@@ -1,0 +1,142 @@
+// /*
+//     Copyright (C) 2026 Jeremy Collier
+//     This file is part of VideoDuplicateFinder
+//     VideoDuplicateFinder is free software: you can redistribute it and/or modify
+//     it under the terms of the GNU Affero General Public License as published by
+//     the Free Software Foundation, either version 3 of the License, or
+//     (at your option) any later version.
+//     VideoDuplicateFinder is distributed in the hope that it will be useful,
+//     but WITHOUT ANY WARRANTY without even the implied warranty of
+//     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//     GNU Affero General Public License for more details.
+//     You should have received a copy of the GNU Affero General Public License
+//     along with VideoDuplicateFinder.  If not, see <http://www.gnu.org/licenses/>.
+// */
+//
+
+using System.Diagnostics;
+using System.Security;
+
+namespace VDF.Agent {
+	/// <summary>
+	/// Two per-user Task Scheduler tasks (no admin rights), both only while the user is logged on,
+	/// least privilege, low priority, one instance at a time:
+	/// <list type="bullet">
+	/// <item><see cref="ScanTask"/>: a scan every <see cref="AgentConfig.ScanEveryMinutes"/> minutes, catching
+	/// up after the PC was off. On battery it runs only if allowed, and the scan itself steps aside in
+	/// Battery Saver or below <see cref="AgentConfig.MinBatteryPercent"/>.</item>
+	/// <item><see cref="OpenTask"/>: at sign-in, opens the review page in the default browser, at most once a
+	/// day and only when something waits for review.</item>
+	/// </list>
+	/// Both run through conhost --headless: the console app gets its console, the user no window.
+	/// </summary>
+	static class Scheduler {
+		public const string Folder = @"VDF Agent";
+		public const string ScanTask = Folder + @"\Duplicate scan";
+		public const string OpenTask = Folder + @"\Open review page";
+
+		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
+		static string Schtasks => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
+
+		static string X(string s) => SecurityElement.Escape(s)!;
+
+		public static string ScanXml(AgentConfig cfg, string agentExe) {
+			int every = Math.Max(15, cfg.ScanEveryMinutes);
+			DateTime start = DateTime.Now.AddMinutes(10);
+			string battery = (!cfg.ScanOnBattery).ToString().ToLowerInvariant();
+			return Task(
+				"Looks for likely duplicate photos and videos and lists them for review. Deletes nothing on its own.",
+				$"""
+				    <TimeTrigger>
+				      <StartBoundary>{start:yyyy-MM-ddTHH:mm:ss}</StartBoundary>
+				      <Repetition><Interval>PT{every}M</Interval><StopAtDurationEnd>false</StopAtDurationEnd></Repetition>
+				    </TimeTrigger>
+				""",
+				$"""
+				    <DisallowStartIfOnBatteries>{battery}</DisallowStartIfOnBatteries>
+				    <StopIfGoingOnBatteries>{battery}</StopIfGoingOnBatteries>
+				    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>
+				""",
+				agentExe, "scan --notify --scheduled");
+		}
+
+		public static string OpenXml(string agentExe) => Task(
+			"Opens the duplicate review page once a day at sign-in when something waits for review.",
+			$"""
+			    <LogonTrigger>
+			      <UserId>{X(Environment.UserDomainName + "\\" + Environment.UserName)}</UserId>
+			      <Delay>PT1M</Delay>
+			    </LogonTrigger>
+			""",
+			"""
+			    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+			    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+			""",
+			agentExe, "open --if-pending --once-a-day");
+
+		static string Task(string description, string trigger, string power, string agentExe, string args) => $"""
+			<?xml version="1.0" encoding="UTF-16"?>
+			<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+			  <RegistrationInfo><Description>{X(description)}</Description></RegistrationInfo>
+			  <Triggers>
+			{trigger}  </Triggers>
+			  <Principals>
+			    <Principal id="Author">
+			      <LogonType>InteractiveToken</LogonType>
+			      <RunLevel>LeastPrivilege</RunLevel>
+			    </Principal>
+			  </Principals>
+			  <Settings>
+			    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+			{power}    <StartWhenAvailable>true</StartWhenAvailable>
+			    <Priority>7</Priority>
+			  </Settings>
+			  <Actions Context="Author">
+			    <Exec>
+			      <Command>{X(Conhost)}</Command>
+			      <Arguments>--headless "{X(agentExe)}" {args}</Arguments>
+			    </Exec>
+			  </Actions>
+			</Task>
+			""";
+
+		public static void Register(string name, string xml) {
+			string file = Path.Combine(Path.GetTempPath(), $"vdf-agent-task-{Guid.NewGuid():N}.xml");
+			File.WriteAllText(file, xml, System.Text.Encoding.Unicode);
+			try {
+				(int code, string output) = Run("/Create", "/TN", name, "/XML", file, "/F");
+				if (code != 0) throw new InvalidOperationException($"Task Scheduler refused '{name}': {output.Trim()}");
+			}
+			finally { File.Delete(file); }
+		}
+
+		public static void Remove(string name) => Run("/Delete", "/TN", name, "/F");
+
+		static (DateTime At, string? Next) cachedQuery;
+
+		/// <summary>"Next Run Time" of the scan task, or null when it isn't registered. Cached for a minute.</summary>
+		public static string? NextRun() {
+			if (DateTime.UtcNow - cachedQuery.At < TimeSpan.FromMinutes(1)) return cachedQuery.Next;
+			string? next = null;
+			try {
+				(int code, string output) = Run("/Query", "/TN", ScanTask, "/FO", "LIST", "/V");
+				if (code == 0)
+					next = output.Split('\n').Select(l => l.Trim())
+						.FirstOrDefault(l => l.StartsWith("Next Run Time:", StringComparison.OrdinalIgnoreCase))?["Next Run Time:".Length..].Trim() ?? "scheduled";
+			}
+			catch { }
+			cachedQuery = (DateTime.UtcNow, next);
+			return next;
+		}
+
+		static (int, string) Run(params string[] args) {
+			var psi = new ProcessStartInfo(Schtasks) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			foreach (string a in args) psi.ArgumentList.Add(a);
+			using var p = Process.Start(psi)!;
+			string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+			p.WaitForExit(30_000);
+			return (p.ExitCode, output);
+		}
+	}
+}

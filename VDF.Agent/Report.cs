@@ -1,0 +1,264 @@
+// /*
+//     Copyright (C) 2026 Jeremy Collier
+//     This file is part of VideoDuplicateFinder
+//     VideoDuplicateFinder is free software: you can redistribute it and/or modify
+//     it under the terms of the GNU Affero General Public License as published by
+//     the Free Software Foundation, either version 3 of the License, or
+//     (at your option) any later version.
+//     VideoDuplicateFinder is distributed in the hope that it will be useful,
+//     but WITHOUT ANY WARRANTY without even the implied warranty of
+//     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//     GNU Affero General Public License for more details.
+//     You should have received a copy of the GNU Affero General Public License
+//     along with VideoDuplicateFinder.  If not, see <http://www.gnu.org/licenses/>.
+// */
+//
+
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using VDF.Core.Utils;
+using VDF.Core.ViewModels;
+
+namespace VDF.Agent {
+	/// <summary>One file in a group, as the review page shows it.</summary>
+	/// <param name="Relation">
+	/// How the file relates to the kept one: <c>keep</c>, <c>identical</c>, <c>smaller</c> (lower
+	/// resolution), <c>compressed</c> (same picture, fewer bytes), <c>resaved</c> (same picture saved
+	/// again), <c>edited</c> (the AI sees the same picture with changes: colour, filter),
+	/// <c>variant</c> (cropped, mirrored, or a different shot that looks alike).
+	/// </param>
+	/// <param name="Suggested">Pre-ticked for the Recycle Bin: identical files and pixel-level copies only.</param>
+	/// <param name="Synced">In a cloud-synced folder: deleting it also deletes it from the cloud and other devices.</param>
+	sealed record ReportItem(
+		string Path, string Name, string Folder, long Size, int Width, int Height, string? Format,
+		double DurationSec, decimal BitrateKbs, float Fps, DateTime ModifiedUtc, float Similarity, bool AiMatched,
+		string Relation, bool Keep, bool Suggested, bool Synced = false);
+
+	/// <summary>
+	/// A set of files that look like copies of each other. <see cref="Kind"/>: <c>identical</c> (all
+	/// byte-for-byte the same), <c>copies</c> (some files are plain copies of the kept one and are
+	/// pre-ticked), <c>similar</c> (only edited versions and look-alikes: nothing is pre-ticked).
+	/// </summary>
+	sealed record ReportGroup(string Key, string Kind, string Media, string KeepPath, string KeepReason,
+		long ReclaimBytes, float MinSimilarity, List<ReportItem> Items);
+
+	sealed record Report(int Version, DateTime ScannedAtUtc, double DurationSec, string Device, int FilesScanned,
+		List<string> Folders, List<string> ExcludedExtensions, List<string> Notes, List<ReportGroup> Groups) {
+		public const int CurrentVersion = 1;
+
+		public static Report? Load() {
+			try {
+				return File.Exists(AgentPaths.Report)
+					? JsonSerializer.Deserialize<Report>(File.ReadAllText(AgentPaths.Report), AgentConfig.Json)
+					: null;
+			}
+			catch (Exception e) {
+				AgentPaths.AppendLog($"report.json unreadable: {e.Message}");
+				return null;
+			}
+		}
+
+		public void Save() => AgentPaths.WriteAtomic(AgentPaths.Report, JsonSerializer.Serialize(this, AgentConfig.Json));
+	}
+
+	/// <summary>
+	/// Turns the engine's duplicate groups into the review report. Code decides everything here —
+	/// which file to keep and why, and what each other file is to it — and only plain copies are
+	/// pre-ticked. What the AI alone matched (an edit, a crop, a look-alike shot) is labelled for the
+	/// user to judge, never pre-ticked: a model's "these look the same" is not a reason to delete.
+	/// </summary>
+	static class ReportBuilder {
+		/// <summary>AI matches at or above this cosine (percent) are the same picture edited; below it, crops and look-alikes.</summary>
+		internal const float SamePictureAiPercent = 97f;
+		/// <summary>
+		/// A classic (grayscale) match at or above this is the same picture, pixel for pixel: a plain copy
+		/// that may be pre-ticked. Calibrated on photos; videos should get their own value once measured.
+		/// </summary>
+		internal const float PlainCopyPercent = 99.5f;
+
+		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates) {
+			var groups = new List<ReportGroup>();
+			foreach (var g in duplicates.GroupBy(d => d.GroupId)) {
+				List<DuplicateItem> items = g.Where(d => File.Exists(d.Path)).ToList();
+				if (items.Count < 2)
+					continue;
+				groups.Add(BuildGroup(items));
+			}
+			return groups
+				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
+				.ThenByDescending(g => g.ReclaimBytes)
+				.ToList();
+		}
+
+		static ReportGroup BuildGroup(List<DuplicateItem> items) {
+			bool isImage = items[0].IsImage;
+			var hashes = new ContentHashes();
+			(DuplicateItem keep, string reason) = isImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
+
+			var reportItems = new List<ReportItem>(items.Count);
+			foreach (DuplicateItem i in items.OrderByDescending(i => ReferenceEquals(i, keep)).ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)) {
+				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes);
+				(int w, int h) = ParseFrameSize(i.FrameSize);
+				bool suggested = relation is "identical" or "smaller" or "compressed" or "resaved";
+				reportItems.Add(new ReportItem(i.Path, Path.GetFileName(i.Path), Path.GetDirectoryName(i.Path) ?? "", i.SizeLong, w, h, i.Format,
+					i.Duration.TotalSeconds, i.BitRateKbs, i.Fps, i.DateModified.ToUniversalTime(), i.Similarity, i.IsAiMatched,
+					relation, relation == "keep", suggested, CloudFiles.IsSynced(i.Path)));
+			}
+			string kind = reportItems.All(i => i.Relation is "keep" or "identical") ? "identical"
+				: reportItems.Any(i => i.Suggested) ? "copies" : "similar";
+			if (kind == "identical")
+				reason = "identical files; kept the one with the original-looking name and folder";
+			else if (kind == "similar")
+				reason = "your pick: these are different shots or edits (suggested: " +
+					(reason.StartsWith("highest resolution", StringComparison.Ordinal) ? "the highest resolution" : "the first one taken") + ")";
+			return new ReportGroup(GroupKey(items.Select(i => i.Path)), kind, isImage ? "image" : "video", keep.Path, reason,
+				reportItems.Where(i => i.Suggested).Sum(i => i.Size), items.Min(i => i.Similarity), reportItems);
+		}
+
+		enum Link { Variant, Edited, Copy }
+
+		/// <summary>
+		/// How closely a member matches the group's reference file (VDF measures every member against
+		/// that one, not against each other). A classic (grayscale) match at or above
+		/// <see cref="PlainCopyPercent"/> is the same picture pixel for pixel; VDF's classic threshold
+		/// (96%) also admits crops, flips and colour edits. Measured on the test set: resized copies
+		/// 100%, recompressed 99.8–99.9%, crops 97.4–97.5%, flips 96.4–97.1%, colour edits 96.4–97.6%,
+		/// two different shots 94.3%. An AI-only match is the same scene changed.
+		/// </summary>
+		static Link LinkToReference(DuplicateItem i) =>
+			i.IsAiMatched ? (i.Similarity >= SamePictureAiPercent ? Link.Edited : Link.Variant)
+			: i.Similarity >= PlainCopyPercent ? Link.Copy : Link.Variant;
+
+		/// <summary>
+		/// What <paramref name="i"/> is to the kept file. Two members are only as close as the weaker
+		/// of their links to the reference: when the keeper itself is an edit or a look-alike, a plain
+		/// copy of the reference is not a plain copy of the keeper.
+		/// </summary>
+		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes) {
+			if (i.SizeLong == keep.SizeLong && hashes.Same(i.Path, keep.Path))
+				return "identical";
+			Link link = (Link)Math.Min((int)LinkToReference(i), (int)LinkToReference(keep));
+			if (link == Link.Variant) return "variant";
+			if (link == Link.Edited) return "edited";
+			if (i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt)
+				return "smaller";
+			if (!i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds))
+				return "variant"; // a shorter cut of the video is not a plain copy
+			return i.SizeLong < keep.SizeLong ? "compressed" : "resaved";
+		}
+
+		/// <summary>Stable across scans for the same set of files, so a "keep all" answer sticks.</summary>
+		public static string GroupKey(IEnumerable<string> paths) {
+			string joined = string.Join("\n", paths.Select(p => p.ToLowerInvariant()).OrderBy(p => p, StringComparer.Ordinal));
+			return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined)))[..16].ToLowerInvariant();
+		}
+
+		/// <summary>
+		/// Photos: the highest resolution; then the camera original (has an EXIF capture date; copies
+		/// made by apps and messengers often lose it); then the oldest file (a copy is newer than what it
+		/// copied); then the largest; then the original-looking name. File size alone is not quality: an
+		/// edit that boosts colour makes a bigger JPEG than the untouched original.
+		/// </summary>
+		static (DuplicateItem, string) PickPhotoKeeper(List<DuplicateItem> items) {
+			int best = items.Max(i => i.FrameSizeInt);
+			var top = items.Where(i => i.FrameSizeInt == best).ToList();
+			if (top.Count == 1)
+				return (top[0], $"highest resolution ({top[0].FrameSize?.Replace("x", " × ")})");
+			var withExif = top.Where(i => ExifReader.TryGetDateTaken(i.Path, out _)).ToList();
+			if (withExif.Count == 1)
+				return (withExif[0], "the camera original (the only copy with its capture date)");
+			if (withExif.Count > 1) top = withExif;
+			DateTime oldest = top.Min(i => i.DateModified);
+			var first = top.Where(i => i.DateModified - oldest < TimeSpan.FromSeconds(2)).ToList();
+			if (first.Count == 1)
+				return (first[0], "the original: same resolution, and the oldest file");
+			long biggest = first.Max(i => i.SizeLong);
+			var largest = first.Where(i => i.SizeLong == biggest).ToList();
+			if (largest.Count == 1)
+				return (largest[0], "same resolution and age; least compressed (largest file)");
+			return (PreferOriginalLooking(largest), "same picture and size; kept the original-looking name and folder");
+		}
+
+		/// <summary>Videos: VDF's own default order (duration, resolution, bitrate, fps), then the oldest, then the smaller file.</summary>
+		static (DuplicateItem, string) PickVideoKeeper(List<DuplicateItem> items) {
+			var ordered = items
+				.OrderByDescending(i => Math.Round(i.Duration.TotalSeconds))
+				.ThenByDescending(i => i.FrameSizeInt)
+				.ThenByDescending(i => i.BitRateKbs)
+				.ThenByDescending(i => i.Fps)
+				.ThenBy(i => i.DateModified)
+				.ThenBy(i => i.SizeLong)
+				.ToList();
+			DuplicateItem keep = ordered[0], next = ordered[1];
+			string reason =
+				Math.Round(keep.Duration.TotalSeconds) > Math.Round(next.Duration.TotalSeconds) ? "longest (the others are shorter cuts)" :
+				keep.FrameSizeInt > next.FrameSizeInt ? $"highest resolution ({keep.FrameSize?.Replace("x", " × ")})" :
+				keep.BitRateKbs > next.BitRateKbs ? $"highest bitrate ({keep.BitRateKbs:N0} kb/s)" :
+				keep.Fps > next.Fps ? $"highest frame rate ({keep.Fps:0.##} fps)" :
+				"same quality; the oldest file";
+			return (keep, reason);
+		}
+
+		static readonly string[] CopyMarkers = { " - copy", " copy", "(1)", "(2)", "(3)", "_1.", "-1." };
+		static readonly string[] TransientFolders = { "\\downloads\\", "\\temp\\", "\\tmp\\", "\\desktop\\", "\\whatsapp", "\\telegram" };
+
+		/// <summary>
+		/// The synced copy (removing it would remove it from the cloud too), then outside
+		/// Downloads/Desktop/temp, without "copy"/"(1)" in the name, oldest, shortest name.
+		/// </summary>
+		static DuplicateItem PreferOriginalLooking(List<DuplicateItem> items) =>
+			items
+				.OrderBy(i => CloudFiles.IsSynced(i.Path) ? 0 : 1)
+				.ThenBy(i => TransientFolders.Any(f => (i.Path.ToLowerInvariant() + "\\").Contains(f)) ? 1 : 0)
+				.ThenBy(i => CopyMarkers.Any(m => Path.GetFileName(i.Path).Contains(m, StringComparison.OrdinalIgnoreCase)) ? 1 : 0)
+				.ThenBy(i => i.DateModified)
+				.ThenBy(i => Path.GetFileName(i.Path).Length)
+				.ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)
+				.First();
+
+		/// <summary>Content hashes, computed once per file and only for files whose sizes match.</summary>
+		sealed class ContentHashes {
+			readonly Dictionary<string, string?> cache = new(StringComparer.OrdinalIgnoreCase);
+
+			public bool Same(string a, string b) {
+				string? ha = Get(a), hb = Get(b);
+				return ha != null && ha == hb;
+			}
+
+			string? Get(string path) {
+				if (!cache.TryGetValue(path, out string? h))
+					cache[path] = h = Compute(path);
+				return h;
+			}
+
+			/// <summary>SHA-256 of the file; beyond 256 MB, of its size plus nine 4 MB samples across it.</summary>
+			static string? Compute(string path) {
+				const long Full = 256L << 20, Chunk = 4L << 20;
+				try {
+					using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20);
+					if (fs.Length <= Full)
+						return Convert.ToHexString(SHA256.HashData(fs));
+					using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+					sha.AppendData(BitConverter.GetBytes(fs.Length));
+					var buffer = new byte[Chunk];
+					for (int k = 0; k < 9; k++) {
+						fs.Position = (fs.Length - Chunk) * k / 8;
+						int read = fs.ReadAtLeast(buffer, (int)Chunk, throwOnEndOfStream: false);
+						sha.AppendData(buffer, 0, read);
+					}
+					return Convert.ToHexString(sha.GetHashAndReset());
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+					return null;
+				}
+			}
+		}
+
+		static (int, int) ParseFrameSize(string? frameSize) {
+			if (string.IsNullOrEmpty(frameSize)) return (0, 0);
+			int x = frameSize.IndexOf('x');
+			return x > 0 && int.TryParse(frameSize.AsSpan(0, x), out int w) && int.TryParse(frameSize.AsSpan(x + 1), out int h) ? (w, h) : (0, 0);
+		}
+	}
+}

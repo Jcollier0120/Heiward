@@ -1,0 +1,196 @@
+// /*
+//     Copyright (C) 2026 Jeremy Collier
+//     This file is part of VideoDuplicateFinder
+//     VideoDuplicateFinder is free software: you can redistribute it and/or modify
+//     it under the terms of the GNU Affero General Public License as published by
+//     the Free Software Foundation, either version 3 of the License, or
+//     (at your option) any later version.
+//     VideoDuplicateFinder is distributed in the hope that it will be useful,
+//     but WITHOUT ANY WARRANTY without even the implied warranty of
+//     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//     GNU Affero General Public License for more details.
+//     You should have received a copy of the GNU Affero General Public License
+//     along with VideoDuplicateFinder.  If not, see <http://www.gnu.org/licenses/>.
+// */
+//
+
+using System.CommandLine;
+using System.Runtime.InteropServices;
+using VDF.Agent;
+using VDF.Core.AI;
+using VDF.Core.FFTools;
+
+// vdf-agent: finds likely duplicate photos and videos in the background (on the NPU when there is
+// one) and lists them on a local review page. It never deletes anything on its own; files the user
+// ticks go to the Recycle Bin. Run without arguments, it installs itself (or, once installed, opens
+// the review page), so the one exe is also the installer.
+var root = new RootCommand("vdf-agent — finds likely duplicate photos and videos and lists them for review");
+root.SetAction(async (_, ct) => {
+	if (Installer.RunningInstalled) {
+		await OpenReviewPageAsync(AgentConfig.Load(), ct);
+		return 0;
+	}
+	int code = await Installer.InstallAsync(dryRun: false, assumeYes: false, device: null, ct);
+	if (!Console.IsInputRedirected) {
+		Console.WriteLine("Press Enter to close.");
+		Console.ReadLine();
+	}
+	return code;
+});
+
+var notify = new Option<bool>("--notify") { Description = "Show a Windows notification when the scan finds new duplicates." };
+var open = new Option<bool>("--open") { Description = "Open the review page (it shows the scan's progress)." };
+var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled };
+scan.SetAction(async (r, ct) => {
+	var cfg = AgentConfig.Load();
+	if (r.GetValue(scheduled) && Power.ShouldSkip(cfg, out string why)) {
+		AgentPaths.AppendLog("scheduled scan skipped: " + why);
+		return 0;
+	}
+	if (r.GetValue(open)) {
+		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
+		_ = OpenReviewPageAsync(cfg, ct);
+	}
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), ct);
+});
+root.Subcommands.Add(scan);
+
+var noBrowser = new Option<bool>("--no-browser") { Description = "Don't open a browser tab." };
+var serve = new Command("serve", "Serve the review page on 127.0.0.1 until it sits unused.") { noBrowser };
+serve.SetAction((r, ct) => ReviewServer.RunAsync(AgentConfig.Load(), !r.GetValue(noBrowser), ct));
+root.Subcommands.Add(serve);
+
+var ifPending = new Option<bool>("--if-pending") { Description = "Only when something waits for review." };
+var onceADay = new Option<bool>("--once-a-day") { Description = "At most once per day (the sign-in task uses this)." };
+var openCmd = new Command("open", "Open the review page in the default browser (starting it if needed).") { ifPending, onceADay };
+openCmd.SetAction(async (r, ct) => {
+	var cfg = AgentConfig.Load();
+	if (r.GetValue(ifPending) && PendingCount() == 0) return 0;
+	string stamp = Path.Combine(AgentPaths.Home, "last-opened.txt");
+	string today = DateTime.Now.ToString("yyyy-MM-dd");
+	if (r.GetValue(onceADay)) {
+		try { if (File.Exists(stamp) && File.ReadAllText(stamp).Trim() == today) return 0; } catch { }
+	}
+	await OpenReviewPageAsync(cfg, ct);
+	try { AgentPaths.WriteAtomic(stamp, today); } catch { }
+	return 0;
+});
+root.Subcommands.Add(openCmd);
+
+var setup = new Command("setup", "Download FFmpeg and the AI components (and the NPU pack on Snapdragon PCs), then report what this PC will use.");
+setup.SetAction(async (_, ct) => {
+	try {
+		if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) == null || FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) == null) {
+			Console.WriteLine("Downloading FFmpeg...");
+			Console.WriteLine($"FFmpeg installed to {await FfmpegDownloader.DownloadAndInstallAsync(null, ct)}");
+		}
+		if (!AiComponents.IsReady) {
+			Console.WriteLine($"Downloading the AI components (ONNX Runtime {AiComponents.RuntimeVersion} + model, ~100 MB)...");
+			await AiComponents.DownloadAsync(null, ct);
+		}
+		if (NpuComponents.IsSupportedPlatform && !NpuComponents.IsInstalled) {
+			Console.WriteLine($"Downloading the NPU pack (Qualcomm QNN {NpuComponents.QnnPackageVersion} + model, ~230 MB)...");
+			await NpuComponents.DownloadAsync(null, ct);
+		}
+		using var embedder = OnnxEmbedder.Create(AiDevice.Auto);
+		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}.");
+		return 0;
+	}
+	catch (Exception e) when (e is not OperationCanceledException) {
+		Console.Error.WriteLine($"Setup failed: {e.Message}");
+		return 1;
+	}
+});
+root.Subcommands.Add(setup);
+
+var dryRun = new Option<bool>("--dry-run") { Description = "Print every step without changing anything." };
+var yes = new Option<bool>("--yes", "-y") { Description = "Answer yes to questions (unattended install)." };
+var deviceOpt = new Option<AiDevice?>("--device") { Description = "Where the AI runs: npu, gpu or cpu. Default: the NPU if there is one, otherwise ask (GPU or CPU)." };
+var install = new Command("install", "Install for this user (no admin): prerequisites, hourly scan, sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt };
+install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct));
+
+// Opens a session on one device and reports where the model actually runs (the installer's GPU
+// check runs this in its own process: a process can only load one ONNX Runtime).
+var probeDevice = new Option<AiDevice>("--device") { Description = "npu, gpu or cpu.", DefaultValueFactory = _ => AiDevice.Auto };
+var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice };
+probe.Hidden = true;
+probe.SetAction(r => {
+	AiDevice wanted = r.GetValue(probeDevice);
+	using var embedder = OnnxEmbedder.Create(wanted);
+	embedder.EmbedBatch(new[] { new byte[OnnxEmbedder.InputSide * OnnxEmbedder.InputSide * 3] });
+	Console.WriteLine($"The AI model runs on the {embedder.DeviceName}.");
+	return wanted is AiDevice.Auto || string.Equals(embedder.DeviceName, wanted.ToString(), StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+});
+root.Subcommands.Add(probe);
+root.Subcommands.Add(install);
+
+var purge = new Option<bool>("--purge") { Description = "Also delete settings, the report and caches." };
+var uninstall = new Command("uninstall", "Remove the agent, its tasks and shortcuts. Keeps the report and settings unless --purge.") { purge, dryRun };
+uninstall.SetAction(r => Installer.Uninstall(r.GetValue(purge), r.GetValue(dryRun)));
+root.Subcommands.Add(uninstall);
+
+var status = new Command("status", "Show the settings, the last report and the schedule.");
+status.SetAction(_ => {
+	var cfg = AgentConfig.Load();
+	Console.WriteLine($"Installed: {(File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
+	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
+	Console.WriteLine($"Folders: {string.Join("; ", cfg.Folders)}");
+	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
+	Console.WriteLine($"Scans: every {cfg.ScanEveryMinutes} min{(cfg.ScanOnBattery ? $", on battery above {cfg.MinBatteryPercent}% unless Battery Saver is on" : ", on AC power only")}");
+	var report = Report.Load();
+	if (report == null) Console.WriteLine("No scan yet: run 'vdf-agent scan'.");
+	else {
+		Console.WriteLine($"Last scan: {report.ScannedAtUtc.ToLocalTime():g}, {report.FilesScanned:N0} files in {report.DurationSec:N0} s, AI on {report.Device}");
+		var decisions = DecisionStore.Load();
+		var pending = report.Groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
+		Console.WriteLine($"To review: {pending.Count} set(s), up to {Format.Bytes(pending.Sum(g => g.ReclaimBytes))} to free");
+		foreach (string n in report.Notes) Console.WriteLine("  note: " + n);
+	}
+	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'vdf-agent install')"}");
+	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
+	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");
+	return 0;
+});
+root.Subcommands.Add(status);
+
+return await root.Parse(args).InvokeAsync();
+
+static int PendingCount() {
+	var report = Report.Load();
+	if (report == null) return 0;
+	var decisions = DecisionStore.Load();
+	return report.Groups.Count(g => !decisions.ContainsKey(g.Key));
+}
+
+/// <summary>Starts the review page in the background if needed, waits until it answers, opens it.</summary>
+static async Task OpenReviewPageAsync(AgentConfig cfg, CancellationToken ct) {
+	ReviewServer.EnsureRunningInBackground(cfg);
+	for (int i = 0; i < 40 && !await ReviewServer.IsUpAsync(cfg.Port); i++)
+		await Task.Delay(250, ct);
+	ReviewServer.OpenBrowser(cfg.Port);
+}
+
+namespace VDF.Agent {
+	/// <summary>Battery checks for scheduled scans (GetSystemPowerStatus).</summary>
+	static class Power {
+		[StructLayout(LayoutKind.Sequential)]
+		struct SystemPowerStatus {
+			public byte ACLineStatus, BatteryFlag, BatteryLifePercent, SystemStatusFlag;
+			public int BatteryLifeTime, BatteryFullLifeTime;
+		}
+
+		[DllImport("kernel32.dll")]
+		static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
+
+		public static bool ShouldSkip(AgentConfig cfg, out string why) {
+			why = "";
+			if (!GetSystemPowerStatus(out var s) || s.ACLineStatus != 0 || (s.BatteryFlag & 128) != 0)
+				return false; // on AC, unknown, or no battery
+			if (!cfg.ScanOnBattery) { why = "on battery (scanOnBattery is off)"; return true; }
+			if ((s.SystemStatusFlag & 1) != 0) { why = "Battery Saver is on"; return true; }
+			if (s.BatteryLifePercent != 255 && s.BatteryLifePercent < cfg.MinBatteryPercent) { why = $"battery at {s.BatteryLifePercent}%"; return true; }
+			return false;
+		}
+	}
+}

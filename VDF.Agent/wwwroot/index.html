@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="agent-token" content="__AGENT_TOKEN__">
+  <title>Duplicate check</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="wrap">
+    <header class="top">
+      <div>
+        <h1>Duplicate check</h1>
+        <p class="muted" id="subtitle">Loading…</p>
+      </div>
+      <div class="scan">
+        <div class="progress hidden" id="progress"><div class="bar" id="progress-bar"></div></div>
+        <span class="muted small" id="progress-text"></span>
+        <button class="btn" id="scan-now">Scan now</button>
+      </div>
+    </header>
+    <p class="error hidden" id="error"></p>
+    <ul class="notes" id="notes"></ul>
+
+    <section class="tiles" id="tiles">
+      <div class="tile"><div class="tile-value" id="t-groups">–</div><div class="muted small">sets to review</div></div>
+      <div class="tile"><div class="tile-value" id="t-free">–</div><div class="muted small">you could free</div></div>
+      <div class="tile"><div class="tile-value" id="t-freed">–</div><div class="muted small">freed so far</div></div>
+    </section>
+
+    <section>
+      <h2>Needs you</h2>
+      <p class="muted small">Ticked files go to the Recycle Bin, where you can restore them. Nothing is deleted until you press the button, and at least one copy of everything always stays.</p>
+      <div id="groups"></div>
+      <button class="btn secondary hidden" id="more">Show more</button>
+    </section>
+
+    <section>
+      <h2>Done</h2>
+      <div id="done"></div>
+    </section>
+
+    <footer class="muted small" id="footer"></footer>
+  </main>
+</body>
+</html>
