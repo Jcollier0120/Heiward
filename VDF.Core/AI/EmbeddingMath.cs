@@ -16,6 +16,8 @@
 
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 
 namespace VDF.Core.AI {
 	/// <summary>
@@ -46,7 +48,15 @@ namespace VDF.Core.AI {
 			int len = Math.Min(sa.Length, sb.Length);
 			int dot = 0;
 			int i = 0;
-			if (Vector.IsHardwareAccelerated && len >= Vector<sbyte>.Count) {
+			if (Dp.IsSupported && len >= 16) {
+				// ARMv8.2 SDOT: 16 int8 products summed into 4 int lanes per instruction,
+				// instead of the two widening steps below (every Snapdragon X has it).
+				Vector128<int> acc = Vector128<int>.Zero;
+				for (; i <= len - 16; i += 16)
+					acc = Dp.DotProduct(acc, Vector128.Create(sa.Slice(i, 16)), Vector128.Create(sb.Slice(i, 16)));
+				dot = Vector128.Sum(acc);
+			}
+			else if (Vector.IsHardwareAccelerated && len >= Vector<sbyte>.Count) {
 				Vector<int> acc = Vector<int>.Zero;
 				int width = Vector<sbyte>.Count;
 				for (; i <= len - width; i += width) {

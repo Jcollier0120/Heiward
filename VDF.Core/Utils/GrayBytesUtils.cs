@@ -18,6 +18,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
+using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
 
 namespace VDF.Core.Utils {
@@ -183,6 +184,23 @@ namespace VDF.Core.Utils {
 					acc = Sse2.Add(acc, Sse2.SumAbsoluteDifferences(vImg2[i], vImg1[i]).AsInt64());
 
 				diff = acc.GetElement(0) + acc.GetElement(1);
+			}
+			else if (AdvSimd.IsSupported) {
+				// ARM64 (NEON): UABD gives |a−b| per byte, then two pairwise widening adds fold
+				// them into 32-bit lanes, overflow-proof like the x86 paths. Without this branch
+				// ARM64 ran the scalar loop: 455 ns per 32×32 pair on a Snapdragon X2, and the
+				// image compare phase calls this for every pair of images.
+				Vector128<uint> acc = Vector128<uint>.Zero;
+				ref byte r1 = ref MemoryMarshal.GetArrayDataReference(img1);
+				ref byte r2 = ref MemoryMarshal.GetArrayDataReference(img2);
+				int i = 0;
+				for (; i <= img1.Length - 16; i += 16) {
+					Vector128<byte> d = AdvSimd.AbsoluteDifference(Vector128.LoadUnsafe(ref r1, (nuint)i), Vector128.LoadUnsafe(ref r2, (nuint)i));
+					acc = AdvSimd.AddPairwiseWideningAndAdd(acc, AdvSimd.AddPairwiseWidening(d));
+				}
+				diff = Vector128.Sum(acc);
+				for (; i < img1.Length; i++)
+					diff += Math.Abs(img1[i] - img2[i]);
 			}
 			else {
 				for (int i = 0; i < img1.Length; i++)
