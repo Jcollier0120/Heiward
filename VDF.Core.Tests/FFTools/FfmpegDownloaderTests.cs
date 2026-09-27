@@ -46,7 +46,6 @@ public class FfmpegDownloaderTests {
 	[Theory]
 	[InlineData("Windows", Architecture.X64, "win64", "BtbN", "zip")]
 	[InlineData("Windows", Architecture.X86, "win32", "BtbN", "zip")]
-	[InlineData("Windows", Architecture.Arm64, "winarm64", "BtbN", "zip")]
 	[InlineData("Linux", Architecture.X64, "linux64", "BtbN", "tar.xz")]
 	[InlineData("Linux", Architecture.Arm, "linuxarmhf", "BtbN", "tar.xz")]
 	[InlineData("OSX", Architecture.X64, "macos64", "yt-dlp", "zip")]
@@ -60,6 +59,33 @@ public class FfmpegDownloaderTests {
 		Assert.Equal(ext == "zip" ? ArchiveKind.Zip : ArchiveKind.TarXz, plan.ArchiveKind);
 		Assert.Contains($"github.com/{repoOwner}/FFmpeg-Builds/releases/download/latest/{plan.ArchiveFileName}", plan.DownloadUrl.AbsoluteUri);
 		Assert.Contains("8.1", plan.DisplayName);
+		Assert.Null(plan.Sha256);
+	}
+
+	[Fact]
+	public void GetDownloadPlans_WindowsArm64UsesPinnedNativeBuilds_LeanFirstThenTordona() {
+		// BtbN's winarm64 builds crash on load on Snapdragon X; 8.1 takes pinned builds instead.
+		var plans = FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.Arm64, "8.1");
+
+		Assert.Equal(2, plans.Count);
+		Assert.Equal("ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip", plans[0].ArchiveFileName);
+		Assert.Equal(ArchiveKind.Zip, plans[0].ArchiveKind);
+		Assert.Equal("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3/" + plans[0].ArchiveFileName, plans[0].DownloadUrl.AbsoluteUri);
+		Assert.Equal("ffmpeg-8.1.3-essentials-shared-win-arm64.7z", plans[1].ArchiveFileName);
+		Assert.Equal(ArchiveKind.SevenZip, plans[1].ArchiveKind);
+		Assert.Equal("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/" + plans[1].ArchiveFileName, plans[1].DownloadUrl.AbsoluteUri);
+		Assert.All(plans, plan => {
+			Assert.Matches("^[0-9a-f]{64}$", plan.Sha256);
+			Assert.Contains("8.1", plan.DisplayName);
+		});
+	}
+
+	[Fact]
+	public void GetDownloadPlans_WindowsArm64WithoutAPinnedBuildFallsBackToBtbN() {
+		var plan = Assert.Single(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.Arm64, "7.1"));
+
+		Assert.Equal("ffmpeg-n7.1-latest-winarm64-gpl-shared-7.1.zip", plan.ArchiveFileName);
+		Assert.Null(plan.Sha256);
 	}
 
 	[Theory]

@@ -21,7 +21,8 @@ namespace VDF.Core.Utils {
 	internal enum ArchiveKind {
 		Zip,
 		TarGz,
-		TarXz
+		TarXz,
+		SevenZip
 	}
 
 	/// <summary>Archive extraction shared by the AI component and FFmpeg downloaders.</summary>
@@ -35,14 +36,20 @@ namespace VDF.Core.Utils {
 			}
 
 			// Tar archives are only downloaded on Linux/macOS, where tar is part of the
-			// base system.
+			// base system. 7z archives are only downloaded on Windows, where System32's
+			// bsdtar (libarchive with liblzma) reads them; it is called by full path because
+			// a Git or MSYS2 GNU tar earlier on PATH cannot.
 			var psi = new ProcessStartInfo {
-				FileName = "tar",
+				FileName = kind == ArchiveKind.SevenZip ? Path.Combine(Environment.SystemDirectory, "tar.exe") : "tar",
 				CreateNoWindow = true,
 				UseShellExecute = false,
 				RedirectStandardError = true,
 			};
-			psi.ArgumentList.Add(kind == ArchiveKind.TarXz ? "-xJf" : "-xzf");
+			psi.ArgumentList.Add(kind switch {
+				ArchiveKind.TarXz => "-xJf",
+				ArchiveKind.SevenZip => "-xf",
+				_ => "-xzf"
+			});
 			psi.ArgumentList.Add(archivePath);
 			psi.ArgumentList.Add("-C");
 			psi.ArgumentList.Add(targetFolder);

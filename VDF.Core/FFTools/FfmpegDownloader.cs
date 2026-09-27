@@ -27,7 +27,8 @@ namespace VDF.Core.FFTools {
 
 	internal readonly record struct FfmpegDownloadProgress(FfmpegDownloadPhase Phase, string DisplayName, long BytesDone, long? BytesTotal);
 
-	internal sealed record FfmpegDownloadPlan(Uri DownloadUrl, string ArchiveFileName, ArchiveKind ArchiveKind, string DisplayName);
+	/// <param name="Sha256">Pinned hash of the archive. When set, it must match and the release's checksums.sha256 is not consulted.</param>
+	internal sealed record FfmpegDownloadPlan(Uri DownloadUrl, string ArchiveFileName, ArchiveKind ArchiveKind, string DisplayName, string? Sha256 = null);
 
 	/// <summary>
 	/// Downloads and installs the shared FFmpeg/FFprobe build matching the compiled-in
@@ -42,6 +43,25 @@ namespace VDF.Core.FFTools {
 
 		const string BtbNRepo = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/";
 		const string YtDlpRepo = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/";
+
+		/// <summary>
+		/// Native Windows ARM64 builds, keyed by version tag, tried in order. BtbN's winarm64
+		/// builds crash with 0xC0000005 while avcodec-62.dll loads on Snapdragon X machines
+		/// (the fault is in their statically linked librsvg/cairo/DirectWrite init code), even
+		/// for `ffmpeg -version`. First the lean LGPL build made for VDF (ffmpeg-winarm64-lean:
+		/// dav1d and zlib only, 11 MB), then tordona's essentials build as the fallback should
+		/// that download fail. Both run in-process and as ffmpeg.exe, and both are pinned by
+		/// release and SHA-256: only the tested archives install. Tags without an entry fall
+		/// back to BtbN.
+		/// </summary>
+		static readonly Dictionary<string, (string Url, string Sha256)[]> WinArm64Builds = new() {
+			["8.1"] = new[] {
+				("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip",
+					"6a8571ab1d7a5a52d700e215e54cdccce3df2b2fdcdd0162dec9860d9bca5ca9"),
+				("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/ffmpeg-8.1.3-essentials-shared-win-arm64.7z",
+					"f4d26c8a8387b61c9eacb92432cf5f2cdd075464aae7523731d17d53df1344cd"),
+			},
+		};
 
 		/// <summary>The FFmpeg major version the compiled FFmpeg.AutoGen binding expects, or 0 when unknown.</summary>
 		internal static int MapToFfmpegMajor(int avcodecMajor, int avformatMajor, int avutilMajor) {
@@ -86,6 +106,15 @@ namespace VDF.Core.FFTools {
 		}
 
 		internal static List<FfmpegDownloadPlan> GetDownloadPlans(DownloadOS os, Architecture arch, string versionTag) {
+			if (os == DownloadOS.Windows && arch == Architecture.Arm64 && WinArm64Builds.TryGetValue(versionTag, out var pinnedBuilds)) {
+				return pinnedBuilds.Select(pinned => {
+					var url = new Uri(pinned.Url);
+					string archive = Path.GetFileName(url.AbsolutePath);
+					ArchiveKind archiveKind = archive.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.SevenZip : ArchiveKind.Zip;
+					return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows ARM64 ({versionTag})", pinned.Sha256);
+				}).ToList();
+			}
+
 			(string Rid, ArchiveKind Kind, string Repo, string Display)? pick = os switch {
 				DownloadOS.Windows => arch switch {
 					Architecture.X64 => ("win64", ArchiveKind.Zip, BtbNRepo, "Windows x64"),
@@ -146,7 +175,10 @@ namespace VDF.Core.FFTools {
 							(done, total) => progress?.Report(new FfmpegDownloadProgress(FfmpegDownloadPhase.Downloading, plan.DisplayName, done, total)),
 							token, MaxDownloadBytes);
 						progress?.Report(new FfmpegDownloadProgress(FfmpegDownloadPhase.Verifying, plan.DisplayName, 0, null));
-						await VerifyChecksumAsync(http, plan.DownloadUrl, downloadPath, plan.ArchiveFileName, token);
+						if (plan.Sha256 != null)
+							await VerifyPinnedChecksumAsync(downloadPath, plan.ArchiveFileName, plan.Sha256, token);
+						else
+							await VerifyChecksumAsync(http, plan.DownloadUrl, downloadPath, plan.ArchiveFileName, token);
 						progress?.Report(new FfmpegDownloadProgress(FfmpegDownloadPhase.Extracting, plan.DisplayName, 0, null));
 						ArchiveUtils.Extract(downloadPath, extractDir, plan.ArchiveKind);
 						return InstallFromExtracted(extractDir);
@@ -238,12 +270,7 @@ namespace VDF.Core.FFTools {
 					return;
 				}
 
-				await using var fs = File.OpenRead(filePath);
-				var actualHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(fs, token));
-
-				if (actualHash != expectedHash)
-					throw new InvalidOperationException(
-						$"Checksum mismatch for '{archiveFileName}': expected {expectedHash}, got {actualHash}. The download may be corrupted or tampered with.");
+				await VerifyPinnedChecksumAsync(filePath, archiveFileName, expectedHash, token);
 			}
 			catch (HttpRequestException) {
 				Logger.Instance.Warn("FFmpeg download: could not fetch checksums.sha256, skipping verification");
@@ -254,6 +281,16 @@ namespace VDF.Core.FFTools {
 				// best-effort intent — a slow checksum host must not block FFmpeg.
 				Logger.Instance.Warn("FFmpeg download: checksum fetch timed out, skipping verification");
 			}
+		}
+
+		/// <summary>Throws InvalidOperationException unless the file's SHA-256 is <paramref name="expectedHash"/>.</summary>
+		static async Task VerifyPinnedChecksumAsync(string filePath, string archiveFileName, string expectedHash, CancellationToken token) {
+			await using var fs = File.OpenRead(filePath);
+			var actualHash = Convert.ToHexStringLower(await SHA256.HashDataAsync(fs, token));
+
+			if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase))
+				throw new InvalidOperationException(
+					$"Checksum mismatch for '{archiveFileName}': expected {expectedHash}, got {actualHash}. The download may be corrupted or tampered with.");
 		}
 	}
 }
