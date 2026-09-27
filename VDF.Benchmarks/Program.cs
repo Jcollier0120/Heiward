@@ -25,6 +25,10 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-decoder-reuse")
 			return DecoderReuseProbe.Run(args);
 
+		// In-process tiled HEIF decode vs the FFmpeg process, on a folder of real photos.
+		if (args.Length > 0 && args[0] == "--probe-heif-tiles")
+			return TiledHeifProbe.Run(args);
+
 		// WIC vs FFmpeg 32x32 gray frames for the same photos (see GrayParityProbe).
 		if (args.Length > 0 && args[0] == "--probe-gray")
 			return GrayParityProbe.Run(args);
