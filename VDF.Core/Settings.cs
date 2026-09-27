@@ -169,6 +169,31 @@ namespace VDF.Core {
 		/// <summary>Similarity threshold (percent = cosine·100) for the AI matching pass.</summary>
 		public float AiPercent = 94f;
 		/// <summary>
+		/// Where AI embeddings run. Auto uses a Hexagon NPU when this is Windows on ARM and the
+		/// NPU pack is installed (AI.NpuComponents), and the CPU otherwise.
+		/// </summary>
+		public AI.AiDevice AiDevice = AI.AiDevice.Auto;
+		/// <summary>
+		/// Decode photos with Windows' own codecs (WIC) instead of FFmpeg: one in-process decode
+		/// at reduced size gives both the gray and the AI frame, and HEIC/WebP/AVIF/RAW work
+		/// through the codecs Windows has. Files WIC cannot read fall back to FFmpeg. Ignored
+		/// elsewhere. Gray frames differ very slightly from FFmpeg's, so compare a library
+		/// with the decoder it was scanned with.
+		/// </summary>
+		public bool UseWindowsImageDecoder = true;
+		/// <summary>
+		/// Leave out cloud-sync placeholders (OneDrive/iCloud/Dropbox files whose data is not on
+		/// this PC). Reading one downloads it, so scanning a synced library could otherwise pull
+		/// gigabytes down. Files already downloaded are scanned as usual.
+		/// </summary>
+		public bool SkipCloudPlaceholders = true;
+		/// <summary>
+		/// File extensions to leave out of the scan entirely (".heic", ".heif", ...), matched
+		/// case-insensitively. Lets a scan skip formats this machine decodes too slowly or not
+		/// at all, and fold them in later without touching the folder list.
+		/// </summary>
+		public HashSet<string> ExcludedExtensions = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>
 		/// Detect partial/time-shifted duplicates visually: dense keyframe embeddings
 		/// matched by temporal offset consistency. Unlike <see cref="EnablePartialClipDetection"/>
 		/// this needs no audio track, so it also covers silent, muted and re-dubbed copies.

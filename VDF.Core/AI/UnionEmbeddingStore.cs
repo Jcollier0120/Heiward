@@ -48,10 +48,19 @@ namespace VDF.Core.AI {
 			CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 		readonly object saveLock = new();
 		volatile bool dirty;
+		string path = StorePath;
 
-		internal static string StorePath =>
+		internal static string StorePath => PathFor(null);
+
+		/// <summary>
+		/// The sidecar for embeddings of one model: <c>null</c> = VDF's int8 CPU model (the original
+		/// file name), otherwise e.g. <see cref="NpuComponents.ModelKey"/>. Different models' vectors
+		/// must never be compared with each other, so each gets its own file.
+		/// </summary>
+		internal static string PathFor(string? cacheKey) =>
 			TestOverrideStorePath ??
-			FileUtils.SafePathCombine(CoreUtils.ResolveDatabaseFolder(Utils.DatabaseUtils.CustomDatabaseFolder), "UnionEmbeddings.db");
+			FileUtils.SafePathCombine(CoreUtils.ResolveDatabaseFolder(Utils.DatabaseUtils.CustomDatabaseFolder),
+				cacheKey == null ? "UnionEmbeddings.db" : $"UnionEmbeddings.{cacheKey}.db");
 
 		/// <summary>Test hook: isolates store tests from the real database folder.</summary>
 		internal static string? TestOverrideStorePath;
@@ -84,9 +93,9 @@ namespace VDF.Core.AI {
 				? record
 				: null;
 
-		internal static UnionEmbeddingStore Load() {
-			var store = new UnionEmbeddingStore();
-			string path = StorePath;
+		internal static UnionEmbeddingStore Load(string? cacheKey = null) {
+			string path = PathFor(cacheKey);
+			var store = new UnionEmbeddingStore { path = path };
 			if (!File.Exists(path))
 				return store;
 			try {
@@ -134,7 +143,6 @@ namespace VDF.Core.AI {
 		internal void Save(IReadOnlySet<string>? keepOnly) {
 			if (!dirty)
 				return;
-			string path = StorePath;
 			string tempPath = path + ".tmp";
 			try {
 				lock (saveLock) {

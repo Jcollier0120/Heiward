@@ -31,7 +31,7 @@ namespace VDF.Core.Utils {
 			".webp",
 			".heic",
 			".heif"};
-		static readonly string[] VideoExtensions = {
+		internal static readonly string[] VideoExtensions = {
 			".mp4",
 			".wmv",
 			".avi",
@@ -76,7 +76,13 @@ namespace VDF.Core.Utils {
 		// mark whole libraries +S, and an unconditional System skip hid every one of them (#876).
 		// Hidden alone has been scanned since 2021 (a1c4806).
 		const FileAttributes HiddenSystemFolder = FileAttributes.Hidden | FileAttributes.System;
-		internal static List<FileInfo> GetFilesRecursive(string initial, bool ignoreReadonly, bool ignoreReparsePoints, bool recursive, bool includeImages, List<string> excludeFolders, CancellationToken cancellationToken) {
+		// Cloud-sync placeholders (OneDrive, iCloud, Dropbox "online-only" files): their data is not on
+		// this disk, and opening one makes the sync client download it. A scan that reads them would
+		// quietly pull a whole cloud library down (e.g. 22 GB of iCloud videos).
+		const FileAttributes RecallOnDataAccess = (FileAttributes)0x00400000, RecallOnOpen = (FileAttributes)0x00040000;
+		const FileAttributes CloudPlaceholder = RecallOnDataAccess | RecallOnOpen | FileAttributes.Offline;
+
+		internal static List<FileInfo> GetFilesRecursive(string initial, bool ignoreReadonly, bool ignoreReparsePoints, bool recursive, bool includeImages, List<string> excludeFolders, CancellationToken cancellationToken, bool skipCloudPlaceholders = false, IReadOnlySet<string>? excludeExtensions = null) {
 			EnumerationOptions enumerationOptions = new() {
 				IgnoreInaccessible = true,
 				// No attribute skip for files: a video marked +S or +H is still a video.
@@ -100,11 +106,16 @@ namespace VDF.Core.Utils {
 			// FileInfo (or even file-name string) is allocated.
 			var extensionLookup = (includeImages ? AllExtensionSet : VideoExtensionSet)
 				.GetAlternateLookup<ReadOnlySpan<char>>();
+			// Case-insensitive whatever set the caller passed (a JSON-loaded set loses its comparer),
+			// and span-based like the extension probe above.
+			bool hasExcludes = excludeExtensions is { Count: > 0 };
+			var excludedLookup = (excludeExtensions ?? (IEnumerable<string>)Array.Empty<string>())
+				.ToFrozenSet(StringComparer.OrdinalIgnoreCase).GetAlternateLookup<ReadOnlySpan<char>>();
 
 			List<FileInfo> files = new();
 			Queue<DirectoryInfo> subFolders = new();
 			subFolders.Enqueue(new(initial));
-			int skippedHiddenSystem = 0, skippedReadonly = 0, skippedReparse = 0;
+			int skippedHiddenSystem = 0, skippedReadonly = 0, skippedReparse = 0, skippedPlaceholders = 0;
 
 			while (subFolders.Count > 0) {
 				if (cancellationToken.IsCancellationRequested)
@@ -119,8 +130,18 @@ namespace VDF.Core.Utils {
 					files.AddRange(new FileSystemEnumerable<FileInfo>(currentFolder.FullName,
 						(ref FileSystemEntry entry) => (FileInfo)entry.ToFileSystemInfo(),
 						enumerationOptions) {
-						ShouldIncludePredicate = (ref FileSystemEntry entry) =>
-							!entry.IsDirectory && extensionLookup.Contains(Path.GetExtension(entry.FileName))
+						ShouldIncludePredicate = (ref FileSystemEntry entry) => {
+							if (entry.IsDirectory || !extensionLookup.Contains(Path.GetExtension(entry.FileName)))
+								return false;
+							if (hasExcludes && excludedLookup.Contains(Path.GetExtension(entry.FileName)))
+								return false;
+							// Attributes come with the directory listing: no extra syscall, no recall.
+							if (skipCloudPlaceholders && (entry.Attributes & CloudPlaceholder) != 0) {
+								skippedPlaceholders++;
+								return false;
+							}
+							return true;
+						}
 					});
 				}
 				catch (DirectoryNotFoundException) {
@@ -181,6 +202,9 @@ namespace VDF.Core.Utils {
 					reasons.Add($"{skippedReparse} reparse points/links ('Exclude reparse points' is enabled)");
 				Logger.Instance.Info($"Skipped {skippedHiddenSystem + skippedReadonly + skippedReparse} subfolder(s) of '{initial}' including everything inside them: {string.Join(", ", reasons)}.");
 			}
+
+			if (skippedPlaceholders > 0)
+				Logger.Instance.Info($"Skipped {skippedPlaceholders} cloud-only file(s) under '{initial}' (not downloaded to this PC; reading them would download them).");
 
 			return files;
 

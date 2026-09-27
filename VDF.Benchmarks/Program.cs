@@ -25,6 +25,10 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-decoder-reuse")
 			return DecoderReuseProbe.Run(args);
 
+		// WIC photo decoding per file type, MTA vs STA (see WicDecodeProbe).
+		if (args.Length > 0 && args[0] == "--probe-wic")
+			return WicDecodeProbe.Run(args);
+
 		// Synthetic compare-phase probe (ScanForDuplicates + HighlightBestMatches).
 		if (args.Length > 0 && args[0] == "--probe-compare")
 			return ComparePhaseProbe.Run(args);

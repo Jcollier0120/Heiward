@@ -53,19 +53,24 @@ namespace VDF.Core.AI {
 		readonly ConcurrentDictionary<string, DenseRecord> records = new(
 			CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
 		readonly object saveLock = new();
+		string path = StorePath;
 
-		internal static string StorePath =>
+		internal static string StorePath => PathFor(null);
+
+		/// <summary>One sidecar per embedding model, as for <see cref="UnionEmbeddingStore.PathFor"/>.</summary>
+		internal static string PathFor(string? cacheKey) =>
 			TestOverrideStorePath ??
-			FileUtils.SafePathCombine(CoreUtils.ResolveDatabaseFolder(Utils.DatabaseUtils.CustomDatabaseFolder), "DenseEmbeddings.db");
+			FileUtils.SafePathCombine(CoreUtils.ResolveDatabaseFolder(Utils.DatabaseUtils.CustomDatabaseFolder),
+				cacheKey == null ? "DenseEmbeddings.db" : $"DenseEmbeddings.{cacheKey}.db");
 
 		/// <summary>Test hook: isolates store tests from the real database folder.</summary>
 		internal static string? TestOverrideStorePath;
 
 		internal int Count => records.Count;
 
-		internal static DenseEmbeddingStore Load() {
-			var store = new DenseEmbeddingStore();
-			string path = StorePath;
+		internal static DenseEmbeddingStore Load(string? cacheKey = null) {
+			string path = PathFor(cacheKey);
+			var store = new DenseEmbeddingStore { path = path };
 			if (!File.Exists(path))
 				return store;
 			try {
@@ -131,7 +136,6 @@ namespace VDF.Core.AI {
 		/// only costs recompute time.
 		/// </summary>
 		internal void Save(IReadOnlySet<string>? keepOnly) {
-			string path = StorePath;
 			string tempPath = path + ".tmp";
 			try {
 				lock (saveLock) {

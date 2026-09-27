@@ -35,9 +35,13 @@ namespace VDF.CLI.Commands {
 		internal static async Task EnsureAiComponentsAsync(VDF.Core.Settings settings, CancellationToken ct) {
 			if (!settings.NeedsAiComponents)
 				return;
-			if (VDF.Core.AI.AiComponents.IsReady)
+			// On Windows ARM64, auto/npu also want the NPU pack; elsewhere it does not apply.
+			bool wantNpu = settings.AiDevice != VDF.Core.AI.AiDevice.Cpu && VDF.Core.AI.NpuComponents.IsSupportedPlatform;
+			bool needNpu = wantNpu && !VDF.Core.AI.NpuComponents.IsInstalled;
+			bool needGpu = settings.AiDevice == VDF.Core.AI.AiDevice.Gpu && VDF.Core.AI.GpuComponents.IsSupportedPlatform && !VDF.Core.AI.GpuComponents.IsInstalled;
+			if (needGpu) needNpu = false;
+			if (VDF.Core.AI.AiComponents.IsReady && !needNpu && !needGpu)
 				return;
-			Console.Error.WriteLine($"[scan] Downloading AI components (ONNX Runtime {VDF.Core.AI.AiComponents.RuntimeVersion} + model, ~100 MB) to '{VDF.Core.AI.AiComponents.AiFolder}'...");
 			// One line per ~5 MB, not per chunk — CI logs stay readable. Buckets are
 			// per step: the runtime and model download concurrently, and a shared
 			// counter would swallow whichever step reaches a bucket second.
@@ -48,8 +52,27 @@ namespace VDF.CLI.Commands {
 				lastReported[p.Step] = bucket;
 				Console.Error.WriteLine($"[scan]   {p.Step}: {p.BytesDone / (1024 * 1024)} MB{(p.BytesTotal.HasValue ? $" / {p.BytesTotal.Value / (1024 * 1024)} MB" : string.Empty)}");
 			});
-			await VDF.Core.AI.AiComponents.DownloadAsync(progress, ct);
-			Console.Error.WriteLine("[scan] AI components ready.");
+			if (!VDF.Core.AI.AiComponents.IsReady) {
+				Console.Error.WriteLine($"[scan] Downloading AI components (ONNX Runtime {VDF.Core.AI.AiComponents.RuntimeVersion} + model, ~100 MB) to '{VDF.Core.AI.AiComponents.AiFolder}'...");
+				await VDF.Core.AI.AiComponents.DownloadAsync(progress, ct);
+				Console.Error.WriteLine("[scan] AI components ready.");
+			}
+			if (needGpu) {
+				Console.Error.WriteLine($"[scan] Downloading the GPU pack (ONNX Runtime DirectML + DirectML {VDF.Core.AI.GpuComponents.DirectMLVersion}, ~215 MB) to '{VDF.Core.AI.AiComponents.AiFolder}'...");
+				await VDF.Core.AI.GpuComponents.DownloadAsync(progress, ct);
+				Console.Error.WriteLine("[scan] GPU pack ready.");
+			}
+			if (needNpu) {
+				Console.Error.WriteLine($"[scan] Downloading the NPU pack (Qualcomm QNN {VDF.Core.AI.NpuComponents.QnnPackageVersion} + FP32 model, ~230 MB) to '{VDF.Core.AI.AiComponents.AiFolder}'...");
+				try {
+					await VDF.Core.AI.NpuComponents.DownloadAsync(progress, ct);
+					Console.Error.WriteLine("[scan] NPU pack ready.");
+				}
+				catch (Exception e) when (e is not OperationCanceledException && settings.AiDevice == VDF.Core.AI.AiDevice.Auto) {
+					// Auto only prefers the NPU: without the pack the scan still runs on the CPU.
+					Console.Error.WriteLine($"[scan] NPU pack unavailable ({e.Message}); AI matching runs on the CPU.");
+				}
+			}
 		}
 
 		/// <summary>Runs StartSearch() only (enumerate files and build hashes).</summary>

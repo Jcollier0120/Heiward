@@ -69,13 +69,16 @@ namespace VDF.Core {
 			}
 
 			// ── Phase A: dense keyframe embeddings (sidecar-cached) ─────────────
-			var store = DenseEmbeddingStore.Load();
+			// The embedder first: the device it landed on picks the sidecar (models never mix).
+			OnnxEmbedder denseEmbedder = OnnxEmbedder.Create(Settings.AiDevice);
+			Logger.Instance.Info($"AI partial detection: keyframe embeddings run on the {denseEmbedder.DeviceName}.");
+			var store = DenseEmbeddingStore.Load(denseEmbedder.CacheKey);
 			if (store.Count > 0)
 				Logger.Instance.Info($"AI partial detection: keyframe cache loaded ({store.Count:N0} record(s)).");
 			InitProgress(videos.Count, T("Scan.Stage.AiDenseSampling"));
 			var dense = new DenseEmbeddingStore.DenseRecord?[videos.Count];
 			int extracted = 0, cached = 0, failed = 0, skippedFailed = 0;
-			using (var embedder = new OnnxEmbedder(AiComponents.ModelPath)) {
+			using (var embedder = denseEmbedder) {
 				object embedLock = new();
 				// Sampling keyframes for a large library runs for hours, and the sidecar used
 				// to be written only after the very last file - so a crash, or the kill that

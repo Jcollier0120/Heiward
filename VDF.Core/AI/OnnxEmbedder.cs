@@ -17,6 +17,7 @@
 using System.Linq;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using VDF.Core.Utils;
 
 namespace VDF.Core.AI {
 	/// <summary>
@@ -24,6 +25,8 @@ namespace VDF.Core.AI {
 	/// raw 224×224 RGB24 frame; output an L2-normalized (optionally int8-quantized)
 	/// embedding whose dot product is the frames' cosine similarity. Instances are
 	/// created per scan; <see cref="EmbedBatch"/> is called from a single worker thread.
+	/// Runs VDF's int8 model on the CPU or, through <see cref="Create"/>, the FP32 model on a
+	/// Hexagon NPU in FP16 (<see cref="NpuComponents"/>).
 	/// </summary>
 	internal sealed class OnnxEmbedder : IDisposable {
 		public const int InputSide = 224;
@@ -38,6 +41,20 @@ namespace VDF.Core.AI {
 		readonly string inputName;
 		readonly string outputName;
 		readonly bool clsFromHiddenState;
+		/// <summary>The graph's static batch size (the NPU's), or 0 when the batch dimension is dynamic.</summary>
+		readonly int fixedBatch;
+		/// <summary>
+		/// NPU only: the machine-wide NPU lock (<see cref="NpuLock"/>), held across back-to-back batches
+		/// for at most <see cref="LeaseLimit"/> so another NPU tool never waits longer than that.
+		/// </summary>
+		IDisposable? npuLease;
+		readonly System.Diagnostics.Stopwatch leaseAge = new();
+		static readonly TimeSpan LeaseLimit = TimeSpan.FromSeconds(2);
+
+		/// <summary>"CPU" or "NPU", for logs and diagnostics.</summary>
+		public string DeviceName { get; }
+		/// <summary>Which embedding sidecars this model's vectors belong in (null = VDF's int8 model).</summary>
+		public string? CacheKey { get; }
 
 		public OnnxEmbedder(string modelPath) {
 			AiComponents.EnsureResolverInstalled();
@@ -48,22 +65,133 @@ namespace VDF.Core.AI {
 			// give inference a portion of the cores, not all of them.
 			options.IntraOpNumThreads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
 			session = new InferenceSession(modelPath, options);
-			inputName = session.InputMetadata.Keys.First();
+			DeviceName = "CPU";
+			(inputName, outputName, clsFromHiddenState) = DescribeOutputs(session);
+		}
+
+		OnnxEmbedder(InferenceSession acceleratedSession, string deviceName, string cacheKey, int fixedBatch) {
+			session = acceleratedSession;
+			this.fixedBatch = fixedBatch;
+			DeviceName = deviceName;
+			CacheKey = cacheKey;
+			(inputName, outputName, clsFromHiddenState) = DescribeOutputs(session);
+		}
+
+		/// <summary>
+		/// The embedder for <paramref name="device"/>: the NPU when it is requested (or Auto) and
+		/// available, the GPU when requested (DirectML), otherwise VDF's int8 model on the CPU. An
+		/// accelerator that fails to open a session is logged and falls back to the CPU, so AI matching
+		/// never breaks because of it.
+		/// </summary>
+		internal static OnnxEmbedder Create(AiDevice device) {
+			if (device == AiDevice.Gpu) {
+				// Before anything else touches ONNX Runtime: the DirectML build must be the one loaded.
+				if (GpuComponents.TrySelectRuntime()) {
+					try {
+						return new OnnxEmbedder(OpenGpuSession(), "GPU", GpuComponents.ModelKey, fixedBatch: 0);
+					}
+					catch (Exception e) {
+						Logger.Instance.Warn($"The GPU could not run the AI model, falling back to the CPU: {e.Message}");
+					}
+				}
+				else
+					Logger.Instance.Info("AI device is GPU, but the GPU pack is not installed (or another runtime was loaded first) - using the CPU.");
+			}
+			else if (device != AiDevice.Cpu) {
+				IReadOnlyList<OrtEpDevice> npus = NpuComponents.GetNpuDevices();
+				if (npus.Count > 0) {
+					try {
+						return new OnnxEmbedder(OpenNpuSession(npus), "NPU", NpuComponents.ModelKey, NpuComponents.NpuBatch);
+					}
+					catch (Exception e) {
+						Logger.Instance.Warn($"The NPU could not run the AI model, falling back to the CPU: {e.Message}");
+					}
+				}
+				else if (device == AiDevice.Npu)
+					Logger.Instance.Info("AI device is NPU, but no NPU is available (not Windows on ARM, NPU pack not installed, or no Hexagon NPU) - using the CPU.");
+			}
+			return new OnnxEmbedder(AiComponents.ModelPath);
+		}
+
+		/// <summary>
+		/// The FP32 model on the HTP. The export's dynamic dimensions are pinned (the HTP only runs
+		/// static shapes) and every node must run on the NPU. The compiled graph is cached as an
+		/// EP-context model: compiling takes ~5 s, loading the cache ~0.2 s.
+		/// </summary>
+		static InferenceSession OpenNpuSession(IReadOnlyList<OrtEpDevice> npus) {
+			// Compiling or loading the HTP graph is NPU work too: take turns with other NPU tools.
+			using IDisposable npuTurn = NpuLock.Acquire();
+			string cacheDir = NpuComponents.ContextCacheFolder;
+			string stem = $"{Path.GetFileNameWithoutExtension(NpuComponents.ModelFileName)}_b{NpuComponents.NpuBatch}_ctx";
+			string ctx = Path.Combine(cacheDir, stem + ".onnx");
+			if (File.Exists(ctx)) {
+				try {
+					return Open(ctx, contextOut: null);
+				}
+				catch (OnnxRuntimeException e) {
+					// A torn or stale cache: rebuild it.
+					Logger.Instance.Info($"Compiled NPU graph unusable, recompiling ({e.Message})");
+					foreach (string f in Directory.EnumerateFiles(cacheDir, stem + "*"))
+						try { File.Delete(f); } catch { }
+				}
+			}
+			Directory.CreateDirectory(cacheDir);
+			return Open(NpuComponents.ModelPath, ctx);
+
+			InferenceSession Open(string modelPath, string? contextOut) {
+				using var options = new SessionOptions();
+				// Every node on the NPU, or fail: a silent CPU fallback would be slower than the int8 CPU path.
+				options.AddSessionConfigEntry("session.disable_cpu_ep_fallback", "1");
+				options.AddFreeDimensionOverrideByName("batch_size", NpuComponents.NpuBatch);
+				options.AddFreeDimensionOverrideByName("num_channels", 3);
+				options.AddFreeDimensionOverrideByName("height", InputSide);
+				options.AddFreeDimensionOverrideByName("width", InputSide);
+				if (contextOut != null) {
+					options.AddSessionConfigEntry("ep.context_enable", "1");
+					options.AddSessionConfigEntry("ep.context_file_path", contextOut);
+				}
+				options.AppendExecutionProvider(OrtEnv.Instance(), npus, NpuComponents.ProviderOptions());
+				return new InferenceSession(modelPath, options);
+			}
+		}
+
+		/// <summary>The FP32 model on DirectML: sequential execution and no memory patterns, as the DML EP requires.</summary>
+		static InferenceSession OpenGpuSession() {
+			AiComponents.EnsureResolverInstalled();
+			using var options = new SessionOptions();
+			options.EnableMemoryPattern = false;
+			options.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
+			options.AppendExecutionProvider_DML(0);
+			return new InferenceSession(NpuComponents.ModelPath, options);
+		}
+
+		static (string Input, string Output, bool ClsFromHiddenState) DescribeOutputs(InferenceSession session) {
+			string input = session.InputMetadata.Keys.First();
 			// DINOv2 exports emit last_hidden_state (CLS token = the image embedding);
 			// keep the generic fallbacks so a future model swap keeps working.
-			if (session.OutputMetadata.ContainsKey("image_embeds")) outputName = "image_embeds";
-			else if (session.OutputMetadata.ContainsKey("pooler_output")) outputName = "pooler_output";
-			else { outputName = session.OutputMetadata.Keys.First(); clsFromHiddenState = true; }
+			if (session.OutputMetadata.ContainsKey("image_embeds")) return (input, "image_embeds", false);
+			if (session.OutputMetadata.ContainsKey("pooler_output")) return (input, "pooler_output", false);
+			return (input, session.OutputMetadata.Keys.First(), true);
 		}
 
 		/// <summary>L2-normalized float embeddings, one per input frame (each 224·224·3 RGB24 bytes).</summary>
 		internal float[][] EmbedBatch(IReadOnlyList<byte[]> rgbFrames) {
-			int batch = rgbFrames.Count;
-			if (batch == 0) return Array.Empty<float[]>();
+			int total = rgbFrames.Count;
+			if (total == 0) return Array.Empty<float[]>();
+			var embeddings = new float[total][];
+			// A static-batch graph (the NPU's) runs in chunks of its batch size, the last one zero-padded.
+			int step = fixedBatch > 0 ? fixedBatch : total;
+			for (int start = 0; start < total; start += step)
+				EmbedChunk(rgbFrames, start, Math.Min(step, total - start), embeddings);
+			return embeddings;
+		}
+
+		void EmbedChunk(IReadOnlyList<byte[]> rgbFrames, int start, int count, float[][] embeddings) {
+			int batch = fixedBatch > 0 ? fixedBatch : count;
 			var tensor = new DenseTensor<float>(new[] { batch, 3, InputSide, InputSide });
 			Span<float> buffer = tensor.Buffer.Span;
-			for (int k = 0; k < batch; k++) {
-				byte[] img = rgbFrames[k];
+			for (int k = 0; k < count; k++) {
+				byte[] img = rgbFrames[start + k];
 				if (img.Length != PixelsPerChannel * 3)
 					throw new ArgumentException($"Expected {PixelsPerChannel * 3} bytes of RGB24, got {img.Length}.");
 				int baseIdx = k * 3 * PixelsPerChannel;
@@ -76,6 +204,8 @@ namespace VDF.Core.AI {
 				}
 			}
 
+			if (fixedBatch > 0)
+				EnterNpu();
 			using IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results =
 				session.Run(new[] { NamedOnnxValue.CreateFromTensor(inputName, tensor) });
 			var outputTensor = (DenseTensor<float>)results.First(v => v.Name == outputName).AsTensor<float>();
@@ -85,14 +215,12 @@ namespace VDF.Core.AI {
 			int stride = clsFromHiddenState && dims.Length == 3 ? dims[1] * dim : dim;
 			Span<float> output = outputTensor.Buffer.Span;
 
-			var embeddings = new float[batch][];
-			for (int k = 0; k < batch; k++) {
+			for (int k = 0; k < count; k++) {
 				var e = new float[dim];
 				output.Slice(k * stride, dim).CopyTo(e);
 				Normalize(e);
-				embeddings[k] = e;
+				embeddings[start + k] = e;
 			}
-			return embeddings;
 		}
 
 		/// <summary>Embeddings quantized for storage in the embedding sidecar caches.</summary>
@@ -113,6 +241,23 @@ namespace VDF.Core.AI {
 				v[i] *= inv;
 		}
 
-		public void Dispose() => session.Dispose();
+		void EnterNpu() {
+			if (npuLease != null && leaseAge.Elapsed < LeaseLimit)
+				return;
+			YieldNpu();
+			npuLease = NpuLock.Acquire();
+			leaseAge.Restart();
+		}
+
+		/// <summary>Releases the NPU lock between bursts of work (the pipeline calls this when nothing is queued).</summary>
+		internal void YieldNpu() {
+			npuLease?.Dispose();
+			npuLease = null;
+		}
+
+		public void Dispose() {
+			YieldNpu();
+			session.Dispose();
+		}
 	}
 }

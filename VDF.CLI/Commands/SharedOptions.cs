@@ -161,6 +161,16 @@ namespace VDF.CLI.Commands {
 			CustomParser = r => ParseInvariantFloat(r, 94f)
 		};
 
+		internal static readonly Option<VDF.Core.AI.AiDevice> AiDevice = new("--ai-device") {
+			Description = "Where AI embeddings run: auto (default: the NPU on Snapdragon Windows-on-ARM PCs, else the CPU), cpu, npu, or gpu (DirectML, any DirectX 12 GPU). On first use, npu/auto download the NPU pack (~230 MB) on Windows ARM64, and gpu downloads the GPU pack (~215 MB).",
+			DefaultValueFactory = _ => VDF.Core.AI.AiDevice.Auto
+		};
+
+		internal static readonly Option<string[]> ExcludeExtensions = new("--exclude-ext") {
+			Description = "File extensions to leave out of the scan, e.g. --exclude-ext .heic .heif",
+			AllowMultipleArgumentsPerToken = true
+		};
+
 		internal static readonly Option<bool> AiPartial = new("--ai-partial") {
 			Description = "Detect partial/time-shifted duplicates visually via dense AI keyframe matching (works without audio, unlike --partial-clip-detection). Downloads the AI components on first use."
 		};
@@ -242,6 +252,11 @@ namespace VDF.CLI.Commands {
 			if (r.GetResult(PartialClipVisualThreshold) != null) s.PartialClipVisualThreshold = r.GetValue(PartialClipVisualThreshold);
 			if (r.GetResult(AiMatching) != null) s.UseAiMatching = r.GetValue(AiMatching);
 			if (r.GetResult(AiPercent) != null) s.AiPercent = Math.Clamp(r.GetValue(AiPercent), 50f, 100f);
+			if (r.GetResult(AiDevice) != null) s.AiDevice = r.GetValue(AiDevice);
+			var excludedExt = r.GetValue(ExcludeExtensions);
+			if (excludedExt != null)
+				foreach (string e in excludedExt)
+					s.ExcludedExtensions.Add(e.StartsWith('.') ? e : "." + e);
 			if (r.GetResult(AiPartial) != null) s.EnableAiPartialDetection = r.GetValue(AiPartial);
 			if (r.GetResult(AiPartialHitPercent) != null) s.AiPartialHitPercent = Math.Clamp(r.GetValue(AiPartialHitPercent), 70f, 99f);
 		}
@@ -273,6 +288,7 @@ namespace VDF.CLI.Commands {
 			cmd.Options.Add(PartialClipVisualThreshold);
 			cmd.Options.Add(AiMatching);
 			cmd.Options.Add(AiPercent);
+			cmd.Options.Add(AiDevice);
 			cmd.Options.Add(AiPartial);
 			cmd.Options.Add(AiPartialHitPercent);
 			cmd.Options.Add(SettingsFile);
@@ -283,6 +299,7 @@ namespace VDF.CLI.Commands {
 		internal static void AddScanOptions(Command cmd) {
 			cmd.Options.Add(Include);
 			cmd.Options.Add(Exclude);
+			cmd.Options.Add(ExcludeExtensions);
 			cmd.Options.Add(Threshold);
 			cmd.Options.Add(Percent);
 			cmd.Options.Add(Parallelism);
@@ -305,6 +322,7 @@ namespace VDF.CLI.Commands {
 			cmd.Options.Add(PartialClipVisualThreshold);
 			cmd.Options.Add(AiMatching);
 			cmd.Options.Add(AiPercent);
+			cmd.Options.Add(AiDevice);
 			cmd.Options.Add(AiPartial);
 			cmd.Options.Add(AiPartialHitPercent);
 			cmd.Options.Add(SettingsFile);
