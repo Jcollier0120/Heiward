@@ -226,9 +226,12 @@ namespace VDF.Core.Utils {
 		/// against its name, so "node_modules" or "*.lrdata" leaves out such folders at any depth.
 		/// Wildcards (* and ?) work in both.
 		/// </summary>
-		internal static bool IsExcludedFolder(string pattern, DirectoryInfo folder) {
+		internal static bool IsExcludedFolder(string pattern, DirectoryInfo folder) => IsExcludedFolder(pattern, folder.FullName, folder.Name);
+
+		/// <inheritdoc cref="IsExcludedFolder(string, DirectoryInfo)"/>
+		internal static bool IsExcludedFolder(string pattern, string fullName, string name) {
 			bool hasSeparator = pattern.Contains(Path.DirectorySeparatorChar) || pattern.Contains(Path.AltDirectorySeparatorChar);
-			string subject = hasSeparator ? folder.FullName : folder.Name;
+			string subject = hasSeparator ? fullName : name;
 			return pattern.IndexOfAny(['*', '?']) < 0
 				? subject.Equals(pattern, StringComparison.OrdinalIgnoreCase)
 				: MatchesWildcards(pattern, subject);

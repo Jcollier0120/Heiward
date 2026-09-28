@@ -24,6 +24,14 @@ namespace VDF.Core {
 		// collection properties aren't repopulated by the default object converter).
 		public HashSet<string> IncludeList { get; set; } = new HashSet<string>();
 		public HashSet<string> BlackList { get; set; } = new HashSet<string>();
+		/// <summary>
+		/// Excluded folders, written like <see cref="BlackList"/> entries, that only apply below the
+		/// folders of <see cref="IncludeList"/>: a folder in IncludeList is scanned even when it, or a
+		/// folder above it, matches one. For a program's built-in exclusions (".*", "?:\Users\*\AppData"),
+		/// which must not override a folder the user chose. BlackList entries cover the whole path.
+		/// Empty (default) = VDF behaves exactly as without it.
+		/// </summary>
+		public HashSet<string> SubfolderBlackList { get; set; } = new HashSet<string>();
 
 		public bool IgnoreReadOnlyFolders;
 		public bool IgnoreReparsePoints;

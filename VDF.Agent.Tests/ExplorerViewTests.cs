@@ -96,6 +96,16 @@ public sealed class ExplorerViewTests : IDisposable {
 	}
 
 	[Fact]
+	public void Tree_BelowAListedFolderInsideAnExemptOne_IsScanned() {
+		string camera = Dir(".app", "camera");
+		string year = Dir(".app", "camera", "2024");
+		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { root, camera } };
+		Assert.Equal("App data", ExplorerView.Tree(Dir(".app"), all: true, cfg, null, new())!.Exempt);
+		Assert.Null(ExplorerView.Tree(camera, all: true, cfg, null, new())!.Exempt);
+		Assert.Null(ExplorerView.Tree(year, all: true, cfg, null, new())!.Exempt);
+	}
+
+	[Fact]
 	public void Tree_RefusesFoldersOutsideTheScan() {
 		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { Dir("Scanned") } };
 		Assert.Null(ExplorerView.Tree(Dir("Elsewhere"), all: false, cfg, null, new()));

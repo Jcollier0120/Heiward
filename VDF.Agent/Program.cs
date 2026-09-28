@@ -219,10 +219,20 @@ scope.SetAction(r => {
 	var notes = new List<string>();
 	var settings = AgentScanner.BuildSettings(cfg, notes);
 	Console.WriteLine("Scanned, with subfolders:");
-	foreach (string rootFolder in settings.IncludeList) Console.WriteLine("  " + rootFolder);
-	Console.WriteLine("Left out (with everything inside):");
-	foreach (string excluded in settings.BlackList) Console.WriteLine("  " + excluded);
+	foreach (string rootFolder in settings.IncludeList) {
+		// A folder from settings.json inside a built-in exclusion is scanned anyway: say so, since it's listed below.
+		string why = ScanScope.BuiltInExclusionOver(rootFolder) is { } over
+			? $"  (in settings.json, so scanned although {(over.Folder.Equals(rootFolder, StringComparison.OrdinalIgnoreCase) ? "it" : over.Folder)} is left out by default: {over.Rule.Reason})"
+			: "";
+		Console.WriteLine("  " + rootFolder + why);
+	}
+	Console.WriteLine("Left out below those (with everything inside):");
+	foreach (string excluded in settings.SubfolderBlackList) Console.WriteLine("  " + excluded);
 	Console.WriteLine($"  folders holding {string.Join(", ", settings.SkipFoldersContaining)} (code repositories), folder links, cloud-only files");
+	if (settings.BlackList.Count > 0) {
+		Console.WriteLine("Left out everywhere (excludeFolders in settings.json; wins over folders):");
+		foreach (string excluded in settings.BlackList) Console.WriteLine("  " + excluded);
+	}
 	foreach (string n in notes) Console.WriteLine("note: " + n);
 	if (!r.GetValue(count)) return 0;
 
@@ -231,7 +241,7 @@ scope.SetAction(r => {
 	int total = 0;
 	foreach (string rootFolder in settings.IncludeList) {
 		var files = VDF.Core.Utils.FileUtils.GetFilesRecursive(rootFolder, settings.IgnoreReadOnlyFolders, settings.IgnoreReparsePoints,
-			recursive: true, settings.IncludeImages, settings.BlackList.ToList(), CancellationToken.None, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
+			recursive: true, settings.IncludeImages, settings.BlackList.Concat(settings.SubfolderBlackList).ToList(), CancellationToken.None, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
 			settings.SkipFoldersContaining, settings.SkipFolderLinks);
 		total += files.Count;
 		foreach (FileInfo f in files) {

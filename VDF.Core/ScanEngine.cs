@@ -583,6 +583,7 @@ namespace VDF.Core {
 			}
 			Settings.IncludeList = Normalize(Settings.IncludeList);
 			Settings.BlackList = Normalize(Settings.BlackList, keepPatterns: true);
+			Settings.SubfolderBlackList = Normalize(Settings.SubfolderBlackList, keepPatterns: true);
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -753,6 +754,9 @@ namespace VDF.Core {
 					lst.Add(e);
 				}
 			int relinkedCount = 0;
+			// The enumeration only judges the folders below each scanned folder, which is all that
+			// SubfolderBlackList covers.
+			List<string> excludedFolders = Settings.BlackList.Concat(Settings.SubfolderBlackList).ToList();
 
 			foreach (string path in Settings.IncludeList) {
 				if (cancellationToken.IsCancellationRequested)
@@ -766,7 +770,7 @@ namespace VDF.Core {
 
 				long listingStart = Stopwatch.GetTimestamp();
 				foreach (FileInfo file in FileUtils.GetFilesRecursive(path, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
-					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
+					Settings.IncludeSubDirectories, Settings.IncludeImages, excludedFolders, cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
 					Settings.SkipFoldersContaining, Settings.SkipFolderLinks)) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
@@ -880,7 +884,7 @@ namespace VDF.Core {
 				reason = "image files are disabled";
 				return true;
 			}
-			if (Settings.BlackList.Any(f => IsBlackListed(entry.Folder, f))) {
+			if (Settings.BlackList.Any(f => IsBlackListed(entry.Folder, f)) || IsSubfolderBlackListed(entry.Folder)) {
 				reason = "path is in the excluded directories list";
 				return true;
 			}
@@ -1046,6 +1050,34 @@ namespace VDF.Core {
 			for (string? folder = folderPath; !string.IsNullOrEmpty(folder); folder = Path.GetDirectoryName(folder))
 				if (FileUtils.MatchesWildcards(blacklistEntry, folder))
 					return true;
+			return false;
+		}
+
+		// True if Settings.SubfolderBlackList covers folderPath: the folder, or one above it below the
+		// deepest IncludeList folder holding it, matches an entry the way the file enumeration leaves out
+		// subfolders (FileUtils.IsExcludedFolder). The IncludeList folder itself and the folders above it
+		// are never judged, so a folder the user chose is scanned even inside a built-in exclusion. A
+		// folder outside IncludeList (ScanAgainstEntireDatabase) is judged along its whole path.
+		internal bool IsSubfolderBlackListed(string folderPath) {
+			if (Settings.SubfolderBlackList.Count == 0)
+				return false;
+			StringComparison comparison = CoreUtils.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+			string? root = null;
+			foreach (string include in Settings.IncludeList) {
+				string trimmed = Path.TrimEndingDirectorySeparator(include);
+				bool holds = folderPath.StartsWith(trimmed, comparison) && (folderPath.Length == trimmed.Length ||
+					Path.EndsInDirectorySeparator(trimmed) || folderPath[trimmed.Length] == Path.DirectorySeparatorChar || folderPath[trimmed.Length] == Path.AltDirectorySeparatorChar);
+				if (holds && (root == null || trimmed.Length > root.Length))
+					root = trimmed;
+			}
+			for (string? folder = folderPath; !string.IsNullOrEmpty(folder) && !string.Equals(folder, root, comparison); folder = Path.GetDirectoryName(folder)) {
+				string name = Path.GetFileName(folder);
+				if (name.Length == 0)
+					break; // a drive or share root
+				foreach (string pattern in Settings.SubfolderBlackList)
+					if (FileUtils.IsExcludedFolder(pattern, folder, name))
+						return true;
+			}
 			return false;
 		}
 
