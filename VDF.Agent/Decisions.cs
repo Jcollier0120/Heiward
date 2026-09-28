@@ -20,11 +20,14 @@ namespace VDF.Agent {
 	/// <summary>
 	/// What the user did with a group: <c>kept</c> (keep all, not duplicates — hidden from later
 	/// reports while the same files stay together) or <c>recycled</c> (these files went to the
-	/// Recycle Bin).
+	/// Recycle Bin); also the developer cleanups. <see cref="Auto"/>: automatic cleanup did it.
 	/// </summary>
-	sealed record Decision(string Action, DateTime AtUtc, List<string> Recycled, long RecycledBytes);
+	sealed record Decision(string Action, DateTime AtUtc, List<string> Recycled, long RecycledBytes, bool Auto = false);
 
-	/// <summary>decisions.json, keyed by <see cref="ReportBuilder.GroupKey"/>. One writer at a time (the review page).</summary>
+	/// <summary>
+	/// decisions.json, keyed by <see cref="ReportBuilder.GroupKey"/>. Written by the review page and by
+	/// automatic cleanup in a scan, always under <see cref="CleanLock"/>.
+	/// </summary>
 	static class DecisionStore {
 		static readonly object gate = new();
 

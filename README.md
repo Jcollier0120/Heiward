@@ -1,11 +1,12 @@
 # Heiward
 
-Heiward keeps your Windows PC tidy in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a local review page. Nothing is removed until you say so, and files you tick go to the Recycle Bin.
+Heiward keeps your Windows PC tidy in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a local review page. Nothing is removed until you say so, and files you tick go to the Recycle Bin. Once you trust what it suggests, it can clean up by itself.
 
 - **Light on power.** AI matching runs on the NPU where there is one (Qualcomm Snapdragon, Intel Core Ultra, or AMD Ryzen AI), with hourly scans. A badge in the title bar shows where it runs, and why not on the NPU. Otherwise it uses the GPU or CPU every 6 hours on AC power, or only when you ask. Scheduled scans run in Windows' efficiency mode.
 - **The whole PC, minus what isn't yours.** Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded.
 - **Laid out like File Explorer.** A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you.
 - **Developer cleanup, project by project.** Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main.
+- **Automatic cleanup, when you're ready.** Two switches let it clean plain copies and developer leftovers by itself, a few days after listing them, with a "Leave it" button on each. Edits, look-alikes, cloud-synced copies and anything that looks like a backup always wait for you.
 - **Themes.** Match Windows, Light, Dark, and six colour themes.
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound.

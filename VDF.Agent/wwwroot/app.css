@@ -436,6 +436,34 @@ button { font: inherit; color: inherit; }
 .meter .fill { height: 100%; background: var(--accent); }
 
 /* Developer cleanup: project cards, a section per cleanup area, rows like the hotspot list, a selection bar */
+/* Automatic cleanup: a card of switches (Windows-style toggles), and a line under each set and item. */
+.auto-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 0 16px; max-width: 760px; }
+.auto-row { display: flex; gap: 14px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.auto-text { min-width: 0; flex: 1; }
+.auto-title { font-weight: 600; margin-bottom: 2px; }
+.auto-status { margin-top: 6px; color: var(--ok); font-weight: 600; }
+.auto-kinds { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
+.auto-kinds label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
+.auto-foot { padding: 12px 0; display: grid; gap: 6px; font-size: 13px; }
+.auto-wait { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.auto-wait select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+.auto-problems { margin-top: 4px; }
+.auto-problems summary { cursor: pointer; }
+.auto-problems ul { margin: 4px 0 0; padding-left: 18px; }
+.switch { position: relative; display: inline-block; width: 40px; height: 20px; flex: none; margin-top: 1px; }
+.switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.switch input:disabled { cursor: default; }
+.switch .slider { position: absolute; inset: 0; border-radius: 999px; border: 1px solid var(--muted); background: var(--surface); transition: background 0.15s, border-color 0.15s; }
+.switch .slider::before { content: ""; position: absolute; left: 4px; top: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); transition: transform 0.15s; }
+.switch input:checked + .slider { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + .slider::before { transform: translateX(20px); background: var(--accent-fg); }
+.switch input:focus-visible + .slider { outline: 2px solid var(--accent); outline-offset: 2px; }
+.switch input:disabled + .slider { opacity: 0.5; }
+.auto-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 6px 0 2px; color: var(--muted); }
+.auto-line svg { width: 14px; height: 14px; flex: none; }
+.auto-line.due { color: var(--ok); }
+.auto-line .link { font-weight: 400; }
+.tag.auto { border-color: transparent; background: var(--accent-soft); color: var(--accent-text); }
 .dev-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; max-width: 760px; }
 .dev-card svg, .folder-head > svg.dev { width: 40px; height: 40px; flex: none; }
 .dev-intro { color: var(--muted); font-size: 12px; max-width: 760px; }

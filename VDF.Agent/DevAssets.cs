@@ -533,7 +533,8 @@ namespace VDF.Agent {
 				merged.Where(b => !checkedOut.Contains(b)).ToList(), merged.Where(checkedOut.Contains).ToList(), null);
 		}
 
-		public static PruneResult Prune(string repo) {
+		/// <param name="only">Only these of the merged branches (automatic cleanup's due ones); null for all.</param>
+		public static PruneResult Prune(string repo, IReadOnlyCollection<string>? only = null) {
 			if (Git.Exe == null) return new PruneResult(new(), new(), false, "git not found");
 			var (_, remotes) = Git.Run(repo, "remote");
 			var remoteList = Lines(remotes);
@@ -544,7 +545,7 @@ namespace VDF.Agent {
 			if (state?.Default == null) return new PruneResult(new(), new(), fetched, state?.Note ?? "Nothing to compare with");
 			var deleted = new List<string>();
 			var kept = state.CheckedOut.Select(b => new PruneKept(b, "checked out in a worktree")).ToList();
-			foreach (string branch in state.Merged) {
+			foreach (string branch in state.Merged.Where(b => only == null || only.Contains(b, StringComparer.OrdinalIgnoreCase))) {
 				var (code, output) = Git.Run(repo, "branch", "-d", "--", branch);
 				if (code != 0 && output.Contains("not fully merged", StringComparison.OrdinalIgnoreCase) &&
 					Git.Run(repo, "merge-base", "--is-ancestor", "refs/heads/" + branch, state.Default).Code == 0)
