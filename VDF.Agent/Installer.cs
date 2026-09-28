@@ -109,7 +109,7 @@ namespace VDF.Agent {
 				if (choice == AiDevice.Cpu) cfg.ScanEveryMinutes = Math.Max(cfg.ScanEveryMinutes, 24 * 60);
 				Step($"AI matching runs on the {(choice == AiDevice.Gpu ? "GPU (DirectML)" : "CPU")}.");
 			}
-			Step($"Settings: {AgentPaths.Config} (scan every {cfg.ScanEveryMinutes} min; folders: {string.Join("; ", cfg.Folders)})");
+			Step($"Settings: {AgentPaths.Config} (scan every {cfg.ScanEveryMinutes} min; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
 			if (!dryRun) cfg.Save();
 
 			Step($"Task Scheduler: '{Scheduler.ScanTask}' every {cfg.ScanEveryMinutes} min, '{Scheduler.OpenTask}' at sign-in");

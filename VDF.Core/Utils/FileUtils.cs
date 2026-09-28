@@ -82,7 +82,8 @@ namespace VDF.Core.Utils {
 		const FileAttributes RecallOnDataAccess = (FileAttributes)0x00400000, RecallOnOpen = (FileAttributes)0x00040000;
 		const FileAttributes CloudPlaceholder = RecallOnDataAccess | RecallOnOpen | FileAttributes.Offline;
 
-		internal static List<FileInfo> GetFilesRecursive(string initial, bool ignoreReadonly, bool ignoreReparsePoints, bool recursive, bool includeImages, List<string> excludeFolders, CancellationToken cancellationToken, bool skipCloudPlaceholders = false, IReadOnlySet<string>? excludeExtensions = null) {
+		internal static List<FileInfo> GetFilesRecursive(string initial, bool ignoreReadonly, bool ignoreReparsePoints, bool recursive, bool includeImages, List<string> excludeFolders, CancellationToken cancellationToken, bool skipCloudPlaceholders = false, IReadOnlySet<string>? excludeExtensions = null,
+			IReadOnlyCollection<string>? skipFoldersContaining = null, bool skipFolderLinks = false) {
 			EnumerationOptions enumerationOptions = new() {
 				IgnoreInaccessible = true,
 				// No attribute skip for files: a video marked +S or +H is still a video.
@@ -115,7 +116,8 @@ namespace VDF.Core.Utils {
 			List<FileInfo> files = new();
 			Queue<DirectoryInfo> subFolders = new();
 			subFolders.Enqueue(new(initial));
-			int skippedHiddenSystem = 0, skippedReadonly = 0, skippedReparse = 0, skippedPlaceholders = 0;
+			int skippedHiddenSystem = 0, skippedReadonly = 0, skippedReparse = 0, skippedPlaceholders = 0, skippedLinks = 0, skippedMarked = 0;
+			bool hasMarkers = skipFoldersContaining is { Count: > 0 };
 
 			while (subFolders.Count > 0) {
 				if (cancellationToken.IsCancellationRequested)
@@ -158,14 +160,7 @@ namespace VDF.Core.Utils {
 					break;
 				try {
 					foreach (DirectoryInfo subFolder in currentFolder.EnumerateDirectories("*", directoryEnumerationOptions)
-						.Where(d => !excludeFolders.Any(x => {
-							if (x.IndexOfAny(['*', '?']) < 0)
-								return d.FullName.Equals(x, StringComparison.OrdinalIgnoreCase);
-							bool hasSeparator = x.Contains(Path.DirectorySeparatorChar) || x.Contains(Path.AltDirectorySeparatorChar);
-							return hasSeparator
-								? System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(x, d.FullName)
-								: System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(x, d.Name);
-						}))) {
+						.Where(d => !excludeFolders.Any(x => IsExcludedFolder(x, d)))) {
 						if (cancellationToken.IsCancellationRequested)
 							break;
 						// Attributes come prepopulated from the enumeration — no extra syscall.
@@ -181,6 +176,18 @@ namespace VDF.Core.Utils {
 						}
 						if (ignoreReparsePoints && (attributes & FileAttributes.ReparsePoint) != 0) {
 							skippedReparse++;
+							continue;
+						}
+						// Junctions and symbolic links report a target; cloud-sync folders (also reparse
+						// points) don't. Only reparse points pay for the lookup.
+						if (skipFolderLinks && (attributes & FileAttributes.ReparsePoint) != 0 && IsFolderLink(subFolder)) {
+							skippedLinks++;
+							continue;
+						}
+						// One attribute lookup per folder and marker (".git" is a folder in a clone and
+						// a file in a worktree).
+						if (hasMarkers && skipFoldersContaining!.Any(m => Path.Exists(Path.Combine(subFolder.FullName, m)))) {
+							skippedMarked++;
 							continue;
 						}
 						subFolders.Enqueue(subFolder);
@@ -203,11 +210,45 @@ namespace VDF.Core.Utils {
 				Logger.Instance.Info($"Skipped {skippedHiddenSystem + skippedReadonly + skippedReparse} subfolder(s) of '{initial}' including everything inside them: {string.Join(", ", reasons)}.");
 			}
 
+			if (skippedLinks > 0)
+				Logger.Instance.Info($"Skipped {skippedLinks} folder link(s) (junctions or symbolic links) under '{initial}'.");
+			if (skippedMarked > 0)
+				Logger.Instance.Info($"Skipped {skippedMarked} folder(s) under '{initial}' holding {string.Join(" or ", skipFoldersContaining!)}, with everything inside.");
 			if (skippedPlaceholders > 0)
 				Logger.Instance.Info($"Skipped {skippedPlaceholders} cloud-only file(s) under '{initial}' (not downloaded to this PC; reading them would download them).");
 
 			return files;
 
+		}
+
+		/// <summary>
+		/// An entry with a path separator is matched against the folder's full path, one without
+		/// against its name, so "node_modules" or "*.lrdata" leaves out such folders at any depth.
+		/// Wildcards (* and ?) work in both.
+		/// </summary>
+		internal static bool IsExcludedFolder(string pattern, DirectoryInfo folder) {
+			bool hasSeparator = pattern.Contains(Path.DirectorySeparatorChar) || pattern.Contains(Path.AltDirectorySeparatorChar);
+			string subject = hasSeparator ? folder.FullName : folder.Name;
+			return pattern.IndexOfAny(['*', '?']) < 0
+				? subject.Equals(pattern, StringComparison.OrdinalIgnoreCase)
+				: MatchesWildcards(pattern, subject);
+		}
+
+		/// <summary>
+		/// <c>*</c> and <c>?</c> matching, case-insensitive. FileSystemName.MatchesSimpleExpression
+		/// reads a backslash as an escape, so on its own a Windows path pattern ("C:\Photos\*",
+		/// "?:\Program Files*") never matches; backslashes are made literal first.
+		/// </summary>
+		internal static bool MatchesWildcards(string pattern, string subject) =>
+			System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern.Replace(@"\", @"\\"), subject);
+
+		static bool IsFolderLink(DirectoryInfo folder) {
+			try {
+				return folder.LinkTarget != null;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return true; // an unreadable reparse point is no library folder
+			}
 		}
 
 		/// <summary>

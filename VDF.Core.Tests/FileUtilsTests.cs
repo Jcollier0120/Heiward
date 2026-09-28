@@ -132,6 +132,76 @@ public class FileUtilsTests {
 		FileUtils.GetFilesRecursive(dir, ignoreReadonly, ignoreReparsePoints,
 			recursive: true, includeImages: false, new List<string>(), CancellationToken.None);
 
+	[Theory]
+	[InlineData("node_modules", @"C:\Projects\app\node_modules", true)]  // a name, at any depth
+	[InlineData("node_modules", @"C:\Projects\app\node_modules2", false)]
+	[InlineData("*.lrdata", @"D:\Lightroom\Catalog Previews.lrdata", true)]
+	[InlineData(".*", @"C:\Users\me\.cache", true)]
+	[InlineData(".*", @"C:\Users\me\Pictures", false)]
+	[InlineData(@"?:\Program Files*", @"C:\Program Files (x86)", true)] // a backslash is not an escape
+	[InlineData(@"?:\Program Files*", @"D:\Games\Program Files", false)]
+	[InlineData(@"?:\Users\*\AppData", @"C:\Users\me\AppData", true)]
+	[InlineData(@"C:\Scans", @"c:\scans", true)]
+	public void IsExcludedFolder_NamesPathsAndWildcards(string pattern, string folder, bool excluded) {
+		if (!OperatingSystem.IsWindows()) return; // Windows paths
+		Assert.Equal(excluded, FileUtils.IsExcludedFolder(pattern, new DirectoryInfo(folder)));
+	}
+
+	[Theory]
+	[InlineData(@"C:\Users\me\AppData\Local\Temp", @"?:\Users\*\AppData", true)] // below a matching folder
+	[InlineData(@"C:\Projects\app\node_modules\lib", "node_modules", true)]
+	[InlineData(@"C:\Users\me\Pictures", @"?:\Users\*\AppData", false)]
+	[InlineData(@"C:\Photos\Camera", @"C:\Photos\*", true)]
+	public void IsBlackListed_CoversTheWholeSubtree(string folder, string pattern, bool excluded) {
+		if (!OperatingSystem.IsWindows()) return; // Windows paths
+		Assert.Equal(excluded, ScanEngine.IsBlackListed(folder, pattern));
+	}
+
+	[Fact]
+	public void GetFilesRecursive_SkipsRepositoriesAndNamedFolders_ButNotTheScannedFolder() {
+		string dir = NewTempTree();
+		try {
+			File.WriteAllBytes(Path.Combine(dir, ".git"), new byte[] { 1 }); // the scanned folder itself is a worktree
+			File.WriteAllBytes(Path.Combine(dir, "top.mp4"), new byte[] { 1 });
+			Directory.CreateDirectory(Path.Combine(dir, "repo", ".git"));
+			File.WriteAllBytes(Path.Combine(dir, "repo", "fixture.mp4"), new byte[] { 1 });
+			Directory.CreateDirectory(Path.Combine(dir, "Photos", "node_modules"));
+			File.WriteAllBytes(Path.Combine(dir, "Photos", "kept.mp4"), new byte[] { 1 });
+			File.WriteAllBytes(Path.Combine(dir, "Photos", "node_modules", "asset.mp4"), new byte[] { 1 });
+			var files = FileUtils.GetFilesRecursive(dir, false, false, recursive: true, includeImages: false,
+				new List<string> { "node_modules" }, CancellationToken.None, skipFoldersContaining: new[] { ".git" });
+			Assert.Equal(new[] { "kept.mp4", "top.mp4" }, files.Select(f => f.Name).OrderBy(n => n));
+		}
+		finally {
+			DeleteTempTree(dir);
+		}
+	}
+
+	[Fact]
+	public void GetFilesRecursive_SkipFolderLinks_LeavesOutJunctions() {
+		if (!OperatingSystem.IsWindows()) return; // junctions are Windows-only
+		string dir = NewTempTree();
+		try {
+			Directory.CreateDirectory(Path.Combine(dir, "real"));
+			File.WriteAllBytes(Path.Combine(dir, "real", "clip.mp4"), new byte[] { 1 });
+			// A junction back to the scanned folder: followed, it loops.
+			using (var mklink = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe",
+				$"/c mklink /J \"{Path.Combine(dir, "real", "loop")}\" \"{dir}\"") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true })!) {
+				mklink.StandardOutput.ReadToEnd();
+				mklink.WaitForExit();
+				Assert.Equal(0, mklink.ExitCode);
+			}
+			var files = FileUtils.GetFilesRecursive(dir, false, false, recursive: true, includeImages: false,
+				new List<string>(), CancellationToken.None, skipFolderLinks: true);
+			Assert.Equal("clip.mp4", Assert.Single(files).Name);
+		}
+		finally {
+			string link = Path.Combine(dir, "real", "loop");
+			if (Directory.Exists(link)) Directory.Delete(link); // removes the junction, not its target
+			DeleteTempTree(dir);
+		}
+	}
+
 	[Fact]
 	public void GetFilesRecursive_RecursesIntoNestedSubfolders() {
 		string dir = NewTempTree();

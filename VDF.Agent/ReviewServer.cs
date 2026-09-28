@@ -160,7 +160,7 @@ namespace VDF.Agent {
 				},
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
-				config = new { cfg.Folders, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config },
+				config = new { folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config },
 			};
 		}
 

@@ -540,9 +540,15 @@ namespace VDF.Core {
 		/// every database entry — scans found 0 duplicates with no hint why (issue #790).
 		/// </summary>
 		void NormalizeScanPaths() {
-			static HashSet<string> Normalize(HashSet<string> paths) {
+			static HashSet<string> Normalize(HashSet<string> paths, bool keepPatterns = false) {
 				var result = new HashSet<string>();
 				foreach (var path in paths) {
+					// Folder names ("node_modules") and wildcard patterns ("*.lrdata", "?:\Windows") are
+					// matched as written: resolving them against the working directory would break them.
+					if (keepPatterns && (path.IndexOfAny(['*', '?']) >= 0 || !Path.IsPathRooted(path))) {
+						result.Add(path);
+						continue;
+					}
 					string normalized = path;
 					try {
 						normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
@@ -553,7 +559,7 @@ namespace VDF.Core {
 				return result;
 			}
 			Settings.IncludeList = Normalize(Settings.IncludeList);
-			Settings.BlackList = Normalize(Settings.BlackList);
+			Settings.BlackList = Normalize(Settings.BlackList, keepPatterns: true);
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -736,7 +742,8 @@ namespace VDF.Core {
 				}
 
 				foreach (FileInfo file in FileUtils.GetFilesRecursive(path, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
-					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions)) {
+					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
+					Settings.SkipFoldersContaining, Settings.SkipFolderLinks)) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
 					FileEntry fEntry;
@@ -888,7 +895,7 @@ namespace VDF.Core {
 			if (Settings.FilterByFilePathContains) {
 				bool contains = false;
 				foreach (var f in Settings.FilePathContainsTexts) {
-					if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(f, entry.Path)) {
+					if (FileUtils.MatchesWildcards(f, entry.Path)) {
 						contains = true;
 						break;
 					}
@@ -918,7 +925,7 @@ namespace VDF.Core {
 			if (Settings.FilterByFilePathNotContains) {
 				bool contains = false;
 				foreach (var f in Settings.FilePathNotContainsTexts) {
-					if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(f, entry.Path)) {
+					if (FileUtils.MatchesWildcards(f, entry.Path)) {
 						contains = true;
 						break;
 					}
@@ -984,8 +991,15 @@ namespace VDF.Core {
 
 		// Returns true if folderPath is covered by blacklistEntry.
 		// Supports wildcard patterns (*, ?) in blacklistEntry — see https://github.com/0x90d/videoduplicatefinder/issues/582
-		static bool IsBlackListed(string folderPath, string blacklistEntry) {
+		internal static bool IsBlackListed(string folderPath, string blacklistEntry) {
 			bool hasWildcard = blacklistEntry.IndexOfAny(['*', '?']) >= 0;
+			bool hasSeparator = blacklistEntry.Contains(Path.DirectorySeparatorChar) ||
+								blacklistEntry.Contains(Path.AltDirectorySeparatorChar);
+			// A folder name without wildcards ("node_modules"): any segment of folderPath, as the
+			// file enumeration matches it (FileUtils.IsExcludedFolder).
+			if (!hasWildcard && !hasSeparator && !Path.IsPathRooted(blacklistEntry))
+				return folderPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
+					.Any(s => s.Equals(blacklistEntry, StringComparison.OrdinalIgnoreCase));
 			if (!hasWildcard) {
 				if (!folderPath.StartsWith(blacklistEntry, StringComparison.OrdinalIgnoreCase))
 					return false;
@@ -996,15 +1010,17 @@ namespace VDF.Core {
 				return !relativePath.StartsWith('.') && !Path.IsPathRooted(relativePath);
 			}
 			// Wildcard pattern without path separators: match against each individual segment of folderPath
-			bool hasSeparator = blacklistEntry.Contains(Path.DirectorySeparatorChar) ||
-								blacklistEntry.Contains(Path.AltDirectorySeparatorChar);
 			if (!hasSeparator) {
 				string[] segments = folderPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
 					StringSplitOptions.RemoveEmptyEntries);
-				return segments.Any(s => System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(blacklistEntry, s));
+				return segments.Any(s => FileUtils.MatchesWildcards(blacklistEntry, s));
 			}
-			// Wildcard pattern with path separators: match against the full path
-			return System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(blacklistEntry, folderPath);
+			// Wildcard pattern with path separators: the folder or any folder above it, as the file
+			// enumeration leaves out a matching folder with everything inside ("?:\Users\*\AppData").
+			for (string? folder = folderPath; !string.IsNullOrEmpty(folder); folder = Path.GetDirectoryName(folder))
+				if (FileUtils.MatchesWildcards(blacklistEntry, folder))
+					return true;
+			return false;
 		}
 
 		// True if the entry's folder is covered by the current include list (honours IncludeSubDirectories).

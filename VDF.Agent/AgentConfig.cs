@@ -57,9 +57,17 @@ namespace VDF.Agent {
 
 	/// <summary>The user's choices, in agent.json. Every field has a working default.</summary>
 	sealed class AgentConfig {
-		/// <summary>Folders to scan (subfolders included).</summary>
-		public List<string> Folders { get; set; } = DefaultFolders();
-		/// <summary>Folders (or wildcard names) to leave out.</summary>
+		/// <summary>
+		/// Scan every fixed drive, minus Windows', apps', games' and other programs' own folders
+		/// (<see cref="ScanScope"/>). Off: only <see cref="Folders"/>.
+		/// </summary>
+		public bool ScanAllDrives { get; set; } = true;
+		/// <summary>More folders to scan, subfolders included: e.g. a USB drive or a network share.</summary>
+		public List<string> Folders { get; set; } = new();
+		/// <summary>
+		/// Folders to leave out, besides the built-in ones: a full path (C:\Scans), a folder name at any
+		/// depth (node_modules), or either with wildcards (*.lrdata, D:\Backups\*).
+		/// </summary>
 		public List<string> ExcludeFolders { get; set; } = new();
 		/// <summary>File types to leave out, e.g. ".heic" (HEIC decodes through FFmpeg, which is ~5x faster than Windows' codec).</summary>
 		public List<string> ExcludeExtensions { get; set; } = new();
@@ -86,25 +94,6 @@ namespace VDF.Agent {
 
 		[JsonIgnore]
 		public int EffectiveParallelism => Parallelism > 0 ? Parallelism : Math.Max(2, Environment.ProcessorCount / 2);
-
-		static List<string> DefaultFolders() {
-			var folders = new List<string>();
-			foreach (var f in new[] { Environment.SpecialFolder.MyPictures, Environment.SpecialFolder.MyVideos, Environment.SpecialFolder.Desktop }) {
-				string path = Environment.GetFolderPath(f);
-				if (!string.IsNullOrEmpty(path) && Directory.Exists(path) && !folders.Contains(path, StringComparer.OrdinalIgnoreCase))
-					folders.Add(path);
-			}
-			string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-			// iCloud for Windows keeps the photo library outside Pictures (older versions under it).
-			// Cloud-only files in it are skipped, never downloaded.
-			foreach (string icloud in new[] { Path.Combine(profile, "iCloudPhotos", "Photos"), Path.Combine(profile, "Pictures", "iCloud Photos", "Photos") })
-				if (Directory.Exists(icloud) && !folders.Any(f => icloud.StartsWith(f + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)))
-					folders.Add(icloud);
-			string downloads = Path.Combine(profile, "Downloads");
-			if (Directory.Exists(downloads))
-				folders.Add(downloads);
-			return folders;
-		}
 
 		internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 

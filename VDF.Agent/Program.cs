@@ -135,7 +135,7 @@ status.SetAction(_ => {
 	var cfg = AgentConfig.Load();
 	Console.WriteLine($"Installed: {(File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
-	Console.WriteLine($"Folders: {string.Join("; ", cfg.Folders)}");
+	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'vdf-agent scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Scans: every {cfg.ScanEveryMinutes} min{(cfg.ScanOnBattery ? $", on battery above {cfg.MinBatteryPercent}% unless Battery Saver is on" : ", on AC power only")}");
 	var report = Report.Load();
@@ -153,6 +153,43 @@ status.SetAction(_ => {
 	return 0;
 });
 root.Subcommands.Add(status);
+
+var count = new Option<bool>("--count") { Description = "List the drives as a scan would (names and attributes only; no file is opened) and count the photos and videos per folder." };
+var scope = new Command("scope", "Show what a scan looks at and what it leaves out.") { count };
+scope.SetAction(r => {
+	var cfg = AgentConfig.Load();
+	var notes = new List<string>();
+	var settings = AgentScanner.BuildSettings(cfg, notes);
+	Console.WriteLine("Scanned, with subfolders:");
+	foreach (string rootFolder in settings.IncludeList) Console.WriteLine("  " + rootFolder);
+	Console.WriteLine("Left out (with everything inside):");
+	foreach (string excluded in settings.BlackList) Console.WriteLine("  " + excluded);
+	Console.WriteLine($"  folders holding {string.Join(", ", settings.SkipFoldersContaining)} (code repositories), folder links, cloud-only files");
+	foreach (string n in notes) Console.WriteLine("note: " + n);
+	if (!r.GetValue(count)) return 0;
+
+	var perFolder = new Dictionary<string, (int Files, long Bytes)>(StringComparer.OrdinalIgnoreCase);
+	var timer = System.Diagnostics.Stopwatch.StartNew();
+	int total = 0;
+	foreach (string rootFolder in settings.IncludeList) {
+		var files = VDF.Core.Utils.FileUtils.GetFilesRecursive(rootFolder, settings.IgnoreReadOnlyFolders, settings.IgnoreReparsePoints,
+			recursive: true, settings.IncludeImages, settings.BlackList.ToList(), CancellationToken.None, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
+			settings.SkipFoldersContaining, settings.SkipFolderLinks);
+		total += files.Count;
+		foreach (FileInfo f in files) {
+			// Grouped three levels below the drive: C:\Users\me\Pictures, D:\Photos\2019.
+			string rel = Path.GetRelativePath(rootFolder, f.DirectoryName ?? rootFolder);
+			string key = Path.Combine(rootFolder, string.Join(Path.DirectorySeparatorChar, rel.Split(Path.DirectorySeparatorChar).Take(3)));
+			perFolder.TryGetValue(key, out var c);
+			perFolder[key] = (c.Files + 1, c.Bytes + f.Length);
+		}
+	}
+	Console.WriteLine($"{total:N0} photos and videos found in {timer.Elapsed.TotalSeconds:N1} s. By folder:");
+	foreach (var (folder, c) in perFolder.OrderByDescending(kv => kv.Value.Files).Take(40))
+		Console.WriteLine($"  {c.Files,8:N0}  {Format.Bytes(c.Bytes),9}  {folder}");
+	return 0;
+});
+root.Subcommands.Add(scope);
 
 return await root.Parse(args).InvokeAsync();
 

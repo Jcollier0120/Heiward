@@ -247,7 +247,7 @@ function renderDone(s) {
 function renderFooter(s) {
   const f = $('footer');
   f.replaceChildren();
-  f.append(el('div', null, 'Folders: ' + s.config.folders.join('; ')));
+  f.append(el('div', null, 'Scanned: ' + s.config.folders.join('; ') + (s.config.allDrives ? ' (every fixed drive, minus system, app and game folders)' : '')));
   if (s.config.excludeExtensions.length) f.append(el('div', null, 'Skipped file types: ' + s.config.excludeExtensions.join(' ')));
   const p = el('div', null, 'Settings: ');
   p.append(el('code', null, s.config.path));

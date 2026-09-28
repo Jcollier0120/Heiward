@@ -194,6 +194,18 @@ namespace VDF.Core {
 		/// </summary>
 		public HashSet<string> ExcludedExtensions = new(StringComparer.OrdinalIgnoreCase);
 		/// <summary>
+		/// Subfolders holding any of these entries (e.g. ".git") are left out with everything inside.
+		/// Code repositories keep test pictures and build copies of them that belong to the project,
+		/// not to the user's library. The scanned folders themselves are never left out this way.
+		/// </summary>
+		public HashSet<string> SkipFoldersContaining = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>
+		/// Don't follow folder junctions and symbolic links. A scan of a whole drive would otherwise
+		/// list a linked folder twice, or loop. Cloud-sync folders are reparse points too, but not
+		/// links, and are still scanned.
+		/// </summary>
+		public bool SkipFolderLinks;
+		/// <summary>
 		/// Detect partial/time-shifted duplicates visually: dense keyframe embeddings
 		/// matched by temporal offset consistency. Unlike <see cref="EnablePartialClipDetection"/>
 		/// this needs no audio track, so it also covers silent, muted and re-dubbed copies.

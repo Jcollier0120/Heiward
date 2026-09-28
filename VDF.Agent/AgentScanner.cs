@@ -98,7 +98,7 @@ namespace VDF.Agent {
 			return 0;
 		}
 
-		static Settings BuildSettings(AgentConfig cfg, List<string> notes) {
+		internal static Settings BuildSettings(AgentConfig cfg, List<string> notes) {
 			var s = new Settings {
 				IncludeImages = true,
 				IncludeSubDirectories = true,
@@ -110,11 +110,13 @@ namespace VDF.Agent {
 				CustomDatabaseFolder = AgentPaths.Database,
 			};
 			Directory.CreateDirectory(AgentPaths.Database);
-			foreach (string f in cfg.Folders) {
-				if (Directory.Exists(f)) s.IncludeList.Add(f);
-				else notes.Add($"Folder not found, skipped: {f}");
-			}
-			foreach (string f in cfg.ExcludeFolders) s.BlackList.Add(f);
+			foreach (string root in ScanScope.Roots(cfg, notes)) s.IncludeList.Add(root);
+			foreach (string f in ScanScope.Exclusions(cfg)) s.BlackList.Add(f);
+			foreach (string marker in ScanScope.RepositoryMarkers) s.SkipFoldersContaining.Add(marker);
+			s.SkipFolderLinks = true;
+			// In-process FFmpeg: an iPhone photo's tiles decode in one process instead of one ffmpeg.exe
+			// per photo (~3x faster). Falls back to the process per file if the libraries don't load.
+			s.UseNativeFfmpegBinding = ScanEngine.NativeFFmpegExists;
 			foreach (string e in cfg.ExcludeExtensions) s.ExcludedExtensions.Add(e.StartsWith('.') ? e : "." + e);
 			if (s.ExcludedExtensions.Contains(".heic"))
 				notes.Add("HEIC/HEIF photos are skipped (agent.json, excludeExtensions).");
