@@ -12,14 +12,20 @@ A *heiward* (Middle English, "hedge warden") was the village officer who kept th
 
 ## Install
 
-1. Download `hei.exe` from [Releases](https://github.com/Jcollier0120/Heiward/releases).
+1. Download from [Releases](https://github.com/Jcollier0120/Heiward/releases):
+   - `Heiward-<version>-x64.exe` for most PCs (Intel or AMD);
+   - `Heiward-<version>-arm64.exe` for Arm PCs, such as Snapdragon Copilot+ PCs.
+
+   Not sure which? **Settings > System > About** says "x64-based processor" or "ARM-based processor".
 2. Run it.
 
-There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan. On a PC without an NPU it asks one question: run the AI on the graphics card or the processor.
+There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan, and the review page opens in your browser to show its progress. On a PC without an NPU it asks one question: run the AI on the graphics card or the processor.
+
+The releases aren't code-signed yet, so the first run shows "Windows protected your PC": click **More info**, then **Run anyway**. On a PC with Smart App Control turned on, Windows blocks unsigned apps outright, so those PCs will need a signed release. `SHA256SUMS.txt` on the release lists each file's SHA-256, which PowerShell's `Get-FileHash` shows.
 
 To remove it, uninstall **Heiward** in Settings > Apps.
 
-The first release isn't out yet. Until then, [build it](VDF.Agent/README.md#build). Settings, commands and how it decides what to tick are in [VDF.Agent/README.md](VDF.Agent/README.md).
+To build it yourself, see [Build](VDF.Agent/README.md#build). Settings, commands and how it decides what to tick are in [VDF.Agent/README.md](VDF.Agent/README.md).
 
 ## Based on Video Duplicate Finder
 

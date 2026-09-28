@@ -256,7 +256,7 @@ namespace VDF.Agent {
 		}
 
 		static void StartDetached(params string[] args) {
-			var psi = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
+			var psi = new ProcessStartInfo(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			Process.Start(psi);
 		}

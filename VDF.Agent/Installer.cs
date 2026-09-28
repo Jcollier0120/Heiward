@@ -52,6 +52,10 @@ namespace VDF.Agent {
 		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
+			if (!WrongBuildConfirmed(assumeYes)) {
+				Console.WriteLine("Nothing installed.");
+				return 3;
+			}
 
 			if (!RunningInstalled) {
 				Step($"Copy {CurrentExe} -> {InstalledExe}");
@@ -172,6 +176,19 @@ namespace VDF.Agent {
 			}
 			Console.WriteLine(dryRun ? "" : "Uninstalled. Files you reviewed stay where they are; recycled ones are in the Recycle Bin.");
 			return 0;
+		}
+
+		/// <summary>
+		/// True unless this is the Intel/AMD build on an Arm PC and the user declines. That build runs there,
+		/// emulated, but slower and without the NPU; the Arm64 download is the one for the PC.
+		/// </summary>
+		static bool WrongBuildConfirmed(bool assumeYes) {
+			if (RuntimeInformation.OSArchitecture != Architecture.Arm64 || RuntimeInformation.ProcessArchitecture == Architecture.Arm64) return true;
+			Console.WriteLine("  This is the Intel/AMD build, and this PC has an Arm processor. It would run emulated: slower,");
+			Console.WriteLine("  and without the NPU. The Arm64 download (Heiward-...-arm64.exe) is the one for this PC.");
+			if (assumeYes || Console.IsInputRedirected) return true;
+			Console.Write("  Install this build anyway? [y/N]: ");
+			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('y');
 		}
 
 		/// <summary>GPU or CPU for a PC without an NPU; Auto means "cancel". --yes (and no console) picks the GPU.</summary>

@@ -13,7 +13,7 @@ Scheduled scans run in Windows' efficiency mode (EcoQoS), on efficient cores at 
 
 ## Install
 
-Download `hei.exe` and run it. There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself, checks every download against a pinned SHA-256, and runs its first scan. On a PC without an NPU it asks whether the AI should run on the **GPU** or the **CPU**, and whether to scan every 6 hours or only when you ask.
+Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.exe` (Arm, such as Snapdragon) from [Releases](https://github.com/Jcollier0120/Heiward/releases) and run it. There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself, checks every download against a pinned SHA-256, and runs its first scan, with the review page open in your browser to show its progress. On a PC without an NPU it asks whether the AI should run on the **GPU** or the **CPU**, and whether to scan every 6 hours or only when you ask.
 
 <details>
 <summary>Everything the installer sets up</summary>
@@ -174,3 +174,19 @@ dotnet publish VDF.Agent -c Release -r win-arm64 --self-contained -p:PublishSing
 ```
 
 Use `-r win-x64` for Intel and AMD PCs. The single file (`hei.exe`) is about 50 MB. Set `HEIWARD_HOME` to keep a test copy's settings and report somewhere else.
+
+### Making a release
+
+From the repository root, on the commit to release:
+
+```
+powershell -ExecutionPolicy Bypass -File VDF.Agent\release.ps1
+```
+
+It builds both exes into `artifacts\heiward` as `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe`, and writes `SHA256SUMS.txt`. The version is `VersionPrefix` in `VDF.Agent.csproj`. Then publish them:
+
+```
+gh release create v<version> artifacts/heiward/* --target master --title "Heiward <version>" --notes "..."
+```
+
+GitHub attaches the source code to every release by itself.
