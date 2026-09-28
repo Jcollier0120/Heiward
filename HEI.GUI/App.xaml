@@ -47,7 +47,11 @@
                          tone, which is fine there. -->
                     <SolidColorBrush x:Key="HeiSelectedHoverTextBrush" Color="#255B55" />
                     <SolidColorBrush x:Key="HeiTombBrush" Color="#A93B31" />
-                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#8A9793" />
+                    <!-- Text of the Offline badge on its own soft fill, and the "=" of a metric
+                         the whole group shares, on any row tint. The mockup's #8A9793 is 2.9:1
+                         on the badge; this is 5.9:1 there and 4.7:1 on the checked and selected
+                         row. -->
+                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#596460" />
                     <SolidColorBrush x:Key="HeiMutedSoftBrush" Color="#F7FAF9" />
                     <SolidColorBrush x:Key="HeiMutedBorderBrush" Color="#DBE3E0" />
                     <!-- Accent-colored text on a soft accent surface (selected settings section,
@@ -107,7 +111,9 @@
                          4.25:1 on its hover fill #2B7F74, white is 4.9:1. -->
                     <SolidColorBrush x:Key="HeiSelectedHoverTextBrush" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="HeiTombBrush" Color="#C05248" />
-                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#6D7B76" />
+                    <!-- The mockup's #6D7B76 is 3.6:1 on the Offline badge's fill; this is 5.8:1
+                         there and 4.7:1 on the selected row. -->
+                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#939F9B" />
                     <SolidColorBrush x:Key="HeiMutedSoftBrush" Color="#1C2422" />
                     <SolidColorBrush x:Key="HeiMutedBorderBrush" Color="#2A3330" />
                     <SolidColorBrush x:Key="HeiAccentTextBrush" Color="#8ADBC9" />
