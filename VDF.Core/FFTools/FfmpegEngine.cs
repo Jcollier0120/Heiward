@@ -502,12 +502,9 @@ namespace VDF.Core.FFTools {
 
 					FfmpegLogCapture.Reset();
 
-					// Tiled HEIF (Apple photos): gray bytes and the AI frame come from the tile
-					// grid decoded in-process; the AI frame usually from the decode that made the
-					// gray bytes. Display thumbnails still go to the process below.
+					// Tiled HEIF (Apple photos): gray bytes and the AI frame come from the tile grid
+					// decoded in-process. Display thumbnails still go to the process below.
 					if (isRawOutput && FileUtils.IsHeifImageFile(settings.File)) {
-						if (isRgbFrame && TakeStashedTiledHeifRgb(settings.File) is { } stashed)
-							return stashed;
 						if (HeifTileGridDecoder.TryDecode(settings.File, wantRgb: isRgbFrame, out var tiled))
 							return isRgbFrame ? tiled.Rgb224 : tiled.Gray32;
 					}
@@ -1358,27 +1355,6 @@ namespace VDF.Core.FFTools {
 				Math.Max(1, (int)Math.Round(source.Height / factor)));
 		}
 
-		// The AI frame of the tiled HEIF that TryGetImageInfoAndGrayBytes decoded last on this
-		// thread. The scan asks for gray bytes and then, on the same thread, for the AI frame;
-		// handing the frame over saves decoding all the tiles a second time.
-		[ThreadStatic] static string? _stashedHeifPath;
-		[ThreadStatic] static byte[]? _stashedHeifRgb;
-
-		static void StashTiledHeifRgb(string path, byte[]? rgb) {
-			AI.FramePool.Shared.Return(_stashedHeifRgb); // never asked for (AI matching off)
-			_stashedHeifRgb = rgb;
-			_stashedHeifPath = rgb != null ? path : null;
-		}
-
-		static byte[]? TakeStashedTiledHeifRgb(string path) {
-			if (_stashedHeifRgb == null || !string.Equals(_stashedHeifPath, path, StringComparison.Ordinal))
-				return null;
-			byte[] rgb = _stashedHeifRgb;
-			_stashedHeifRgb = null;
-			_stashedHeifPath = null;
-			return rgb;
-		}
-
 		/// <summary>
 		/// Native fast path for hashing a still image: decodes the (single) frame once and
 		/// returns both the 32x32 gray bytes and the source dimensions, avoiding a separate
@@ -1394,10 +1370,8 @@ namespace VDF.Core.FFTools {
 				return false;
 			try {
 				// Tiled HEIF (Apple photos): the picture only exists as a tile grid (#869), which
-				// HeifTileGridDecoder assembles in-process. It also makes the AI frame from the same
-				// decode, kept for the GetThumbnail(Rgb224) call the scan makes next.
-				if (FileUtils.IsHeifImageFile(path) && HeifTileGridDecoder.TryDecode(path, wantRgb: true, out var tiled)) {
-					StashTiledHeifRgb(path, tiled.Rgb224);
+				// HeifTileGridDecoder assembles in-process.
+				if (FileUtils.IsHeifImageFile(path) && HeifTileGridDecoder.TryDecode(path, wantRgb: false, out var tiled)) {
 					grayBytes = tiled.Gray32;
 					width = tiled.Width;
 					height = tiled.Height;

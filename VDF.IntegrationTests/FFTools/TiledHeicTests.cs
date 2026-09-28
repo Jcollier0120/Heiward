@@ -128,7 +128,7 @@ public class TiledHeicTests {
 		// The photo's size, not a 512x512 tile's (#869).
 		Assert.True(width > 512 && height > 512, $"{width}x{height}");
 
-		// The AI frame the scan asks for next comes from the same decode.
+		// The AI frame backfill for cached photos (GetThumbnail) decodes the grid in-process too.
 		var rgb = FfmpegEngine.GetThumbnail(new FfmpegSettings {
 			File = TiledHeicPath!,
 			Position = TimeSpan.Zero,
@@ -138,11 +138,12 @@ public class TiledHeicTests {
 		Assert.NotNull(rgb);
 		Assert.Equal(cliRgb!.Length, rgb!.Length);
 
-		// The same picture as the command line's grid assembly, scaled the same way: the hashes
-		// must agree, or a photo hashed one way would stop matching itself hashed the other.
+		// The same picture as the command line's grid assembly: the AI frames and the gray bytes
+		// derived from them (as every photo is hashed) must agree, or a photo hashed one way would
+		// stop matching itself hashed the other.
 		double rgbDifference = rgb.Zip(cliRgb, (a, b) => Math.Abs(a - b)).Average();
 		Assert.True(rgbDifference < 1, $"AI frame mean difference {rgbDifference:F2}");
-		double similarity = (1 - VDF.Core.Utils.GrayBytesUtils.PercentageDifference(gray, cliGray!)) * 100;
+		double similarity = (1 - VDF.Core.Utils.GrayBytesUtils.PercentageDifference(gray, VDF.Core.Utils.GrayBytesUtils.FromRgb224(cliRgb))) * 100;
 		Assert.True(similarity > 99.5, $"gray similarity {similarity:F2}%");
 	}
 

@@ -24,25 +24,55 @@ namespace VDF.Core.FFTools.FFmpegNative {
 	/// where each goes (#869). The command line assembles it through a filtergraph, one process
 	/// per photo; here all tiles go through one frame-threaded decoder, several at a time.
 	///
-	/// The tiles are copied onto a full-resolution canvas, and the gray bytes and the AI frame
-	/// come from it in one bicubic step, exactly as from any other decoded picture. Shrinking
-	/// the tiles first would be faster but softens the 32x32 gray bytes enough (about 3% of
-	/// VDF's similarity) that a HEIC no longer matches its own JPEG copy.
+	/// Each decoded tile is area-averaged straight onto a canvas shrunk by a whole factor (4 for
+	/// an iPhone photo), so no full-resolution picture is ever built. The 224x224 AI frame comes
+	/// from the canvas in one bicubic step, and the 32x32 gray bytes come from the AI frame
+	/// (GrayBytesUtils.FromRgb224), the rule every photo follows whatever decoded it, so a
+	/// HEIC still matches its own JPEG copy.
 	/// </summary>
 	static unsafe class HeifTileGridDecoder {
 		internal readonly record struct Result(byte[] Gray32, byte[]? Rgb224, int Width, int Height);
 
-		const int GraySide = 32;
+		/// <summary>
+		/// The canvas keeps at least this many pixels on its shorter side, twice the AI input, so
+		/// the bicubic step down to 224x224 still has detail to average.
+		/// </summary>
+		internal const int MinCanvasSide = 2 * AI.OnnxEmbedder.InputSide;
+
+		static readonly int[] CanvasFactors = { 8, 4, 2 };
 
 		/// <summary>
-		/// The picture's crop window (horizontal_offset, vertical_offset, width, height) clamped to
-		/// the canvas. The origin is rounded down to even so the 4:2:0 chroma planes stay aligned,
-		/// a shift of at most one pixel.
+		/// The largest of 8, 4 and 2 that keeps the canvas's shorter side at
+		/// <see cref="MinCanvasSide"/> or more and divides tile sizes and offsets into multiples of
+		/// 2 * factor, so every tile lands on whole chroma samples; 1 when none does.
 		/// </summary>
-		internal static (int X, int Y, int Width, int Height) CropWindow(int x, int y, int width, int height, int canvasWidth, int canvasHeight) {
-			int cx = Math.Clamp(x, 0, canvasWidth) & ~1;
-			int cy = Math.Clamp(y, 0, canvasHeight) & ~1;
-			return (cx, cy, Math.Min(canvasWidth - cx, width), Math.Min(canvasHeight - cy, height));
+		internal static int CanvasFactor(int width, int height, int tileWidth, int tileHeight, ReadOnlySpan<(int X, int Y)> offsets) {
+			foreach (int factor in CanvasFactors) {
+				int step = 2 * factor;
+				if (Math.Min(width, height) / factor < MinCanvasSide || tileWidth % step != 0 || tileHeight % step != 0)
+					continue;
+				bool aligned = true;
+				foreach (var (x, y) in offsets) {
+					if (x % step != 0 || y % step != 0) {
+						aligned = false;
+						break;
+					}
+				}
+				if (aligned)
+					return factor;
+			}
+			return 1;
+		}
+
+		/// <summary>
+		/// The picture's crop window (horizontal_offset, vertical_offset, width, height) on a canvas
+		/// shrunk by <paramref name="factor"/>, clamped to it. The origin is rounded down to even so
+		/// the 4:2:0 chroma planes stay aligned, a shift of at most one canvas pixel.
+		/// </summary>
+		internal static (int X, int Y, int Width, int Height) CropWindow(int x, int y, int width, int height, int factor, int canvasWidth, int canvasHeight) {
+			int cx = Math.Clamp(x / factor, 0, canvasWidth) & ~1;
+			int cy = Math.Clamp(y / factor, 0, canvasHeight) & ~1;
+			return (cx, cy, Math.Min(canvasWidth - cx, (width + factor / 2) / factor), Math.Min(canvasHeight - cy, (height + factor / 2) / factor));
 		}
 
 		/// <summary>
@@ -109,6 +139,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				int tileWidth = tilePar->width, tileHeight = tilePar->height;
 				if (tileWidth <= 0 || tileHeight <= 0 || tileWidth % 2 != 0 || tileHeight % 2 != 0)
 					throw new FFInvalidExitCodeException($"Unsupported tile size {tileWidth}x{tileHeight}.");
+				int factor = CanvasFactor(grid->width, grid->height, tileWidth, tileHeight, offsets);
 
 				AVCodec* decoder = ffmpeg.avcodec_find_decoder(tilePar->codec_id);
 				if (decoder == null)
@@ -128,7 +159,8 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				if (packet == null || frame == null)
 					throw new FFInvalidExitCodeException("Failed to allocate AVPacket/AVFrame.");
 
-				canvas = new TileCanvas(offsets, tileWidth, tileHeight, grid->coded_width, grid->coded_height);
+				canvas = new TileCanvas(offsets, factor, tileWidth, tileHeight,
+					(grid->coded_width + factor - 1) / factor, (grid->coded_height + factor - 1) / factor);
 
 				int readError;
 				while ((readError = ffmpeg.av_read_frame(format, packet)) >= 0) {
@@ -156,7 +188,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				if (canvas.PlacedCount != tileCount)
 					throw new FFInvalidExitCodeException($"Only {canvas.PlacedCount} of {tileCount} tiles decoded.");
 
-				var crop = CropWindow(grid->horizontal_offset, grid->vertical_offset, grid->width, grid->height, canvas.Width, canvas.Height);
+				var crop = CropWindow(grid->horizontal_offset, grid->vertical_offset, grid->width, grid->height, factor, canvas.Width, canvas.Height);
 				if (crop.Width <= 0 || crop.Height <= 0)
 					throw new FFInvalidExitCodeException("Empty crop window.");
 				AVFrame picture = canvas.View(crop.X, crop.Y, crop.Width, crop.Height);
@@ -169,23 +201,24 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				if (matrix != null && matrix->size >= 9 * sizeof(int))
 					orientation = FrameOrientation.FromDisplayMatrix(new ReadOnlySpan<int>(matrix->data, 9));
 
-				// The same conversions GetThumbnail and TryGetImageInfoAndGrayBytes apply to any
-				// other picture, so a HEIC and its JPEG copy hash alike.
-				var cropSize = new Size(crop.Width, crop.Height);
-				byte[] gray;
-				using (var toGray = new VideoFrameConverter(cropSize, pixelFormat, new Size(GraySide, GraySide), AVPixelFormat.AV_PIX_FMT_GRAY8))
-					gray = orientation.Apply(CopyPacked(toGray.Convert(picture), 1, null), GraySide, GraySide, 1);
-				byte[]? rgb = null;
-				if (wantRgb) {
-					int side = AI.OnnxEmbedder.InputSide;
-					using var toRgb = new VideoFrameConverter(cropSize, pixelFormat, new Size(side, side), AVPixelFormat.AV_PIX_FMT_RGB24);
+				// The AI frame in the same bicubic step GetThumbnail(Rgb224) takes for any other picture,
+				// and the gray bytes from it, as for every photo.
+				int side = AI.OnnxEmbedder.InputSide;
+				byte[] rgb;
+				using (var toRgb = new VideoFrameConverter(new Size(crop.Width, crop.Height), pixelFormat, new Size(side, side), AVPixelFormat.AV_PIX_FMT_RGB24)) {
 					// A pooled buffer, like every other AI frame; turning makes a new one.
 					byte[] pooled = CopyPacked(toRgb.Convert(picture), 3, AI.FramePool.Shared.Rent());
 					rgb = orientation.Apply(pooled, side, side, 3);
 					if (!ReferenceEquals(rgb, pooled))
 						AI.FramePool.Shared.Return(pooled);
 				}
-				result = new Result(gray, rgb, grid->width, grid->height);
+				byte[] gray = Utils.GrayBytesUtils.FromRgb224(rgb);
+				if (!wantRgb) {
+					AI.FramePool.Shared.Return(rgb);
+					result = new Result(gray, null, grid->width, grid->height);
+				}
+				else
+					result = new Result(gray, rgb, grid->width, grid->height);
 				return true;
 			}
 			finally {
@@ -243,18 +276,20 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		}
 
 		/// <summary>
-		/// The full-resolution picture the tiles are copied onto, and which of them have arrived.
-		/// The canvas is created with the first decoded tile, whose pixel format it takes.
+		/// The shrunk picture the tiles are scaled onto, and which of them have arrived. The canvas
+		/// and its scaler are created with the first decoded tile, whose pixel format they take.
 		/// </summary>
 		sealed class TileCanvas : IDisposable {
 			readonly (int X, int Y)[] offsets;
 			readonly bool[] placed;
-			readonly int tileWidth, tileHeight;
+			readonly int factor, tileWidth, tileHeight;
 			AVFrame* canvas;
+			SwsContext* scaler;
 
-			public TileCanvas((int X, int Y)[] offsets, int tileWidth, int tileHeight, int width, int height) {
+			public TileCanvas((int X, int Y)[] offsets, int factor, int tileWidth, int tileHeight, int width, int height) {
 				this.offsets = offsets;
 				placed = new bool[offsets.Length];
+				this.factor = factor;
 				this.tileWidth = tileWidth;
 				this.tileHeight = tileHeight;
 				Width = width;
@@ -266,7 +301,7 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			public int PlacedCount { get; private set; }
 			public AVPixelFormat PixelFormat { get; private set; } = AVPixelFormat.AV_PIX_FMT_NONE;
 
-			/// <summary>Takes every frame the decoder has ready and copies each into its place.</summary>
+			/// <summary>Takes every frame the decoder has ready and scales each into its place.</summary>
 			public void PlaceDecodedTiles(AVCodecContext* codec, AVFrame* frame) {
 				while (true) {
 					int ret = ffmpeg.avcodec_receive_frame(codec, frame);
@@ -293,12 +328,20 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				else if (tile->format != (int)PixelFormat)
 					throw new FFInvalidExitCodeException($"Tile {t} has a different pixel format.");
 
-				var (x, y) = offsets[t];
-				ffmpeg.av_image_copy_plane(canvas->data[0] + y * canvas->linesize[0] + x, canvas->linesize[0],
-					tile->data[0], tile->linesize[0], tileWidth, tileHeight);
-				for (uint plane = 1; plane <= 2; plane++)
-					ffmpeg.av_image_copy_plane(canvas->data[plane] + y / 2 * canvas->linesize[plane] + x / 2, canvas->linesize[plane],
-						tile->data[plane], tile->linesize[plane], tileWidth / 2, tileHeight / 2);
+				int x = offsets[t].X / factor, y = offsets[t].Y / factor; // even, see CanvasFactor
+				byte* dstY = canvas->data[0] + y * canvas->linesize[0] + x;
+				byte* dstU = canvas->data[1] + y / 2 * canvas->linesize[1] + x / 2;
+				byte* dstV = canvas->data[2] + y / 2 * canvas->linesize[2] + x / 2;
+				if (factor == 1) {
+					ffmpeg.av_image_copy_plane(dstY, canvas->linesize[0], tile->data[0], tile->linesize[0], tileWidth, tileHeight);
+					ffmpeg.av_image_copy_plane(dstU, canvas->linesize[1], tile->data[1], tile->linesize[1], tileWidth / 2, tileHeight / 2);
+					ffmpeg.av_image_copy_plane(dstV, canvas->linesize[2], tile->data[2], tile->linesize[2], tileWidth / 2, tileHeight / 2);
+				}
+				else {
+					var dst = new byte*[] { dstY, dstU, dstV, null };
+					var dstStride = new[] { canvas->linesize[0], canvas->linesize[1], canvas->linesize[2], 0 };
+					ffmpeg.sws_scale(scaler, tile->data, tile->linesize, 0, tileHeight, dst, dstStride).ThrowExceptionIfError();
+				}
 				placed[t] = true;
 				PlacedCount++;
 			}
@@ -320,6 +363,14 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				int chromaRows = (Height + 1) / 2;
 				new Span<byte>(canvas->data[1], canvas->linesize[1] * chromaRows).Fill(128);
 				new Span<byte>(canvas->data[2], canvas->linesize[2] * chromaRows).Fill(128);
+				if (factor == 1)
+					return;
+				// Area averaging by a whole factor: every canvas pixel is the mean of a square of
+				// tile pixels, so the tiles meet without seams.
+				scaler = ffmpeg.sws_getContext(tileWidth, tileHeight, pixelFormat,
+					tileWidth / factor, tileHeight / factor, pixelFormat, (int)SwsFlags.SWS_AREA, null, null, null);
+				if (scaler == null)
+					throw new FFInvalidExitCodeException("Could not initialize the tile scaler.");
 			}
 
 			/// <summary>A frame header over part of the canvas (x and y even); valid until Dispose.</summary>
@@ -336,6 +387,10 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			}
 
 			public void Dispose() {
+				if (scaler != null) {
+					ffmpeg.sws_freeContext(scaler);
+					scaler = null;
+				}
 				if (canvas != null) {
 					AVFrame* frame = canvas;
 					ffmpeg.av_frame_free(&frame);

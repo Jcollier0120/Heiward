@@ -19,24 +19,53 @@ using VDF.Core.FFTools.FFmpegNative;
 namespace VDF.Core.Tests.FFTools;
 
 /// <summary>
-/// The crop arithmetic of the in-process tiled HEIF decoder. Decoding itself needs a real
+/// The canvas arithmetic of the in-process tiled HEIF decoder. Decoding itself needs a real
 /// tiled HEIF, which FFmpeg cannot write; VDF.IntegrationTests covers it via VDF_TEST_TILED_HEIC.
 /// </summary>
 public class HeifTileGridDecoderTests {
-	[Fact]
-	public void CropWindow_IsThePicturesWindowOnTheCodedGrid() {
-		// iPhone 12 MP, 16:9: 8 x 5 tiles of 512 = 4096 x 2560 coded, 4032 x 2268 shown.
-		Assert.Equal((0, 0, 4032, 2268), HeifTileGridDecoder.CropWindow(0, 0, 4032, 2268, 4096, 2560));
+	static (int X, int Y)[] Grid(int columns, int rows, int tileWidth, int tileHeight) =>
+		Enumerable.Range(0, columns * rows).Select(i => (i % columns * tileWidth, i / columns * tileHeight)).ToArray();
+
+	[Theory]
+	[InlineData(4032, 2268, 4)] // 12 MP iPhone, 16:9: 2268/8 would leave 283 rows, under 448
+	[InlineData(2268, 4032, 4)] // the same upright
+	[InlineData(5712, 3213, 4)] // 24 MP iPhone
+	[InlineData(4032, 3024, 4)] // 12 MP 4:3
+	[InlineData(8064, 6048, 8)] // 48 MP: room for the largest factor
+	[InlineData(1737, 3088, 2)] // a cropped photo
+	[InlineData(800, 600, 1)]   // small enough to keep every pixel
+	public void CanvasFactor_KeepsTheShorterSideAtTwiceTheAiInput(int width, int height, int expected) {
+		var offsets = Grid((width + 511) / 512, (height + 511) / 512, 512, 512);
+
+		int factor = HeifTileGridDecoder.CanvasFactor(width, height, 512, 512, offsets);
+
+		Assert.Equal(expected, factor);
+		Assert.True(factor == 1 || Math.Min(width, height) / factor >= HeifTileGridDecoder.MinCanvasSide);
 	}
 
 	[Fact]
-	public void CropWindow_RoundsOddOriginsDownToEvenForTheChromaPlanes() {
-		Assert.Equal((12, 2, 1000, 800), HeifTileGridDecoder.CropWindow(13, 3, 1000, 800, 4096, 2560));
+	public void CanvasFactor_OnlyPicksFactorsThatDivideTilesIntoWholeChromaSamples() {
+		// 500-pixel tiles: 500 is a multiple of 4 but not of 8 or 16, so only factor 2 lands
+		// every tile on even canvas coordinates.
+		Assert.Equal(2, HeifTileGridDecoder.CanvasFactor(4000, 3000, 500, 500, Grid(8, 6, 500, 500)));
 	}
 
 	[Fact]
-	public void CropWindow_NeverRunsOffTheCanvas() {
-		Assert.Equal((4000, 2500, 96, 60), HeifTileGridDecoder.CropWindow(4000, 2500, 500, 500, 4096, 2560));
-		Assert.Equal((0, 0, 4096, 2560), HeifTileGridDecoder.CropWindow(-8, -8, 9999, 9999, 4096, 2560));
+	public void CanvasFactor_FallsBackToOneForMisalignedOffsets() {
+		(int X, int Y)[] offsets = { (0, 0), (510, 0) };
+		Assert.Equal(1, HeifTileGridDecoder.CanvasFactor(4000, 3000, 512, 512, offsets));
+	}
+
+	[Fact]
+	public void CropWindow_ScalesThePicturesWindowOntoTheCanvas() {
+		// 8 x 5 tiles of 512 = 4096 x 2560 coded, 4032 x 2268 shown, canvas at a quarter.
+		Assert.Equal((0, 0, 1008, 567), HeifTileGridDecoder.CropWindow(0, 0, 4032, 2268, 4, 1024, 640));
+		Assert.Equal((0, 0, 4032, 2268), HeifTileGridDecoder.CropWindow(0, 0, 4032, 2268, 1, 4096, 2560));
+	}
+
+	[Fact]
+	public void CropWindow_RoundsOddOriginsDownToEvenAndStaysOnTheCanvas() {
+		Assert.Equal((2, 0, 1022, 320), HeifTileGridDecoder.CropWindow(12, 3, 4096, 1280, 4, 1024, 640));
+		Assert.Equal((0, 0, 1024, 640), HeifTileGridDecoder.CropWindow(-8, -8, 9999, 9999, 4, 1024, 640));
 	}
 }

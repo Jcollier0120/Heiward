@@ -30,7 +30,8 @@ namespace VDF.Benchmarks.Scenarios;
 ///   dotnet run -c Release --project VDF.Benchmarks -- --probe-heif-tiles &lt;folder&gt; [parallelism]
 ///
 /// For every .heic/.heif in the folder it reports how closely the in-process gray bytes match
-/// the process path's (VDF's own similarity, where 96% makes a duplicate) and the AI frames'
+/// the process path's, both derived from the AI frame as photos are hashed (VDF's own similarity,
+/// where 96% makes a duplicate), and the AI frames'
 /// mean difference, then photos/s for both paths, one at a time and in parallel.
 /// </summary>
 public static class TiledHeifProbe {
@@ -76,7 +77,10 @@ public static class TiledHeifProbe {
 		for (int i = 0; i < files.Count; i++) {
 			if (native[i].Gray == null) { nativeFailed++; continue; }
 			if (cli[i].Gray == null) { cliFailed++; continue; }
-			double similarity = (1 - GrayBytesUtils.PercentageDifference(native[i].Gray!, cli[i].Gray!)) * 100;
+			// Photos hash the gray frame derived from the AI frame (GrayBytesUtils.FromRgb224), whichever
+			// decoder made it, so that is what the process path's result is compared as.
+			if (cli[i].Rgb == null) { cliFailed++; continue; }
+			double similarity = (1 - GrayBytesUtils.PercentageDifference(native[i].Gray!, GrayBytesUtils.FromRgb224(cli[i].Rgb!))) * 100;
 			similarities.Add(similarity);
 			if (native[i].Rgb != null && cli[i].Rgb != null)
 				rgbDiffs.Add(MeanAbsoluteDifference(native[i].Rgb!, cli[i].Rgb!));
@@ -91,6 +95,15 @@ public static class TiledHeifProbe {
 		}
 		if (rgbDiffs.Count > 0)
 			Console.WriteLine($"AI frame mean |difference| per byte: mean {rgbDiffs.Average():F2}  max {rgbDiffs.Max():F2} (of 255)");
+		if (WicImageDecoder.IsAvailable) {
+			// Windows' own HEIF codec as the referee; slow (a couple of photos per second), so 20.
+			var wicSims = new List<double>();
+			for (int i = 0; i < Math.Min(20, files.Count); i++)
+				if (native[i].Gray != null && WicImageDecoder.TryDecode(files[i], out byte[]? wicGray, out _, out _, out _) && wicGray != null)
+					wicSims.Add((1 - GrayBytesUtils.PercentageDifference(native[i].Gray!, wicGray)) * 100);
+			if (wicSims.Count > 0)
+				Console.WriteLine($"gray similarity in-process vs WIC: {wicSims.Count} photos, min {wicSims.Min():F2}%  mean {wicSims.Average():F2}%");
+		}
 		Console.WriteLine($"{"",-12} {"1 at a time",14} {"parallel " + parallelism,14}");
 		Console.WriteLine($"{"in-process",-12} {Rate(files.Count, nativeSeq),14} {Rate(files.Count, nativePar),14}");
 		Console.WriteLine($"{"process",-12} {Rate(files.Count, cliSeq),14} {Rate(files.Count, cliPar),14}");
@@ -110,9 +123,8 @@ public static class TiledHeifProbe {
 		FfmpegEngine.CustomFFArguments = string.Empty;
 		byte[]? Gray(string file, bool native) {
 			FfmpegEngine.UseNativeBinding = native;
-			return native
-				? FfmpegEngine.TryGetImageInfoAndGrayBytes(file, out byte[]? gray, out _, out _, extendedLogging: true) ? gray : null
-				: Cli(file).Gray;
+			byte[]? rgb = native ? Native(file).Rgb : Cli(file).Rgb;
+			return rgb != null ? GrayBytesUtils.FromRgb224(rgb) : null;
 		}
 		Console.WriteLine($"{Path.GetFileName(a)} vs {Path.GetFileName(b)}");
 		foreach (bool nativeA in new[] { true, false })
@@ -124,13 +136,11 @@ public static class TiledHeifProbe {
 		return 0;
 	}
 
-	/// <summary>The scan's native order: gray bytes first, then the AI frame from the same decode.</summary>
-	static (byte[]? Gray, byte[]? Rgb) Native(string file) {
-		if (!FfmpegEngine.TryGetImageInfoAndGrayBytes(file, out byte[]? gray, out _, out _, extendedLogging: true))
-			return (null, null);
-		var rgb = FfmpegEngine.GetThumbnail(new FfmpegSettings { File = file, Position = TimeSpan.Zero, Rgb224 = true, SoftwareDecodeOnly = true }, extendedLogging: true);
-		return (gray, rgb);
-	}
+	/// <summary>The scan's in-process path: the AI frame, and the gray bytes derived from it.</summary>
+	static (byte[]? Gray, byte[]? Rgb) Native(string file) =>
+		FfmpegEngine.TryGetImageInfoAndRgb224(file, out byte[]? rgb, out _, out _, extendedLogging: true) && rgb != null
+			? (GrayBytesUtils.FromRgb224(rgb), rgb)
+			: (null, null);
 
 	static (byte[]? Gray, byte[]? Rgb) Cli(string file) =>
 		FfmpegEngine.GetGrayAndRgb224Cli(file, TimeSpan.Zero, softwareDecodeOnly: true, extendedLogging: false);
