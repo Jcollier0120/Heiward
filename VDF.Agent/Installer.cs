@@ -27,7 +27,7 @@ namespace VDF.Agent {
 	/// The whole install, per user and without admin rights, from the one self-contained exe:
 	/// <list type="number">
 	/// <item>copy the exe to %LOCALAPPDATA%\Programs\Heiward (its downloads land next to it);</item>
-	/// <item>fetch FFmpeg, the AI runtime and model, and on Snapdragon PCs the NPU pack; probe the NPU;</item>
+	/// <item>fetch FFmpeg, the AI runtime and model, and the pack for the PC's NPU; probe the NPU;</item>
 	/// <item>write settings.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
 	/// <item>register the scan task and the sign-in "open the review page" task;</item>
 	/// <item>add a Start menu entry, the name its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
@@ -225,7 +225,7 @@ namespace VDF.Agent {
 		}
 
 		/// <summary>
-		/// FFmpeg, ONNX Runtime and the model, and on Snapdragon PCs the NPU pack, next to this exe: each copied
+		/// FFmpeg, ONNX Runtime and the model, and the pack for the PC's NPU, next to this exe: each copied
 		/// from one of <paramref name="sources"/> when a copy there passes the same check (see
 		/// <see cref="ComponentReuse"/>), otherwise downloaded. Downloads are SHA-256 pinned. Shared by
 		/// install and setup.

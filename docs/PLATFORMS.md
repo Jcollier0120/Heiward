@@ -51,5 +51,5 @@ About 680 of `VDF.Agent`'s 3,700 lines, plus Windows specifics inside the scan s
 - **Linux:** WSL2 on this PC, or any Linux PC.
 - **macOS:** a Mac with Apple Silicon.
 - **Windows NPUs:**
-  - An Intel Core Ultra PC. Any Intel PC also exercises most of the Intel pack with `VDF_NPU_TEST=openvino-cpu`.
-  - An AMD Ryzen AI PC on Windows 11 24H2 or later.
+  - An Intel Core Ultra PC: install and scan, nothing else. An older Intel PC has no NPU, so Heiward rightly uses its GPU or CPU; setting `VDF_NPU_TEST=openvino-cpu` makes it run the Intel pack on the CPU instead, which tests everything but the NPU itself.
+  - An AMD Ryzen AI PC on Windows 11 24H2 or later: install and scan. The Windows ML route it uses is tested on a Snapdragon PC with `VDF_NPU_TEST=winml-qnn` (same 82 groups on the 600-photo test set as Qualcomm's own pack).

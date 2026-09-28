@@ -162,7 +162,7 @@ namespace VDF.CLI.Commands {
 		};
 
 		internal static readonly Option<VDF.Core.AI.AiDevice> AiDevice = new("--ai-device") {
-			Description = "Where AI embeddings run: auto (default: the NPU on Snapdragon Windows-on-ARM PCs, else the CPU), cpu, npu, or gpu (DirectML, any DirectX 12 GPU). On first use, npu/auto download the NPU pack (~230 MB) on Windows ARM64, and gpu downloads the GPU pack (~215 MB).",
+			Description = "Where AI embeddings run: auto (default: the NPU on Windows PCs with a Qualcomm, Intel or AMD NPU, else the CPU), cpu, npu, or gpu (DirectML, any DirectX 12 GPU). On first use, npu/auto download the pack for the PC's NPU, and gpu downloads the GPU pack (~215 MB).",
 			DefaultValueFactory = _ => VDF.Core.AI.AiDevice.Auto
 		};
 
