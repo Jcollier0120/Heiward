@@ -79,6 +79,12 @@ namespace VDF.Agent {
 			// Revalidated on every load, so an updated agent's page never runs yesterday's script.
 			app.MapGet("/app.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/app.css", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.css"), "text/css; charset=utf-8"); });
+			// The tab icon. Its own policy lets its <style> (light and dark colours) apply; it holds no script.
+			app.MapGet("/favicon.svg", (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-cache";
+				ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'";
+				return Results.Content(Asset("favicon.svg"), "image/svg+xml");
+			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward" }));
 			app.MapGet("/api/state", () => Results.Json(State(cfg), AgentConfig.Json));
