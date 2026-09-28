@@ -10,6 +10,23 @@ Heiward keeps your Windows PC tidy in the background. It finds duplicate photos 
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound.
 
+![Heiward's home page: a card per drive or folder with its sets of copies, developer cleanup, and the folders where cleaning up frees the most](docs/screenshots/home.png)
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screenshots/duplicates.png" alt="A folder's page: its subfolders, and its duplicates with the copy to remove ticked"></td>
+<td width="50%"><img src="docs/screenshots/developer.png" alt="Developer cleanup in the Carbon theme: projects, shared caches, and what's selected for cleaning"></td>
+</tr>
+<tr>
+<td>A folder and its duplicates. Each set keeps one file; the copies go to the Recycle Bin.</td>
+<td>Developer cleanup, project by project (Carbon theme).</td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/screenshots/themes.png" alt="The theme menu over the Quest theme"></td>
+<td>Match Windows, Light, Dark, or one of six colour themes (Quest here).<br><br>The dogs are the author's own. The developer projects are made up.</td>
+</tr>
+</table>
+
 ## Install
 
 1. Download from [Releases](https://github.com/Jcollier0120/Heiward/releases):
