@@ -82,6 +82,38 @@ namespace VDF.Core.FFTools.FFmpegNative {
 		/// missing tiles); callers then fall back to the FFmpeg process.
 		/// </summary>
 		internal static bool TryDecode(string path, bool wantRgb, out Result result, int timeoutMs = 15_000) {
+			if (HeifHardwareLane.TryEnter()) {
+				try {
+					bool decoded = TryDecode(path, wantRgb, hardware: true, out result, timeoutMs);
+					HeifHardwareLane.RecordSuccess();
+					return decoded;
+				}
+				catch (Exception e) {
+					// Decode this photo on the CPU instead; the lane turns itself off if the GPU
+					// keeps failing on photos the CPU can read.
+					if (!TryDecodeOnCpu(path, wantRgb, out result, timeoutMs))
+						return false;
+					HeifHardwareLane.RecordFailure(e);
+					return true;
+				}
+				finally {
+					HeifHardwareLane.Exit();
+				}
+			}
+			return TryDecodeOnCpu(path, wantRgb, out result, timeoutMs);
+		}
+
+		static bool TryDecodeOnCpu(string path, bool wantRgb, out Result result, int timeoutMs) {
+			HeifHardwareLane.CpuDecodeStarted();
+			try {
+				return TryDecode(path, wantRgb, hardware: false, out result, timeoutMs);
+			}
+			finally {
+				HeifHardwareLane.CpuDecodeEnded();
+			}
+		}
+
+		static bool TryDecode(string path, bool wantRgb, bool hardware, out Result result, int timeoutMs) {
 			result = default;
 			long deadline = Stopwatch.GetTimestamp() + (long)(timeoutMs / 1000.0 * Stopwatch.Frequency);
 			// Aborts blocking I/O once the deadline passes, as in VideoStreamDecoder.
@@ -144,15 +176,24 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				AVCodec* decoder = ffmpeg.avcodec_find_decoder(tilePar->codec_id);
 				if (decoder == null)
 					throw new FFInvalidExitCodeException($"No decoder for {ffmpeg.avcodec_get_name(tilePar->codec_id)} tiles.");
-				codec = ffmpeg.avcodec_alloc_context3(decoder);
-				if (codec == null)
-					throw new FFInvalidExitCodeException("Failed to allocate AVCodecContext.");
-				ffmpeg.avcodec_parameters_to_context(codec, tilePar).ThrowExceptionIfError();
-				// The tiles are independent intra pictures, so frame threading decodes as many
-				// at once as there are cores (0 = FFmpeg's automatic count).
-				codec->thread_count = 0;
-				codec->thread_type = ffmpeg.FF_THREAD_FRAME | ffmpeg.FF_THREAD_SLICE;
-				ffmpeg.avcodec_open2(codec, decoder, null).ThrowExceptionIfError();
+				// The hardware lane's decoder stays open between photos and belongs to the lane;
+				// a CPU decoder is this photo's own (freed below).
+				AVCodecContext* tiles;
+				if (hardware) {
+					tiles = HeifHardwareLane.RentDecoder(decoder, tilePar);
+				}
+				else {
+					codec = ffmpeg.avcodec_alloc_context3(decoder);
+					if (codec == null)
+						throw new FFInvalidExitCodeException("Failed to allocate AVCodecContext.");
+					ffmpeg.avcodec_parameters_to_context(codec, tilePar).ThrowExceptionIfError();
+					// The tiles are independent intra pictures, so frame threading decodes as many
+					// at once as there are cores (0 = FFmpeg's automatic count).
+					codec->thread_count = 0;
+					codec->thread_type = ffmpeg.FF_THREAD_FRAME | ffmpeg.FF_THREAD_SLICE;
+					ffmpeg.avcodec_open2(codec, decoder, null).ThrowExceptionIfError();
+					tiles = codec;
+				}
 
 				packet = ffmpeg.av_packet_alloc();
 				frame = ffmpeg.av_frame_alloc();
@@ -172,10 +213,10 @@ namespace VDF.Core.FFTools.FFmpegNative {
 						// back in its own time, and all tiles carry the same pts otherwise.
 						packet->pts = packet->dts = t;
 						int sendError;
-						while ((sendError = ffmpeg.avcodec_send_packet(codec, packet)) == ffmpeg.AVERROR(ffmpeg.EAGAIN))
-							canvas.PlaceDecodedTiles(codec, frame);
+						while ((sendError = ffmpeg.avcodec_send_packet(tiles, packet)) == ffmpeg.AVERROR(ffmpeg.EAGAIN))
+							canvas.PlaceDecodedTiles(tiles, frame);
 						sendError.ThrowExceptionIfError();
-						canvas.PlaceDecodedTiles(codec, frame);
+						canvas.PlaceDecodedTiles(tiles, frame);
 					}
 					finally {
 						ffmpeg.av_packet_unref(packet);
@@ -183,8 +224,8 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				}
 				if (readError != ffmpeg.AVERROR_EOF)
 					readError.ThrowExceptionIfError();
-				ffmpeg.avcodec_send_packet(codec, null).ThrowExceptionIfError();
-				canvas.PlaceDecodedTiles(codec, frame);
+				ffmpeg.avcodec_send_packet(tiles, null).ThrowExceptionIfError();
+				canvas.PlaceDecodedTiles(tiles, frame, drain: true);
 				if (canvas.PlacedCount != tileCount)
 					throw new FFInvalidExitCodeException($"Only {canvas.PlacedCount} of {tileCount} tiles decoded.");
 
@@ -220,6 +261,11 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				else
 					result = new Result(gray, rgb, grid->width, grid->height);
 				return true;
+			}
+			catch when (hardware) {
+				// Mid-photo failure: the lane's decoder is in an unknown state, start the next photo fresh.
+				HeifHardwareLane.CloseDecoder();
+				throw;
 			}
 			finally {
 				canvas?.Dispose();
@@ -285,6 +331,11 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			readonly int factor, tileWidth, tileHeight;
 			AVFrame* canvas;
 			SwsContext* scaler;
+			AVFrame* downloaded; // a hardware-decoded tile, copied to system memory
+			AVPixelFormat tileFormat = AVPixelFormat.AV_PIX_FMT_NONE;
+			// Hardware-decoded tiles not copied out yet. Copying waits for the GPU, so the lane keeps
+			// a few tiles in flight and copies each out only once the next ones are queued on it.
+			readonly Queue<nint> inFlight = new();
 
 			public TileCanvas((int X, int Y)[] offsets, int factor, int tileWidth, int tileHeight, int width, int height) {
 				this.offsets = offsets;
@@ -301,19 +352,45 @@ namespace VDF.Core.FFTools.FFmpegNative {
 			public int PlacedCount { get; private set; }
 			public AVPixelFormat PixelFormat { get; private set; } = AVPixelFormat.AV_PIX_FMT_NONE;
 
-			/// <summary>Takes every frame the decoder has ready and scales each into its place.</summary>
-			public void PlaceDecodedTiles(AVCodecContext* codec, AVFrame* frame) {
+			/// <summary>
+			/// Takes every frame the decoder has ready and scales each into its place; hardware
+			/// frames once <see cref="HeifHardwareLane.TilesInFlight"/> newer ones are queued, or all
+			/// of them when <paramref name="drain"/> is set after the last packet.
+			/// </summary>
+			public void PlaceDecodedTiles(AVCodecContext* codec, AVFrame* frame, bool drain = false) {
 				while (true) {
 					int ret = ffmpeg.avcodec_receive_frame(codec, frame);
 					if (ret == ffmpeg.AVERROR(ffmpeg.EAGAIN) || ret == ffmpeg.AVERROR_EOF)
-						return;
+						break;
 					ret.ThrowExceptionIfError();
 					try {
-						Place(frame);
+						if (frame->hw_frames_ctx == null) {
+							Place(frame);
+							continue;
+						}
+						AVFrame* held = ffmpeg.av_frame_clone(frame);
+						if (held == null)
+							throw new FFInvalidExitCodeException("Failed to reference a decoded tile.");
+						inFlight.Enqueue((nint)held);
+						while (inFlight.Count > HeifHardwareLane.TilesInFlight)
+							PlaceOldestInFlight();
 					}
 					finally {
 						ffmpeg.av_frame_unref(frame);
 					}
+				}
+				if (drain)
+					while (inFlight.Count > 0)
+						PlaceOldestInFlight();
+			}
+
+			void PlaceOldestInFlight() {
+				AVFrame* held = (AVFrame*)inFlight.Dequeue();
+				try {
+					Place(held);
+				}
+				finally {
+					ffmpeg.av_frame_free(&held);
 				}
 			}
 
@@ -321,18 +398,27 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				long t = tile->pts;
 				if (t < 0 || t >= placed.Length || placed[t])
 					throw new FFInvalidExitCodeException($"Decoder returned an unexpected tile ({t}).");
+				if (tile->hw_frames_ctx != null) {
+					// Hardware lane: the tile lives in video memory; copy it out (NV12).
+					if (downloaded == null && (downloaded = ffmpeg.av_frame_alloc()) == null)
+						throw new FFInvalidExitCodeException("Failed to allocate AVFrame.");
+					ffmpeg.av_frame_unref(downloaded);
+					ffmpeg.av_hwframe_transfer_data(downloaded, tile, 0).ThrowExceptionIfError();
+					ffmpeg.av_frame_copy_props(downloaded, tile).ThrowExceptionIfError();
+					tile = downloaded;
+				}
 				if (tile->width != tileWidth || tile->height != tileHeight)
 					throw new FFInvalidExitCodeException($"Tile {t} decoded as {tile->width}x{tile->height}, expected {tileWidth}x{tileHeight}.");
 				if (canvas == null)
-					Allocate((AVPixelFormat)tile->format);
-				else if (tile->format != (int)PixelFormat)
+					Allocate(tile);
+				else if (tile->format != (int)tileFormat)
 					throw new FFInvalidExitCodeException($"Tile {t} has a different pixel format.");
 
 				int x = offsets[t].X / factor, y = offsets[t].Y / factor; // even, see CanvasFactor
 				byte* dstY = canvas->data[0] + y * canvas->linesize[0] + x;
 				byte* dstU = canvas->data[1] + y / 2 * canvas->linesize[1] + x / 2;
 				byte* dstV = canvas->data[2] + y / 2 * canvas->linesize[2] + x / 2;
-				if (factor == 1) {
+				if (scaler == null) {
 					ffmpeg.av_image_copy_plane(dstY, canvas->linesize[0], tile->data[0], tile->linesize[0], tileWidth, tileHeight);
 					ffmpeg.av_image_copy_plane(dstU, canvas->linesize[1], tile->data[1], tile->linesize[1], tileWidth / 2, tileHeight / 2);
 					ffmpeg.av_image_copy_plane(dstV, canvas->linesize[2], tile->data[2], tile->linesize[2], tileWidth / 2, tileHeight / 2);
@@ -346,15 +432,21 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				PlacedCount++;
 			}
 
-			void Allocate(AVPixelFormat pixelFormat) {
-				// 8-bit 4:2:0 only, which is what phones write; the process path takes the rest.
-				if (pixelFormat != AVPixelFormat.AV_PIX_FMT_YUVJ420P && pixelFormat != AVPixelFormat.AV_PIX_FMT_YUV420P)
-					throw new FFInvalidExitCodeException($"Unsupported tile pixel format {ffmpeg.av_get_pix_fmt_name(pixelFormat)}.");
-				PixelFormat = pixelFormat;
+			void Allocate(AVFrame* tile) {
+				// 8-bit 4:2:0 only, which is what phones write (NV12 from the hardware lane); the
+				// process path takes the rest.
+				tileFormat = (AVPixelFormat)tile->format;
+				if (tileFormat != AVPixelFormat.AV_PIX_FMT_YUVJ420P && tileFormat != AVPixelFormat.AV_PIX_FMT_YUV420P && tileFormat != AVPixelFormat.AV_PIX_FMT_NV12)
+					throw new FFInvalidExitCodeException($"Unsupported tile pixel format {ffmpeg.av_get_pix_fmt_name(tileFormat)}.");
+				// The canvas holds the decoded values unchanged, labelled with their range: iPhone
+				// tiles are full range, yuvj420p from the CPU decoder and NV12 tagged "pc" from the
+				// hardware one, so both lanes hand the AI frame conversion the same picture.
+				bool fullRange = tileFormat == AVPixelFormat.AV_PIX_FMT_YUVJ420P || tile->color_range == AVColorRange.AVCOL_RANGE_JPEG;
+				PixelFormat = fullRange ? AVPixelFormat.AV_PIX_FMT_YUVJ420P : AVPixelFormat.AV_PIX_FMT_YUV420P;
 				canvas = ffmpeg.av_frame_alloc();
 				if (canvas == null)
 					throw new FFInvalidExitCodeException("Failed to allocate the canvas.");
-				canvas->format = (int)pixelFormat;
+				canvas->format = (int)PixelFormat;
 				canvas->width = Width;
 				canvas->height = Height;
 				ffmpeg.av_frame_get_buffer(canvas, 0).ThrowExceptionIfError();
@@ -363,12 +455,14 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				int chromaRows = (Height + 1) / 2;
 				new Span<byte>(canvas->data[1], canvas->linesize[1] * chromaRows).Fill(128);
 				new Span<byte>(canvas->data[2], canvas->linesize[2] * chromaRows).Fill(128);
-				if (factor == 1)
-					return;
+				if (factor == 1 && tileFormat != AVPixelFormat.AV_PIX_FMT_NV12)
+					return; // plain plane copies
 				// Area averaging by a whole factor: every canvas pixel is the mean of a square of
-				// tile pixels, so the tiles meet without seams.
-				scaler = ffmpeg.sws_getContext(tileWidth, tileHeight, pixelFormat,
-					tileWidth / factor, tileHeight / factor, pixelFormat, (int)SwsFlags.SWS_AREA, null, null, null);
+				// tile pixels, so the tiles meet without seams. Scaling into the tile's own range
+				// family (yuvj420p to yuvj420p, NV12 to yuv420p) leaves the values' range alone.
+				AVPixelFormat target = tileFormat == AVPixelFormat.AV_PIX_FMT_YUVJ420P ? AVPixelFormat.AV_PIX_FMT_YUVJ420P : AVPixelFormat.AV_PIX_FMT_YUV420P;
+				scaler = ffmpeg.sws_getContext(tileWidth, tileHeight, tileFormat,
+					tileWidth / factor, tileHeight / factor, target, (int)SwsFlags.SWS_AREA, null, null, null);
 				if (scaler == null)
 					throw new FFInvalidExitCodeException("Could not initialize the tile scaler.");
 			}
@@ -390,6 +484,15 @@ namespace VDF.Core.FFTools.FFmpegNative {
 				if (scaler != null) {
 					ffmpeg.sws_freeContext(scaler);
 					scaler = null;
+				}
+				if (downloaded != null) {
+					AVFrame* frame = downloaded;
+					ffmpeg.av_frame_free(&frame);
+					downloaded = null;
+				}
+				while (inFlight.Count > 0) {
+					AVFrame* held = (AVFrame*)inFlight.Dequeue();
+					ffmpeg.av_frame_free(&held);
 				}
 				if (canvas != null) {
 					AVFrame* frame = canvas;

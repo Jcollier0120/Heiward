@@ -170,6 +170,31 @@ public class TiledHeicTests {
 	}
 
 	[SkippableFact]
+	public void NativeBinding_TiledHeic_HardwareLaneMatchesTheCpuLane() {
+		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");
+		Skip.If(TiledHeicPath == null, SkipReason);
+		Skip.If(!OperatingSystem.IsWindows(), "the hardware lane is D3D12VA");
+
+		using var guard = new FfmpegStaticStateGuard();
+		FfmpegEngine.UseNativeBinding = true;
+		var mode = VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode;
+		try {
+			VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode = VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.LaneMode.Off;
+			Assert.True(VDF.Core.FFTools.FFmpegNative.HeifTileGridDecoder.TryDecode(TiledHeicPath!, wantRgb: true, out var cpu));
+			VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode = VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.LaneMode.Always;
+			Assert.True(VDF.Core.FFTools.FFmpegNative.HeifTileGridDecoder.TryDecode(TiledHeicPath!, wantRgb: true, out var gpu));
+			// Without a D3D12 video decoder the lane stays unused and the CPU decodes both; with
+			// one, HEVC decoding is exact, so the GPU's picture is the CPU's.
+			Assert.Equal(cpu.Rgb224, gpu.Rgb224);
+			Assert.Equal(cpu.Gray32, gpu.Gray32);
+			Assert.Equal((cpu.Width, cpu.Height), (gpu.Width, gpu.Height));
+		}
+		finally {
+			VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode = mode;
+		}
+	}
+
+	[SkippableFact]
 	public void NativeBinding_TiledHeic_Rgb224Path_HashesLikeTheProcessPath() {
 		Skip.If(!_fixture.FfmpegCliAvailable, _fixture.FfmpegNotFoundReason);
 		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");

@@ -71,6 +71,19 @@ public static class TiledHeifProbe {
 		double nativePar = Time(() => Parallel.For(0, files.Count, options, i => Native(files[i])));
 		double cliPar = Time(() => Parallel.For(0, files.Count, options, i => Cli(files[i])));
 
+		// The GPU's decoder lane (HeifHardwareLane): on its own, and what it adds beside the CPU.
+		var lane = VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode;
+		VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode = VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.LaneMode.Off;
+		double cpuOnlyPar = Time(() => Parallel.For(0, files.Count, options, i => Native(files[i])));
+		VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode = VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.LaneMode.Always;
+		var hardware = new (byte[]? Gray, byte[]? Rgb)[files.Count];
+		double hardwareSeq = Time(() => { for (int i = 0; i < files.Count; i++) hardware[i] = Native(files[i]); });
+		VDF.Core.FFTools.FFmpegNative.HeifHardwareLane.Mode = lane;
+		var laneSims = Enumerable.Range(0, files.Count).Where(i => hardware[i].Gray != null && native[i].Gray != null)
+			.Select(i => (1 - GrayBytesUtils.PercentageDifference(hardware[i].Gray!, native[i].Gray!)) * 100).ToList();
+		var laneRgb = Enumerable.Range(0, files.Count).Where(i => hardware[i].Rgb != null && native[i].Rgb != null)
+			.Select(i => MeanAbsoluteDifference(hardware[i].Rgb!, native[i].Rgb!)).ToList();
+
 		var similarities = new List<double>();
 		var rgbDiffs = new List<double>();
 		int nativeFailed = 0, cliFailed = 0;
@@ -104,8 +117,12 @@ public static class TiledHeifProbe {
 			if (wicSims.Count > 0)
 				Console.WriteLine($"gray similarity in-process vs WIC: {wicSims.Count} photos, min {wicSims.Min():F2}%  mean {wicSims.Average():F2}%");
 		}
+		if (laneSims.Count > 0)
+			Console.WriteLine($"hardware lane vs CPU lane: {laneSims.Count} photos, gray min {laneSims.Min():F2}%, AI frame mean |difference| {laneRgb.DefaultIfEmpty().Average():F3}");
 		Console.WriteLine($"{"",-12} {"1 at a time",14} {"parallel " + parallelism,14}");
-		Console.WriteLine($"{"in-process",-12} {Rate(files.Count, nativeSeq),14} {Rate(files.Count, nativePar),14}");
+		Console.WriteLine($"{"in-process",-12} {Rate(files.Count, nativeSeq),14} {Rate(files.Count, nativePar),14}   (CPU with the hardware lane beside it)");
+		Console.WriteLine($"{"CPU only",-12} {"",14} {Rate(files.Count, cpuOnlyPar),14}");
+		Console.WriteLine($"{"GPU only",-12} {Rate(files.Count, hardwareSeq),14}");
 		Console.WriteLine($"{"process",-12} {Rate(files.Count, cliSeq),14} {Rate(files.Count, cliPar),14}");
 		return 0;
 	}
