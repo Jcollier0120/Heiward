@@ -5,7 +5,12 @@ Heiward tends your drives. It looks for likely duplicate photos and videos and, 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound. The command is `hei`.
 
 Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videoduplicatefinder) and uses its engine. Like it, Heiward is free software under the GNU AGPL v3. The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
-- the **NPU** of a Snapdragon PC: fast, and it barely uses power, so scans can run every hour;
+- the **NPU**: fast, and it barely uses power, so scans can run every hour. Heiward detects which NPU the PC has and downloads that vendor's runtime:
+  - **Qualcomm Hexagon** (Snapdragon X, Windows on Arm): Qualcomm's QNN plugin;
+  - **Intel AI Boost** (Core Ultra, Intel/AMD build): Intel's OpenVINO plugin, OpenVINO included;
+  - **AMD Ryzen AI** (Intel/AMD build, Windows 11 24H2 or later): AMD's Vitis AI plugin, which Windows ML downloads and keeps updated.
+
+  Intel and AMD support is new and hasn't been tried on those NPUs yet. On any other PC, or if the NPU can't run the model, AI matching falls back to the GPU or CPU;
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 
@@ -19,7 +24,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 <summary>Everything the installer sets up</summary>
 
 1. copies itself to `%LOCALAPPDATA%\Programs\Heiward`;
-2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack on Snapdragon PCs. Every download is SHA-256 pinned;
+2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack for the PC's NPU. Every download is SHA-256 pinned, and AMD's plugin comes from Windows ML;
 3. checks for an NPU. Without one, it asks whether the AI should run on the **GPU** or the **CPU**;
 4. schedules scans with Task Scheduler (per user):
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
@@ -135,7 +140,7 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 hei                 install (or, once installed, open the review page)
 hei scan [--open]   scan now
 hei open            open the review page
-hei status          settings, last scan, schedule, NPU lock
+hei status          settings, where AI matching runs, last scan, schedule, NPU lock
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
@@ -155,6 +160,8 @@ It's laid out like File Explorer, so you can go where you care most instead of s
   - A copy kept in another folder is dimmed and says so.
   - One button moves every ticked copy in the folder to the Recycle Bin, keeping the kept file of each set.
 - **Exempt folders** (system, programs, games, code, other accounts) are greyed out with the reason. Many of them together fold into one row. Folders without photos or videos are hidden behind a "show" link.
+
+**Where AI matching runs:** a badge in the title bar. It's green ("NPU ready", then "Running on the NPU" once a scan has used it). Otherwise it names the device and why: "No NPU available", "Unsupported NPU" (an NPU this version can't drive yet), "NPU not set up" (its pack isn't downloaded), or "NPU fell back" (it couldn't run the model; `heiward.log` says why). The install, `hei setup` and every scan write this to `ai-status.json`, so the page reads one small file and is right from the first visit.
 
 **Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser.
 
@@ -179,16 +186,15 @@ Use `-r win-x64` for Intel and AMD PCs. The single file (`hei.exe`) is about 50 
 
 ### Making a release
 
-From the repository root, on the commit to release:
+From the repository root, on the commit to release, with the .NET 10 SDK and the GitHub CLI (`gh`, signed in) on PATH:
 
 ```
-powershell -ExecutionPolicy Bypass -File VDF.Agent\release.ps1
+powershell -ExecutionPolicy Bypass -File VDF.Agent\release.ps1 -Publish
 ```
 
-It builds both exes into `artifacts\heiward` as `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe`, and writes `SHA256SUMS.txt`. The version is `VersionPrefix` in `VDF.Agent.csproj`. Then publish them:
+It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, writes `SHA256SUMS.txt`, then creates the release `v<version>` at the commit it built and uploads all three. The version is `VersionPrefix` in `VDF.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
 
-```
-gh release create v<version> artifactsheiwardHeiward-<version>-x64.exe artifactsheiwardHeiward-<version>-arm64.exe artifactsheiwardSHA256SUMS.txt --target master --title "Heiward <version>" --notes "..."
-```
+- Without `-Publish` it only builds.
+- `-Notes <text or file>` replaces the default release notes, which say which file to download and how to get past the unsigned-build warning.
 
-The files are named one by one because PowerShell doesn't expand `*` for other programs. GitHub attaches the source code to every release by itself.
+GitHub attaches the source code to every release by itself.
