@@ -319,6 +319,53 @@ public class DriveScanPlannerTests {
 		_ = DriveScanPlanner.QueryHasSeekPenalty(@"C:\");
 	}
 
+	// ── GroupRootsByDisk (the file listing walks one disk at a time, all disks at once) ──
+
+	static readonly string[] Mounts = { @"C:\", @"D:\", @"E:\", @"F:\" };
+	static readonly Func<string, int> AllSame = _ => 0;
+
+	[Fact]
+	public void GroupRootsByDisk_PutsTheSlowestDiskFirst() {
+		// It decides when the listing ends, so it starts first: the share, then the spinning disk, then the SSDs in their order.
+		int Slowness(string mount) => mount.StartsWith(@"\\", StringComparison.Ordinal) ? 2 : mount[0] == 'D' ? 1 : 0;
+		var groups = DriveScanPlanner.GroupRootsByDisk(new[] { @"C:\", @"D:\", @"E:\", @"\\nas\photos", @"F:\" }, _ => null, Mounts, Slowness);
+		Assert.Equal(new[] { @"\\nas\photos", @"D:\", @"C:\", @"E:\", @"F:\" }, groups.Select(g => g.Single()));
+	}
+
+	[Fact]
+	public void GroupRootsByDisk_SeparatesDisks_AndKeepsPartitionsOfOneDiskTogether() {
+		// D: and E: are two partitions of one spinning disk: walking both at once would seek-thrash it.
+		string? Disk(string root) => root[0] switch { 'C' => "disk:7:0", 'D' or 'E' => "disk:7:1", _ => null };
+		var groups = DriveScanPlanner.GroupRootsByDisk(
+			new[] { @"C:\Photos", @"D:\", @"C:\Users\me\Pictures", @"E:\Backup", @"F:\" }, Disk, Mounts, AllSame);
+		Assert.Equal(3, groups.Count);
+		Assert.Equal(new[] { @"C:\Photos", @"C:\Users\me\Pictures" }, groups[0]);
+		Assert.Equal(new[] { @"D:\", @"E:\Backup" }, groups[1]);
+		Assert.Equal(new[] { @"F:\" }, groups[2]); // no answer: a group of its own mount
+	}
+
+	[Fact]
+	public void GroupRootsByDisk_WithoutAnswers_GroupsByDriveOrShare() {
+		var groups = DriveScanPlanner.GroupRootsByDisk(
+			new[] { @"C:\a", @"\\nas\photos", @"C:\b", @"\\nas\videos\2024", @"D:\" }, _ => null, Mounts, AllSame);
+		Assert.Equal(4, groups.Count);
+		Assert.Equal(new[] { @"C:\a", @"C:\b" }, groups[0]);
+		Assert.Equal(new[] { @"\\nas\photos" }, groups[1]);
+		Assert.Equal(new[] { @"\\nas\videos\2024" }, groups[2]);
+		Assert.Equal(new[] { @"D:\" }, groups[3]);
+	}
+
+	[Fact]
+	public void QueryPhysicalDisk_AnswersForADriveLetterOnly() {
+		Assert.Null(DriveScanPlanner.QueryPhysicalDisk(@"\\nas\media"));
+		Assert.Null(DriveScanPlanner.QueryPhysicalDisk("/"));
+		if (!OperatingSystem.IsWindows()) return;
+		// The system drive is one disk on any ordinary PC (a VM's may not answer: null, never an exception).
+		string? disk = DriveScanPlanner.QueryPhysicalDisk(@"C:\");
+		Assert.True(disk == null || disk.StartsWith("disk:", StringComparison.Ordinal), disk);
+		Assert.Equal(disk, DriveScanPlanner.QueryPhysicalDisk("C:"));
+	}
+
 	// ── DriveProgressTracker ────────────────────────────────────────────────
 
 	static DriveScanGroup GroupWithEntries(string root, DriveSpeedClass speedClass, params FileEntry[] entries) {

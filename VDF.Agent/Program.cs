@@ -212,7 +212,7 @@ dev.SetAction(r => {
 });
 root.Subcommands.Add(dev);
 
-var count = new Option<bool>("--count") { Description = "List the drives as a scan would (names and attributes only; no file is opened) and count the photos and videos per folder." };
+var count = new Option<bool>("--count") { Description = "List the drives as a scan would (every disk at once, slowest first; names and attributes only, no file is opened), with each disk's time, and count the photos and videos per folder." };
 var scope = new Command("scope", "Show what a scan looks at and what it leaves out.") { count };
 scope.SetAction(r => {
 	var cfg = AgentConfig.Load();
@@ -236,13 +236,30 @@ scope.SetAction(r => {
 	foreach (string n in notes) Console.WriteLine("note: " + n);
 	if (!r.GetValue(count)) return 0;
 
-	var perFolder = new Dictionary<string, (int Files, long Bytes)>(StringComparer.OrdinalIgnoreCase);
+	// As a scan lists them: every disk at once, slowest first, a disk's own folders one after another.
+	// Each disk's time, and the total against one disk after another, show what walking them together saves.
+	var disks = VDF.Core.Utils.DriveScanPlanner.GroupRootsByDisk(settings.IncludeList);
+	var excludedFolders = settings.BlackList.Concat(settings.SubfolderBlackList).ToList();
 	var timer = System.Diagnostics.Stopwatch.StartNew();
-	int total = 0;
-	foreach (string rootFolder in settings.IncludeList) {
+	var walked = Task.WhenAll(disks.Select(diskRoots => Task.Run(() => diskRoots.Select(rootFolder => {
+		var walk = System.Diagnostics.Stopwatch.StartNew();
 		var files = VDF.Core.Utils.FileUtils.GetFilesRecursive(rootFolder, settings.IgnoreReadOnlyFolders, settings.IgnoreReparsePoints,
-			recursive: true, settings.IncludeImages, settings.BlackList.Concat(settings.SubfolderBlackList).ToList(), CancellationToken.None, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
+			recursive: true, settings.IncludeImages, excludedFolders, CancellationToken.None, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
 			settings.SkipFoldersContaining, settings.SkipFolderLinks);
+		return (Root: rootFolder, Files: files, Time: walk.Elapsed);
+	}).ToList()))).GetAwaiter().GetResult();
+	TimeSpan wall = timer.Elapsed;
+
+	Console.WriteLine($"Listed {disks.Count} disk(s) at once, slowest first:");
+	foreach (var disk in walked) {
+		string first = disk[0].Root;
+		string kind = VDF.Core.Utils.DriveScanPlanner.IsNetworkRoot(Path.GetPathRoot(first) ?? first) ? "network share"
+			: VDF.Core.Utils.DriveScanPlanner.QueryHasSeekPenalty(Path.GetPathRoot(first) ?? first) switch { true => "hard disk", false => "SSD", null => "disk" };
+		Console.WriteLine($"  {kind,-13} {disk.Sum(w => w.Files.Count),9:N0} files {disk.Sum(w => w.Time.TotalSeconds),7:N1} s  {string.Join(", ", disk.Select(w => w.Root))}");
+	}
+	var perFolder = new Dictionary<string, (int Files, long Bytes)>(StringComparer.OrdinalIgnoreCase);
+	int total = 0;
+	foreach (var (rootFolder, files, _) in walked.SelectMany(d => d)) {
 		total += files.Count;
 		foreach (FileInfo f in files) {
 			// Grouped three levels below the drive: C:\Users\me\Pictures, D:\Photos\2019.
@@ -252,7 +269,9 @@ scope.SetAction(r => {
 			perFolder[key] = (c.Files + 1, c.Bytes + f.Length);
 		}
 	}
-	Console.WriteLine($"{total:N0} photos and videos found in {timer.Elapsed.TotalSeconds:N1} s. By folder:");
+	double oneByOne = walked.SelectMany(d => d).Sum(w => w.Time.TotalSeconds);
+	Console.WriteLine($"{total:N0} photos and videos found in {wall.TotalSeconds:N1} s" +
+		(disks.Count > 1 ? $" (one disk after another: about {oneByOne:N1} s)" : "") + ". By folder:");
 	foreach (var (folder, c) in perFolder.OrderByDescending(kv => kv.Value.Files).Take(40))
 		Console.WriteLine($"  {c.Files,8:N0}  {Format.Bytes(c.Bytes),9}  {folder}");
 	return 0;
