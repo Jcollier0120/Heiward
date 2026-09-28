@@ -237,6 +237,20 @@ public sealed class DevAssetsTests : IDisposable {
 	}
 
 	[Fact]
+	public void DevProjects_AreMadeConsistent() {
+		var saved = DevProject.Normalize(new[] {
+			new DevProject("  Suite  ", new() { @"C:\Projects\App\", @"C:\Projects\Api", @"c:\projects\app" }),
+			new DevProject("suite", new() { @"C:\Projects\Other", @"C:\Projects\More" }),   // same name: dropped
+			new DevProject("Solo", new() { @"C:\Projects\Api", @"C:\Projects\Tool" }),      // Api is taken: one left, dropped
+			new DevProject("Loose", new() { "relative\\path", @"C:\Projects\X", @"C:\Projects\Y" }),
+			new DevProject("", new() { @"C:\A", @"C:\B" }),
+		});
+		Assert.Equal(new[] { "Suite", "Loose" }, saved.Select(p => p.Name));
+		Assert.Equal(new[] { @"C:\Projects\App", @"C:\Projects\Api" }, saved[0].Repos);
+		Assert.Equal(new[] { @"C:\Projects\X", @"C:\Projects\Y" }, saved[1].Repos);
+	}
+
+	[Fact]
 	public void Clean_ReChecksAProjectFolderBeforeDeleting() {
 		string app = Dir("p", "app");
 		Touch(Path.Combine(app, "package.json"));

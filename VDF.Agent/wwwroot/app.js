@@ -47,6 +47,15 @@ const ICONS = {
   check: [['path', 'M3 8.5 6.5 12 13 4.5', 'stroke']],
   info: [['circle', '8,8,6.5', 'stroke'], ['path', 'M8 7.2V11.5M8 4.6v.2', 'stroke']],
   code: [['path', 'M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5', 'stroke']],
+  layers: [['path', 'M8 2 2 5l6 3 6-3-6-3zM2 8l6 3 6-3M2 11l6 3 6-3', 'stroke']],
+  branch: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,5,1.5', 'stroke'],
+    ['path', 'M4.5 5v6M11.5 6.5c0 3-3.5 3.2-7 4.6', 'stroke']],
+  db: [['path', 'M3 4c0-1.1 2.2-2 5-2s5 .9 5 2-2.2 2-5 2-5-.9-5-2zM3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2', 'stroke']],
+  phone: [['rect', '4.5,1.5,7,13,1.6', 'stroke'], ['path', 'M7 12.2h2', 'stroke']],
+  clock: [['circle', '8,8,6', 'stroke'], ['path', 'M8 4.8V8l2.3 1.4', 'stroke']],
+  stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
+  merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
+    ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
 };
 
 // Developer cleanup's mark: code brackets on an accent tile.
@@ -216,7 +225,9 @@ function ticked(g) {
 
 function parseRoute() {
   const h = location.hash;
-  if (h === '#/dev') return { view: 'dev' };
+  if (h === '#/dev') return { view: 'dev', cat: null };
+  if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
+  if (h.startsWith('#/dev/s/')) return { view: 'dev', cat: decodeURIComponent(h.slice(8)) };
   if (h.startsWith('#/f/')) {
     try { return { view: 'folder', path: decodeURIComponent(h.slice(4)) }; } catch { /* fall through */ }
   }
@@ -290,6 +301,17 @@ function renderCrumbs() {
     b.addEventListener('click', () => { location.hash = '#/dev'; });
     li.append(b);
     items.push(li);
+    const g = route.group ? devGroupById(route.group) : null;
+    const label = g ? g.name : route.cat && DEV_META[route.cat] ? DEV_META[route.cat].short : null;
+    if (label) {
+      const li2 = el('li');
+      li2.append(icon('sep', 'sep'));
+      const c = el('button', 'crumb');
+      c.append(g ? (g.project ? icon('stack') : folderIcon(false)) : icon(DEV_META[route.cat].icon), el('span', null, label));
+      c.addEventListener('click', () => { location.hash = g ? '#/dev/g/' + encodeURIComponent(g.id) : '#/dev/s/' + route.cat; });
+      li2.append(c);
+      items.push(li2);
+    }
   }
   if (route.view === 'folder') {
     const d = cardFor(route.path);
@@ -352,7 +374,6 @@ function renderHome(s) {
 
 // ---------------------------------------------------------------- developer cleanup
 
-const DEV_SHORT = { projects: 'Projects', worktrees: 'Worktrees', caches: 'Caches', android: 'Emulators', temp: 'Temp & dumps' };
 let devReport = null;         // /api/dev
 const devTicks = new Set();   // ticked item ids
 const devSeen = new Set();    // ids whose default tick was applied (the user's edits survive refreshes)
@@ -381,7 +402,12 @@ function renderDevCard(dev) {
         (dev.running ? 'checking again…' : 'checked ' + ago(dev.scannedAtUtc))));
     const chips = el('div', 'chips');
     chips.style.marginTop = '6px';
-    for (const c of dev.categories || []) chips.append(el('span', 'chip quiet', (DEV_SHORT[c.key] || c.title) + ' ' + bytes(c.bytes)));
+    for (const c of dev.categories || []) {
+      // Each chip opens its category.
+      const chip = el('button', 'chip quiet chip-link', ((DEV_META[c.key] || {}).short || c.title) + ' ' + bytes(c.bytes));
+      chip.addEventListener('click', () => { location.hash = SHARED.includes(c.key) ? '#/dev/s/' + c.key : '#/dev'; });
+      chips.append(chip);
+    }
     text.append(chips);
   }
   top.append(text);
@@ -404,7 +430,9 @@ function renderDevCard(dev) {
 
 async function loadDevReport() {
   const res = await fetch('/api/dev');
-  devReport = res.ok ? await res.json() : null;
+  const data = res.ok ? await res.json() : null;
+  devReport = data ? data.report : null;
+  devProjects = data ? data.projects || [] : [];
   for (const c of (devReport && devReport.categories) || [])
     for (const i of c.items)
       if (!devSeen.has(i.id)) {
@@ -426,94 +454,464 @@ function lastUsed(iso) {
   return 'untouched ' + Math.round(days / 30) + ' months';
 }
 
-function renderDev() {
-  const view = $('devview');
-  const dev = state.dev;
-  const frag = document.createDocumentFragment();
+// The developer view, project first: each repository (or a project the user bundled several into)
+// has its own page with a section per cleanup area; machine-wide things (package caches, emulators,
+// temp files) sit under Shared. Laid out like the folder view: navigation pane, one page at a time,
+// and a selection bar that appears once something is ticked.
+const DEV_META = {
+  projects: { short: 'Build outputs', icon: 'layers', blurb: 'node_modules, bin and obj, Gradle and Cargo build folders, Python environments. The next install or build recreates them.' },
+  worktrees: { short: 'Worktrees', icon: 'branch', blurb: 'Extra working folders; git removes one only when it has no uncommitted changes, and the branch stays.' },
+  repos: { short: 'Merged branches', icon: 'merge', blurb: 'Local branches already merged into the remote\'s main or master.' },
+  caches: { short: 'Package caches', icon: 'db' },
+  android: { short: 'Emulators', icon: 'phone' },
+  temp: { short: 'Temp & dumps', icon: 'clock' },
+};
+const SHARED = ['caches', 'android', 'temp'];
+let devProjects = [];         // [{ name, repos: [path] }] from agent.json
+let devResult = null;         // [ok, message] after the last clean, shown until the next
+let groupMode = false;        // picking repositories to bundle into a project
+const groupPick = new Set();  // repository keys picked
 
-  const head = el('div', 'folder-head');
-  head.append(devIcon());
-  const title = el('div');
-  title.style.flex = '1';
-  title.append(el('h1', null, 'Developer cleanup'),
-    el('div', 'dev-intro', 'Things your development tools recreate when they need them. Cleaning deletes them permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer.'));
-  const chips = el('div', 'chips');
-  if (devReport && devReport.scannedAtUtc && devReport.categories.length) {
-    const all = devItems();
-    chips.append(el('span', 'chip', bytes(all.reduce((a, i) => a + i.bytes, 0)) + ' in all'));
-    chips.append(el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)));
+const rkey = (p) => (p || '').replace(/\\+$/, '').toLowerCase();
+
+function catIcon(k, big) {
+  const box = el('span', 'cat-icon' + (big ? ' big' : ''));
+  box.append(icon((DEV_META[k] || {}).icon || 'code'));
+  return box;
+}
+
+const devSize = (items) => items.reduce((a, i) => a + i.bytes, 0);
+const devPicked = () => devItems().filter((i) => devTicks.has(i.id) && !i.blocked);
+
+/** Repositories with their build outputs, worktrees and branches, bundled as the user asked. */
+function devGroups() {
+  if (!devReport || !devReport.scannedAtUtc) return [];
+  const repos = new Map();
+  const repoOf = (path) => {
+    const k = rkey(path);
+    if (!repos.has(k)) repos.set(k, { key: k, name: path.replace(/\\+$/, '').split(SEP).pop(), path, outputs: [], worktrees: [], branches: null });
+    return repos.get(k);
+  };
+  for (const c of devReport.categories) {
+    if (c.key === 'projects') for (const i of c.items) repoOf(i.location).outputs.push(i);
+    if (c.key === 'worktrees') for (const i of c.items) repoOf(i.repo || i.location).worktrees.push(i);
   }
+  for (const r of devReport.repositories || []) repoOf(r.path).branches = r;
+  const groups = [];
+  const used = new Set();
+  for (const p of devProjects) {
+    const members = p.repos.map(rkey).filter((k) => repos.has(k) && !used.has(k)).map((k) => repos.get(k));
+    if (!members.length) continue;
+    members.forEach((m) => used.add(m.key));
+    groups.push({ id: 'p:' + p.name.toLowerCase(), name: p.name, project: p, repos: members });
+  }
+  for (const r of repos.values()) if (!used.has(r.key)) groups.push({ id: 'r:' + r.key, name: r.name, project: null, repos: [r] });
+  for (const g of groups) {
+    g.outputs = g.repos.flatMap((r) => r.outputs);
+    g.worktrees = g.repos.flatMap((r) => r.worktrees);
+    g.branches = g.repos.map((r) => r.branches).filter(Boolean);
+    g.items = [...g.outputs, ...g.worktrees];
+    g.bytes = devSize(g.items);
+    g.merged = g.branches.reduce((a, b) => a + b.merged.length, 0);
+  }
+  return groups.sort((a, b) => b.bytes - a.bytes || b.merged - a.merged || a.name.localeCompare(b.name));
+}
+
+function devGroupById(id) {
+  return devGroups().find((g) => g.id === id) || null;
+}
+
+function renderDev() {
+  renderDevNav();
+  renderDevContent();
+}
+
+function renderDevNav() {
+  const rows = [];
+  const row = (label, glyph, hash, badge, selected, dim) => {
+    const b = el('button', 'tree-row' + (dim ? ' empty' : ''));
+    b.style.paddingLeft = '8px';
+    glyph.classList.add('glyph');
+    b.append(glyph, el('span', 'label', label));
+    if (badge) b.append(el('span', 'count', badge));
+    if (selected) { b.classList.add('selected'); b.setAttribute('aria-current', 'page'); }
+    b.addEventListener('click', () => { location.hash = hash; $('dev-nav').classList.remove('open'); });
+    rows.push(b);
+  };
+  row('Overview', icon('code'), '#/dev', null, !route.group && !route.cat);
+  if (devReport && devReport.scannedAtUtc) {
+    const groups = devGroups();
+    if (groups.length) rows.push(el('div', 'tree-section', 'Projects'));
+    for (const g of groups)
+      row(g.name, g.project ? icon('stack') : folderIcon(false), '#/dev/g/' + encodeURIComponent(g.id),
+        g.bytes >= 1 << 20 ? bytes(g.bytes) : g.merged ? count(g.merged, 'branch', 'branches') : '', route.group === g.id, !g.bytes && !g.merged);
+    const shared = devReport.categories.filter((c) => SHARED.includes(c.key));
+    if (shared.length) rows.push(el('div', 'tree-section', 'Shared'));
+    for (const c of shared) row(DEV_META[c.key].short, catIcon(c.key), '#/dev/s/' + c.key, bytes(devSize(c.items)), route.cat === c.key);
+  }
+  $('dev-tree').replaceChildren(...rows);
+}
+
+function devHeader(glyph, title, intro, chips) {
+  const head = el('div', 'folder-head');
+  head.append(glyph);
+  const text = el('div');
+  text.style.flex = '1';
+  text.style.minWidth = '0';
+  text.append(el('h1', null, title));
+  if (intro) text.append(typeof intro === 'string' ? el('div', 'dev-intro', intro) : intro);
+  if (chips.length) {
+    const box = el('div', 'chips');
+    box.append(...chips);
+    text.append(box);
+  }
+  head.append(text);
+  return head;
+}
+
+function renderDevContent() {
+  const content = $('dev-content');
+  const y = content.scrollTop;
+  const frag = document.createDocumentFragment();
+  const dev = state.dev;
+  if (!devReport || !devReport.scannedAtUtc) {
+    frag.append(devHeader(devIcon(), 'Developer cleanup', 'Build outputs, git worktrees, merged branches, package caches and emulators that your tools recreate when needed.', []));
+    const empty = el('div', 'empty-state');
+    empty.append(el('div', null, dev.running ? 'Checking… this takes a minute or so.' : 'Not checked yet.'));
+    if (!dev.running) {
+      const b = el('button', 'btn more', 'Check now');
+      b.addEventListener('click', startDevCheck);
+      empty.append(b);
+    }
+    frag.append(empty);
+  } else if (route.group) {
+    const g = devGroupById(route.group);
+    frag.append(...(g ? groupPage(g) : [el('div', 'empty-state', 'That project isn\'t in the last check.')]));
+  } else if (route.cat) {
+    const c = devReport.categories.find((x) => x.key === route.cat);
+    frag.append(...(c ? categoryPage(c) : [el('div', 'empty-state', 'Nothing here in the last check.')]));
+  } else {
+    frag.append(...devOverview(dev));
+  }
+  if (devResult) {
+    const [ok, msg] = devResult;
+    frag.append(el('div', 'dev-banner ' + (ok ? 'ok' : 'bad'), msg));
+  }
+  frag.append(groupMode && !route.group && !route.cat ? groupBar() : selectionBar());
+  content.replaceChildren(frag);
+  content.scrollTop = y;
+}
+
+// ---- overview
+
+function devOverview(dev) {
+  const total = devSize(devItems());
   const again = el('button', 'link small', dev.running ? 'Checking…' : 'Check again');
   again.disabled = dev.running;
   again.addEventListener('click', startDevCheck);
-  chips.append(again);
-  title.append(chips);
-  head.append(title);
-  frag.append(head);
+  const out = [devHeader(devIcon(), 'Developer cleanup',
+    'Things your development tools recreate when they need them, project by project. Cleaning deletes them permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer.',
+    [el('span', 'chip', bytes(total) + ' in all'), el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)), again])];
 
-  if (!devReport || !devReport.scannedAtUtc) {
-    frag.append(el('div', 'empty-state', dev.running ? 'Checking… this takes a minute or so.' : 'Not checked yet.'));
-    view.replaceChildren(frag);
-    return;
+  const groups = devGroups();
+  if (groups.length) {
+    const head = el('div', 'list-head');
+    head.append(el('h2', null, 'Projects'));
+    const toggle = el('button', 'link small', groupMode ? 'Cancel grouping' : 'Group repositories into a project');
+    toggle.addEventListener('click', () => { groupMode = !groupMode; groupPick.clear(); renderDev(); });
+    head.append(toggle);
+    out.push(head);
+    if (groupMode) out.push(el('p', 'muted small', 'Tick the repositories that belong together (an app and its backend, a monorepo split in two), then name the project.'));
+    const grid = el('div', 'cat-grid');
+    const biggest = Math.max(1, ...groups.map((g) => g.bytes));
+    for (const g of groups) grid.append(projectCard(g, biggest));
+    out.push(grid);
   }
-  if (!devReport.categories.length) frag.append(el('div', 'empty-state', 'Nothing to clean up.'));
-  else {
-    frag.append(devActionBar());
-    for (const c of devReport.categories) frag.append(devCategory(c));
+  const shared = devReport.categories.filter((c) => SHARED.includes(c.key));
+  if (shared.length) {
+    out.push(el('h2', null, 'Shared by all projects'));
+    const grid = el('div', 'cat-grid');
+    for (const c of shared) {
+      const blocked = c.items.filter((i) => i.blocked).length;
+      const picked = c.items.filter((i) => devTicks.has(i.id) && !i.blocked);
+      grid.append(sharedCard(c, blocked, picked));
+    }
+    out.push(grid);
   }
-  if ((devReport.repositories || []).length) frag.append(repoSection(devReport.repositories));
-  view.replaceChildren(frag);
+  if (!groups.length && !shared.length) out.push(el('div', 'empty-state', 'Nothing to clean up.'));
+  return out;
 }
 
-const pruneResults = new Map(); // repository id -> [ok, message] after pruning
+function projectCard(g, biggest) {
+  const card = el(groupMode ? 'label' : 'button', 'cat-card' + (groupMode && g.repos.every((r) => groupPick.has(r.key)) ? ' picked' : ''));
+  const top = el('div', 'cat-top');
+  if (groupMode) {
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = g.repos.every((r) => groupPick.has(r.key));
+    box.addEventListener('change', () => {
+      for (const r of g.repos) if (box.checked) groupPick.add(r.key); else groupPick.delete(r.key);
+      renderDev();
+    });
+    top.append(box);
+  }
+  const glyph = el('span', 'cat-icon big');
+  glyph.append(g.project ? icon('stack') : icon('branch'));
+  top.append(glyph);
+  const text = el('div');
+  text.style.minWidth = '0';
+  text.append(el('div', 'cat-title', g.name), el('div', 'cat-amount', g.bytes >= 1 << 20 ? bytes(g.bytes) : '–'));
+  top.append(text);
+  card.append(top);
+  const bar = el('div', 'usage');
+  const fill = el('div', 'fill');
+  fill.style.width = Math.max(1.5, (100 * g.bytes) / biggest) + '%';
+  bar.append(fill);
+  card.append(bar);
+  const parts = [];
+  if (g.project) parts.push(count(g.repos.length, 'repository', 'repositories'));
+  if (g.outputs.length) parts.push('build outputs');
+  if (g.worktrees.length) parts.push(count(g.worktrees.length, 'worktree', 'worktrees'));
+  if (g.merged) parts.push(count(g.merged, 'merged branch', 'merged branches'));
+  card.append(el('div', 'muted small', parts.join(' · ') || 'Nothing to clean'));
+  const picked = g.items.filter((i) => devTicks.has(i.id) && !i.blocked);
+  if (picked.length) card.append(el('span', 'chip good', bytes(devSize(picked)) + ' selected'));
+  if (!groupMode) card.addEventListener('click', () => { location.hash = '#/dev/g/' + encodeURIComponent(g.id); });
+  return card;
+}
 
-function repoSection(repos) {
-  const box = el('section', 'dev-category');
-  const head = el('div', 'section-head');
-  const merged = repos.reduce((a, r) => a + r.merged.length, 0);
-  head.append(el('h2', null, 'Repositories · ' + count(merged, 'merged branch', 'merged branches')));
+function sharedCard(c, blocked, picked) {
+  const card = el('button', 'cat-card');
+  const top = el('div', 'cat-top');
+  top.append(catIcon(c.key, true));
+  const text = el('div');
+  text.style.minWidth = '0';
+  text.append(el('div', 'cat-title', DEV_META[c.key].short), el('div', 'cat-amount', bytes(devSize(c.items))));
+  top.append(text);
+  card.append(top);
+  card.append(el('div', 'muted small', count(c.items.length, 'item', 'items') + (blocked ? ' · ' + blocked + ' in use or kept' : '')));
+  if (picked.length) card.append(el('span', 'chip good', bytes(devSize(picked)) + ' selected'));
+  card.addEventListener('click', () => { location.hash = '#/dev/s/' + c.key; });
+  return card;
+}
+
+/** While grouping: how many repositories are picked, and the button that bundles them. */
+function groupBar() {
+  const bar = el('div', 'sel-bar show');
+  const text = el('div', 'sel-text');
+  text.append(el('div', 'sel-count', groupPick.size ? count(groupPick.size, 'repository', 'repositories') + ' picked' : 'Pick two or more repositories'));
+  text.append(el('div', 'muted small', 'A repository belongs to one project; picking a project\'s card picks all of its repositories.'));
+  bar.append(text);
+  const cancel = el('button', 'btn secondary', 'Cancel');
+  cancel.addEventListener('click', () => { groupMode = false; groupPick.clear(); renderDev(); });
+  const make = el('button', 'btn', 'Group as one project');
+  make.disabled = groupPick.size < 2;
+  make.addEventListener('click', groupPicked);
+  bar.append(cancel, make);
+  return bar;
+}
+
+async function groupPicked() {
+  const groups = devGroups();
+  const pickedRepos = groups.flatMap((g) => g.repos).filter((r) => groupPick.has(r.key));
+  const fromProject = groups.find((g) => g.project && g.repos.some((r) => groupPick.has(r.key)));
+  const name = (prompt('Name for the project (' + pickedRepos.map((r) => r.name).join(', ') + '):', fromProject ? fromProject.name : pickedRepos[0].name) || '').trim();
+  if (!name) return;
+  // Picked repositories leave the projects they were in; the new project takes them all.
+  const next = devProjects
+    .map((p) => ({ name: p.name, repos: p.repos.filter((r) => !groupPick.has(rkey(r))) }))
+    .filter((p) => p.name.toLowerCase() !== name.toLowerCase());
+  next.push({ name, repos: pickedRepos.map((r) => r.path) });
+  await saveProjects(next);
+  groupMode = false;
+  groupPick.clear();
+  location.hash = '#/dev/g/' + encodeURIComponent('p:' + name.toLowerCase());
+  renderDev();
+}
+
+async function saveProjects(next) {
+  try {
+    devProjects = await post('/api/dev/projects', next);
+  } catch (e) { showError(e.message); }
+}
+
+// ---- a project's page
+
+function groupPage(g) {
+  const chips = [el('span', 'chip', bytes(g.bytes))];
+  if (g.merged) chips.push(el('span', 'chip quiet', count(g.merged, 'merged branch', 'merged branches')));
+  const picked = g.items.filter((i) => devTicks.has(i.id) && !i.blocked);
+  if (picked.length) chips.push(el('span', 'chip good', bytes(devSize(picked)) + ' selected'));
+  let intro;
+  if (g.project) {
+    intro = el('div', 'project-repos');
+    intro.append(el('span', 'dev-intro', 'A project of ' + count(g.repos.length, 'repository', 'repositories') + ':'));
+    for (const r of g.repos) {
+      const chip = el('span', 'chip quiet repo-chip');
+      chip.append(el('span', null, r.name));
+      chip.title = r.path;
+      const x = el('button', 'chip-x', '×');
+      x.title = 'Take ' + r.name + ' out of ' + g.name;
+      x.setAttribute('aria-label', x.title);
+      x.addEventListener('click', async () => {
+        await saveProjects(devProjects.map((p) => p === g.project ? { name: p.name, repos: p.repos.filter((q) => rkey(q) !== r.key) } : p));
+        if (!devProjects.some((p) => p.name === g.name)) location.hash = '#/dev';
+        renderDev();
+      });
+      chip.append(x);
+      intro.append(chip);
+    }
+    const ungroup = el('button', 'link small', 'Ungroup');
+    ungroup.addEventListener('click', async () => {
+      await saveProjects(devProjects.filter((p) => p !== g.project));
+      location.hash = '#/dev';
+      renderDev();
+    });
+    intro.append(ungroup);
+  } else {
+    intro = g.repos[0].path;
+  }
+  const out = [devHeader(g.project ? bigIcon('stack') : bigFolder(), g.name, intro, chips)];
+  const multi = g.repos.length > 1;
+  if (g.outputs.length) out.push(devSection('projects', g.outputs, multi));
+  if (g.worktrees.length) out.push(devSection('worktrees', g.worktrees, multi));
+  if (g.branches.length) out.push(branchSection(g.branches));
+  if (!g.outputs.length && !g.worktrees.length && !g.branches.length) out.push(el('div', 'empty-state', 'Nothing to clean in this project.'));
+  return out;
+}
+
+function bigIcon(name) {
+  const box = el('span', 'cat-icon big hero');
+  box.append(icon(name));
+  return box;
+}
+
+function bigFolder() {
+  const f = folderIcon(false);
+  f.classList.add('hero-folder');
+  return f;
+}
+
+/** One cleanup area of a project: its items, ticked ones first to clean, the blocked ones folded. */
+function devSection(k, items, showRepo) {
+  const box = el('section', 'dev-section');
+  const head = el('div', 'dev-section-head');
+  head.append(catIcon(k));
+  const title = el('div', 'dev-section-title');
+  title.append(el('span', null, DEV_META[k].short), el('span', 'muted', ' · ' + bytes(devSize(items))));
+  head.append(title);
+  const open = items.filter((i) => !i.blocked);
+  if (open.length > 1) {
+    const allOn = open.every((i) => devTicks.has(i.id));
+    const toggle = el('button', 'link small', allOn ? 'Select none' : 'Select all');
+    toggle.addEventListener('click', () => { for (const i of open) if (allOn) devTicks.delete(i.id); else devTicks.add(i.id); renderDev(); });
+    head.append(toggle);
+  }
   box.append(head);
-  box.append(el('p', 'muted small', 'Local branches already merged into the remote\'s main or master. Pruning fetches first, then deletes those local branches with git. ' +
-    'Never main, master, develop or a branch checked out in a worktree; branches on the remote are never touched.'));
-  const table = el('table', 'details dev-table');
-  const tbody = el('tbody');
-  for (const r of repos) {
-    const row = el('tr', 'repo-row');
-    const what = el('td', 'what');
-    what.colSpan = 2;
-    const name = el('div', 'dev-name');
-    name.append(el('span', null, r.name));
-    what.append(name);
-    const where = el('div', 'folder muted small', r.path);
-    where.title = r.path;
-    what.append(where);
-    what.append(el('div', 'muted small', r.default
+  box.append(el('p', 'muted small', DEV_META[k].blurb));
+  if (open.length) {
+    const list = el('div', 'dev-list');
+    for (const i of open) list.append(devRow(i, showRepo));
+    box.append(list);
+  }
+  const blocked = items.filter((i) => i.blocked);
+  if (blocked.length) {
+    const group = el('details', 'blocked-group');
+    group.append(el('summary', null, count(blocked.length, 'item', 'items') + ' in use or kept, ' + bytes(devSize(blocked))));
+    const list = el('div', 'dev-list');
+    for (const i of blocked) list.append(devRow(i, showRepo));
+    group.append(list);
+    box.append(group);
+  }
+  return box;
+}
+
+function branchSection(branches) {
+  const box = el('section', 'dev-section');
+  const head = el('div', 'dev-section-head');
+  head.append(catIcon('repos'));
+  const merged = branches.reduce((a, b) => a + b.merged.length, 0);
+  const title = el('div', 'dev-section-title');
+  title.append(el('span', null, DEV_META.repos.short), el('span', 'muted', ' · ' + count(merged, 'branch', 'branches')));
+  head.append(title);
+  box.append(head);
+  box.append(el('p', 'muted small', DEV_META.repos.blurb + ' Prune fetches first; hover it to see why it\'s safe.'));
+  const list = el('div', 'dev-list');
+  for (const r of branches) {
+    const row = el('div', 'dev-item repo-item');
+    const main = el('div', 'dev-item-main');
+    main.append(el('div', 'dev-item-name', r.name));
+    main.append(el('div', 'muted small', r.default
       ? count(r.localBranches, 'local branch', 'local branches') + ' · compared with ' + r.default
       : r.note || ''));
     if (r.merged.length) {
-      const list = el('details', 'branches');
-      list.append(el('summary', 'small', count(r.merged.length, 'merged branch', 'merged branches') + ' to delete'));
-      list.append(el('div', 'muted small branch-list', r.merged.join(', ')));
-      what.append(list);
+      const chips = el('div', 'chips');
+      for (const b of r.merged.slice(0, 12)) chips.append(el('span', 'chip quiet', b));
+      if (r.merged.length > 12) chips.append(el('span', 'chip quiet', '+' + (r.merged.length - 12) + ' more'));
+      main.append(chips);
     }
-    if (r.checkedOut.length) what.append(el('div', 'muted small', 'Kept (checked out): ' + r.checkedOut.join(', ')));
+    if (r.checkedOut.length) main.append(el('div', 'muted small', 'Kept, checked out in a worktree: ' + r.checkedOut.join(', ')));
     if (pruneResults.has(r.id)) {
       const [ok, msg] = pruneResults.get(r.id);
-      what.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
+      main.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
     }
-    row.append(what);
-    const act = el('td', 'num size');
-    const btn = el('button', 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'None');
+    row.append(main);
+    const side = el('div', 'dev-item-side');
+    const btn = el('button', r.merged.length ? 'btn' : 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'Nothing to prune');
     btn.disabled = !r.merged.length || devBusy;
     btn.addEventListener('click', () => pruneRepo(r));
-    act.append(pruneTip(r, btn));
-    row.append(act);
-    tbody.append(row);
+    side.append(pruneTip(r, btn));
+    row.append(side);
+    list.append(row);
   }
-  table.append(tbody);
-  box.append(table);
+  box.append(list);
   return box;
 }
+
+// ---- a shared category's page
+
+function categoryPage(c) {
+  const items = c.items;
+  const picked = items.filter((i) => devTicks.has(i.id) && !i.blocked);
+  const chips = [el('span', 'chip', bytes(devSize(items))), el('span', 'chip quiet', count(items.length, 'item', 'items'))];
+  if (picked.length) chips.push(el('span', 'chip good', bytes(devSize(picked)) + ' selected'));
+  return [devHeader(bigIcon(DEV_META[c.key].icon), c.title, c.explain, chips), devSection(c.key, items, false)];
+}
+
+function devRow(i, showRepo) {
+  const row = el('label', 'dev-item' + (i.blocked ? ' blocked' : '') + (devTicks.has(i.id) && !i.blocked ? ' on' : ''));
+  const box = el('input');
+  box.type = 'checkbox';
+  box.checked = devTicks.has(i.id) && !i.blocked;
+  box.disabled = !!i.blocked || devBusy;
+  box.addEventListener('change', () => { if (box.checked) devTicks.add(i.id); else devTicks.delete(i.id); renderDev(); });
+  row.append(box);
+  const main = el('div', 'dev-item-main');
+  const name = el('div', 'dev-item-name');
+  // A project's build outputs are one row per repository: name it by what's in it, not the repository twice.
+  name.append(el('span', null, i.kind === 'projects' && !showRepo ? 'Build outputs' : i.name));
+  if (i.blocked) name.append(el('span', 'tag', i.blocked));
+  else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
+  main.append(name);
+  const where = el('div', 'folder muted small', i.location);
+  where.title = i.location;
+  main.append(where);
+  // On a single repository's page, 'worktree of <it>' says nothing new.
+  const facts = (i.detail || '').split(/, | · /).filter((f) => f && !(i.kind === 'worktrees' && !showRepo && f.startsWith('worktree of ')));
+  if (facts.length) {
+    const chips = el('div', 'chips');
+    for (const f of facts) chips.append(el('span', 'chip quiet', f));
+    main.append(chips);
+  }
+  row.append(main);
+  const side = el('div', 'dev-item-side');
+  side.append(el('div', 'dev-size', bytes(i.bytes)));
+  if (i.lastUsedUtc) side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
+  row.append(side);
+  return row;
+}
+
+const pruneResults = new Map(); // repository id -> [ok, message] after pruning
 
 /** The Prune button with a tooltip (hover or keyboard focus) saying what it does and why nothing is lost. */
 function pruneTip(r, btn) {
@@ -541,7 +939,7 @@ function pruneTip(r, btn) {
   // Above the button when it fits in the scrolling view, otherwise below: the view scrolls down to
   // whatever doesn't fit there, while a tooltip clipped at the top can't be read.
   const place = () => {
-    const view = wrap.closest('.view');
+    const view = wrap.closest('.content, .view');
     if (!view) return;
     const above = wrap.getBoundingClientRect().top - view.getBoundingClientRect().top;
     wrap.classList.toggle('below', above < body.offsetHeight + 12);
@@ -572,25 +970,36 @@ async function pruneRepo(r) {
   refresh(true);
 }
 
-function devActionBar() {
-  const picked = devItems().filter((i) => devTicks.has(i.id) && !i.blocked);
-  const size = picked.reduce((a, i) => a + i.bytes, 0);
-  const bar = el('div', 'cleanup dev-bar');
-  const text = el('div');
-  text.append(el('div', null, picked.length ? count(picked.length, 'item', 'items') + ' selected · ' + bytes(size) : 'Nothing selected'));
-  const result = el('div', 'result small');
-  result.id = 'dev-result';
-  text.append(result);
+/** Appears once something is ticked, on any page: the one place to clean from. */
+function selectionBar() {
+  const picked = devPicked();
+  const bar = el('div', 'sel-bar' + (picked.length || devBusy ? ' show' : ''));
+  if (!picked.length && !devBusy) return bar;
+  const text = el('div', 'sel-text');
+  const where = [...new Set(picked.map((i) => {
+    if (i.kind === 'projects') return i.name;
+    if (i.kind === 'worktrees') return (i.repo || '').split(SEP).pop();
+    const c = devReport.categories.find((x) => x.items.includes(i));
+    return c ? DEV_META[c.key].short : '';
+  }))].filter(Boolean);
+  text.append(el('div', 'sel-count', devBusy ? 'Cleaning…' : count(picked.length, 'item', 'items') + ' selected · ' + bytes(devSize(picked))));
+  const status = el('div', 'muted small');
+  status.id = 'dev-status';
+  status.textContent = devBusy ? '' : 'in ' + where.slice(0, 4).join(', ') + (where.length > 4 ? ' and ' + (where.length - 4) + ' more' : '');
+  text.append(status);
   bar.append(text);
-  const btn = el('button', 'btn', devBusy ? 'Cleaning…' : picked.length ? 'Clean ' + bytes(size) : 'Clean');
-  btn.disabled = !picked.length || devBusy;
-  btn.addEventListener('click', () => cleanDev(picked));
-  bar.append(btn);
+  const clear = el('button', 'btn secondary', 'Clear');
+  clear.disabled = devBusy;
+  clear.addEventListener('click', () => { for (const i of picked) devTicks.delete(i.id); renderDev(); });
+  const clean = el('button', 'btn', devBusy ? 'Cleaning…' : 'Clean ' + bytes(devSize(picked)));
+  clean.disabled = devBusy;
+  clean.addEventListener('click', () => cleanDev(picked));
+  bar.append(clear, clean);
   return bar;
 }
 
 async function cleanDev(picked) {
-  const size = picked.reduce((a, i) => a + i.bytes, 0);
+  const size = devSize(picked);
   const lines = ['Delete ' + count(picked.length, 'item', 'items') + ' (' + bytes(size) + ') permanently?',
     'Tools recreate them when needed; the next build or install takes longer.'];
   const worktrees = picked.filter((i) => i.kind === 'worktrees').length;
@@ -598,12 +1007,13 @@ async function cleanDev(picked) {
   if (picked.some((i) => i.kind === 'avd')) lines.push('Deleting an emulator deletes the apps and data inside it.');
   if (!confirm(lines.join('\n\n'))) return;
   devBusy = true;
+  devResult = null;
   renderDev();
   let freed = 0, left = 0;
   const failed = [];
   for (const [n, i] of picked.entries()) {
-    const status = $('dev-result');
-    if (status) status.textContent = 'Cleaning ' + i.name + '… (' + (n + 1) + ' of ' + picked.length + ')';
+    const status = $('dev-status');
+    if (status) status.textContent = i.name + ' (' + (n + 1) + ' of ' + picked.length + ')';
     try {
       const r = await post('/api/dev/items/' + encodeURIComponent(i.id) + '/clean');
       freed += r.freedBytes;
@@ -615,67 +1025,11 @@ async function cleanDev(picked) {
     }
   }
   devBusy = false;
+  devResult = [!failed.length, 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file was', 'files were') + ' in use and left alone.' : '') +
+    (failed.length ? ' Not cleaned: ' + failed.join('; ') : '')];
   await loadDevReport();
   renderDev();
-  const status = $('dev-result');
-  if (status) {
-    status.textContent = 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file was', 'files were') + ' in use and left alone.' : '') +
-      (failed.length ? ' Not cleaned: ' + failed.join('; ') : '');
-    status.className = 'result small ' + (failed.length ? 'bad' : 'ok');
-  }
   refresh(true);
-}
-
-function devCategory(c) {
-  const box = el('section', 'dev-category');
-  const head = el('div', 'section-head');
-  head.append(el('h2', null, c.title + ' · ' + bytes(c.items.reduce((a, i) => a + i.bytes, 0))));
-  const selectable = c.items.filter((i) => !i.blocked);
-  if (selectable.length > 1) {
-    const allOn = selectable.every((i) => devTicks.has(i.id));
-    const toggle = el('button', 'link small', allOn ? 'Select none' : 'Select all');
-    toggle.addEventListener('click', () => {
-      for (const i of selectable) if (allOn) devTicks.delete(i.id); else devTicks.add(i.id);
-      renderDev();
-    });
-    head.append(toggle);
-  }
-  box.append(head);
-  box.append(el('p', 'muted small', c.explain));
-  const table = el('table', 'details dev-table');
-  const tbody = el('tbody');
-  for (const i of c.items) {
-    const row = el('tr', 'dev-row' + (i.blocked ? ' exempt' : ''));
-    const tickCell = el('td', 'tick-cell');
-    const box2 = el('input');
-    box2.type = 'checkbox';
-    box2.checked = devTicks.has(i.id) && !i.blocked;
-    box2.disabled = !!i.blocked || devBusy;
-    box2.setAttribute('aria-label', 'Clean ' + i.name);
-    box2.addEventListener('change', () => { if (box2.checked) devTicks.add(i.id); else devTicks.delete(i.id); renderDev(); });
-    tickCell.append(box2);
-    row.append(tickCell);
-    const what = el('td', 'what');
-    const name = el('div', 'dev-name');
-    name.append(el('span', null, i.name));
-    if (i.blocked) name.append(el('span', 'tag', i.blocked));
-    else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
-    what.append(name);
-    const where = el('div', 'folder muted small', i.location);
-    where.title = i.location;
-    what.append(where);
-    if (i.detail) what.append(el('div', 'muted small', i.detail));
-    if (i.lastUsedUtc) what.append(el('div', 'muted small when-inline', lastUsed(i.lastUsedUtc)));
-    row.append(what);
-    row.append(el('td', 'muted small when', lastUsed(i.lastUsedUtc)));
-    row.append(el('td', 'num size', bytes(i.bytes)));
-    if (i.lastUsedUtc) where.title = i.location + ' · ' + lastUsed(i.lastUsedUtc);
-    row.addEventListener('click', (e) => { if (e.target !== box2 && !box2.disabled) { box2.checked = !box2.checked; box2.dispatchEvent(new Event('change')); } });
-    tbody.append(row);
-  }
-  table.append(tbody);
-  box.append(table);
-  return box;
 }
 
 function driveCard(d) {
@@ -1258,6 +1612,7 @@ async function renderRoute() {
   $('folder').classList.toggle('hidden', !folder);
   if (route.view === 'dev') {
     if (!devReport || (state.dev.scannedAtUtc && devReport.scannedAtUtc !== state.dev.scannedAtUtc)) await loadDevReport();
+    renderCrumbs(); // a project's name comes with the report
     renderDev();
     return;
   }
@@ -1306,7 +1661,11 @@ $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
 $('nav-back').addEventListener('click', () => history.back());
 $('nav-fwd').addEventListener('click', () => history.forward());
-$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') go(null); });
+$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } });
+$('dev-nav-toggle').addEventListener('click', () => {
+  const open = $('dev-nav').classList.toggle('open');
+  $('dev-nav-toggle').setAttribute('aria-expanded', String(open));
+});
 $('navpane-toggle').addEventListener('click', () => {
   const open = $('navpane').classList.toggle('open');
   $('navpane-toggle').setAttribute('aria-expanded', String(open));

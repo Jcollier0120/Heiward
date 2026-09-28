@@ -114,7 +114,14 @@ namespace VDF.Agent {
 				DecisionStore.Set(key, null);
 				return Results.Ok();
 			});
-			app.MapGet("/api/dev", () => Results.Json(DevReport.Load() ?? new DevReport(), AgentConfig.Json));
+			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
+			app.MapGet("/api/dev", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
+			app.MapPost("/api/dev/projects", (List<DevProject> projects) => {
+				var saved = AgentConfig.Load();
+				saved.DevProjects = DevProject.Normalize(projects);
+				saved.Save();
+				return Results.Json(saved.DevProjects, AgentConfig.Json);
+			});
 			app.MapPost("/api/dev/scan", () => {
 				if (DevScan.IsRunning()) return Results.Conflict(new { error = "A developer check is already running." });
 				StartDetached("dev", "--scan");

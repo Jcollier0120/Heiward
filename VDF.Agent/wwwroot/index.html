@@ -72,7 +72,13 @@
     <footer class="muted small" id="footer"></footer>
   </main>
 
-  <main id="devview" class="view home hidden"></main>
+  <main id="devview" class="view split hidden">
+    <aside class="navpane" id="dev-nav" aria-label="Developer cleanup">
+      <button class="navpane-toggle" id="dev-nav-toggle" aria-expanded="false">Projects and categories</button>
+      <div class="tree" id="dev-tree"></div>
+    </aside>
+    <section class="content" id="dev-content"></section>
+  </main>
 
   <main id="folder" class="view split hidden">
     <aside class="navpane" id="navpane" aria-label="Folders">

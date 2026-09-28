@@ -55,6 +55,31 @@ namespace VDF.Agent {
 		}
 	}
 
+	/// <summary>Several repositories shown as one project in Developer cleanup.</summary>
+	sealed record DevProject(string Name, List<string> Repos) {
+		/// <summary>
+		/// What the page sent, made consistent: names trimmed and unique, each repository (a full path) in
+		/// one project only, and a project needing two repositories (one is just the repository).
+		/// </summary>
+		public static List<DevProject> Normalize(IEnumerable<DevProject>? projects) {
+			var result = new List<DevProject>();
+			var taken = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (DevProject p in projects ?? Enumerable.Empty<DevProject>()) {
+				string name = (p.Name ?? "").Trim();
+				if (name.Length is 0 or > 80 || result.Any(r => r.Name.Equals(name, StringComparison.OrdinalIgnoreCase))) continue;
+				var repos = (p.Repos ?? new())
+					.Where(r => !string.IsNullOrWhiteSpace(r) && Path.IsPathFullyQualified(r))
+					.Select(r => Path.TrimEndingDirectorySeparator(Path.GetFullPath(r)))
+					.Distinct(StringComparer.OrdinalIgnoreCase)
+					.Where(taken.Add)
+					.ToList();
+				if (repos.Count >= 2) result.Add(new DevProject(name, repos));
+				else foreach (string r in repos) taken.Remove(r);
+			}
+			return result;
+		}
+	}
+
 	/// <summary>The user's choices, in agent.json. Every field has a working default.</summary>
 	sealed class AgentConfig {
 		/// <summary>
@@ -102,6 +127,9 @@ namespace VDF.Agent {
 		public int StaleProjectDays { get; set; } = 30;
 		/// <summary>Temp files untouched this many days are ticked for cleaning.</summary>
 		public int TempOlderThanDays { get; set; } = 7;
+
+		/// <summary>Repositories the user bundled into one project on the review page (each in at most one).</summary>
+		public List<DevProject> DevProjects { get; set; } = new();
 
 		[JsonIgnore]
 		public bool DeveloperModeOn => !string.Equals(DeveloperMode, "off", StringComparison.OrdinalIgnoreCase);

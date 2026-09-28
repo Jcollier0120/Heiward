@@ -70,6 +70,13 @@ Every fixed drive: internal drives, and external disks that Windows reports as f
 
 Once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there. Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
 
+The page is organised by project:
+- **Each repository** has its own page, with a section per cleanup area: build outputs, worktrees and merged branches.
+- **Projects:** "Group repositories into a project" bundles repositories that belong together, such as an app and its backend, under one name. The bundles are saved in `agent.json` (`devProjects`), and a project's page can take a repository out or ungroup it.
+- **Shared by all projects:** package caches, emulators and temp files, since they belong to no single repository.
+
+Tick items anywhere; a selection bar at the bottom cleans them all at once.
+
 | What | Recognised by | Ticked for you |
 |---|---|---|
 | Build outputs: `node_modules`, `bin`/`obj`, Gradle `build`/`.gradle`/`.cxx`, `target`, `.venv`, `.next` | the project file beside it (`package.json`, a `.csproj`, `build.gradle`, `Cargo.toml`, ...), so a folder that merely has the name is left alone | in projects untouched for 30 days (`staleProjectDays`), judged by git's own files and the project's top level |
