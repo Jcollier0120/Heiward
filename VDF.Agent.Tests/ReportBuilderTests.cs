@@ -156,6 +156,45 @@ public sealed class ReportBuilderTests : IDisposable {
 	}
 
 	[Fact]
+	public void TwoSetsOfCopiesInOneGroup_EachKeepsOneAndTicksTheOther() {
+		// Regression (a real library): two look-alike burst shots, each imported twice, came as one
+		// VDF group. Judged against one kept file, the second shot's copy was a look-alike, unticked.
+		byte[] a = Bytes(8000, 1), b = Bytes(8100, 2);
+		var shotA = Photo("20151008_204237.jpg", 5312, 2988, a, modified: new DateTime(2015, 10, 8, 20, 42, 37, DateTimeKind.Utc));
+		var copyA = Photo("20151008_204237(1).jpg", 5312, 2988, a, modified: new DateTime(2015, 10, 8, 20, 42, 37, DateTimeKind.Utc));
+		var shotB = Photo("20151008_204240.jpg", 5312, 2988, b, gray: 93.97f, modified: new DateTime(2015, 10, 8, 20, 42, 40, DateTimeKind.Utc));
+		var copyB = Photo("20151008_204240(1).jpg", 5312, 2988, b, gray: 93.97f, modified: new DateTime(2015, 10, 8, 20, 42, 40, DateTimeKind.Utc));
+
+		var groups = ReportBuilder.Build(new[] { shotA, copyA, shotB, copyB }, fingerprints);
+		Assert.Equal(2, groups.Count);
+		Assert.Contains(groups, g => g.KeepPath == shotA.Path && g.Items.Single(i => i.Path == copyA.Path).Suggested);
+		Assert.Contains(groups, g => g.KeepPath == shotB.Path && g.Items.Single(i => i.Path == copyB.Path).Suggested);
+	}
+
+	[Theory]
+	[InlineData("IMG_20141118_180734.jpg", "IMG_20141118_180734_Original.jpg")] // Samsung, Picasa
+	[InlineData("IMG_1234-edited.jpg", "IMG_1234.jpg")]                         // Google Photos
+	public void APhotoAndItsNamedEdit_AreBothKept(string edited, string original) {
+		// Regression (a real library): a light edit scored 99.68% against its original, above the
+		// plain-copy line, and the original was pre-ticked.
+		var g = Single(
+			Photo(edited, 1836, 3264, Bytes(7900, 1), modified: new DateTime(2014, 11, 18, 0, 0, 0, DateTimeKind.Utc)),
+			Photo(original, 1836, 3264, Bytes(10900, 2), gray: 99.68f, modified: new DateTime(2014, 11, 19, 0, 0, 0, DateTimeKind.Utc)));
+		Assert.DoesNotContain(g.Items, i => i.Suggested);
+		Assert.Contains(g.Items, i => i.Relation == "edited");
+	}
+
+	[Theory]
+	[InlineData("IMG_3345.GIF", "IMG_4327.GIF")]
+	[InlineData("IMG_3785.GIF", "IMG_3784.JPG")]
+	public void AnimatedPictures_MatchedByTheirFirstFrame_AreNotTicked(string a, string b) {
+		// Regression (a real library): two different GIFs that start with the same frame, and a still
+		// taken from a GIF, were pre-ticked as copies.
+		var g = Single(Photo(a, 720, 404, Bytes(9000, 1)), Photo(b, 588, 330, Bytes(2000, 2), gray: 99.87f));
+		Assert.DoesNotContain(g.Items, i => i.Suggested);
+	}
+
+	[Fact]
 	public void GroupKey_IgnoresOrderAndCase() {
 		Assert.Equal(ReportBuilder.GroupKey(new[] { @"C:\A\x.jpg", @"C:\B\y.jpg" }), ReportBuilder.GroupKey(new[] { @"c:\b\Y.JPG", @"C:\A\x.jpg" }));
 		Assert.NotEqual(ReportBuilder.GroupKey(new[] { @"C:\A\x.jpg", @"C:\B\y.jpg" }), ReportBuilder.GroupKey(new[] { @"C:\A\x.jpg", @"C:\B\z.jpg" }));

@@ -30,8 +30,8 @@ Code decides everything shown on the page. No model output is trusted to delete 
 |---|---|---|
 | Identical copy | Byte-for-byte the same file (SHA-256) | yes |
 | Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed | yes |
-| Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%) | no |
-| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike, such as bursts | no |
+| Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`) | no |
+| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike, such as bursts. Also animated pictures (GIF, WebP), which are compared by their first frame only | no |
 
 **Which copy to keep:**
 - **Photos:** the highest resolution, then the camera original (it has a capture date), then the oldest file, then the largest. File size alone isn't quality: a colour edit makes a bigger JPEG than the original.
@@ -46,6 +46,22 @@ Code decides everything shown on the page. No model output is trusted to delete 
 
 **Cloud-synced files** (iCloud Photos, OneDrive, Dropbox) are marked on the page, and you're asked before they go. Deleting one also deletes it from the cloud and your other devices. Files that exist only in the cloud are never read: reading one would download it.
 
+## What gets scanned
+
+Every fixed drive: internal drives, and external disks that Windows reports as fixed. USB sticks, card readers and network drives are left out unless you add them to `folders`. The report only lists your own files, so some folders are left out, with everything inside:
+
+| Left out | Why |
+|---|---|
+| `Windows`, `Program Files`, `ProgramData`, `Recovery`, `$Recycle.Bin` and other system folders at a drive's root | They belong to Windows and installed programs |
+| `AppData` in every profile, other people's profiles | Browser caches, app icons and saves; other accounts' files |
+| Game libraries: `steamapps`, `SteamLibrary`, `Epic Games`, `GOG Games`, `XboxGames`, `WindowsApps` and others | Textures and videos a game needs |
+| Photo apps' own libraries: `*.photoslibrary`, `*.lrdata`, `*.lrlibrary`, `*.cocatalog` | Their originals and previews are managed by the app |
+| Code repositories (a folder holding `.git`, `.hg` or `.svn`), `node_modules`, folders whose name starts with `.` | Test pictures and build copies belong to the project |
+| `AccountPictures` | Windows' account picture at nine sizes |
+| Folder links (junctions, symbolic links) | Scanned where they point, not twice |
+
+`vdf-agent scope` lists all of it; `vdf-agent scope --count` also counts the photos and videos per folder, without opening any file. Add your own with `excludeFolders`.
+
 ## Sharing the NPU
 
 Other NPU tools on the PC can use the NPU at the same time, for example npu-agent's maintenance jobs, which run a local LLM on the NPU. The agent takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists:
@@ -58,8 +74,10 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 
 | Field | Default | |
 |---|---|---|
-| `folders` | Pictures, Videos, Desktop, iCloud Photos, Downloads | Scanned with subfolders |
-| `excludeFolders`, `excludeExtensions` | none | e.g. `[".heic"]` |
+| `scanAllDrives` | true | Every fixed drive, minus the folders above |
+| `folders` | none | More folders to scan, e.g. a USB drive or `\\nas\photos` (the only ones when `scanAllDrives` is false) |
+| `excludeFolders` | none | A path (`D:\Scans`), a folder name at any depth (`Backups`), or either with wildcards (`D:\Old\*`, `*.bak`) |
+| `excludeExtensions` | none | e.g. `[".heic"]` |
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
 | `scanEveryMinutes` | 60 | Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
@@ -74,6 +92,7 @@ vdf-agent                 install (or, once installed, open the review page)
 vdf-agent scan [--open]   scan now
 vdf-agent open            open the review page
 vdf-agent status          settings, last scan, schedule, NPU lock
+vdf-agent scope [--count] what a scan looks at and leaves out
 vdf-agent setup           download FFmpeg and the AI components
 vdf-agent install         [--dry-run] [--yes] [--device npu|gpu|cpu]
 vdf-agent uninstall       [--purge] [--dry-run]

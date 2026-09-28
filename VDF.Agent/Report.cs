@@ -124,6 +124,7 @@ namespace VDF.Agent {
 				.ToList();
 			GatherSplitCopies(members, hashes, fingerprints);
 			return members
+				.SelectMany(items => SplitByPicture(items, hashes, fingerprints))
 				.Where(items => items.Count >= 2)
 				.Select(items => BuildGroup(items, hashes, fingerprints))
 				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
@@ -166,6 +167,37 @@ namespace VDF.Agent {
 			return others.SelectMany(o => here.Select(c => fingerprints.GrayPercent(o.Path, c.Path) ?? 0f)).Max();
 		}
 
+		/// <summary>
+		/// A VDF group can hold more than one set of copies: two look-alike burst shots, each imported
+		/// twice. Judged against a single kept file, the second shot's copy is only a look-alike and
+		/// isn't ticked. Such a group becomes one group per picture, each with its own kept file; files
+		/// that copy none of the others (look-alikes) leave the report.
+		/// </summary>
+		static IEnumerable<List<DuplicateItem>> SplitByPicture(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints) {
+			if (items.Count < 4) { // two sets of copies take four files
+				yield return items;
+				yield break;
+			}
+			var sets = new List<List<DuplicateItem>>();
+			var rest = new List<DuplicateItem>(items);
+			while (rest.Count > 0) {
+				DuplicateItem keep = rest.Count == 1 ? rest[0] : (items[0].IsImage ? PickPhotoKeeper(rest) : PickVideoKeeper(rest)).Item1;
+				var set = rest.Where(i => ReferenceEquals(i, keep) || IsPlainCopy(Relation(i, keep, hashes, fingerprints))).ToList();
+				sets.Add(set);
+				rest.RemoveAll(set.Contains);
+			}
+			var copies = sets.Where(s => s.Count >= 2).ToList();
+			if (copies.Count < 2) {
+				yield return items;
+				yield break;
+			}
+			foreach (var set in copies)
+				yield return set;
+		}
+
+		/// <summary>The relations that are the same picture, pixel for pixel: the ones pre-ticked.</summary>
+		static bool IsPlainCopy(string relation) => relation is "identical" or "smaller" or "compressed" or "resaved";
+
 		static ReportGroup BuildGroup(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints) {
 			bool isImage = items[0].IsImage;
 			(DuplicateItem keep, string reason) = isImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
@@ -174,7 +206,7 @@ namespace VDF.Agent {
 			foreach (DuplicateItem i in items.OrderByDescending(i => ReferenceEquals(i, keep)).ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)) {
 				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes, fingerprints);
 				(int w, int h) = ParseFrameSize(i.FrameSize);
-				bool suggested = relation is "identical" or "smaller" or "compressed" or "resaved";
+				bool suggested = IsPlainCopy(relation);
 				// Shown similarity: to the kept file (the AI's cosine where the pixels differ).
 				float? toKeepGray = ReferenceEquals(i, keep) ? 100f : fingerprints.GrayPercent(i.Path, keep.Path);
 				float? toKeepAi = ReferenceEquals(i, keep) ? null : fingerprints.AiPercent(i.Path, keep.Path);
@@ -207,6 +239,14 @@ namespace VDF.Agent {
 		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints) {
 			if (i.SizeLong == keep.SizeLong && hashes.Same(i.Path, keep.Path))
 				return "identical";
+			// Named as a photo and its edit (Google Photos' "-edited", Samsung's and Picasa's
+			// "_Original"): however light the edit (one scored 99.68%), both stay; the user decides.
+			if (IsOriginalAndEdit(i.Path, keep.Path))
+				return "edited";
+			// An animated picture is compared by its first frame only: two GIFs that start alike, or a
+			// still taken from one, are not copies of each other.
+			if (MayBeAnimated(i.Path) || MayBeAnimated(keep.Path))
+				return "variant";
 			if (fingerprints.GrayPercent(i.Path, keep.Path) is float gray && gray >= PlainCopyPercent) {
 				if (i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt)
 					return "smaller";
@@ -216,6 +256,17 @@ namespace VDF.Agent {
 			}
 			return fingerprints.AiPercent(i.Path, keep.Path) >= SamePictureAiPercent ? "edited" : "variant";
 		}
+
+		static readonly string[] EditSuffixes = { "_original", "-original", " (original)", "-edited", "_edited", " (edited)" };
+
+		/// <summary>One name is the other's plus an original/edit suffix: IMG_1.jpg and IMG_1_Original.jpg.</summary>
+		internal static bool IsOriginalAndEdit(string a, string b) {
+			string sa = Path.GetFileNameWithoutExtension(a), sb = Path.GetFileNameWithoutExtension(b);
+			return EditSuffixes.Any(s => sa.Equals(sb + s, StringComparison.OrdinalIgnoreCase) || sb.Equals(sa + s, StringComparison.OrdinalIgnoreCase));
+		}
+
+		static bool MayBeAnimated(string path) =>
+			Path.GetExtension(path).ToLowerInvariant() is ".gif" or ".webp" or ".apng" or ".heics";
 
 		/// <summary>Stable across scans for the same set of files, so a "keep all" answer sticks.</summary>
 		public static string GroupKey(IEnumerable<string> paths) {
