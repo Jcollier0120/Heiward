@@ -129,10 +129,7 @@ namespace VDF.Agent {
 				CustomDatabaseFolder = AgentPaths.Database,
 			};
 			Directory.CreateDirectory(AgentPaths.Database);
-			foreach (string root in ScanScope.Roots(cfg, notes)) s.IncludeList.Add(root);
-			foreach (string f in ScanScope.Exclusions(cfg)) s.BlackList.Add(f);
-			foreach (string marker in ScanScope.RepositoryMarkers) s.SkipFoldersContaining.Add(marker);
-			s.SkipFolderLinks = true;
+			ScanScope.Apply(s, cfg, notes);
 			// In-process FFmpeg: an iPhone photo's tiles decode in one process instead of one ffmpeg.exe
 			// per photo (~3x faster). Falls back to the process per file if the libraries don't load.
 			s.UseNativeFfmpegBinding = ScanEngine.NativeFFmpegExists;

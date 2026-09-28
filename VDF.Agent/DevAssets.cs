@@ -153,7 +153,8 @@ namespace VDF.Agent {
 					else if (reason == null) queue.Enqueue(d.FullName);
 				}
 			}
-			return repos;
+			// A repository listed in folders is a root of its own, and the drive's walk finds it too.
+			return repos.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 		}
 
 		static bool IsRepository(string folder) => ScanScope.RepositoryMarkers.Any(m => Path.Exists(Path.Combine(folder, m)));
