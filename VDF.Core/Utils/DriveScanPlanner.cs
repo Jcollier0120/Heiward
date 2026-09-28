@@ -291,10 +291,76 @@ namespace VDF.Core.Utils {
 			}
 		}
 
+		/// <summary>
+		/// The scan roots grouped by the physical disk they live on, each group keeping the given
+		/// order, so the file listing can walk every disk at once but never one disk twice at once:
+		/// a spinning disk seek-thrashes under two directory walks, while separate disks don't slow
+		/// each other at all. Roots on one drive letter always share a group; drive letters that are
+		/// partitions of one disk share it too (<paramref name="diskOf"/>, by default
+		/// <see cref="QueryPhysicalDisk"/>). A root without an answer (UNC share, mount folder,
+		/// non-Windows, a volume spanning disks) groups by its mount root. The slowest disk comes
+		/// first (<paramref name="slowness"/>, by default <see cref="ListingSlowness"/>): it decides
+		/// when the listing ends, so it starts before the rest.
+		/// </summary>
+		internal static List<List<string>> GroupRootsByDisk(IEnumerable<string> roots, Func<string, string?>? diskOf = null,
+				IReadOnlyList<string>? mountRoots = null, Func<string, int>? slowness = null) {
+			mountRoots ??= SnapshotMountRoots();
+			diskOf ??= QueryPhysicalDisk;
+			slowness ??= ListingSlowness;
+			var groups = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+			var order = new List<(List<string> Roots, string Mount)>();
+			var keyOfMount = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+			foreach (string root in roots) {
+				string mount = GetRootKey(root, mountRoots);
+				if (!keyOfMount.TryGetValue(mount, out string? key))
+					keyOfMount[mount] = key = diskOf(mount) ?? "mount:" + mount;
+				if (!groups.TryGetValue(key, out List<string>? group)) {
+					groups[key] = group = new List<string>();
+					order.Add((group, mount));
+				}
+				group.Add(root);
+			}
+			return order.OrderByDescending(g => slowness(g.Mount)).Select(g => g.Roots).ToList(); // stable: ties keep their order
+		}
+
+		/// <summary>How slow a drive is to walk: 2 a network share, 1 a spinning disk or one Windows can't tell, 0 an SSD.</summary>
+		internal static int ListingSlowness(string mount) =>
+			IsNetworkRoot(mount) ? 2 : QueryHasSeekPenalty(mount) == false ? 0 : 1;
+
+		/// <summary>
+		/// The physical disk behind a drive-letter root ("disk:7:0" = device type 7, disk 0), from
+		/// IOCTL_STORAGE_GET_DEVICE_NUMBER (metadata only, no elevation). Two partitions of one disk
+		/// answer the same. Null when there is no single answer: non-Windows, UNC/mount-folder roots,
+		/// or a volume spanning several disks (Storage Spaces, dynamic disks).
+		/// </summary>
+		internal static string? QueryPhysicalDisk(string root) {
+			if (!OperatingSystem.IsWindows())
+				return null;
+			if (root.Length < 2 || root.Length > 3 || !char.IsAsciiLetter(root[0]) || root[1] != ':')
+				return null;
+			nint handle = NativeMethods.CreateFileW($@"\\.\{root[0]}:", 0 /* query metadata only — no read access, no elevation */,
+				NativeMethods.FILE_SHARE_READ | NativeMethods.FILE_SHARE_WRITE, 0, NativeMethods.OPEN_EXISTING, 0, 0);
+			if (handle == NativeMethods.INVALID_HANDLE_VALUE)
+				return null;
+			try {
+				if (!NativeMethods.DeviceIoControl(handle, NativeMethods.IOCTL_STORAGE_GET_DEVICE_NUMBER, 0, 0,
+						out NativeMethods.STORAGE_DEVICE_NUMBER number, (uint)Marshal.SizeOf<NativeMethods.STORAGE_DEVICE_NUMBER>(), out _, 0))
+					return null;
+				return $"disk:{number.DeviceType}:{number.DeviceNumber}";
+			}
+			catch {
+				return null;
+			}
+			finally {
+				NativeMethods.CloseHandle(handle);
+			}
+		}
+
 		static class NativeMethods {
 			internal const uint FILE_SHARE_READ = 0x1;
 			internal const uint FILE_SHARE_WRITE = 0x2;
 			internal const uint OPEN_EXISTING = 3;
+			internal const uint IOCTL_STORAGE_GET_DEVICE_NUMBER = 0x2D1080;
 			internal const uint IOCTL_STORAGE_QUERY_PROPERTY = 0x2D1400;
 			internal const uint StorageDeviceSeekPenaltyProperty = 7;
 			internal static readonly nint INVALID_HANDLE_VALUE = -1;
@@ -313,6 +379,13 @@ namespace VDF.Core.Utils {
 				internal byte IncursSeekPenalty;
 			}
 
+			[StructLayout(LayoutKind.Sequential)]
+			internal struct STORAGE_DEVICE_NUMBER {
+				internal uint DeviceType;
+				internal uint DeviceNumber;
+				internal uint PartitionNumber;
+			}
+
 			[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
 			internal static extern nint CreateFileW(string lpFileName, uint dwDesiredAccess, uint dwShareMode,
 				nint lpSecurityAttributes, uint dwCreationDisposition, uint dwFlagsAndAttributes, nint hTemplateFile);
@@ -322,6 +395,13 @@ namespace VDF.Core.Utils {
 			internal static extern bool DeviceIoControl(nint hDevice, uint dwIoControlCode,
 				ref STORAGE_PROPERTY_QUERY lpInBuffer, uint nInBufferSize,
 				out DEVICE_SEEK_PENALTY_DESCRIPTOR lpOutBuffer, uint nOutBufferSize,
+				out uint lpBytesReturned, nint lpOverlapped);
+
+			[DllImport("kernel32.dll", SetLastError = true)]
+			[return: MarshalAs(UnmanagedType.Bool)]
+			internal static extern bool DeviceIoControl(nint hDevice, uint dwIoControlCode,
+				nint lpInBuffer, uint nInBufferSize,
+				out STORAGE_DEVICE_NUMBER lpOutBuffer, uint nOutBufferSize,
 				out uint lpBytesReturned, nint lpOverlapped);
 
 			[DllImport("kernel32.dll")]

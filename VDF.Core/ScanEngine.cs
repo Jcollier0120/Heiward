@@ -125,6 +125,8 @@ namespace VDF.Core {
 		readonly ConcurrentDictionary<string, TimeSpan> analysisTimes = new(StringComparer.OrdinalIgnoreCase);
 		/// <summary>Wall-clock time the last search spent listing each folder of <see cref="Settings.IncludeList"/>.</summary>
 		public IReadOnlyDictionary<string, TimeSpan> ListingTimes => listingTimes;
+		/// <summary>Tests: how the roots split into disks for the listing (default <see cref="DriveScanPlanner.GroupRootsByDisk"/>).</summary>
+		internal Func<IEnumerable<string>, List<List<string>>>? GroupRootsForListing;
 		/// <summary>The device the last search's AI embeddings actually ran on ("NPU", "GPU", "CPU"), after any fallback; null without AI matching.</summary>
 		public string? AiDeviceUsed { get; private set; }
 		/// <summary>The embedding sidecar that device's vectors went to (null = VDF's int8 model).</summary>
@@ -727,7 +729,7 @@ namespace VDF.Core {
 			return flagged;
 		}
 
-		Task BuildFileList(CancellationToken cancellationToken) => Task.Run(() => {
+		internal Task BuildFileList(CancellationToken cancellationToken) => Task.Run(() => {
 
 			DatabaseUtils.LoadDatabase();
 			QuarantineCrashSuspects();
@@ -754,20 +756,47 @@ namespace VDF.Core {
 				}
 			int relinkedCount = 0;
 
+			var roots = new List<string>();
 			foreach (string path in Settings.IncludeList) {
-				if (cancellationToken.IsCancellationRequested)
-					return;
-				if (!Directory.Exists(path)) {
-					// A disconnected network drive or removed folder would otherwise be
-					// skipped without a trace, making the scan look broken (0 files found).
-					Logger.Instance.Warn($"Search directory not found or inaccessible, skipping: '{path}'. If this is a network drive, make sure it is connected (or use the \\\\server\\share UNC path instead of a drive letter).");
+				if (Directory.Exists(path)) {
+					roots.Add(path);
 					continue;
 				}
+				// A disconnected network drive or removed folder would otherwise be
+				// skipped without a trace, making the scan look broken (0 files found).
+				Logger.Instance.Warn($"Search directory not found or inaccessible, skipping: '{path}'. If this is a network drive, make sure it is connected (or use the \\\\server\\share UNC path instead of a drive letter).");
+			}
 
-				long listingStart = Stopwatch.GetTimestamp();
-				foreach (FileInfo file in FileUtils.GetFilesRecursive(path, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
-					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
-					Settings.SkipFoldersContaining, Settings.SkipFolderLinks)) {
+			// Every disk is listed at the same time, one walk per physical disk: a disk's own roots
+			// go one after another, since a spinning disk seek-thrashes under two directory walks,
+			// while separate disks don't slow each other. Listing a PC's drives then takes as long
+			// as the slowest one instead of all of them in turn (on a rescan, listing is most of the
+			// work). Each root's files are merged into the database here, on this thread, as soon
+			// as its walk is done. A setting of 1 keeps its promise of one thing at a time.
+			List<List<string>> disks = Settings.MaxDegreeOfParallelism == 1
+				? new List<List<string>> { roots }
+				: (GroupRootsForListing ?? (r => DriveScanPlanner.GroupRootsByDisk(r)))(roots);
+			if (disks.Count > 1)
+				Logger.Instance.Info($"Listing {disks.Count} disks at once, slowest first: {string.Join(" | ", disks.Select(d => string.Join(", ", d)))}");
+			List<string> blackList = Settings.BlackList.ToList();
+			// Not disposed: after a cancel this method returns while a walk may still be finishing its folder.
+			var listed = new BlockingCollection<(string Root, List<FileInfo> Files)>();
+			Task walks = Task.WhenAll(disks.Select(diskRoots => Task.Run(() => {
+				foreach (string root in diskRoots) {
+					if (cancellationToken.IsCancellationRequested)
+						return;
+					long listingStart = Stopwatch.GetTimestamp();
+					List<FileInfo> files = FileUtils.GetFilesRecursive(root, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
+						Settings.IncludeSubDirectories, Settings.IncludeImages, blackList, cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
+						Settings.SkipFoldersContaining, Settings.SkipFolderLinks);
+					listingTimes[root] = Stopwatch.GetElapsedTime(listingStart);
+					listed.Add((root, files));
+				}
+			})));
+			walks.ContinueWith(_ => listed.CompleteAdding(), TaskScheduler.Default);
+
+			foreach (var (_, files) in listed.GetConsumingEnumerable()) {
+				foreach (FileInfo file in files) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
 					foundFiles.Add((file.FullName, file.Length));
@@ -791,8 +820,10 @@ namespace VDF.Core {
 					else
 						RefreshExistingEntry(fEntry, dbEntry);
 				}
-				listingTimes[path] = Stopwatch.GetElapsedTime(listingStart);
 			}
+			if (cancellationToken.IsCancellationRequested)
+				return;
+			walks.GetAwaiter().GetResult(); // a walk that failed fails the scan, as it did before
 
 			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
 			if (relinkedCount > 0)
@@ -1292,7 +1323,9 @@ namespace VDF.Core {
 					DriveScanPlanner.AssignParallelism(driveGroups, Settings.MaxDegreeOfParallelism, Settings.HddMaxDegreeOfParallelism, Environment.ProcessorCount);
 					driveProgressTracker = new DriveProgressTracker(driveGroups, CountsTowardDriveProgress, classified: true);
 					var driveTasks = new List<Task>(driveGroups.Count);
-					for (int i = 0; i < driveGroups.Count; i++) {
+					// Slow drives start first: the slowest decides when the analysis ends, so it must
+					// never queue behind a fast one for a thread. Progress keeps the drives' own order.
+					foreach (int i in Enumerable.Range(0, driveGroups.Count).OrderBy(i => driveGroups[i].SpeedClass == DriveSpeedClass.Fast ? 1 : 0)) {
 						DriveScanGroup group = driveGroups[i];
 						DriveProgressTracker.Counter counter = driveProgressTracker.CounterFor(i);
 						Logger.Instance.Info($"Drive '{group.Root}': {group.Entries.Count:N0} file(s), concurrency {group.DegreeOfParallelism} ({(group.SpeedClass == DriveSpeedClass.Fast ? "fast" : "slow")}, {group.ClassSource})");
