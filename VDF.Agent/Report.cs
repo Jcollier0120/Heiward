@@ -17,6 +17,8 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using VDF.Core;
+using VDF.Core.AI;
 using VDF.Core.Utils;
 using VDF.Core.ViewModels;
 
@@ -62,6 +64,44 @@ namespace VDF.Agent {
 		public void Save() => AgentPaths.WriteAtomic(AgentPaths.Report, JsonSerializer.Serialize(this, AgentConfig.Json));
 	}
 
+	/// <summary>How alike two scanned files are, from their stored fingerprints; null when unknown.</summary>
+	interface IFingerprints {
+		/// <summary>VDF's classic similarity (percent) of the two files' gray frames, averaged over common positions.</summary>
+		float? GrayPercent(string a, string b);
+		/// <summary>Cosine (percent) of the two files' AI embeddings, averaged over common positions.</summary>
+		float? AiPercent(string a, string b);
+	}
+
+	/// <summary>The fingerprints of the scan that just ran: its database's gray frames and its embedding cache.</summary>
+	sealed class ScanFingerprints : IFingerprints {
+		readonly Dictionary<string, FileEntry> entries;
+		readonly UnionEmbeddingStore? embeddings;
+
+		public ScanFingerprints(string? embeddingCacheKey, bool withAi) {
+			entries = new Dictionary<string, FileEntry>(StringComparer.OrdinalIgnoreCase);
+			foreach (FileEntry e in DatabaseUtils.Database) entries[e.Path] = e;
+			embeddings = withAi ? UnionEmbeddingStore.Load(embeddingCacheKey) : null;
+		}
+
+		public float? GrayPercent(string a, string b) => Average(a, b, e => e.grayBytes,
+			(x, y) => x.Length == y.Length ? 100f * (1f - GrayBytesUtils.PercentageDifference(x, y)) : null);
+
+		public float? AiPercent(string a, string b) {
+			if (embeddings == null || !entries.TryGetValue(a, out FileEntry? ea) || !entries.TryGetValue(b, out FileEntry? eb)) return null;
+			var keys = ea.grayBytes.Keys.Intersect(eb.grayBytes.Keys).DefaultIfEmpty(0d);
+			var sims = keys.Select(k => (x: embeddings.GetEmbedding(ea, k), y: embeddings.GetEmbedding(eb, k)))
+				.Where(p => p.x != null && p.y != null).Select(p => 100f * EmbeddingMath.CosineSimilarity(p.x!, p.y!)).ToList();
+			return sims.Count > 0 ? sims.Average() : null;
+		}
+
+		float? Average(string a, string b, Func<FileEntry, Dictionary<double, byte[]?>> frames, Func<byte[], byte[], float?> compare) {
+			if (!entries.TryGetValue(a, out FileEntry? ea) || !entries.TryGetValue(b, out FileEntry? eb)) return null;
+			var sims = frames(ea).Where(kv => kv.Value != null && frames(eb).TryGetValue(kv.Key, out byte[]? v) && v != null)
+				.Select(kv => compare(kv.Value!, frames(eb)[kv.Key]!)).Where(v => v != null).Select(v => v!.Value).ToList();
+			return sims.Count > 0 ? sims.Average() : null;
+		}
+	}
+
 	/// <summary>
 	/// Turns the engine's duplicate groups into the review report. Code decides everything here —
 	/// which file to keep and why, and what each other file is to it — and only plain copies are
@@ -77,13 +117,13 @@ namespace VDF.Agent {
 		/// </summary>
 		internal const float PlainCopyPercent = 99.5f;
 
-		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates) {
+		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints) {
 			var groups = new List<ReportGroup>();
 			foreach (var g in duplicates.GroupBy(d => d.GroupId)) {
 				List<DuplicateItem> items = g.Where(d => File.Exists(d.Path)).ToList();
 				if (items.Count < 2)
 					continue;
-				groups.Add(BuildGroup(items));
+				groups.Add(BuildGroup(items, fingerprints));
 			}
 			return groups
 				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
@@ -91,18 +131,23 @@ namespace VDF.Agent {
 				.ToList();
 		}
 
-		static ReportGroup BuildGroup(List<DuplicateItem> items) {
+		static ReportGroup BuildGroup(List<DuplicateItem> items, IFingerprints fingerprints) {
 			bool isImage = items[0].IsImage;
 			var hashes = new ContentHashes();
 			(DuplicateItem keep, string reason) = isImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
 
 			var reportItems = new List<ReportItem>(items.Count);
 			foreach (DuplicateItem i in items.OrderByDescending(i => ReferenceEquals(i, keep)).ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)) {
-				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes);
+				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes, fingerprints);
 				(int w, int h) = ParseFrameSize(i.FrameSize);
 				bool suggested = relation is "identical" or "smaller" or "compressed" or "resaved";
+				// Shown similarity: to the kept file (the AI's cosine where the pixels differ).
+				float? toKeepGray = ReferenceEquals(i, keep) ? 100f : fingerprints.GrayPercent(i.Path, keep.Path);
+				float? toKeepAi = ReferenceEquals(i, keep) ? null : fingerprints.AiPercent(i.Path, keep.Path);
+				bool byAi = relation is "edited" or "variant" && toKeepAi != null;
+				float shown = byAi ? toKeepAi!.Value : toKeepGray ?? i.Similarity;
 				reportItems.Add(new ReportItem(i.Path, Path.GetFileName(i.Path), Path.GetDirectoryName(i.Path) ?? "", i.SizeLong, w, h, i.Format,
-					i.Duration.TotalSeconds, i.BitRateKbs, i.Fps, i.DateModified.ToUniversalTime(), i.Similarity, i.IsAiMatched,
+					i.Duration.TotalSeconds, i.BitRateKbs, i.Fps, i.DateModified.ToUniversalTime(), shown, byAi,
 					relation, relation == "keep", suggested, CloudFiles.IsSynced(i.Path)));
 			}
 			string kind = reportItems.All(i => i.Relation is "keep" or "identical") ? "identical"
@@ -116,36 +161,26 @@ namespace VDF.Agent {
 				reportItems.Where(i => i.Suggested).Sum(i => i.Size), items.Min(i => i.Similarity), reportItems);
 		}
 
-		enum Link { Variant, Edited, Copy }
-
 		/// <summary>
-		/// How closely a member matches the group's reference file (VDF measures every member against
-		/// that one, not against each other). A classic (grayscale) match at or above
-		/// <see cref="PlainCopyPercent"/> is the same picture pixel for pixel; VDF's classic threshold
-		/// (96%) also admits crops, flips and colour edits. Measured on the test set: resized copies
-		/// 100%, recompressed 99.8–99.9%, crops 97.4–97.5%, flips 96.4–97.1%, colour edits 96.4–97.6%,
-		/// two different shots 94.3%. An AI-only match is the same scene changed.
+		/// What <paramref name="i"/> is to the kept file, from the two files' own fingerprints (VDF's
+		/// per-member similarity is to whichever member pulled it into the group, so it says nothing
+		/// about the keeper). A grayscale match at or above <see cref="PlainCopyPercent"/> is the same
+		/// picture pixel for pixel. Measured on the test set with RGB-derived gray frames: resized
+		/// 99.91–99.98%, recompressed 99.79–99.97%, while crops scored 97.35–97.66%, colour edits
+		/// 97.12–97.99%, flips 96.16–97.32% and two different shots 94.3%. Below that, the AI's
+		/// cosine says "same picture, edited" (≥ <see cref="SamePictureAiPercent"/>) or "variant".
 		/// </summary>
-		static Link LinkToReference(DuplicateItem i) =>
-			i.IsAiMatched ? (i.Similarity >= SamePictureAiPercent ? Link.Edited : Link.Variant)
-			: i.Similarity >= PlainCopyPercent ? Link.Copy : Link.Variant;
-
-		/// <summary>
-		/// What <paramref name="i"/> is to the kept file. Two members are only as close as the weaker
-		/// of their links to the reference: when the keeper itself is an edit or a look-alike, a plain
-		/// copy of the reference is not a plain copy of the keeper.
-		/// </summary>
-		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes) {
+		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints) {
 			if (i.SizeLong == keep.SizeLong && hashes.Same(i.Path, keep.Path))
 				return "identical";
-			Link link = (Link)Math.Min((int)LinkToReference(i), (int)LinkToReference(keep));
-			if (link == Link.Variant) return "variant";
-			if (link == Link.Edited) return "edited";
-			if (i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt)
-				return "smaller";
-			if (!i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds))
-				return "variant"; // a shorter cut of the video is not a plain copy
-			return i.SizeLong < keep.SizeLong ? "compressed" : "resaved";
+			if (fingerprints.GrayPercent(i.Path, keep.Path) is float gray && gray >= PlainCopyPercent) {
+				if (i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt)
+					return "smaller";
+				if (!i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds))
+					return "variant"; // a shorter cut of the video is not a plain copy
+				return i.SizeLong < keep.SizeLong ? "compressed" : "resaved";
+			}
+			return fingerprints.AiPercent(i.Path, keep.Path) >= SamePictureAiPercent ? "edited" : "variant";
 		}
 
 		/// <summary>Stable across scans for the same set of files, so a "keep all" answer sticks.</summary>

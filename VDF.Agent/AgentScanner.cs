@@ -74,7 +74,7 @@ namespace VDF.Agent {
 			}
 
 			Report? previous = Report.Load();
-			var groups = ReportBuilder.Build(engine.Duplicates);
+			var groups = ReportBuilder.Build(engine.Duplicates, new ScanFingerprints(NpuComponents.CacheKeyFor(settings.AiDevice), settings.UseAiMatching));
 			string device = settings.UseAiMatching ? NpuComponents.DeviceFor(settings.AiDevice) : "off";
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);

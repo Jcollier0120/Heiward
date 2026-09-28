@@ -18,8 +18,8 @@ using System.Runtime.InteropServices;
 
 namespace VDF.Core.Utils {
 	/// <summary>
-	/// Decodes photos with the Windows Imaging Component instead of an FFmpeg process: the 32×32
-	/// gray frame and the 224×224 RGB embedding frame both come out of ONE decode, in-process.
+	/// Decodes photos with the Windows Imaging Component instead of an FFmpeg process: the 224×224
+	/// RGB embedding frame and the 32×32 gray frame computed from it come out of ONE decode, in-process.
 	/// <list type="bullet">
 	/// <item>Faster: JPEG (and other codecs that implement IWICBitmapSourceTransform) decode
 	/// straight to a reduced size — the IDCT and colour conversion never touch the full 12 MP.
@@ -209,12 +209,12 @@ namespace VDF.Core.Utils {
 		}
 
 		/// <summary>
-		/// Decodes <paramref name="path"/> into VDF's 32×32 gray frame and, when
-		/// <paramref name="wantRgb"/>, the 224×224 RGB24 embedding frame (both squashed to square
-		/// like the FFmpeg path, orientation applied). <paramref name="width"/>/<paramref name="height"/>
-		/// are the stored image dimensions.
+		/// Decodes <paramref name="path"/> into the 224×224 RGB24 AI frame (squashed to square like the
+		/// FFmpeg path, orientation applied) and VDF's 32×32 gray frame, which is computed from it
+		/// (<see cref="GrayBytesUtils.FromRgb224"/>) so that WIC- and FFmpeg-decoded photos agree.
+		/// <paramref name="width"/>/<paramref name="height"/> are the displayed image dimensions.
 		/// </summary>
-		internal static bool TryDecode(string path, bool wantRgb, out byte[]? gray, out byte[]? rgb, out int width, out int height) {
+		internal static bool TryDecode(string path, out byte[]? gray, out byte[]? rgb, out int width, out int height) {
 			gray = null; rgb = null; width = height = 0;
 			lastFailure = null;
 			if (!IsAvailable) return Fail("not Windows");
@@ -235,7 +235,7 @@ namespace VDF.Core.Utils {
 				height = (int)h;
 				Orientation orientation = IsHeif(decoder) ? Orientation.None : ReadOrientation(frame); // the HEIF codec applies irot/imir itself
 
-				// Reduced-size BGR copy, ≥ RgbOut on both sides, then two Fant (area-average) passes from it.
+				// Reduced-size BGR copy, ≥ RgbOut on both sides, then one Fant (area-average) pass to 224×224.
 				if (!TryReducedDecode(frame, w, h, out byte[] reduced, out uint rw, out uint rh))
 					return Fail("pixel decode");
 				fixed (byte* pr = reduced) {
@@ -244,17 +244,12 @@ namespace VDF.Core.Utils {
 							factory, rw, rh, &bgr, rw * 3, (uint)reduced.Length, pr, &bitmap) < 0)
 						return Fail("CreateBitmapFromMemory");
 				}
-				byte[]? g = Resample(factory, bitmap, GrayOut, GUID_WICPixelFormat8bppGray, 1);
-				if (g == null) return Fail("gray resample");
-				gray = Orient(g, GrayOut, 1, orientation);
-				if (wantRgb) {
-					byte[]? bgrOut = Resample(factory, bitmap, RgbOut, GUID_WICPixelFormat24bppBGR, 3);
-					if (bgrOut != null) {
-						for (int i = 0; i < bgrOut.Length; i += 3)
-							(bgrOut[i], bgrOut[i + 2]) = (bgrOut[i + 2], bgrOut[i]); // BGR -> RGB
-						rgb = Orient(bgrOut, RgbOut, 3, orientation);
-					}
-				}
+				byte[]? bgrOut = Resample(factory, bitmap, RgbOut, GUID_WICPixelFormat24bppBGR, 3);
+				if (bgrOut == null) return Fail("resample");
+				for (int i = 0; i < bgrOut.Length; i += 3)
+					(bgrOut[i], bgrOut[i + 2]) = (bgrOut[i + 2], bgrOut[i]); // BGR -> RGB
+				rgb = Orient(bgrOut, RgbOut, 3, orientation);
+				gray = GrayBytesUtils.FromRgb224(rgb);
 				return true;
 			}
 			catch (Exception e) when (e is not OutOfMemoryException) {

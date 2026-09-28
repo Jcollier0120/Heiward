@@ -41,7 +41,7 @@ public static class WicDecodeProbe {
 					var sw = Stopwatch.StartNew();
 					int ok = 0;
 					foreach (string f in list)
-						if (WicImageDecoder.TryDecode(f, wantRgb: true, out _, out _, out _, out _)) ok++;
+						if (WicImageDecoder.TryDecode(f, out _, out _, out _, out _)) ok++;
 					Console.WriteLine($"{apartment} {ext,-6} {list.Count,3} files  {sw.Elapsed.TotalMilliseconds / Math.Max(1, list.Count),7:N1} ms each  ({ok} decoded)");
 				}
 			});
@@ -56,7 +56,7 @@ public static class WicDecodeProbe {
 				var sw = Stopwatch.StartNew();
 				int ok = 0;
 				Parallel.ForEach(list, new ParallelOptions { MaxDegreeOfParallelism = threads }, f => {
-					if (WicImageDecoder.TryDecode(f, wantRgb: true, out _, out _, out _, out _)) Interlocked.Increment(ref ok);
+					if (WicImageDecoder.TryDecode(f, out _, out _, out _, out _)) Interlocked.Increment(ref ok);
 				});
 				Console.WriteLine($"{threads} thread(s) {ext,-6} {list.Count / sw.Elapsed.TotalSeconds,7:N1} files/s  ({ok}/{list.Count} decoded)");
 			}
