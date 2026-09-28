@@ -18,20 +18,32 @@ jobs:
     - name: Build CLI
       run: dotnet publish HEI.CLI/HEI.CLI.csproj -c Release -v q --self-contained -r win-x64
     - name: Build Web
+      id: build
       run: dotnet publish HEI.Web/HEI.Web.csproj -c Release -v q --self-contained -r win-x64
+    # Every suite reports, also when one before it failed. None runs when the build
+    # failed (a skipped Build Web means an earlier build step failed).
     - name: Run Unit Tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.Core.Tests/HEI.Core.Tests.csproj -c Release -v q
     - name: Run Heiward Tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q
     - name: Run CLI Tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.CLI.Tests/HEI.CLI.Tests.csproj -c Release -v q
     - name: Run GUI Tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.GUI.Tests/HEI.GUI.Tests.csproj -c Release -v q
     - name: Run GUI Headless Tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.GUI.HeadlessTests/HEI.GUI.HeadlessTests.csproj -c Release -v q
     - name: Run Web Tests
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.Web.Tests/HEI.Web.Tests.csproj -c Release -v q
     - name: Install FFmpeg
+      id: ffmpeg
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: choco install ffmpeg -y --no-progress
     - name: Run Integration Tests
+      if: ${{ !cancelled() && steps.ffmpeg.outcome == 'success' }}
       run: dotnet test HEI.IntegrationTests/HEI.IntegrationTests.csproj -c Release -v normal
