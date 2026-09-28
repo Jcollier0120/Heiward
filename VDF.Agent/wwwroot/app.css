@@ -179,6 +179,28 @@ button { font: inherit; color: inherit; }
 .meter { grid-column: 2 / 4; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .meter .fill { height: 100%; background: var(--accent); }
 
+/* Developer cleanup */
+.dev-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; max-width: 760px; }
+.dev-card svg, .folder-head > svg.dev { width: 40px; height: 40px; flex: none; }
+.dev-bar { position: sticky; top: 0; z-index: 2; margin-top: 18px; box-shadow: var(--shadow); }
+.dev-category { max-width: 1180px; }
+.dev-category > p { margin-bottom: 6px; max-width: 820px; }
+.details.dev-table { table-layout: fixed; }
+.details.dev-table td { height: auto; padding: 8px 10px; white-space: normal; vertical-align: top; }
+.details.dev-table .tick-cell { width: 36px; padding-top: 10px; }
+.details.dev-table .what { overflow-wrap: anywhere; }
+.details.dev-table .when { width: 136px; white-space: nowrap; padding-top: 10px; }
+.details.dev-table .size { width: 88px; white-space: nowrap; font-weight: 600; padding-top: 9px; }
+.dev-intro { color: var(--muted); font-size: 12px; max-width: 760px; }
+@media (max-width: 820px) {
+  .details.dev-table .when { display: none; }
+}
+.dev-row { cursor: pointer; }
+.dev-row:hover td { background: var(--hover); }
+.dev-row.exempt { cursor: default; }
+.dev-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
+.tag.suggested { border-color: transparent; background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+
 .history summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); padding: 4px 0; }
 .done-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 footer { margin-top: 28px; }
@@ -315,4 +337,8 @@ footer code { font-size: 12px; }
   .tiles { grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .tile { padding: 8px 10px; }
   .tile-value { font-size: 17px; }
+}
+.when-inline { display: none; }
+@media (max-width: 820px) {
+  .when-inline { display: block; }
 }

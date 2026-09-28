@@ -114,6 +114,29 @@ namespace VDF.Agent {
 				DecisionStore.Set(key, null);
 				return Results.Ok();
 			});
+			app.MapGet("/api/dev", () => Results.Json(DevReport.Load() ?? new DevReport(), AgentConfig.Json));
+			app.MapPost("/api/dev/scan", () => {
+				if (DevScan.IsRunning()) return Results.Conflict(new { error = "A developer check is already running." });
+				StartDetached("dev", "--scan");
+				return Results.Accepted();
+			});
+			app.MapPost("/api/dev/items/{id}/clean", (string id) => {
+				DevItem? item = DevReport.Load()?.Categories.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == id);
+				if (item == null) return Results.NotFound(new { error = "That item is no longer in the list; check again." });
+				if (item.Blocked != null) return Results.Conflict(new { error = item.Blocked });
+				CleanResult result;
+				lock (recycleGate) {
+					result = DevCleaner.Clean(item, cfg);
+					if (result.FreedBytes > 0)
+						DecisionStore.Set("dev:" + id, new Decision("dev-cleaned", DateTime.UtcNow, new() { item.Name }, result.FreedBytes));
+					// Gone, or what's left (files in use) re-measured.
+					if (result.Error == null)
+						DevReport.Update(id, result.LeftInUse == 0 ? null : item with { Bytes = Math.Max(0, item.Bytes - result.FreedBytes), Suggested = false });
+				}
+				AgentPaths.AppendLog($"developer clean: {item.Kind} {item.Location}: freed {Format.Bytes(result.FreedBytes)}" +
+					(result.LeftInUse > 0 ? $", {result.LeftInUse} in use left" : "") + (result.Error != null ? $", {result.Error}" : ""));
+				return Results.Json(result, AgentConfig.Json);
+			});
 			app.MapPost("/api/scan", () => {
 				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
 				StartDetached("scan");
@@ -154,6 +177,7 @@ namespace VDF.Agent {
 					return new {
 						key = d.Key, action = d.Value.Action, atUtc = d.Value.AtUtc, recycled = d.Value.Recycled.Count, recycledBytes = d.Value.RecycledBytes,
 						kind = g?.Kind, keepName = g?.Items.FirstOrDefault(i => i.Keep)?.Name, inReport = g != null,
+						label = d.Value.Action == "dev-cleaned" ? d.Value.Recycled.FirstOrDefault() : null,
 					};
 				}).ToList();
 			return new {
@@ -168,11 +192,25 @@ namespace VDF.Agent {
 					reclaimableBytes = pending.Sum(g => g.ReclaimBytes),
 					recycledBytes = decisions.Values.Sum(d => d.RecycledBytes),
 				},
+				dev = DevSummary(cfg),
 				drives = ExplorerView.Drives(cfg, index, pending),
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
 				config = new { folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config },
+			};
+		}
+
+		/// <summary>The home page's developer card: totals per category of the last check.</summary>
+		static object DevSummary(AgentConfig cfg) {
+			DevReport? r = cfg.DeveloperModeOn ? DevReport.Load() : null;
+			return new {
+				enabled = cfg.DeveloperModeOn,
+				running = cfg.DeveloperModeOn && DevScan.IsRunning(),
+				scannedAtUtc = r?.ScannedAtUtc,
+				totalBytes = r?.Categories.SelectMany(c => c.Items).Sum(i => i.Bytes) ?? 0,
+				suggestedBytes = r?.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes) ?? 0,
+				categories = r?.Categories.Select(c => new { c.Key, c.Title, bytes = c.Items.Sum(i => i.Bytes), count = c.Items.Count }).ToList(),
 			};
 		}
 

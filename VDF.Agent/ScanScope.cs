@@ -65,6 +65,8 @@ namespace VDF.Agent {
 		/// <summary>Windows' own profile folders: the template for new accounts and its old-style links.</summary>
 		static readonly HashSet<string> WindowsProfiles = new(StringComparer.OrdinalIgnoreCase) { "Default", "Default User", "All Users", "defaultuser0", "defaultuser100000" };
 
+		internal const string RepositoryReason = "Code repository";
+
 		/// <summary>A folder holding one of these is a code repository: its pictures belong to the project.</summary>
 		internal static readonly string[] RepositoryMarkers = { ".git", ".hg", ".svn" };
 
@@ -125,7 +127,7 @@ namespace VDF.Agent {
 			}
 			foreach (string marker in RepositoryMarkers)
 				if (Path.Exists(Path.Combine(folder.FullName, marker)))
-					return "Code repository";
+					return RepositoryReason;
 			return null;
 		}
 

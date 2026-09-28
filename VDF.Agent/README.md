@@ -66,6 +66,20 @@ Every fixed drive: internal drives, and external disks that Windows reports as f
 
 `vdf-agent scope` lists all of it; `vdf-agent scope --count` also counts the photos and videos per folder, without opening any file. Add your own with `excludeFolders`.
 
+## Developer mode
+
+Once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there. Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
+
+| What | Recognised by | Ticked for you |
+|---|---|---|
+| Build outputs: `node_modules`, `bin`/`obj`, Gradle `build`/`.gradle`/`.cxx`, `target`, `.venv`, `.next` | the project file beside it (`package.json`, a `.csproj`, `build.gradle`, `Cargo.toml`, ...), so a folder that merely has the name is left alone | in projects untouched for 30 days (`staleProjectDays`), judged by git's own files and the project's top level |
+| Git worktrees | the repository's `.git\worktrees` | untouched for 30 days, no uncommitted changes, and every commit already on a remote. Git removes it (`git worktree remove`, which refuses a worktree with changes), and the branch stays. Worktrees in a tool's home (`~\.npu-agent\...`, app data) or used by a scheduled task are never offered |
+| Package caches: Gradle, NuGet, npm, Yarn, pnpm, pip, Maven, Cargo, Go | the tools' own cache folders | never. Blocked while the tool runs (Java for Gradle, dotnet or Visual Studio for NuGet) |
+| Android emulators and system images | the AVD folder and the SDK's `system-images` | system images no emulator uses. Emulators themselves aren't ticked, since they hold app data. Blocked while an emulator runs |
+| Temp files and crash dumps | `%TEMP%` entries untouched for 7 days (`tempOlderThanDays`), `%LOCALAPPDATA%\CrashDumps` | yes |
+
+Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `vdf-agent dev` shows the last check; `vdf-agent dev --scan` checks now. Set `"developerMode": "off"` to turn it off.
+
 ## Sharing the NPU
 
 Other NPU tools on the PC can use the NPU at the same time, for example npu-agent's maintenance jobs, which run a local LLM on the NPU. The agent takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists:
@@ -88,6 +102,8 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `openPageAtSignIn` | true | Once a day, only when something waits for review |
 | `port` | 18484 | The review page, on 127.0.0.1 only |
 | `toast` | true | A notification when a scan finds something new |
+| `developerMode` | `auto` | `off`: no developer cleanup. `auto`: check once a day |
+| `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
 
 ## Commands
 
@@ -97,6 +113,7 @@ vdf-agent scan [--open]   scan now
 vdf-agent open            open the review page
 vdf-agent status          settings, last scan, schedule, NPU lock
 vdf-agent scope [--count] what a scan looks at and leaves out
+vdf-agent dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 vdf-agent setup           download FFmpeg and the AI components
 vdf-agent install         [--dry-run] [--yes] [--device npu|gpu|cpu]
 vdf-agent uninstall       [--purge] [--dry-run]

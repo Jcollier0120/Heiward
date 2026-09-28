@@ -46,7 +46,16 @@ const ICONS = {
   sep: [['path', 'M6 4l4 4-4 4', 'stroke']],
   check: [['path', 'M3 8.5 6.5 12 13 4.5', 'stroke']],
   info: [['circle', '8,8,6.5', 'stroke'], ['path', 'M8 7.2V11.5M8 4.6v.2', 'stroke']],
+  code: [['path', 'M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5', 'stroke']],
 };
+
+// Developer cleanup's mark: code brackets on an accent tile.
+function devIcon(cls) {
+  return svg('0 0 40 40', [
+    ['rect', '4,6,32,28,6', 'fill', 'var(--accent)'],
+    ['path', 'M16 14l-6 6 6 6M24 14l6 6-6 6', 'stroke'],
+  ], cls);
+}
 
 function svg(viewBox, parts, cls) {
   const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
@@ -207,6 +216,7 @@ function ticked(g) {
 
 function parseRoute() {
   const h = location.hash;
+  if (h === '#/dev') return { view: 'dev' };
   if (h.startsWith('#/f/')) {
     try { return { view: 'folder', path: decodeURIComponent(h.slice(4)) }; } catch { /* fall through */ }
   }
@@ -272,6 +282,15 @@ function renderCrumbs() {
     items.push(li);
   };
   crumb('This PC', pcIcon(), null);
+  if (route.view === 'dev') {
+    const li = el('li');
+    li.append(icon('sep', 'sep'));
+    const b = el('button', 'crumb');
+    b.append(icon('code'), el('span', null, 'Developer cleanup'));
+    b.addEventListener('click', () => { location.hash = '#/dev'; });
+    li.append(b);
+    items.push(li);
+  }
   if (route.view === 'folder') {
     const d = cardFor(route.path);
     if (d) {
@@ -326,8 +345,232 @@ function renderHome(s) {
     return row;
   }));
 
+  renderDevCard(s.dev);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- developer cleanup
+
+const DEV_SHORT = { projects: 'Projects', worktrees: 'Worktrees', caches: 'Caches', android: 'Emulators', temp: 'Temp & dumps' };
+let devReport = null;         // /api/dev
+const devTicks = new Set();   // ticked item ids
+const devSeen = new Set();    // ids whose default tick was applied (the user's edits survive refreshes)
+let devBusy = false;
+
+async function startDevCheck() {
+  try { await post('/api/dev/scan'); } catch (e) { showError(e.message); }
+  refresh(true);
+}
+
+function renderDevCard(dev) {
+  const section = $('dev-section');
+  section.classList.toggle('hidden', !dev.enabled || (dev.scannedAtUtc && !(dev.categories || []).length && !dev.running));
+  const card = el('div', 'dev-card');
+  const top = el('div', 'drive-top');
+  top.append(devIcon());
+  const text = el('div');
+  text.style.flex = '1';
+  text.style.minWidth = '0';
+  if (!dev.scannedAtUtc) {
+    text.append(el('div', 'drive-name', 'Developer leftovers'),
+      el('div', 'muted small', dev.running ? 'Checking build outputs, worktrees and caches…' : 'Build outputs, git worktrees, package caches and emulators that tools recreate. Not checked yet.'));
+  } else {
+    text.append(el('div', 'drive-name', bytes(dev.totalBytes) + ' that tools can recreate'),
+      el('div', 'muted small', (dev.suggestedBytes ? bytes(dev.suggestedBytes) + ' ticked for cleaning · ' : 'Nothing ticked for you · ') +
+        (dev.running ? 'checking again…' : 'checked ' + ago(dev.scannedAtUtc))));
+    const chips = el('div', 'chips');
+    chips.style.marginTop = '6px';
+    for (const c of dev.categories || []) chips.append(el('span', 'chip quiet', (DEV_SHORT[c.key] || c.title) + ' ' + bytes(c.bytes)));
+    text.append(chips);
+  }
+  top.append(text);
+  const actions = el('div', 'actions');
+  actions.style.marginTop = '0';
+  if (dev.scannedAtUtc) {
+    const open = el('button', 'btn', 'Review');
+    open.addEventListener('click', () => { location.hash = '#/dev'; });
+    actions.append(open);
+  } else {
+    const check = el('button', 'btn', dev.running ? 'Checking…' : 'Check now');
+    check.disabled = dev.running;
+    check.addEventListener('click', startDevCheck);
+    actions.append(check);
+  }
+  top.append(actions);
+  card.append(top);
+  $('dev-card').replaceChildren(card);
+}
+
+async function loadDevReport() {
+  const res = await fetch('/api/dev');
+  devReport = res.ok ? await res.json() : null;
+  for (const c of (devReport && devReport.categories) || [])
+    for (const i of c.items)
+      if (!devSeen.has(i.id)) {
+        devSeen.add(i.id);
+        if (i.suggested && !i.blocked) devTicks.add(i.id);
+      }
+}
+
+function devItems() {
+  return ((devReport && devReport.categories) || []).flatMap((c) => c.items);
+}
+
+function lastUsed(iso) {
+  if (!iso) return '';
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (days < 1) return 'used today';
+  if (days < 2) return 'used yesterday';
+  if (days < 60) return 'untouched ' + Math.floor(days) + ' days';
+  return 'untouched ' + Math.round(days / 30) + ' months';
+}
+
+function renderDev() {
+  const view = $('devview');
+  const dev = state.dev;
+  const frag = document.createDocumentFragment();
+
+  const head = el('div', 'folder-head');
+  head.append(devIcon());
+  const title = el('div');
+  title.style.flex = '1';
+  title.append(el('h1', null, 'Developer cleanup'),
+    el('div', 'dev-intro', 'Things your development tools recreate when they need them. Cleaning deletes them permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer.'));
+  const chips = el('div', 'chips');
+  if (devReport && devReport.scannedAtUtc && devReport.categories.length) {
+    const all = devItems();
+    chips.append(el('span', 'chip', bytes(all.reduce((a, i) => a + i.bytes, 0)) + ' in all'));
+    chips.append(el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)));
+  }
+  const again = el('button', 'link small', dev.running ? 'Checking…' : 'Check again');
+  again.disabled = dev.running;
+  again.addEventListener('click', startDevCheck);
+  chips.append(again);
+  title.append(chips);
+  head.append(title);
+  frag.append(head);
+
+  if (!devReport || !devReport.scannedAtUtc) {
+    frag.append(el('div', 'empty-state', dev.running ? 'Checking… this takes a minute or so.' : 'Not checked yet.'));
+    view.replaceChildren(frag);
+    return;
+  }
+  if (!devReport.categories.length) {
+    frag.append(el('div', 'empty-state', 'Nothing to clean up.'));
+    view.replaceChildren(frag);
+    return;
+  }
+
+  frag.append(devActionBar());
+  for (const c of devReport.categories) frag.append(devCategory(c));
+  view.replaceChildren(frag);
+}
+
+function devActionBar() {
+  const picked = devItems().filter((i) => devTicks.has(i.id) && !i.blocked);
+  const size = picked.reduce((a, i) => a + i.bytes, 0);
+  const bar = el('div', 'cleanup dev-bar');
+  const text = el('div');
+  text.append(el('div', null, picked.length ? count(picked.length, 'item', 'items') + ' selected · ' + bytes(size) : 'Nothing selected'));
+  const result = el('div', 'result small');
+  result.id = 'dev-result';
+  text.append(result);
+  bar.append(text);
+  const btn = el('button', 'btn', devBusy ? 'Cleaning…' : picked.length ? 'Clean ' + bytes(size) : 'Clean');
+  btn.disabled = !picked.length || devBusy;
+  btn.addEventListener('click', () => cleanDev(picked));
+  bar.append(btn);
+  return bar;
+}
+
+async function cleanDev(picked) {
+  const size = picked.reduce((a, i) => a + i.bytes, 0);
+  const lines = ['Delete ' + count(picked.length, 'item', 'items') + ' (' + bytes(size) + ') permanently?',
+    'Tools recreate them when needed; the next build or install takes longer.'];
+  const worktrees = picked.filter((i) => i.kind === 'worktrees').length;
+  if (worktrees) lines.push(count(worktrees, 'worktree folder is', 'worktree folders are') + ' removed by git; the branches stay.');
+  if (picked.some((i) => i.kind === 'avd')) lines.push('Deleting an emulator deletes the apps and data inside it.');
+  if (!confirm(lines.join('\n\n'))) return;
+  devBusy = true;
+  renderDev();
+  let freed = 0, left = 0;
+  const failed = [];
+  for (const [n, i] of picked.entries()) {
+    const status = $('dev-result');
+    if (status) status.textContent = 'Cleaning ' + i.name + '… (' + (n + 1) + ' of ' + picked.length + ')';
+    try {
+      const r = await post('/api/dev/items/' + encodeURIComponent(i.id) + '/clean');
+      freed += r.freedBytes;
+      left += r.leftInUse;
+      if (r.error) failed.push(i.name + ' (' + r.error + ')');
+      devTicks.delete(i.id);
+    } catch (e) {
+      failed.push(i.name + ' (' + e.message + ')');
+    }
+  }
+  devBusy = false;
+  await loadDevReport();
+  renderDev();
+  const status = $('dev-result');
+  if (status) {
+    status.textContent = 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file was', 'files were') + ' in use and left alone.' : '') +
+      (failed.length ? ' Not cleaned: ' + failed.join('; ') : '');
+    status.className = 'result small ' + (failed.length ? 'bad' : 'ok');
+  }
+  refresh(true);
+}
+
+function devCategory(c) {
+  const box = el('section', 'dev-category');
+  const head = el('div', 'section-head');
+  head.append(el('h2', null, c.title + ' · ' + bytes(c.items.reduce((a, i) => a + i.bytes, 0))));
+  const selectable = c.items.filter((i) => !i.blocked);
+  if (selectable.length > 1) {
+    const allOn = selectable.every((i) => devTicks.has(i.id));
+    const toggle = el('button', 'link small', allOn ? 'Select none' : 'Select all');
+    toggle.addEventListener('click', () => {
+      for (const i of selectable) if (allOn) devTicks.delete(i.id); else devTicks.add(i.id);
+      renderDev();
+    });
+    head.append(toggle);
+  }
+  box.append(head);
+  box.append(el('p', 'muted small', c.explain));
+  const table = el('table', 'details dev-table');
+  const tbody = el('tbody');
+  for (const i of c.items) {
+    const row = el('tr', 'dev-row' + (i.blocked ? ' exempt' : ''));
+    const tickCell = el('td', 'tick-cell');
+    const box2 = el('input');
+    box2.type = 'checkbox';
+    box2.checked = devTicks.has(i.id) && !i.blocked;
+    box2.disabled = !!i.blocked || devBusy;
+    box2.setAttribute('aria-label', 'Clean ' + i.name);
+    box2.addEventListener('change', () => { if (box2.checked) devTicks.add(i.id); else devTicks.delete(i.id); renderDev(); });
+    tickCell.append(box2);
+    row.append(tickCell);
+    const what = el('td', 'what');
+    const name = el('div', 'dev-name');
+    name.append(el('span', null, i.name));
+    if (i.blocked) name.append(el('span', 'tag', i.blocked));
+    else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
+    what.append(name);
+    const where = el('div', 'folder muted small', i.location);
+    where.title = i.location;
+    what.append(where);
+    if (i.detail) what.append(el('div', 'muted small', i.detail));
+    if (i.lastUsedUtc) what.append(el('div', 'muted small when-inline', lastUsed(i.lastUsedUtc)));
+    row.append(what);
+    row.append(el('td', 'muted small when', lastUsed(i.lastUsedUtc)));
+    row.append(el('td', 'num size', bytes(i.bytes)));
+    if (i.lastUsedUtc) where.title = i.location + ' · ' + lastUsed(i.lastUsedUtc);
+    row.addEventListener('click', (e) => { if (e.target !== box2 && !box2.disabled) { box2.checked = !box2.checked; box2.dispatchEvent(new Event('change')); } });
+    tbody.append(row);
+  }
+  table.append(tbody);
+  box.append(table);
+  return box;
 }
 
 function driveCard(d) {
@@ -389,7 +632,9 @@ function renderDone(s) {
   box.replaceChildren(...s.done.map((d) => {
     const row = el('div', 'done-row');
     row.append(el('span', 'muted small', new Date(d.atUtc).toLocaleString()));
-    if (d.action === 'recycled') {
+    if (d.action === 'dev-cleaned') {
+      row.append(el('span', null, 'Cleaned ' + (d.label || 'developer files') + ', freed ' + bytes(d.recycledBytes) + ' (deleted permanently)'));
+    } else if (d.action === 'recycled') {
       row.append(el('span', null, 'Moved ' + d.recycled + ' file(s), ' + bytes(d.recycledBytes) + ', to the Recycle Bin' + (d.keepName ? ', kept ' + d.keepName : '')));
     } else {
       row.append(el('span', null, 'Kept all' + (d.keepName ? ' (' + d.keepName + ' and its look-alikes)' : '')));
@@ -901,8 +1146,14 @@ async function renderRoute() {
   if (!state) return;
   renderCrumbs();
   const folder = route.view === 'folder';
-  $('home').classList.toggle('hidden', folder);
+  $('home').classList.toggle('hidden', route.view !== 'home');
+  $('devview').classList.toggle('hidden', route.view !== 'dev');
   $('folder').classList.toggle('hidden', !folder);
+  if (route.view === 'dev') {
+    if (!devReport || (state.dev.scannedAtUtc && devReport.scannedAtUtc !== state.dev.scannedAtUtc)) await loadDevReport();
+    renderDev();
+    return;
+  }
   if (!folder) {
     renderHome(state);
     return;
@@ -927,6 +1178,7 @@ async function refresh(force) {
     const changed = force || !state ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.scan.running !== state.scan.running ||
+      s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
     showError('');
@@ -935,7 +1187,7 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    timer = setTimeout(refresh, s.scan.running ? 2000 : 15000);
+    timer = setTimeout(refresh, s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
     showError('The agent is not responding (' + e.message + '). Run "vdf-agent open" to start it again.');
     timer = setTimeout(refresh, 5000);
@@ -947,7 +1199,7 @@ $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
 $('nav-back').addEventListener('click', () => history.back());
 $('nav-fwd').addEventListener('click', () => history.forward());
-$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); });
+$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') go(null); });
 $('navpane-toggle').addEventListener('click', () => {
   const open = $('navpane').classList.toggle('open');
   $('navpane-toggle').setAttribute('aria-expanded', String(open));

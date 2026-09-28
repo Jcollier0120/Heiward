@@ -92,6 +92,19 @@ namespace VDF.Agent {
 		public int ServerIdleMinutes { get; set; } = 60;
 		/// <summary>A Windows notification when a scan finds something new.</summary>
 		public bool Toast { get; set; } = true;
+		/// <summary>
+		/// Developer mode: also look for build outputs, worktrees, caches, emulators and temp files that
+		/// tools recreate. "auto" checks once a day and shows the section when there's something to show;
+		/// "off" never checks.
+		/// </summary>
+		public string DeveloperMode { get; set; } = "auto";
+		/// <summary>A project untouched this many days has its build outputs ticked for cleaning.</summary>
+		public int StaleProjectDays { get; set; } = 30;
+		/// <summary>Temp files untouched this many days are ticked for cleaning.</summary>
+		public int TempOlderThanDays { get; set; } = 7;
+
+		[JsonIgnore]
+		public bool DeveloperModeOn => !string.Equals(DeveloperMode, "off", StringComparison.OrdinalIgnoreCase);
 
 		[JsonIgnore]
 		public int EffectiveParallelism => Parallelism > 0 ? Parallelism : Math.Max(2, Environment.ProcessorCount / 2);

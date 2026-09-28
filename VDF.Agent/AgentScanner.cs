@@ -80,6 +80,10 @@ namespace VDF.Agent {
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);
 			report.Save();
 			ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
+			if (DevScan.Due(cfg)) {
+				try { DevScan.RunAndSave(cfg, ct); }
+				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("developer check failed: " + e.Message); }
+			}
 
 			var decisions = DecisionStore.Load();
 			var known = new HashSet<string>(previous?.Groups.Select(g => g.Key) ?? Enumerable.Empty<string>());

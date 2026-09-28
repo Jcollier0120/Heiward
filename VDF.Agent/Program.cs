@@ -160,6 +160,25 @@ status.SetAction(_ => {
 });
 root.Subcommands.Add(status);
 
+var devScan = new Option<bool>("--scan") { Description = "Check again now (otherwise: show the last check)." };
+var dev = new Command("dev", "Developer mode: build outputs, worktrees, caches, emulators and temp files that tools recreate.") { devScan };
+dev.SetAction(r => {
+	var cfg = AgentConfig.Load();
+	DevReport? report = r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load();
+	if (report == null) {
+		Console.WriteLine("No developer check yet: run 'vdf-agent dev --scan'.");
+		return 0;
+	}
+	Console.WriteLine($"Checked {report.ScannedAtUtc.ToLocalTime():g} in {report.DurationSec:N0} s.");
+	foreach (DevCategory c in report.Categories) {
+		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked");
+		foreach (DevItem i in c.Items.Take(8))
+			Console.WriteLine($"  {(i.Suggested ? "[x]" : i.Blocked != null ? "[-]" : "[ ]")} {Format.Bytes(i.Bytes),9}  {i.Name}  {i.Detail}{(i.Blocked != null ? $" ({i.Blocked})" : "")}");
+	}
+	return 0;
+});
+root.Subcommands.Add(dev);
+
 var count = new Option<bool>("--count") { Description = "List the drives as a scan would (names and attributes only; no file is opened) and count the photos and videos per folder." };
 var scope = new Command("scope", "Show what a scan looks at and what it leaves out.") { count };
 scope.SetAction(r => {
