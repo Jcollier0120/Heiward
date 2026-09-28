@@ -1,0 +1,280 @@
+<Application
+    x:Class="HEI.GUI.App"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:actipro="http://schemas.actiprosoftware.com/avaloniaui"
+    xmlns:generation="clr-namespace:ActiproSoftware.UI.Avalonia.Themes.Generation;assembly=ActiproSoftware.Avalonia.Shared"
+    xmlns:local="clr-namespace:HEI.GUI"
+    xmlns:utils="clr-namespace:HEI.GUI.Utils"
+    RequestedThemeVariant="Dark">
+
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.ThemeDictionaries>
+                <!-- Exact redesign palette (vdf-ux-concept.html tokens). These are the
+                     mockup's good/warn/danger/sel roles; the teal ACCENT itself comes from
+                     the HeiTeal ramp below. Border brushes carry the mockup's 45% alpha so
+                     badges/chips survive selected-row backgrounds (locked decision 12). -->
+                <ResourceDictionary x:Key="Light">
+                    <!-- Text tones are darker than the mockup's (#1C8A52 / #A06A10 / #BB4237):
+                         those reached only 3.4 to 4.4:1 on white, on their own soft chips and
+                         on the checked-row tint. WCAG AA wants 4.5:1. Borders keep the
+                         mockup tone, they are not text. -->
+                    <SolidColorBrush x:Key="HeiGoodBrush" Color="#16703F" />
+                    <SolidColorBrush x:Key="HeiGoodSoftBrush" Color="#E2F2E9" />
+                    <SolidColorBrush x:Key="HeiGoodBorderBrush" Color="#731C8A52" />
+                    <SolidColorBrush x:Key="HeiWarnBrush" Color="#855709" />
+                    <SolidColorBrush x:Key="HeiWarnSoftBrush" Color="#F6ECD9" />
+                    <SolidColorBrush x:Key="HeiWarnBorderBrush" Color="#73A06A10" />
+                    <SolidColorBrush x:Key="HeiDangerBrush" Color="#A5332A" />
+                    <SolidColorBrush x:Key="HeiDangerSoftBrush" Color="#F7E5E3" />
+                    <SolidColorBrush x:Key="HeiDangerBorderBrush" Color="#73BB4237" />
+                    <!-- Checked-row tint: red family because checked means "will be
+                         deleted", and clearly above the row background (#841).
+                         Active = the checked row is ALSO list-selected: the opaque
+                         checked tint covers the ListBoxItem highlight, so selection
+                         needs its own clearly stronger step. -->
+                    <SolidColorBrush x:Key="HeiSelBrush" Color="#F9DFDA" />
+                    <!-- The step is small on purpose: #F0BDB1 took the green and red metric
+                         values to 3.7 and 4.1:1. What marks the selected row is its frame. -->
+                    <SolidColorBrush x:Key="HeiSelActiveBrush" Color="#F8DCD6" />
+                    <!-- The list-selected row: a quiet tint under text that keeps its colors,
+                         and a frame. The theme's own highlight (#BEF3E4 with teal text) left
+                         the dimmed secondary text at 3.4:1. -->
+                    <SolidColorBrush x:Key="HeiRowSelectedBrush" Color="#E0EFEC" />
+                    <SolidColorBrush x:Key="HeiRowSelectedFrameBrush" Color="#0E7C6B" />
+                    <!-- Text of a selected list item under the pointer. Light: the theme's own
+                         tone, which is fine there. -->
+                    <SolidColorBrush x:Key="HeiSelectedHoverTextBrush" Color="#255B55" />
+                    <SolidColorBrush x:Key="HeiTombBrush" Color="#A93B31" />
+                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#8A9793" />
+                    <SolidColorBrush x:Key="HeiMutedSoftBrush" Color="#F7FAF9" />
+                    <SolidColorBrush x:Key="HeiMutedBorderBrush" Color="#DBE3E0" />
+                    <!-- Accent-colored text on a soft accent surface (selected settings section,
+                         drive chip, outline accent buttons). The theme's own pairing is 1.7 to
+                         3.6:1 here. -->
+                    <SolidColorBrush x:Key="HeiAccentTextBrush" Color="#0F6B5C" />
+                    <!-- Text on the solid accent (Scan, Next group). -->
+                    <SolidColorBrush x:Key="HeiOnAccentBrush" Color="#16201E" />
+                    <!-- Solid red behind white text (Delete checked): the theme's #EE4343 is 3.8:1. -->
+                    <SolidColorBrush x:Key="HeiDangerSolidBrush" Color="#D32F2F" />
+                    <!-- Dimmed secondary text. Dark keeps the mockup's 0.55 / 0.6 / 0.65, which
+                         read 5:1 and better as light-on-dark. The same values as dark-on-white
+                         are 3.3 to 4.4:1, so the light theme dims less. -->
+                    <x:Double x:Key="HeiTextFaintOpacity">0.72</x:Double>
+                    <x:Double x:Key="HeiTextMutedOpacity">0.72</x:Double>
+                    <x:Double x:Key="HeiTextSoftOpacity">0.72</x:Double>
+                    <x:Double x:Key="HeiTextSecondaryOpacity">0.9</x:Double>
+                    <!-- Dimmed text by its value. The same in light and dark, so nothing changes
+                         there; what matters is that the high contrast themes set all of them
+                         to 1: dimming is contrast taken away on purpose. -->
+                    <x:Double x:Key="HeiTextDim90Opacity">0.9</x:Double>
+                    <x:Double x:Key="HeiTextDim85Opacity">0.85</x:Double>
+                    <x:Double x:Key="HeiTextDim80Opacity">0.8</x:Double>
+                    <x:Double x:Key="HeiTextDim75Opacity">0.75</x:Double>
+                    <x:Double x:Key="HeiTextDim70Opacity">0.7</x:Double>
+                    <x:Double x:Key="HeiTextDim55Opacity">0.55</x:Double>
+                    <!-- Placeholder text in an empty field: the theme's own look. -->
+                    <x:Double x:Key="HeiPlaceholderOpacity">0.67</x:Double>
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Dark">
+                    <SolidColorBrush x:Key="HeiGoodBrush" Color="#45B878" />
+                    <SolidColorBrush x:Key="HeiGoodSoftBrush" Color="#17301F" />
+                    <SolidColorBrush x:Key="HeiGoodBorderBrush" Color="#7345B878" />
+                    <SolidColorBrush x:Key="HeiWarnBrush" Color="#D29A3A" />
+                    <SolidColorBrush x:Key="HeiWarnSoftBrush" Color="#33260E" />
+                    <SolidColorBrush x:Key="HeiWarnBorderBrush" Color="#73D29A3A" />
+                    <!-- lighter than the mockup's #E06A5E, which is 4.3:1 on the checked-row tint -->
+                    <SolidColorBrush x:Key="HeiDangerBrush" Color="#EB8378" />
+                    <SolidColorBrush x:Key="HeiDangerSoftBrush" Color="#391914" />
+                    <SolidColorBrush x:Key="HeiDangerBorderBrush" Color="#73E06A5E" />
+                    <!-- Checked-row tint: red family because checked means "will be
+                         deleted"; the old #1D2A27 green was nearly invisible against
+                         the dark row background (#841). Active = the checked row is
+                         ALSO list-selected: the opaque checked tint covers the
+                         ListBoxItem highlight, so selection needs its own clearly
+                         stronger step. -->
+                    <SolidColorBrush x:Key="HeiSelBrush" Color="#43221B" />
+                    <!-- The step is small on purpose: #6E392B took the red and green metric
+                         values to 3.5 and 3.7:1. What marks the selected row is its frame. -->
+                    <SolidColorBrush x:Key="HeiSelActiveBrush" Color="#4C271E" />
+                    <!-- The list-selected row: a quiet tint under text that keeps its colors,
+                         and a frame. The theme's own highlight (#297168) left the red and
+                         green metric values at 2.2:1, on the row the user is working on. -->
+                    <SolidColorBrush x:Key="HeiRowSelectedBrush" Color="#1F3631" />
+                    <SolidColorBrush x:Key="HeiRowSelectedFrameBrush" Color="#34B39C" />
+                    <!-- Text of a selected list item under the pointer: the theme's #D7F9EE is
+                         4.25:1 on its hover fill #2B7F74, white is 4.9:1. -->
+                    <SolidColorBrush x:Key="HeiSelectedHoverTextBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="HeiTombBrush" Color="#C05248" />
+                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#6D7B76" />
+                    <SolidColorBrush x:Key="HeiMutedSoftBrush" Color="#1C2422" />
+                    <SolidColorBrush x:Key="HeiMutedBorderBrush" Color="#2A3330" />
+                    <SolidColorBrush x:Key="HeiAccentTextBrush" Color="#8ADBC9" />
+                    <!-- The theme puts its light default text on the accent: 2.3:1. -->
+                    <SolidColorBrush x:Key="HeiOnAccentBrush" Color="#0B2B26" />
+                    <SolidColorBrush x:Key="HeiDangerSolidBrush" Color="#D32F2F" />
+                    <x:Double x:Key="HeiTextFaintOpacity">0.55</x:Double>
+                    <x:Double x:Key="HeiTextMutedOpacity">0.6</x:Double>
+                    <x:Double x:Key="HeiTextSoftOpacity">0.65</x:Double>
+                    <x:Double x:Key="HeiTextSecondaryOpacity">0.7</x:Double>
+                    <!-- Dimmed text by its value. The same in light and dark, so nothing changes
+                         there; what matters is that the high contrast themes set all of them
+                         to 1: dimming is contrast taken away on purpose. -->
+                    <x:Double x:Key="HeiTextDim90Opacity">0.9</x:Double>
+                    <x:Double x:Key="HeiTextDim85Opacity">0.85</x:Double>
+                    <x:Double x:Key="HeiTextDim80Opacity">0.8</x:Double>
+                    <x:Double x:Key="HeiTextDim75Opacity">0.75</x:Double>
+                    <x:Double x:Key="HeiTextDim70Opacity">0.7</x:Double>
+                    <x:Double x:Key="HeiTextDim55Opacity">0.55</x:Double>
+                    <!-- Placeholder text in an empty field: the theme's own look. -->
+                    <x:Double x:Key="HeiPlaceholderOpacity">0.67</x:Double>
+                </ResourceDictionary>
+                <!-- High contrast on dark. Held to 7:1 for text (4.5:1 large text and icons) by the contrast guard: no dimmed text at all, tones light enough for the darkest and the tinted surfaces alike, and outlines one can see. -->
+                <ResourceDictionary x:Key="{x:Static utils:HeiThemes.HighContrastDark}">
+                    <SolidColorBrush x:Key="HeiGoodBrush" Color="#8CE6B0" />
+                    <SolidColorBrush x:Key="HeiGoodSoftBrush" Color="#0F2418" />
+                    <SolidColorBrush x:Key="HeiGoodBorderBrush" Color="#8CE6B0" />
+                    <SolidColorBrush x:Key="HeiWarnBrush" Color="#F5C76E" />
+                    <SolidColorBrush x:Key="HeiWarnSoftBrush" Color="#2A1F08" />
+                    <SolidColorBrush x:Key="HeiWarnBorderBrush" Color="#F5C76E" />
+                    <SolidColorBrush x:Key="HeiDangerBrush" Color="#FFB3A8" />
+                    <SolidColorBrush x:Key="HeiDangerSoftBrush" Color="#2E1210" />
+                    <SolidColorBrush x:Key="HeiDangerBorderBrush" Color="#FFB3A8" />
+                    <SolidColorBrush x:Key="HeiSelBrush" Color="#3A1712" />
+                    <SolidColorBrush x:Key="HeiSelActiveBrush" Color="#4A1D16" />
+                    <SolidColorBrush x:Key="HeiRowSelectedBrush" Color="#14302B" />
+                    <SolidColorBrush x:Key="HeiRowSelectedFrameBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="HeiSelectedHoverTextBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="HeiTombBrush" Color="#8A2A22" />
+                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#C8CDD4" />
+                    <SolidColorBrush x:Key="HeiMutedSoftBrush" Color="#1C2422" />
+                    <SolidColorBrush x:Key="HeiMutedBorderBrush" Color="#C8CDD4" />
+                    <SolidColorBrush x:Key="HeiAccentTextBrush" Color="#A8F0E0" />
+                    <SolidColorBrush x:Key="HeiOnAccentBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="HeiDangerSolidBrush" Color="#9E1B1B" />
+                    <x:Double x:Key="HeiTextFaintOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextMutedOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextSoftOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextSecondaryOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim90Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim85Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim80Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim75Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim70Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim55Opacity">1</x:Double>
+                    <!-- At full strength; the theme's italic still tells it from typed text. -->
+                    <x:Double x:Key="HeiPlaceholderOpacity">1</x:Double>
+                    <!-- The theme's own surfaces and outlines, where they fall short of the
+                         enhanced level: the soft accent surface under text, and the hairline
+                         borders that tell a field, a button or a panel from what is around it. -->
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushSoftAccent}" Color="#12332E" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushSoftAccentPointerOver}" Color="#12332E" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushSoftAccentPressed}" Color="#12332E" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushOutlineAccentPointerOver}" Color="#12332E" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushOutlineAccentPressed}" Color="#12332E" />
+                    <!-- A selected item in a plain list: the inversion high contrast users know as
+                         highlight and highlight text. Seen at a glance, and far above 7:1. -->
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemBackgroundBrushSelected}" Color="#A8F0E0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemBackgroundBrushSelectedPointerOver}" Color="#A8F0E0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemBackgroundBrushSelectedPressed}" Color="#A8F0E0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemForegroundBrushSelected}" Color="#000000" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container1BorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container2BorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container3BorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container4BorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container5BorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ButtonBorderBrushOutline}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBorderBrushOutline}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey EditBorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey SwitchBorderBrushOutline}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListBorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey MenuPopupBorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey PopupBorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ToolTipBorderBrush}" Color="#B4B8C0" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ProgressBarBorderBrush}" Color="#B4B8C0" />
+                </ResourceDictionary>
+                <!-- High contrast on light, the counterpart of the above. -->
+                <ResourceDictionary x:Key="{x:Static utils:HeiThemes.HighContrastLight}">
+                    <SolidColorBrush x:Key="HeiGoodBrush" Color="#0A4A27" />
+                    <SolidColorBrush x:Key="HeiGoodSoftBrush" Color="#EAF6EF" />
+                    <SolidColorBrush x:Key="HeiGoodBorderBrush" Color="#0A4A27" />
+                    <SolidColorBrush x:Key="HeiWarnBrush" Color="#553600" />
+                    <SolidColorBrush x:Key="HeiWarnSoftBrush" Color="#FAF2E2" />
+                    <SolidColorBrush x:Key="HeiWarnBorderBrush" Color="#553600" />
+                    <SolidColorBrush x:Key="HeiDangerBrush" Color="#7A1710" />
+                    <SolidColorBrush x:Key="HeiDangerSoftBrush" Color="#FBECEA" />
+                    <SolidColorBrush x:Key="HeiDangerBorderBrush" Color="#7A1710" />
+                    <SolidColorBrush x:Key="HeiSelBrush" Color="#FBE9E6" />
+                    <SolidColorBrush x:Key="HeiSelActiveBrush" Color="#F8DCD6" />
+                    <SolidColorBrush x:Key="HeiRowSelectedBrush" Color="#E6F3F0" />
+                    <SolidColorBrush x:Key="HeiRowSelectedFrameBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="HeiSelectedHoverTextBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="HeiTombBrush" Color="#8A2A22" />
+                    <SolidColorBrush x:Key="HeiMutedBrush" Color="#3F4650" />
+                    <SolidColorBrush x:Key="HeiMutedSoftBrush" Color="#F7FAF9" />
+                    <SolidColorBrush x:Key="HeiMutedBorderBrush" Color="#3F4650" />
+                    <SolidColorBrush x:Key="HeiAccentTextBrush" Color="#06433A" />
+                    <SolidColorBrush x:Key="HeiOnAccentBrush" Color="#000000" />
+                    <SolidColorBrush x:Key="HeiDangerSolidBrush" Color="#9E1B1B" />
+                    <x:Double x:Key="HeiTextFaintOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextMutedOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextSoftOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextSecondaryOpacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim90Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim85Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim80Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim75Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim70Opacity">1</x:Double>
+                    <x:Double x:Key="HeiTextDim55Opacity">1</x:Double>
+                    <!-- At full strength; the theme's italic still tells it from typed text. -->
+                    <x:Double x:Key="HeiPlaceholderOpacity">1</x:Double>
+                    <!-- The theme's own surfaces and outlines, where they fall short of the
+                         enhanced level: the soft accent surface under text, and the hairline
+                         borders that tell a field, a button or a panel from what is around it. -->
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushSoftAccent}" Color="#E6F5F1" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushSoftAccentPointerOver}" Color="#E6F5F1" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushSoftAccentPressed}" Color="#E6F5F1" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushOutlineAccentPointerOver}" Color="#E6F5F1" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBackgroundBrushOutlineAccentPressed}" Color="#E6F5F1" />
+                    <!-- A selected item in a plain list: the inversion high contrast users know as
+                         highlight and highlight text. Seen at a glance, and far above 7:1. -->
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemBackgroundBrushSelected}" Color="#06433A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemBackgroundBrushSelectedPointerOver}" Color="#06433A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemBackgroundBrushSelectedPressed}" Color="#06433A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListItemForegroundBrushSelected}" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container1BorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container2BorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container3BorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container4BorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey Container5BorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ButtonBorderBrushOutline}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ControlBorderBrushOutline}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey EditBorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey SwitchBorderBrushOutline}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ListBorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey MenuPopupBorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey PopupBorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ToolTipBorderBrush}" Color="#4A4F5A" />
+                    <SolidColorBrush x:Key="{actipro:ThemeResourceKey ProgressBarBorderBrush}" Color="#4A4F5A" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+
+    <Application.Styles>
+        <FluentTheme />
+        <!-- Teal-green accent (redesign locked decision 12): a custom accent ramp
+             generated from the mockup color replaces ActiPro's default blue. -->
+        <actipro:ModernTheme>
+            <actipro:ModernTheme.Definition>
+                <generation:ThemeDefinition AccentColorRampName="HeiTeal">
+                    <generation:ThemeDefinition.ColorPaletteFactory>
+                        <utils:HeiColorPaletteFactory />
+                    </generation:ThemeDefinition.ColorPaletteFactory>
+                </generation:ThemeDefinition>
+            </actipro:ModernTheme.Definition>
+        </actipro:ModernTheme>
+        <StyleInclude Source="avares://HEI.GUI/Styles/Styles.xaml" />
+    </Application.Styles>
+</Application>

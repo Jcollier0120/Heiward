@@ -43,7 +43,7 @@ The releases aren't code-signed yet, so the first run shows "Windows protected y
 
 To remove it, uninstall **Heiward** in Settings > Apps.
 
-To build it yourself, see [Build](VDF.Agent/README.md#build). Settings, commands and how it decides what to tick are in [VDF.Agent/README.md](VDF.Agent/README.md).
+To build it yourself, see [Build](HEI.Agent/README.md#build). Settings, commands and how it decides what to tick are in [HEI.Agent/README.md](HEI.Agent/README.md).
 
 ## Based on Video Duplicate Finder
 
@@ -59,7 +59,7 @@ What the fork adds to Video Duplicate Finder's engine:
 # License
 Video Duplicate Finder is licensed under AGPLv3.
 
-Heiward (`VDF.Agent`) is AGPLv3 too. When it installs, it downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU runtime for the PC's NPU (Qualcomm QNN, Intel OpenVINO, or AMD Vitis AI, which Windows ML supplies) or DirectML for a GPU. Each carries its own licence.
+Heiward (`HEI.Agent`) is AGPLv3 too. When it installs, it downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU runtime for the PC's NPU (Qualcomm QNN, Intel OpenVINO, or AMD Vitis AI, which Windows ML supplies) or DirectML for a GPU. Each carries its own licence.
 
 The optional AI components are downloaded separately on first use and carry their own licenses: ONNX Runtime (MIT) and the DINOv2-small embedding model (Apache-2.0). Neither is bundled with or linked into the release binaries.
 

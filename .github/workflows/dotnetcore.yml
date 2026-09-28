@@ -14,22 +14,24 @@ jobs:
       with:
         dotnet-version: '10.0.x'
     - name: Build GUI
-      run: dotnet publish VDF.GUI/VDF.GUI.csproj -c Release -v q --self-contained -r win-x64
+      run: dotnet publish HEI.GUI/HEI.GUI.csproj -c Release -v q --self-contained -r win-x64
     - name: Build CLI
-      run: dotnet publish VDF.CLI/VDF.CLI.csproj -c Release -v q --self-contained -r win-x64
+      run: dotnet publish HEI.CLI/HEI.CLI.csproj -c Release -v q --self-contained -r win-x64
     - name: Build Web
-      run: dotnet publish VDF.Web/VDF.Web.csproj -c Release -v q --self-contained -r win-x64
+      run: dotnet publish HEI.Web/HEI.Web.csproj -c Release -v q --self-contained -r win-x64
     - name: Run Unit Tests
-      run: dotnet test VDF.Core.Tests/VDF.Core.Tests.csproj -c Release -v q
+      run: dotnet test HEI.Core.Tests/HEI.Core.Tests.csproj -c Release -v q
+    - name: Run Heiward Tests
+      run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q
     - name: Run CLI Tests
-      run: dotnet test VDF.CLI.Tests/VDF.CLI.Tests.csproj -c Release -v q
+      run: dotnet test HEI.CLI.Tests/HEI.CLI.Tests.csproj -c Release -v q
     - name: Run GUI Tests
-      run: dotnet test VDF.GUI.Tests/VDF.GUI.Tests.csproj -c Release -v q
+      run: dotnet test HEI.GUI.Tests/HEI.GUI.Tests.csproj -c Release -v q
     - name: Run GUI Headless Tests
-      run: dotnet test VDF.GUI.HeadlessTests/VDF.GUI.HeadlessTests.csproj -c Release -v q
+      run: dotnet test HEI.GUI.HeadlessTests/HEI.GUI.HeadlessTests.csproj -c Release -v q
     - name: Run Web Tests
-      run: dotnet test VDF.Web.Tests/VDF.Web.Tests.csproj -c Release -v q
+      run: dotnet test HEI.Web.Tests/HEI.Web.Tests.csproj -c Release -v q
     - name: Install FFmpeg
       run: choco install ffmpeg -y --no-progress
     - name: Run Integration Tests
-      run: dotnet test VDF.IntegrationTests/VDF.IntegrationTests.csproj -c Release -v normal
+      run: dotnet test HEI.IntegrationTests/HEI.IntegrationTests.csproj -c Release -v normal

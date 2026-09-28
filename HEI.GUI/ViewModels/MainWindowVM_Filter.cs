@@ -1,0 +1,214 @@
+// /*
+//     Copyright (C) 2026 0x90d
+//     This file is part of VideoDuplicateFinder
+//     VideoDuplicateFinder is free software: you can redistribute it and/or modify
+//     it under the terms of the GPLv3 as published by
+//     the Free Software Foundation, either version 3 of the License, or
+//     (at your option) any later version.
+//     VideoDuplicateFinder is distributed in the hope that it will be useful,
+//     but WITHOUT ANY WARRANTY without even the implied warranty of
+//     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+//     GNU General Public License for more details.
+//     You should have received a copy of the GNU General Public License
+//     along with VideoDuplicateFinder.  If not, see <http://www.gnu.org/licenses/>.
+// */
+//
+
+using System.ComponentModel;
+using System.Linq;
+using Avalonia.Collections;
+using ReactiveUI;
+using HEI.GUI.Data;
+
+namespace HEI.GUI.ViewModels {
+	public partial class MainWindowVM : ReactiveObject {
+
+		public FileTypeFilterOption[] TypeFilters { get; } = {
+			new FileTypeFilterOption("All", FileTypeFilter.All),
+			new FileTypeFilterOption("Videos", FileTypeFilter.Videos),
+			new FileTypeFilterOption("Images", FileTypeFilter.Images),
+		};
+
+		FileTypeFilterOption _FileType;
+
+		public FileTypeFilterOption FileType {
+			get => _FileType;
+			set {
+				if (value.Name == _FileType.Name) return;
+				_FileType = value;
+				this.RaisePropertyChanged(nameof(FileType));
+				RefreshResultsView();
+			}
+		}
+		bool _FilterGroupsWithCheckedItems;
+		public bool FilterGroupsWithCheckedItems {
+			get => _FilterGroupsWithCheckedItems;
+			set {
+				if (value == _FilterGroupsWithCheckedItems) return;
+				this.RaiseAndSetIfChanged(ref _FilterGroupsWithCheckedItems, value);
+				RefreshResultsView();
+			}
+		}
+
+		bool _FilterHideGroupsWithOneFileLeft;
+		/// <summary>
+		/// Hides groups in which at most one file still exists: after deleting a folder that
+		/// had an identical copy elsewhere, every file of the copy stayed listed next to its
+		/// "Already deleted" twin, one group per file (#909).
+		/// </summary>
+		public bool FilterHideGroupsWithOneFileLeft {
+			get => _FilterHideGroupsWithOneFileLeft;
+			set {
+				if (value == _FilterHideGroupsWithOneFileLeft) return;
+				this.RaiseAndSetIfChanged(ref _FilterHideGroupsWithOneFileLeft, value);
+				RefreshResultsView();
+			}
+		}
+
+		/// <summary>Recomputed on every list rebuild while the chip is on, so deletions show up at once.</summary>
+		HashSet<Guid> _groupsWithOneFileLeft = new();
+		void RebuildGroupsWithOneFileLeft() {
+			if (!FilterHideGroupsWithOneFileLeft) { _groupsWithOneFileLeft.Clear(); return; }
+			var (isTombstone, _) = ResultsListBuilder.CreateCachedPathStatus(File.Exists, HEI.Core.ScanEngine.IsDriveReady);
+			_groupsWithOneFileLeft = GroupsWithAtMostOneFileLeft(Duplicates, isTombstone);
+		}
+
+		/// <summary>
+		/// Groups with at most one member that is not "Already deleted". A member on an
+		/// unplugged drive still counts as a file: offline is not deleted.
+		/// </summary>
+		internal static HashSet<Guid> GroupsWithAtMostOneFileLeft(IEnumerable<DuplicateItemVM> items, Func<DuplicateItemVM, bool> isTombstone) {
+			var liveCount = new Dictionary<Guid, int>();
+			foreach (var item in items) {
+				liveCount.TryGetValue(item.ItemInfo.GroupId, out int count);
+				liveCount[item.ItemInfo.GroupId] = isTombstone(item) ? count : count + 1;
+			}
+			return liveCount.Where(kv => kv.Value <= 1).Select(kv => kv.Key).ToHashSet();
+		}
+
+		bool _FilterOnlyGroupsWithAiMatches;
+		/// <summary>
+		/// Shows only the groups the AI pass contributed to: those holding a file that only
+		/// the AI accepted, which the classic comparison rejected (#927). Not an AI-only scan:
+		/// the rest of such a group stays visible, because the AI-matched file can only be
+		/// judged next to the file it was matched with, and which one that was is not recorded.
+		/// </summary>
+		public bool FilterOnlyGroupsWithAiMatches {
+			get => _FilterOnlyGroupsWithAiMatches;
+			set {
+				if (value == _FilterOnlyGroupsWithAiMatches) return;
+				this.RaiseAndSetIfChanged(ref _FilterOnlyGroupsWithAiMatches, value);
+				RefreshResultsView();
+				this.RaisePropertyChanged(nameof(ResultsShowAiMatchFilter));
+			}
+		}
+
+		HashSet<Guid> _groupsWithAiMatch = new();
+
+		/// <summary>
+		/// The chip only exists when it can do something: the results contain AI matches, or
+		/// it is still switched on (so it can be switched off after a scan without AI).
+		/// </summary>
+		public bool ResultsShowAiMatchFilter => _groupsWithAiMatch.Count > 0 || FilterOnlyGroupsWithAiMatches;
+
+		/// <summary>Recomputed on every list rebuild: removing or deleting files can empty a group of its AI match.</summary>
+		void RebuildGroupsWithAiMatch() {
+			bool had = _groupsWithAiMatch.Count > 0;
+			_groupsWithAiMatch = GroupsWithAiMatches(Duplicates);
+			if (had != _groupsWithAiMatch.Count > 0)
+				this.RaisePropertyChanged(nameof(ResultsShowAiMatchFilter));
+		}
+
+		/// <summary>Groups holding at least one file flagged <see cref="HEI.Core.DuplicateFlags.AiMatched"/>.</summary>
+		internal static HashSet<Guid> GroupsWithAiMatches(IEnumerable<DuplicateItemVM> items) =>
+			items.Where(d => d.ItemInfo.IsAiMatched).Select(d => d.ItemInfo.GroupId).ToHashSet();
+
+		HashSet<Guid> _groupsWithPathHit = new();
+		void RebuildSearchPathIndex() {
+			var needle = FilterByPath;
+			if (string.IsNullOrEmpty(needle)) { _groupsWithPathHit.Clear(); return; }
+
+			_groupsWithPathHit = Duplicates
+				.Where(d => PathMatchesFilter(d.ItemInfo.Path, needle))
+				.Select(d => d.ItemInfo.GroupId)
+				.ToHashSet();
+		}
+
+		/// <summary>
+		/// Substring match by default; when the needle contains * or ? it is treated
+		/// as a wildcard pattern instead (unanchored, so "season?\ep*" works without
+		/// the user having to wrap it in stars themselves).
+		/// </summary>
+		internal static bool PathMatchesFilter(string path, string needle) {
+			if (needle.IndexOfAny(['*', '?']) < 0)
+				return path.Contains(needle, StringComparison.OrdinalIgnoreCase);
+			string pattern = EscapeWildcardBackslashes(needle);
+			if (!pattern.StartsWith('*')) pattern = "*" + pattern;
+			if (!pattern.EndsWith('*')) pattern += "*";
+			return System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(pattern, path);
+		}
+
+		/// <summary>
+		/// MatchesSimpleExpression treats '\' in the pattern as an escape character, so a
+		/// raw Windows path fragment ("*D:\Videos*") would never match anything (#864).
+		/// VDF's path patterns treat backslashes literally instead - '*' and '?' are
+		/// illegal in Windows file names, so escape syntax has nothing to express here.
+		/// </summary>
+		internal static string EscapeWildcardBackslashes(string pattern) => pattern.Replace("\\", "\\\\");
+
+		string _FilterByPath = string.Empty;
+		public string FilterByPath {
+			get => _FilterByPath;
+			set {
+				if (value == _FilterByPath) return;
+				_FilterByPath = value;
+				this.RaisePropertyChanged(nameof(FilterByPath));
+			}
+		}
+		int _FilterSimilarityFrom = 0;
+		public int FilterSimilarityFrom {
+			get => _FilterSimilarityFrom;
+			set {
+				if (value == _FilterSimilarityFrom) return;
+				this.RaiseAndSetIfChanged(ref _FilterSimilarityFrom, value);
+				RefreshResultsView();
+			}
+		}
+		int _FilterSimilarityTo = 100;
+		public int FilterSimilarityTo {
+			get => _FilterSimilarityTo;
+			set {
+				if (value == _FilterSimilarityTo) return;
+				this.RaiseAndSetIfChanged(ref _FilterSimilarityTo, value);
+				RefreshResultsView();
+			}
+		}
+
+		/// <summary>The results filter; the view exposes it as always-active toolbar chips.</summary>
+		internal bool DuplicatesFilterCore(DuplicateItemVM data) {
+			bool ok = true;
+			if (!string.IsNullOrEmpty(FilterByPath)) {
+				ok = PathMatchesFilter(data.ItemInfo.Path, FilterByPath)
+					 || _groupsWithPathHit.Contains(data.ItemInfo.GroupId);
+			}
+
+			if (ok && FileType.Value != FileTypeFilter.All)
+				ok = FileType.Value == FileTypeFilter.Images ? data.ItemInfo.IsImage : !data.ItemInfo.IsImage;
+
+			if (ok)
+				ok = data.ItemInfo.Similarity >= FilterSimilarityFrom && data.ItemInfo.Similarity <= FilterSimilarityTo;
+
+			if (ok && FilterGroupsWithCheckedItems)
+				ok = GroupHasCheckedItems(data.ItemInfo.GroupId);
+
+			if (ok && FilterHideGroupsWithOneFileLeft)
+				ok = !_groupsWithOneFileLeft.Contains(data.ItemInfo.GroupId);
+
+			if (ok && FilterOnlyGroupsWithAiMatches)
+				ok = _groupsWithAiMatch.Contains(data.ItemInfo.GroupId);
+
+			data.IsVisibleInFilter = ok;
+			return ok;
+		}
+	}
+}
