@@ -167,4 +167,29 @@ public class TiledHeicTests {
 		Assert.Equal(VDF.Core.AI.OnnxEmbedder.InputSide * VDF.Core.AI.OnnxEmbedder.InputSide * 3, rgb!.Length);
 		Assert.True(VDF.Core.Utils.GrayBytesUtils.VerifyGrayScaleValues(gray));
 	}
+
+	[SkippableFact]
+	public void NativeBinding_TiledHeic_Rgb224Path_HashesLikeTheProcessPath() {
+		Skip.If(!_fixture.FfmpegCliAvailable, _fixture.FfmpegNotFoundReason);
+		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");
+		Skip.If(TiledHeicPath == null, SkipReason);
+
+		using var guard = new FfmpegStaticStateGuard();
+		FfmpegEngine.HardwareAccelerationMode = FFHardwareAccelerationMode.none;
+		FfmpegEngine.CustomFFArguments = string.Empty;
+
+		FfmpegEngine.UseNativeBinding = false;
+		(_, byte[]? cliRgb) = FfmpegEngine.GetGrayAndRgb224Cli(TiledHeicPath!, TimeSpan.Zero, softwareDecodeOnly: true, extendedLogging: true);
+		Assert.NotNull(cliRgb);
+
+		// The scan's path: one in-process decode gives the AI frame and the photo's size; the gray
+		// frame is derived from that AI frame, as for every photo.
+		FfmpegEngine.UseNativeBinding = true;
+		Assert.True(FfmpegEngine.TryGetImageInfoAndRgb224(TiledHeicPath!, out byte[]? rgb, out int width, out int height, extendedLogging: true));
+		Assert.True(width > 512 && height > 512, $"{width}x{height}");
+		Assert.Equal(cliRgb!.Length, rgb!.Length);
+		double similarity = (1 - VDF.Core.Utils.GrayBytesUtils.PercentageDifference(
+			VDF.Core.Utils.GrayBytesUtils.FromRgb224(rgb), VDF.Core.Utils.GrayBytesUtils.FromRgb224(cliRgb))) * 100;
+		Assert.True(similarity > 99.7, $"gray similarity {similarity:F2}%");
+	}
 }

@@ -1155,9 +1155,9 @@ namespace VDF.Core {
 						if (entry.IsImage) {
 							ScanCrashJournal.Begin(ScanCrashJournal.PhaseImage, entry.Path);
 							try {
-								// Gray frames made one way are not comparable with the other (~96% apart for
-								// the same picture): recompute cached ones when the image pipeline changed.
-								if (entry.grayBytes.Count > 0 && entry.Flags.Has(CurrentImageGrayVersion) != UseWic)
+								// Gray frames made under older rules are not comparable with today's (~96% apart
+								// for the same picture): recompute them once.
+								if (entry.grayBytes.Count > 0 && !entry.Flags.Has(CurrentImageGrayVersion))
 									entry.grayBytes.Clear();
 								if (entry.grayBytes.Count == 0) {
 									if (!GetGrayBytesFromImage(entry, Settings.UseExifCreationDate, Settings.ExtendedFFToolsLogging, aiEmbeddingPipeline, UseWic))
@@ -2974,17 +2974,15 @@ namespace VDF.Core {
 
 		static bool GetGrayBytesFromImage(FileEntry imageFile, bool useExifIfAvailable, bool extendedLogging, AI.IEmbeddingFrameSink? embeddingSink = null, bool useWic = false) {
 			try {
-				// Decode through FFmpeg — the same pipeline videos use — so image and video
-				// gray bytes share identical grayscale conversion and scaling. On Windows,
-				// WIC goes first when enabled (Settings.UseWindowsImageDecoder): one in-process,
-				// reduced-size decode yields both frames; anything it can't read falls through.
-				byte[]? grayBytes = null;
-				// RGB frame from the combined CLI fallback; submitted only after the
-				// dark check below, so failed/too-dark images stay without an embedding
-				// exactly like on the two-call path.
-				byte[]? pendingRgb = null;
-				bool rgbFromCombinedCall = false;
+				// Every photo's gray frame is computed from its 224x224 RGB frame (the AI's input),
+				// whichever decoder made it: a JPEG export (WIC) and its HEIC original (FFmpeg) then
+				// agree to ~99.8%, where the decoders' own gray scaling left them ~96% apart
+				// (GrayBytesUtils.FromRgb224). Videos keep FFmpeg's gray frames; they are never
+				// compared with photos. On Windows, WIC goes first when enabled
+				// (Settings.UseWindowsImageDecoder); anything it can't read falls through to FFmpeg.
+				byte[]? rgb = null;
 				int width = 0, height = 0;
+				bool sizeFromHeader = false;
 				// HEIC/HEIF go to FFmpeg first: Windows' HEIF codec decodes one photo at a time
 				// (~2 per second on a Snapdragon X2, however many threads ask), while FFmpeg
 				// processes decode them in parallel, ~5x faster. WIC stays their fallback.
@@ -2992,21 +2990,23 @@ namespace VDF.Core {
 				bool wicFirst = useWic && !heif;
 				bool TryWic() {
 					long start = Stopwatch.GetTimestamp();
-					bool ok = WicImageDecoder.TryDecode(imageFile.Path, out grayBytes, out pendingRgb, out width, out height);
+					bool ok = WicImageDecoder.TryDecode(imageFile.Path, out _, out rgb, out width, out height);
 					if (!ok)
 						Logger.Instance.Info($"WIC could not decode '{imageFile.Path}' ({WicImageDecoder.LastFailure}).");
 					else if (Stopwatch.GetElapsedTime(start) > TimeSpan.FromSeconds(5))
 						Logger.Instance.Info($"Slow WIC decode: {Stopwatch.GetElapsedTime(start).TotalMilliseconds:N0} ms for '{imageFile.Path}'.");
 					return ok;
 				}
-				if (wicFirst && TryWic()) {
-					rgbFromCombinedCall = true;
-				}
-				else if (!FfmpegEngine.TryGetImageInfoAndGrayBytes(imageFile.Path, out grayBytes, out width, out height, extendedLogging)) {
+				// Last resort only: a gray frame from FFmpeg's own scaling, when no RGB frame could be
+				// made. Left unmarked, so the next scan tries again.
+				byte[]? fallbackGray = null;
+				bool decoded = wicFirst && TryWic();
+				if (!decoded && !FfmpegEngine.TryGetImageInfoAndRgb224(imageFile.Path, out rgb, out width, out height, extendedLogging)) {
 					// CLI fallback. Read dimensions straight from the file header first: some
 					// PNGs trip FFprobe's demuxer with a bogus "chunk too big" error (#805),
 					// and the header carries the dimensions without decoding. Only fall back
 					// to FFprobe when the header reader doesn't recognise the format.
+					sizeFromHeader = true;
 					if (!ImageHeader.TryGetDimensions(imageFile.Path, out width, out height)) {
 						MediaInfo? info = FFProbeEngine.GetMediaInfo(imageFile.Path, extendedLogging);
 						// Largest stream, not the first: tiled HEIFs expose dozens of streams
@@ -3017,51 +3017,30 @@ namespace VDF.Core {
 						width = stream?.Width ?? 0;
 						height = stream?.Height ?? 0;
 					}
-					if ((useWic || embeddingSink?.WantsEmbedding(imageFile, 0) == true) &&
-						string.IsNullOrWhiteSpace(FfmpegEngine.CustomFFArguments)) {
-						// Embedding wanted too (or, with the WIC pipeline, the RGB frame the gray frame is
-						// computed from): fetch gray + RGB in one decode instead of two.
-						(grayBytes, pendingRgb) = FfmpegEngine.GetGrayAndRgb224Cli(imageFile.Path, TimeSpan.Zero, softwareDecodeOnly: true, extendedLogging);
-						rgbFromCombinedCall = true;
-					}
-					else {
-						grayBytes = FfmpegEngine.GetThumbnail(new FfmpegSettings {
-							File = imageFile.Path,
-							Position = TimeSpan.Zero,
-							GrayScale = 1,
-							SoftwareDecodeOnly = true,
-						}, extendedLogging);
-					}
+					// One FFmpeg run for both frames. CustomFFArguments don't apply to photos: the
+					// in-process path above never could apply them, and the hash must not depend on
+					// which path decoded the file.
+					(fallbackGray, rgb) = FfmpegEngine.GetGrayAndRgb224Cli(imageFile.Path, TimeSpan.Zero, softwareDecodeOnly: true, extendedLogging);
 				}
 
 				// FFmpeg missing, broken, or unable to read this HEIC: WIC still can, slowly.
-				if (grayBytes == null && useWic && !wicFirst && TryWic())
-					rgbFromCombinedCall = true;
-				else if (grayBytes != null && useWic && !rgbFromCombinedCall) {
-					// FFmpeg's in-process path returned gray only: fetch the RGB frame too (same decoder).
-					pendingRgb = FfmpegEngine.GetThumbnail(new FfmpegSettings {
-						File = imageFile.Path, Position = TimeSpan.Zero, Rgb224 = true, SoftwareDecodeOnly = true,
-					}, extendedLogging);
-					rgbFromCombinedCall = true;
-				}
-				// With the WIC pipeline every photo's gray frame is computed from its RGB frame, whichever
-				// decoder made it: a JPEG (WIC) and its HEIC original (FFmpeg) then agree to ~99.8%, where
-				// the two decoders' own gray scaling left them ~96% apart (GrayBytesUtils.FromRgb224).
-				bool grayFromRgb = useWic && pendingRgb != null;
-				if (grayFromRgb)
-					grayBytes = GrayBytesUtils.FromRgb224(pendingRgb!);
-				imageFile.Flags.Set(CurrentImageGrayVersion, grayFromRgb);
-				// Tiled HEIC through FFmpeg reports one tile's size (FFprobe's largest stream is a
-				// tile; the picture is a stream group). WIC reads the displayed size from the header.
-				if (grayBytes != null && heif && useWic && WicImageDecoder.TryGetSize(imageFile.Path, out int heifW, out int heifH)) {
+				if (rgb == null && useWic && !wicFirst && TryWic())
+					fallbackGray = null;
+				// Tiled HEIC through FFprobe reports one tile's size (its largest stream is a tile;
+				// the picture is a stream group). WIC reads the displayed size from the header.
+				if (sizeFromHeader && heif && useWic && WicImageDecoder.TryGetSize(imageFile.Path, out int heifW, out int heifH)) {
 					width = heifW;
 					height = heifH;
 				}
 
+				byte[]? grayBytes = rgb != null ? GrayBytesUtils.FromRgb224(rgb) : fallbackGray;
+				imageFile.Flags.Set(CurrentImageGrayVersion, rgb != null);
 				if (grayBytes == null) {
 					imageFile.Flags.Set(EntryFlags.ThumbnailError);
 					return false;
 				}
+				if (rgb == null)
+					Logger.Instance.Info($"No RGB frame for '{imageFile.Path}'; its gray frame comes from FFmpeg's own scaling until a later scan makes one.");
 
 				imageFile.mediaInfo = new MediaInfo {
 					Streams = new[] {
@@ -3089,20 +3068,17 @@ namespace VDF.Core {
 				if (!GrayBytesUtils.VerifyGrayScaleValues(grayBytes)) {
 					imageFile.Flags.Set(EntryFlags.TooDark);
 					Logger.Instance.Warn($"Graybytes too dark of: {imageFile.Path}");
+					AI.FramePool.Shared.Return(rgb);
 					return false;
 				}
 
 				imageFile.grayBytes.Add(0, grayBytes);
-				if (rgbFromCombinedCall) {
-					// The RGB frame came out of the same decode; a null here means the RGB
-					// branch failed — non-fatal, the AI pass abstains (no second attempt:
-					// the native path already failed for this file and the CLI just ran).
-					if (pendingRgb != null && embeddingSink?.WantsEmbedding(imageFile, 0) == true)
-						embeddingSink.SubmitFrame(imageFile, 0, pendingRgb);
-				}
-				else {
-					TryQueueImageEmbeddingFrame(imageFile, embeddingSink, extendedLogging, useWic);
-				}
+				// The AI frame is the one the gray frame came from. Without one the AI pass abstains
+				// (no second attempt: every decoder already tried this file).
+				if (rgb != null && embeddingSink?.WantsEmbedding(imageFile, 0) == true)
+					embeddingSink.SubmitFrame(imageFile, 0, rgb);
+				else
+					AI.FramePool.Shared.Return(rgb);
 				return true;
 			}
 			catch (Exception ex) {

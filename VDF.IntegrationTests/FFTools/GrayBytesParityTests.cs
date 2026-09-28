@@ -121,6 +121,34 @@ public class GrayBytesParityTests {
 		Assert.True(diff < 0.05f, $"Native vs process still-image graybytes differ by {diff:P2}, expected < 5%");
 	}
 
+	[SkippableTheory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void Rgb224_NativeStillImage_MatchesThumbnailAndProcess(bool png) {
+		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");
+		Skip.If(!_fixture.FfmpegCliAvailable, _fixture.FfmpegNotFoundReason);
+		string? image = png ? _fixture.SamplePng : _fixture.SampleJpeg;
+		Skip.If(image == null, "Still image fixture not generated");
+
+		using var guard = new FfmpegStaticStateGuard();
+		FfmpegEngine.HardwareAccelerationMode = FFHardwareAccelerationMode.none;
+		var rgbSettings = new FfmpegSettings { File = image!, Position = TimeSpan.Zero, Rgb224 = true, SoftwareDecodeOnly = true };
+
+		// The scan's one-decode path must give exactly the frame GetThumbnail gives (the embedding
+		// backfill for cached photos uses that one), and the gray frame derived from it must match
+		// the CLI's closely: every photo's gray frame is FromRgb224 of whichever frame it got.
+		FfmpegEngine.UseNativeBinding = true;
+		Assert.True(FfmpegEngine.TryGetImageInfoAndRgb224(image!, out var nativeRgb, out int w, out int h, extendedLogging: false));
+		Assert.True(w > 0 && h > 0, $"Native decode reported invalid dimensions {w}x{h}");
+		Assert.Equal(FfmpegEngine.GetThumbnail(rgbSettings, extendedLogging: false), nativeRgb);
+
+		FfmpegEngine.UseNativeBinding = false;
+		var processRgb = FfmpegEngine.GetThumbnail(rgbSettings, extendedLogging: false);
+		Assert.NotNull(processRgb);
+		float diff = GrayBytesUtils.PercentageDifference(GrayBytesUtils.FromRgb224(nativeRgb!), GrayBytesUtils.FromRgb224(processRgb!));
+		Assert.True(diff < 0.01f, $"Native vs process RGB-derived graybytes differ by {diff:P2}, expected < 1%");
+	}
+
 	[SkippableFact]
 	public void GrayBytes_NativeMode_SameInput_ProducesIdenticalOutput() {
 		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");

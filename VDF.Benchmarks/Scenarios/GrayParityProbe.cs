@@ -23,7 +23,7 @@ namespace VDF.Benchmarks.Scenarios;
 /// <c>--probe-gray &lt;folder&gt; [n]</c>: the same photos through WIC and through FFmpeg must give
 /// matching 32×32 gray frames, or a JPEG (WIC) and its HEIC original (FFmpeg) never reach the
 /// plain-copy similarity. Compares FFmpeg's own gray frame and the RGB-derived one
-/// (<see cref="GrayBytesUtils.FromRgb224"/>, what photos use with the WIC pipeline) against WIC's.
+/// (<see cref="GrayBytesUtils.FromRgb224"/>, what every photo's gray frame is) against WIC's.
 /// Measured on 30 camera JPEGs: FFmpeg's own gray 96.35% (worst 93.53%), RGB-derived 99.85% (worst 99.79%).
 /// </summary>
 public static class GrayParityProbe {

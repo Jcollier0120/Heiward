@@ -1441,6 +1441,63 @@ namespace VDF.Core.FFTools {
 		}
 
 		/// <summary>
+		/// Native fast path for a still image's 224x224 RGB frame plus its dimensions, from one
+		/// decode. The scan computes a photo's gray bytes from this frame
+		/// (<see cref="GrayBytesUtils.FromRgb224"/>), whichever decoder made it, so a copy decoded
+		/// elsewhere (WIC, the CLI) hashes alike. Scaling and orientation match
+		/// <see cref="GetThumbnail"/> with <c>Rgb224</c>. The frame is a <see cref="AI.FramePool"/>
+		/// buffer. Returns false when the native binding is unavailable or decoding fails.
+		/// </summary>
+		internal static unsafe bool TryGetImageInfoAndRgb224(string path, out byte[]? rgb224, out int width, out int height, bool extendedLogging) {
+			rgb224 = null;
+			width = 0;
+			height = 0;
+			if (!ShouldUseNativeBinding)
+				return false;
+			try {
+				// Tiled HEIF (Apple photos): the picture only exists as a tile grid (#869), which
+				// HeifTileGridDecoder assembles in-process.
+				if (FileUtils.IsHeifImageFile(path) && HeifTileGridDecoder.TryDecode(path, wantRgb: true, out var tiled) && tiled.Rgb224 != null) {
+					rgb224 = tiled.Rgb224;
+					width = tiled.Width;
+					height = tiled.Height;
+					return true;
+				}
+				using var vsd = new VideoStreamDecoder(path);
+				// A stream group the decoder above did not take: decoding the "best" stream would
+				// hash a single tile or an aux depth/gain map (#869); the process fallback assembles it.
+				if (vsd.HasStreamGroups && FileUtils.IsHeifImageFile(path))
+					throw new Exception($"Tiled HEIF needs FFmpeg's grid assembly; using the process fallback for '{path}'");
+				if (!vsd.TryDecodeFrame(out var srcFrame, TimeSpan.Zero))
+					throw new Exception($"TryDecodeFrame failed for image '{path}'");
+
+				Size sourceSize = new(
+					srcFrame.width > 0 ? srcFrame.width : vsd.FrameSize.Width,
+					srcFrame.height > 0 ? srcFrame.height : vsd.FrameSize.Height);
+				AVPixelFormat srcPixFmt = ResolveSourcePixelFormat(srcFrame.format, vsd.PixelFormat);
+				if (srcPixFmt < 0 || srcPixFmt >= AVPixelFormat.AV_PIX_FMT_NB)
+					throw new Exception($"Invalid source pixel format {srcPixFmt}");
+				if (sourceSize.Width <= 0 || sourceSize.Height <= 0)
+					throw new Exception($"Invalid source dimensions {sourceSize.Width}x{sourceSize.Height}");
+
+				int side = AI.OnnxEmbedder.InputSide;
+				using var converter = new VideoFrameConverter(
+					sourceSize, srcPixFmt,
+					new Size(side, side), AVPixelFormat.AV_PIX_FMT_RGB24,
+					VideoFrameConverter.ScaleQuality.Bicubic, bitExact: false);
+				rgb224 = vsd.GetOrientation(srcFrame).Apply(ExtractRgb224FromFrame(converter.Convert(srcFrame)), side, side, 3);
+				width = sourceSize.Width;
+				height = sourceSize.Height;
+				return true;
+			}
+			catch (Exception e) {
+				if (extendedLogging)
+					Logger.Instance.Warn($"Native image decode failed on '{path}', falling back to process mode. Exception: {e}");
+				return false;
+			}
+		}
+
+		/// <summary>
 		/// Encodes raw BGRA pixels into a JPEG, optionally downscaling to
 		/// <paramref name="maxWidth"/>. Used by the GUI to encode composed thumbnail
 		/// strips for the on-disk cache. Native binding preferred; falls back to an

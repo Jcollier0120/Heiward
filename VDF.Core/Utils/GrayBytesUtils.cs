@@ -28,7 +28,7 @@ namespace VDF.Core.Utils {
 
 		/// <summary>
 		/// VDF's 32×32 gray frame computed from a 224×224 RGB24 frame: box-averaged BT.601 luma over 7×7
-		/// blocks. Photos use this (with Settings.UseWindowsImageDecoder) whichever decoder produced the
+		/// blocks. Every photo's gray frame is this, whichever decoder produced the
 		/// RGB frame, so a JPEG through WIC and its HEIC original through FFmpeg get comparable frames:
 		/// 99.85% apart on average (worst 99.79%) for the same picture, where each decoder's own gray
 		/// scaling left them 96.4% apart (WIC's Fant vs FFmpeg's bicubic and video-range stretch).
