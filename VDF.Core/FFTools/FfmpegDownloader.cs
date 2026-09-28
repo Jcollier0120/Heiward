@@ -49,15 +49,15 @@ namespace VDF.Core.FFTools {
 		/// builds crash with 0xC0000005 while avcodec-62.dll loads on Snapdragon X machines
 		/// (the fault is in their statically linked librsvg/cairo/DirectWrite init code), even
 		/// for `ffmpeg -version`. First the lean LGPL build made for VDF (ffmpeg-winarm64-lean:
-		/// dav1d and zlib only, 11 MB), then tordona's essentials build as the fallback should
+		/// dav1d and zlib only, 11 MB, built -O3 tuned for Oryon: HEVC ~15% faster per core), then tordona's essentials build as the fallback should
 		/// that download fail. Both run in-process and as ffmpeg.exe, and both are pinned by
 		/// release and SHA-256: only the tested archives install. Tags without an entry fall
 		/// back to BtbN.
 		/// </summary>
 		static readonly Dictionary<string, (string Url, string Sha256)[]> WinArm64Builds = new() {
 			["8.1"] = new[] {
-				("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip",
-					"6a8571ab1d7a5a52d700e215e54cdccce3df2b2fdcdd0162dec9860d9bca5ca9"),
+				("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-2/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip",
+					"c85a17d94e8f9e75f9d2ce01d29ae2c1feb6c1d0cc85c13c3662e165d45ec74e"),
 				("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/ffmpeg-8.1.3-essentials-shared-win-arm64.7z",
 					"f4d26c8a8387b61c9eacb92432cf5f2cdd075464aae7523731d17d53df1344cd"),
 			},

@@ -70,7 +70,7 @@ public class FfmpegDownloaderTests {
 		Assert.Equal(2, plans.Count);
 		Assert.Equal("ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip", plans[0].ArchiveFileName);
 		Assert.Equal(ArchiveKind.Zip, plans[0].ArchiveKind);
-		Assert.Equal("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3/" + plans[0].ArchiveFileName, plans[0].DownloadUrl.AbsoluteUri);
+		Assert.Equal("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-2/" + plans[0].ArchiveFileName, plans[0].DownloadUrl.AbsoluteUri);
 		Assert.Equal("ffmpeg-8.1.3-essentials-shared-win-arm64.7z", plans[1].ArchiveFileName);
 		Assert.Equal(ArchiveKind.SevenZip, plans[1].ArchiveKind);
 		Assert.Equal("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/" + plans[1].ArchiveFileName, plans[1].DownloadUrl.AbsoluteUri);
