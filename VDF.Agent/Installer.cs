@@ -82,11 +82,14 @@ namespace VDF.Agent {
 			// Prerequisites: copied from a copy that already has them, else downloaded. No admin rights needed.
 			bool arm64 = RuntimeInformation.OSArchitecture == Architecture.Arm64;
 			var sources = ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
-			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? ", Qualcomm NPU pack" : ""));
+			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? $", {NpuComponents.NpuName} pack" : ""));
 			await EnsurePrerequisitesAsync(sources, dryRun, ct);
 
 			bool npu = device is null or AiDevice.Auto or AiDevice.Npu && (!dryRun ? NpuComponents.WillUseNpu(AiDevice.Auto) : NpuComponents.IsSupportedPlatform);
-			Step(npu ? "NPU found: AI matching runs on the Hexagon NPU." : $"No supported NPU on this PC ({(arm64 ? "ARM64" : RuntimeInformation.OSArchitecture.ToString())}).");
+			Step(npu ? $"NPU found: AI matching runs on the {NpuComponents.NpuName}."
+				: NpuHardware.Vendor == NpuVendor.None ? $"No NPU on this PC ({(arm64 ? "ARM64" : RuntimeInformation.OSArchitecture.ToString())})."
+				: NpuComponents.IsSupportedPlatform ? $"The {NpuComponents.NpuName} could not run the model here."
+				: $"This build does not support this PC's NPU yet ({NpuHardware.Name}).");
 			var cfg = File.Exists(AgentPaths.Config) ? AgentConfig.Load() : new AgentConfig();
 			cfg.AiDevice = "auto";
 			if (!npu) {
@@ -125,7 +128,11 @@ namespace VDF.Agent {
 				cfg.ScanEveryMinutes = 0;
 			}
 			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
-			if (!dryRun) cfg.Save();
+			if (!dryRun) {
+				cfg.Save();
+				// What the install found, for the review page's badge until the first scan says otherwise.
+				AiStatus.Record(cfg, npu ? "NPU" : cfg.AiDevice == "gpu" ? "GPU" : "CPU", "install");
+			}
 
 			Step(cfg.ScanEveryMinutes > 0
 				? $"Task Scheduler: '{Scheduler.ScanTask}' {Scheduler.Describe(cfg)}, '{Scheduler.OpenTask}' at sign-in"
@@ -254,7 +261,7 @@ namespace VDF.Agent {
 					async () => NpuComponents.IsInstalled && await ProbeDeviceAsync("npu", ct)) is string npuFrom)
 					Console.WriteLine($"  NPU pack: copied from {npuFrom}");
 				else {
-					Console.WriteLine($"  NPU pack (Qualcomm QNN {NpuComponents.QnnPackageVersion} + model, ~230 MB)...");
+					Console.WriteLine($"  NPU pack ({NpuComponents.PackDescription})...");
 					await NpuComponents.DownloadAsync(null, ct);
 				}
 			}

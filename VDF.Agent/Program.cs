@@ -92,6 +92,7 @@ setup.SetAction(async (r, ct) => {
 		await Installer.EnsurePrerequisitesAsync(ComponentReuse.Sources(r.GetValue(reuseFrom), CoreUtils.StateFolder), dryRun: false, ct);
 		using var embedder = OnnxEmbedder.Create(AiDevice.Auto);
 		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}.");
+		AiStatus.Record(AgentConfig.Load(), embedder.DeviceName, "setup");
 		return 0;
 	}
 	catch (Exception e) when (e is not OperationCanceledException) {
@@ -137,6 +138,7 @@ status.SetAction(_ => {
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
+	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} (checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	var report = Report.Load();
 	if (report == null) Console.WriteLine("No scan yet: run 'hei scan'.");
 	else {

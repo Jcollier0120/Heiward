@@ -15,6 +15,7 @@
 //
 
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 using VDF.Core.AI;
 
@@ -43,13 +44,26 @@ public sealed class ComponentReuseTests : IDisposable {
 		File.WriteAllText(path, text);
 	}
 
+	/// <summary>A stand-in DLL: just the headers that say which processor it's for.</summary>
+	static void Library(string path, bool thisProcess = true) {
+		ushort machine = RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? (ushort)0xAA64 : (ushort)0x8664;
+		if (!thisProcess) machine = machine == 0xAA64 ? (ushort)0x8664 : (ushort)0xAA64;
+		var bytes = new byte[0x100];
+		bytes[0] = (byte)'M'; bytes[1] = (byte)'Z';
+		BitConverter.GetBytes(0x80).CopyTo(bytes, 0x3C);
+		bytes[0x80] = (byte)'P'; bytes[0x81] = (byte)'E';
+		BitConverter.GetBytes(machine).CopyTo(bytes, 0x84);
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		File.WriteAllBytes(path, bytes);
+	}
+
 	/// <summary>A folder laid out like an app's: FFmpeg in bin\, every library the in-process decoder loads.</summary>
-	string FfmpegCopy(string name, bool withLibraries = true) {
+	string FfmpegCopy(string name, bool withLibraries = true, bool thisProcess = true) {
 		string d = Dir(name);
 		Touch(Path.Combine(d, "bin", "ffmpeg.exe"));
 		Touch(Path.Combine(d, "bin", "ffprobe.exe"));
 		if (withLibraries)
-			foreach (var l in ffmpeg.LibraryVersionMap) Touch(Path.Combine(d, "bin", $"{l.Key}-{l.Value}.dll"));
+			foreach (var l in ffmpeg.LibraryVersionMap) Library(Path.Combine(d, "bin", $"{l.Key}-{l.Value}.dll"), thisProcess);
 		return d;
 	}
 
@@ -79,6 +93,15 @@ public sealed class ComponentReuseTests : IDisposable {
 	}
 
 	[Fact]
+	public void A_copy_for_another_processor_is_never_used() {
+		// An Arm64 Heiward can't load x64 FFmpeg (or the reverse), whatever its version.
+		string other = FfmpegCopy("other-cpu", thisProcess: false);
+		Assert.False(ComponentReuse.Ffmpeg.Complete(other));
+		Assert.True(ComponentReuse.ForThisProcess(Environment.ProcessPath!));
+		Assert.False(ComponentReuse.ForThisProcess(Path.Combine(other, "bin", "ffmpeg.exe"))); // not a PE file at all
+	}
+
+	[Fact]
 	public void An_incomplete_copy_is_never_used() {
 		string noLibraries = FfmpegCopy("cli-only", withLibraries: false);
 		Assert.False(ComponentReuse.Ffmpeg.Complete(noLibraries));
@@ -89,7 +112,7 @@ public sealed class ComponentReuseTests : IDisposable {
 	public void The_AI_runtime_must_be_the_version_this_build_expects() {
 		string d = Dir("ai-copy");
 		Touch(Path.Combine(d, "ai", AiComponents.ModelFileName));
-		Touch(Path.Combine(d, "ai", "onnxruntime.dll"));
+		Library(Path.Combine(d, "ai", "onnxruntime.dll"));
 		Touch(Path.Combine(d, "ai", "runtime.version"), "0.0.1");
 		Assert.False(ComponentReuse.AiRuntime.Complete(d));
 		Touch(Path.Combine(d, "ai", "runtime.version"), AiComponents.RuntimeVersion + "\n");
@@ -105,16 +128,20 @@ public sealed class ComponentReuseTests : IDisposable {
 		Assert.DoesNotContain("QnnHtp.dll", files);
 	}
 
+	/// <summary>The Qualcomm pack's layout (a test PC may have another vendor's NPU, or none).</summary>
+	static readonly ComponentReuse.Part QnnLayout = ComponentReuse.NpuPackFor(
+		new[] { "qnn", $"qnn-cache-{NpuComponents.QnnPackageVersion}" }, Path.Combine("qnn", "onnxruntime_providers_qnn.dll"));
+
 	[Fact]
 	public void The_NPU_pack_brings_its_compiled_graphs() {
 		string d = Dir("npu-copy");
 		Touch(Path.Combine(d, "ai", NpuComponents.ModelFileName));
-		Touch(Path.Combine(d, "ai", "qnn", "onnxruntime_providers_qnn.dll"));
+		Library(Path.Combine(d, "ai", "qnn", "onnxruntime_providers_qnn.dll"));
 		Touch(Path.Combine(d, "ai", "qnn", "QnnHtp.dll"));
 		Touch(Path.Combine(d, "ai", $"qnn-cache-{NpuComponents.QnnPackageVersion}", "graph.bin"));
 		Touch(Path.Combine(d, "ai", "qnn-cache-0.1", "stale.bin"));
-		Assert.True(ComponentReuse.NpuPack.Complete(d));
-		var files = ComponentReuse.NpuPack.Files(d).ToList();
+		Assert.True(QnnLayout.Complete(d));
+		var files = QnnLayout.Files(d).ToList();
 		Assert.Contains(Path.Combine("ai", $"qnn-cache-{NpuComponents.QnnPackageVersion}", "graph.bin"), files);
 		Assert.DoesNotContain(files, f => f.Contains("qnn-cache-0.1"));
 	}
@@ -137,7 +164,7 @@ public sealed class ComponentReuseTests : IDisposable {
 			CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true,
 		})!) p.WaitForExit();
 		Assert.True(Directory.Exists(Path.Combine(source, "ai", "qnn", "linked")));
-		var files = ComponentReuse.NpuPack.Files(source).ToList();
+		var files = QnnLayout.Files(source).ToList();
 		Assert.Contains(Path.Combine("ai", "qnn", "QnnHtp.dll"), files);
 		Assert.DoesNotContain(files, f => f.EndsWith("secret.txt"));
 	}
