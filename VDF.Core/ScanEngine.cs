@@ -125,6 +125,10 @@ namespace VDF.Core {
 		readonly ConcurrentDictionary<string, TimeSpan> analysisTimes = new(StringComparer.OrdinalIgnoreCase);
 		/// <summary>Wall-clock time the last search spent listing each folder of <see cref="Settings.IncludeList"/>.</summary>
 		public IReadOnlyDictionary<string, TimeSpan> ListingTimes => listingTimes;
+		/// <summary>The device the last search's AI embeddings actually ran on ("NPU", "GPU", "CPU"), after any fallback; null without AI matching.</summary>
+		public string? AiDeviceUsed { get; private set; }
+		/// <summary>The embedding sidecar that device's vectors went to (null = VDF's int8 model).</summary>
+		public string? AiCacheKeyUsed { get; private set; }
 		/// <summary>
 		/// Wall-clock time the last search spent analysing each drive's files (decoding, fingerprints),
 		/// keyed by the drive's root. Drives run concurrently, each at its own parallelism.
@@ -374,6 +378,8 @@ namespace VDF.Core {
 						var embedder = AI.OnnxEmbedder.Create(Settings.AiDevice);
 						unionEmbeddingStore = AI.UnionEmbeddingStore.Load(embedder.CacheKey);
 						aiEmbeddingPipeline = new AI.EmbeddingPipeline(embedder, unionEmbeddingStore, cancelationTokenSource.Token);
+						AiDeviceUsed = embedder.DeviceName;
+						AiCacheKeyUsed = embedder.CacheKey;
 						Logger.Instance.Info($"AI embeddings run on the {embedder.DeviceName}.");
 					}
 					Logger.Instance.Info(T("Log.GatheringMediaInfo"));
@@ -493,6 +499,8 @@ namespace VDF.Core {
 		}
 
 		void PrepareSearch() {
+			AiDeviceUsed = null;
+			AiCacheKeyUsed = null;
 			ResetExcludedLogging();
 			//Using VDF.GUI we know fftools exist at this point but VDF.Core might be used in other projects as well
 			if (!Settings.UseNativeFfmpegBinding && !FFmpegExists)

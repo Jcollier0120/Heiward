@@ -108,19 +108,22 @@ namespace VDF.Core.AI {
 					}
 				}
 				else if (device == AiDevice.Npu)
-					Logger.Instance.Info("AI device is NPU, but no NPU is available (not Windows on ARM, NPU pack not installed, or no Hexagon NPU) - using the CPU.");
+					Logger.Instance.Info("AI device is NPU, but no NPU is available (none on this PC, one this build cannot drive, or the NPU pack is not installed) - using the CPU.");
 			}
 			return new OnnxEmbedder(AiComponents.ModelPath);
 		}
 
 		/// <summary>
-		/// The FP32 model on the HTP. The export's dynamic dimensions are pinned (the HTP only runs
-		/// static shapes) and every node must run on the NPU. The compiled graph is cached as an
-		/// EP-context model: compiling takes ~5 s, loading the cache ~0.2 s.
+		/// The FP32 model on the NPU. The export's dynamic dimensions are pinned (NPUs only run static
+		/// shapes) and every node must run on the NPU. On Qualcomm's HTP the compiled graph is cached as
+		/// an EP-context model (compiling takes ~5 s, loading the cache ~0.2 s); OpenVINO and Vitis AI
+		/// keep their own cache (a provider option, see <see cref="NpuPack"/>).
 		/// </summary>
 		static InferenceSession OpenNpuSession(IReadOnlyList<OrtEpDevice> npus) {
-			// Compiling or loading the HTP graph is NPU work too: take turns with other NPU tools.
+			// Compiling or loading the graph is NPU work too: take turns with other NPU tools.
 			using IDisposable npuTurn = NpuLock.Acquire();
+			if (!NpuComponents.UsesEpContextModel)
+				return Open(NpuComponents.ModelPath, contextOut: null);
 			string cacheDir = NpuComponents.ContextCacheFolder;
 			string stem = $"{Path.GetFileNameWithoutExtension(NpuComponents.ModelFileName)}_b{NpuComponents.NpuBatch}_ctx";
 			string ctx = Path.Combine(cacheDir, stem + ".onnx");

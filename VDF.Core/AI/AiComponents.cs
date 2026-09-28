@@ -43,12 +43,13 @@ namespace VDF.Core.AI {
 		/// </summary>
 		public const string PortableRuntimeVersion = "1.23.2";
 		/// <summary>
-		/// Windows ARM64 runs a newer native runtime under the same 1.23.2 managed wrapper (the C
-		/// API is versioned and backward compatible): Qualcomm's QNN plugin, which drives the
-		/// Snapdragon NPU (<see cref="NpuComponents"/>), needs ONNX Runtime 1.24 or newer.
+		/// Windows runs a newer native runtime under the same 1.23.2 managed wrapper (the C API is
+		/// versioned and backward compatible): the NPU plugins (<see cref="NpuComponents"/>) need it.
+		/// Qualcomm's QNN plugin needs ONNX Runtime 1.24 or newer, and the plugins Windows ML hands
+		/// out (AMD's Vitis AI) are built against the 1.27 it ships.
 		/// </summary>
-		public const string WinArm64RuntimeVersion = "1.27.0";
-		public static string RuntimeVersion => NpuComponents.IsSupportedPlatform ? WinArm64RuntimeVersion : PortableRuntimeVersion;
+		public const string WindowsRuntimeVersion = "1.27.0";
+		public static string RuntimeVersion => CoreUtils.IsWindows ? WindowsRuntimeVersion : PortableRuntimeVersion;
 		public const string ModelFileName = "dinov2-small-int8.onnx";
 		/// <summary>SHA256 of the model file (Xenova/dinov2-small ONNX export, quantized, Apache-2.0).</summary>
 		public const string ModelSha256 = "3afdc8bc63b50558d6e5770f5b799bb82455c2311183a2de43803f343a29d917";
