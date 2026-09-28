@@ -87,7 +87,17 @@ elseif (Test-Path $Notes) {
 }
 
 Write-Host "`nCreating release $tag on $Repo at $($commit.Substring(0, 7)) and uploading $($files.Count) files..."
-# Named one by one: PowerShell doesn't expand wildcards for other programs.
-gh release create $tag @($files | ForEach-Object FullName) --repo $Repo --target $commit --title "Heiward $version" --notes $Notes
-if ($LASTEXITCODE -ne 0) { throw 'gh release create failed.' }
+# The notes go to gh in a file: Windows PowerShell passes a double quote inside an argument to
+# other programs unescaped, which splits it ("Windows protected your PC" became four arguments,
+# and gh took "protected" for a file to upload). UTF-8 without a BOM, so none shows in the notes.
+$notesFile = Join-Path ([IO.Path]::GetTempPath()) "heiward-notes-$([guid]::NewGuid().ToString('N')).md"
+[IO.File]::WriteAllText($notesFile, $Notes, (New-Object System.Text.UTF8Encoding $false))
+try {
+	# Named one by one: PowerShell doesn't expand wildcards for other programs.
+	gh release create $tag @($files | ForEach-Object FullName) --repo $Repo --target $commit --title "Heiward $version" --notes-file $notesFile
+	if ($LASTEXITCODE -ne 0) { throw 'gh release create failed.' }
+}
+finally {
+	Remove-Item $notesFile -ErrorAction SilentlyContinue
+}
 Write-Host "Released: https://github.com/$Repo/releases/tag/$tag"
