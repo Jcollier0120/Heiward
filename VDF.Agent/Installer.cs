@@ -44,8 +44,12 @@ namespace VDF.Agent {
 		static string CurrentExe => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "vdf-agent.exe");
 		public static bool RunningInstalled => string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
 
+		/// <summary>Scheduled scans without an NPU: every 6 hours, on AC power.</summary>
+		internal const int GpuCpuScanMinutes = 6 * 60;
+
 		/// <param name="device">Force the AI device (unattended installs); null = the NPU if there is one, else ask.</param>
-		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct) {
+		/// <param name="onDemand">True: no scheduled scans, only "Scan now". Null: ask when there's no NPU.</param>
+		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
 
@@ -105,20 +109,26 @@ namespace VDF.Agent {
 				}
 				cfg.AiDevice = choice == AiDevice.Gpu ? "gpu" : "cpu";
 				cfg.ScanOnBattery = false;
-				// The GPU keeps up with hourly scans; the CPU gets one a day.
-				if (choice == AiDevice.Cpu) cfg.ScanEveryMinutes = Math.Max(cfg.ScanEveryMinutes, 24 * 60);
+				// Without an NPU a scan costs real power: every 6 hours on AC power, or only on demand.
+				cfg.ScanEveryMinutes = (onDemand ?? AskOnDemand(assumeYes)) ? 0 : GpuCpuScanMinutes;
 				Step($"AI matching runs on the {(choice == AiDevice.Gpu ? "GPU (DirectML)" : "CPU")}.");
 			}
-			Step($"Settings: {AgentPaths.Config} (scan every {cfg.ScanEveryMinutes} min; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
+			else if (onDemand == true) {
+				cfg.ScanEveryMinutes = 0;
+			}
+			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
 			if (!dryRun) cfg.Save();
 
-			Step($"Task Scheduler: '{Scheduler.ScanTask}' every {cfg.ScanEveryMinutes} min, '{Scheduler.OpenTask}' at sign-in");
+			Step(cfg.ScanEveryMinutes > 0
+				? $"Task Scheduler: '{Scheduler.ScanTask}' {Scheduler.Describe(cfg)}, '{Scheduler.OpenTask}' at sign-in"
+				: $"Task Scheduler: no scan task (scans run when you press Scan now), '{Scheduler.OpenTask}' at sign-in");
 			if (dryRun) {
-				Console.WriteLine(Scheduler.ScanXml(cfg, InstalledExe));
+				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, InstalledExe));
 				Console.WriteLine(Scheduler.OpenXml(InstalledExe));
 			}
 			else {
-				Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, InstalledExe));
+				if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, InstalledExe));
+				else Scheduler.Remove(Scheduler.ScanTask);
 				if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(InstalledExe));
 			}
 
@@ -164,13 +174,23 @@ namespace VDF.Agent {
 		/// <summary>GPU or CPU for a PC without an NPU; Auto means "cancel". --yes (and no console) picks the GPU.</summary>
 		static AiDevice AskDevice(bool assumeYes) {
 			Console.WriteLine("  The AI step can run on your graphics card or on the processor:");
-			Console.WriteLine("    [G] GPU (recommended if you have a graphics card; any DirectX 12 GPU): fast, scans every hour on AC power");
-			Console.WriteLine("    [C] CPU: works everywhere, uses more power, scans once a day");
+			Console.WriteLine("    [G] GPU (recommended if you have a graphics card; any DirectX 12 GPU): fast and light on power");
+			Console.WriteLine("    [C] CPU: works everywhere, uses more power");
 			Console.WriteLine("    [N] Don't install");
 			if (assumeYes || Console.IsInputRedirected) return AiDevice.Gpu;
 			Console.Write("  Your choice [G/c/n]: ");
 			string answer = Console.ReadLine()?.Trim().ToLowerInvariant() ?? "";
 			return answer.StartsWith('n') ? AiDevice.Auto : answer.StartsWith('c') ? AiDevice.Cpu : AiDevice.Gpu;
+		}
+
+		/// <summary>Without an NPU: scheduled scans every 6 hours, or only on demand. --yes picks the schedule.</summary>
+		static bool AskOnDemand(bool assumeYes) {
+			Console.WriteLine("  When should it look for new duplicates?");
+			Console.WriteLine("    [S] Every 6 hours, only on AC power, in Windows' efficiency mode (recommended)");
+			Console.WriteLine("    [D] Only when I press \"Scan now\" on the review page");
+			if (assumeYes || Console.IsInputRedirected) return false;
+			Console.Write("  Your choice [S/d]: ");
+			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('d');
 		}
 
 		/// <summary>Runs "vdf-agent probe --device {device}" in its own process: true when the model runs there.</summary>

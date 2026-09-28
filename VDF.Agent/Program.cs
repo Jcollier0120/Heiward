@@ -44,9 +44,13 @@ var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task
 var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
-	if (r.GetValue(scheduled) && Power.ShouldSkip(cfg, out string why)) {
-		AgentPaths.AppendLog("scheduled scan skipped: " + why);
-		return 0;
+	if (r.GetValue(scheduled)) {
+		if (Power.ShouldSkip(cfg, out string why)) {
+			AgentPaths.AppendLog("scheduled scan skipped: " + why);
+			return 0;
+		}
+		// Background scans take their time: Windows runs them on efficient cores at low clocks.
+		AgentPaths.AppendLog(Power.EnterEfficiencyMode() ? "scheduled scan in efficiency mode" : "scheduled scan: efficiency mode unavailable");
 	}
 	if (r.GetValue(open)) {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
@@ -107,8 +111,10 @@ root.Subcommands.Add(setup);
 var dryRun = new Option<bool>("--dry-run") { Description = "Print every step without changing anything." };
 var yes = new Option<bool>("--yes", "-y") { Description = "Answer yes to questions (unattended install)." };
 var deviceOpt = new Option<AiDevice?>("--device") { Description = "Where the AI runs: npu, gpu or cpu. Default: the NPU if there is one, otherwise ask (GPU or CPU)." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, hourly scan, sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt };
-install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct));
+var onDemandOpt = new Option<bool>("--on-demand") { Description = "No scheduled scans: scan only when you press Scan now. Default without an NPU: ask (every 6 hours or on demand)." };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt };
+install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
+	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime).
@@ -137,7 +143,7 @@ status.SetAction(_ => {
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'vdf-agent scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
-	Console.WriteLine($"Scans: every {cfg.ScanEveryMinutes} min{(cfg.ScanOnBattery ? $", on battery above {cfg.MinBatteryPercent}% unless Battery Saver is on" : ", on AC power only")}");
+	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
 	var report = Report.Load();
 	if (report == null) Console.WriteLine("No scan yet: run 'vdf-agent scan'.");
 	else {
@@ -219,6 +225,36 @@ namespace VDF.Agent {
 
 		[DllImport("kernel32.dll")]
 		static extern bool GetSystemPowerStatus(out SystemPowerStatus status);
+
+		[StructLayout(LayoutKind.Sequential)]
+		struct ProcessPowerThrottlingState {
+			public uint Version, ControlMask, StateMask;
+		}
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern bool SetProcessInformation(IntPtr process, int infoClass, ref ProcessPowerThrottlingState info, int size);
+
+		[DllImport("kernel32.dll")]
+		static extern IntPtr GetCurrentProcess();
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern bool SetPriorityClass(IntPtr process, uint priorityClass);
+
+		/// <summary>
+		/// EcoQoS, the power half of Task Manager's "Efficiency mode": Windows runs the process on
+		/// efficient cores at low clocks, so a background scan takes longer and costs little power.
+		/// Priority stays below normal rather than idle: the scan holds the shared NPU lock for up to
+		/// two seconds at a time, and an idle-priority thread starved while holding it would make
+		/// other NPU tools wait.
+		/// </summary>
+		public static bool EnterEfficiencyMode() {
+			const int ProcessPowerThrottling = 4;
+			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000;
+			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = ExecutionSpeed };
+			bool eco = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
+			bool low = SetPriorityClass(GetCurrentProcess(), BelowNormalPriorityClass);
+			return eco && low;
+		}
 
 		public static bool ShouldSkip(AgentConfig cfg, out string why) {
 			why = "";

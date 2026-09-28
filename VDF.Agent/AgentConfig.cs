@@ -76,8 +76,9 @@ namespace VDF.Agent {
 		/// <summary>Files decoded at once; 0 = half the logical processors (at least 2).</summary>
 		public int Parallelism { get; set; }
 		/// <summary>
-		/// Minutes between scheduled scans. A rescan only looks at new and changed files, so an hourly
-		/// scan with nothing new is a directory listing. PCs without an NPU get a daily scan at install.
+		/// Minutes between scheduled scans; 0 = no scheduled scans, only "Scan now". A rescan only looks at
+		/// new and changed files, so an hourly scan with nothing new is a directory listing. Without an
+		/// NPU the installer sets every 6 hours on AC power, or 0 if the user picks on demand.
 		/// </summary>
 		public int ScanEveryMinutes { get; set; } = 60;
 		/// <summary>Let scheduled scans run on battery (they skip themselves in Battery Saver or below <see cref="MinBatteryPercent"/>).</summary>

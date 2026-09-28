@@ -113,6 +113,14 @@ namespace VDF.Agent {
 
 		public static void Remove(string name) => Run("/Delete", "/TN", name, "/F");
 
+		/// <summary>"every hour", "every 6 hours on AC power", "only when you press Scan now".</summary>
+		public static string Describe(AgentConfig cfg) {
+			if (cfg.ScanEveryMinutes <= 0) return "scans only when you press Scan now";
+			int m = Math.Max(15, cfg.ScanEveryMinutes);
+			string every = m % 60 != 0 ? $"every {m} min" : m == 60 ? "every hour" : $"every {m / 60} hours";
+			return "scans " + every + (cfg.ScanOnBattery ? "" : " on AC power");
+		}
+
 		static (DateTime At, string? Next) cachedQuery;
 
 		/// <summary>"Next Run Time" of the scan task, or null when it isn't registered. Cached for a minute.</summary>

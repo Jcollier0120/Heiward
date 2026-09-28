@@ -239,6 +239,7 @@ function renderHeader(s) {
     parts.push('No scan yet');
   }
   if (s.schedule.next) parts.push('next ' + s.schedule.next);
+  else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   $('subtitle').textContent = parts.join(' · ');
 
   const running = s.scan.running;

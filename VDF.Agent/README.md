@@ -4,8 +4,10 @@
 
 It is built on Video Duplicate Finder's engine. The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
 - the **NPU** of a Snapdragon PC: fast, and it barely uses power, so scans can run every hour;
-- your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it;
-- the **CPU**.
+- your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
+- the **CPU**: the same choice as the GPU.
+
+Scheduled scans run in Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority. A rescan only checks new and changed files.
 
 ## Install
 
@@ -14,11 +16,13 @@ Download `vdf-agent.exe` and run it. It is one self-contained file: no .NET, no 
 1. copies itself to `%LOCALAPPDATA%\Programs\VDF Agent`;
 2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack on Snapdragon PCs. Every download is SHA-256 pinned;
 3. checks for an NPU. Without one, it asks whether the AI should run on the **GPU** or the **CPU**;
-4. schedules scans with Task Scheduler (per user). With an NPU or GPU they run every hour, and on battery they step aside in Battery Saver or below 30%. On the CPU they run once a day;
+4. schedules scans with Task Scheduler (per user):
+   - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
+   - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
 5. opens the review page in your browser once a day at sign-in, and only when something waits for review;
 6. adds **Duplicate check** to the Start menu, and an entry in Apps & Features so Windows can uninstall it.
 
-Unattended: `vdf-agent install --yes --device gpu`. Preview every step without changing anything: `vdf-agent install --dry-run`.
+Unattended: `vdf-agent install --yes --device gpu` (add `--on-demand` for no scheduled scans). Preview every step without changing anything: `vdf-agent install --dry-run`.
 
 The agent does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
 
@@ -79,7 +83,7 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `excludeFolders` | none | A path (`D:\Scans`), a folder name at any depth (`Backups`), or either with wildcards (`D:\Old\*`, `*.bak`) |
 | `excludeExtensions` | none | e.g. `[".heic"]` |
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
-| `scanEveryMinutes` | 60 | Only new and changed files are processed |
+| `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review |
 | `port` | 18484 | The review page, on 127.0.0.1 only |
