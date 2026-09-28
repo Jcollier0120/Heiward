@@ -14,13 +14,24 @@
 // */
 //
 
+using VDF.Core;
 using VDF.Core.Utils;
 
 namespace VDF.Agent.Tests;
 
 /// <summary>What a whole-drive scan leaves out: judged by the same matcher the file enumeration uses.</summary>
-public sealed class ScanScopeTests {
-	static readonly List<string> Excluded = ScanScope.Exclusions(new AgentConfig());
+public sealed class ScanScopeTests : IDisposable {
+	static readonly List<string> Excluded = ScanScope.Exclusions();
+
+	readonly string temp = Path.Combine(Path.GetTempPath(), "vdf-scope-" + Guid.NewGuid().ToString("N"));
+
+	public void Dispose() { try { Directory.Delete(temp, true); } catch { } }
+
+	string Dir(params string[] parts) {
+		string p = Path.Combine(new[] { temp }.Concat(parts).ToArray());
+		Directory.CreateDirectory(p);
+		return p;
+	}
 
 	static bool IsExcluded(string folder) => Excluded.Any(p => FileUtils.IsExcludedFolder(p, new DirectoryInfo(folder)));
 
@@ -51,9 +62,72 @@ public sealed class ScanScopeTests {
 	public void TheUsersOwnFolders_AreScanned(string folder) => Assert.False(IsExcluded(folder), folder);
 
 	[Fact]
-	public void UserExclusions_AreAdded() {
-		var excluded = ScanScope.Exclusions(new AgentConfig { ExcludeFolders = { @"D:\Scans" } });
-		Assert.Contains(@"D:\Scans", excluded);
+	public void UserExclusions_CoverTheWholePath_BuiltInOnesOnlyTheFoldersBelowTheScannedOnes() {
+		var s = new Settings();
+		ScanScope.Apply(s, new AgentConfig { ScanAllDrives = false, ExcludeFolders = { @"D:\Scans" } });
+		Assert.Equal(new[] { @"D:\Scans" }, s.BlackList);
+		Assert.Contains(".*", s.SubfolderBlackList);
+		Assert.Contains(@"?:\Users\*\AppData", s.SubfolderBlackList);
+		Assert.DoesNotContain(@"D:\Scans", s.SubfolderBlackList);
+	}
+
+	/// <summary>
+	/// The bug: folders = [~\.npu-agent\npu-vision\testset\camera] listed 600 photos, then compared 0,
+	/// because ".*" (and "?:\Users\*\AppData", for a temp folder) matched a folder above it.
+	/// </summary>
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void AListedFolder_InsideABuiltInExclusion_IsScanned(bool allDrives) {
+		string camera = Dir(".npu-agent", "npu-vision", "testset", "camera");
+		Dir(".npu-agent", "npu-vision", "testset", "camera", ".thumbnails");
+		File.WriteAllBytes(Path.Combine(camera, "a.jpg"), new byte[] { 1 });
+		File.WriteAllBytes(Path.Combine(camera, ".thumbnails", "a.jpg"), new byte[] { 1 });
+		var notes = new List<string>();
+		var engine = new ScanEngine();
+		ScanScope.Apply(engine.Settings, new AgentConfig { ScanAllDrives = allDrives, Folders = { camera } }, notes);
+
+		// On a whole-drive scan too: the drive's walk never gets there, so it's a root of its own.
+		Assert.Contains(camera, engine.Settings.IncludeList);
+		Assert.Empty(notes);
+		var files = FileUtils.GetFilesRecursive(camera, false, false, recursive: true, includeImages: true,
+			engine.Settings.BlackList.Concat(engine.Settings.SubfolderBlackList).ToList(), CancellationToken.None,
+			skipFoldersContaining: engine.Settings.SkipFoldersContaining, skipFolderLinks: true);
+		FileInfo found = Assert.Single(files); // the rules still apply below it
+		Assert.False(engine.InvalidEntry(new FileEntry(found), out _, out string? reason), reason);
+	}
+
+	[Fact]
+	public void AListedFolder_InsideTheUsersOwnExclusion_IsSkippedWithANote() {
+		string keep = Dir("Backups", "Keep");
+		foreach (string exclusion in new[] { Path.Combine(temp, "Backups"), "Backups", Path.Combine(temp, "Back*") }) {
+			var notes = new List<string>();
+			var roots = ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { keep }, ExcludeFolders = { exclusion } }, notes);
+			Assert.Empty(roots);
+			string note = Assert.Single(notes);
+			Assert.Contains(keep, note);
+			Assert.Contains(exclusion, note);
+			Assert.Contains("excludeFolders", note);
+		}
+	}
+
+	[Fact]
+	public void ListedFoldersInsideEachOther_AreScannedOnce() {
+		string outer = Dir("Photos"), inner = Dir("Photos", "2019");
+		Assert.Equal(new[] { outer }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { inner, outer } }));
+		Assert.Equal(new[] { outer }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { outer, inner } }));
+		// Unless the outer one's walk leaves it out on the way.
+		string hidden = Dir("Photos", ".app", "Exports");
+		Assert.Equal(new[] { outer, hidden }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { outer, hidden } }));
+	}
+
+	[Fact]
+	public void BuiltInExclusionOver_NamesTheLeftOutFolder() {
+		var over = ScanScope.BuiltInExclusionOver(@"C:\Users\me\.npu-agent\npu-vision\testset\camera");
+		Assert.NotNull(over);
+		Assert.Equal(@"C:\Users\me\.npu-agent", over.Value.Folder);
+		Assert.Equal("App data", over.Value.Rule.Reason);
+		Assert.Null(ScanScope.BuiltInExclusionOver(@"D:\Photos\2019"));
 	}
 
 	[Fact]

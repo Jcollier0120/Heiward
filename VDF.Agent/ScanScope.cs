@@ -14,6 +14,7 @@
 // */
 //
 
+using VDF.Core;
 using VDF.Core.Utils;
 
 namespace VDF.Agent {
@@ -22,6 +23,13 @@ namespace VDF.Agent {
 	/// to installed apps and games, and to other programs' own libraries. Pictures and videos in those
 	/// are parts of something (a game's textures, an app's icons, a photo app's previews) that breaks
 	/// if a "duplicate" goes, and they would bury the user's own copies in the report.
+	/// <para>
+	/// The built-in exclusions only apply below the scanned folders: a folder the user lists in
+	/// <c>folders</c> is scanned even when it, or a folder above it, matches one. The user's own
+	/// <c>excludeFolders</c> cover the whole path and win over <c>folders</c>: a listed folder inside
+	/// one is skipped with a note. Both are explicit, and leaving files alone is the safe way to
+	/// settle a contradiction in a tool that suggests deleting them.
+	/// </para>
 	/// </summary>
 	static class ScanScope {
 		/// <summary>A folder left out of scans, and the reason shown for it on the review page.</summary>
@@ -29,6 +37,7 @@ namespace VDF.Agent {
 
 		const string SystemReason = "Windows", Programs = "Installed programs", AppData = "App data", Games = "Game library",
 			Code = "Code", PhotoApp = "Photo app library", Drivers = "Drivers", DevTools = "Developer tools";
+		internal const string UserReason = "Excluded in settings";
 
 		/// <summary>
 		/// Left out at any depth, by folder name (wildcards allowed). VDF matches a pattern without a
@@ -70,29 +79,66 @@ namespace VDF.Agent {
 		/// <summary>A folder holding one of these is a code repository: its pictures belong to the project.</summary>
 		internal static readonly string[] RepositoryMarkers = { ".git", ".hg", ".svn" };
 
-		/// <summary>The folders to scan: every fixed drive that is ready (when enabled), then the extra folders.</summary>
+		/// <summary>
+		/// The folders to scan: every fixed drive that is ready (when enabled), then the extra folders.
+		/// An extra folder inside another is scanned with it, unless that walk never gets there (a
+		/// built-in exclusion, a code repository or a folder link on the way): then it's scanned on its
+		/// own. A folder inside one of the user's own exclusions is skipped, with a note.
+		/// </summary>
 		public static List<string> Roots(AgentConfig cfg, List<string>? notes = null) {
-			var roots = new List<string>();
+			var candidates = new List<string>();
 			if (cfg.ScanAllDrives)
 				foreach (DriveInfo drive in FixedDrives())
-					roots.Add(drive.RootDirectory.FullName);
+					candidates.Add(drive.RootDirectory.FullName);
 			foreach (string folder in cfg.Folders) {
 				if (!Directory.Exists(folder)) {
 					notes?.Add($"Folder not found, skipped: {folder}");
 					continue;
 				}
-				string full = Path.GetFullPath(folder);
-				if (!roots.Any(r => IsSameOrUnder(full, r)))
-					roots.Add(full);
+				string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+				if (UserExclusionOver(full, cfg) is { } exclusion) {
+					notes?.Add($"Folder skipped: {full} is inside \"{exclusion}\" in excludeFolders (settings.json), which wins over folders. Remove one of the two.");
+					continue;
+				}
+				candidates.Add(full);
+			}
+			List<Rule>? rules = null; // only needed for a folder inside another
+			var roots = new List<string>();
+			for (int i = 0; i < candidates.Count; i++) {
+				string folder = candidates[i];
+				// Covered by an earlier copy of the same folder, or by a folder above it whose scan gets there.
+				bool covered = candidates.Where((other, j) => j != i && IsSameOrUnder(folder, other) && (j < i || !IsSameOrUnder(other, folder)))
+					.Any(other => ExemptBelow(other, folder, rules ??= BuiltInRules()) == null);
+				if (!covered)
+					roots.Add(folder);
 			}
 			return roots;
 		}
 
-		/// <summary>Folders left out: the built-in ones, other people's profiles, then the user's own.</summary>
-		public static List<string> Exclusions(AgentConfig cfg) =>
-			ExclusionRules(cfg).Select(r => r.Pattern).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+		/// <summary>
+		/// The built-in exclusions, for Settings.SubfolderBlackList: they only apply below the scanned
+		/// folders. The user's own go to Settings.BlackList (<see cref="Apply"/>).
+		/// </summary>
+		public static List<string> Exclusions() =>
+			BuiltInRules().Select(r => r.Pattern).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
+		/// <summary>Puts what a scan looks at into the engine's settings.</summary>
+		internal static void Apply(Settings s, AgentConfig cfg, List<string>? notes = null) {
+			foreach (string root in Roots(cfg, notes)) s.IncludeList.Add(root);
+			foreach (string f in Exclusions()) s.SubfolderBlackList.Add(f);
+			foreach (string f in cfg.ExcludeFolders.Where(f => !string.IsNullOrWhiteSpace(f))) s.BlackList.Add(f);
+			foreach (string marker in RepositoryMarkers) s.SkipFoldersContaining.Add(marker);
+			s.SkipFolderLinks = true;
+		}
+
+		/// <summary>Folders left out: the built-in ones, other people's profiles, then the user's own.</summary>
 		internal static List<Rule> ExclusionRules(AgentConfig cfg) {
+			var rules = BuiltInRules();
+			rules.AddRange(cfg.ExcludeFolders.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new Rule(p, UserReason)));
+			return rules;
+		}
+
+		static List<Rule> BuiltInRules() {
 			var rules = new List<Rule>(ExcludedNames);
 			rules.AddRange(ExcludedAtDriveRoot.Select(r => r with { Pattern = @"?:\" + r.Pattern }));
 			// Every profile's app data: browser caches, app icons, game saves, and this agent's own home.
@@ -101,8 +147,56 @@ namespace VDF.Agent {
 			if (!string.IsNullOrEmpty(windows))
 				rules.Add(new(windows, SystemReason));
 			rules.AddRange(OtherProfiles().Select(p => new Rule(p, WindowsProfiles.Contains(Path.GetFileName(p)) ? SystemReason : "Another account")));
-			rules.AddRange(cfg.ExcludeFolders.Select(p => new Rule(p, "Excluded in settings")));
 			return rules;
+		}
+
+		/// <summary>
+		/// The folder, or the one above it, that a built-in rule leaves out, and the rule: for a listed
+		/// folder that is scanned anyway. Null when none does.
+		/// </summary>
+		internal static (string Folder, Rule Rule)? BuiltInExclusionOver(string folder) {
+			List<Rule> rules = BuiltInRules();
+			for (string? f = Path.TrimEndingDirectorySeparator(folder); !string.IsNullOrEmpty(f); f = Path.GetDirectoryName(f)) {
+				string name = Path.GetFileName(f);
+				if (name.Length == 0) break; // the drive's root
+				foreach (Rule rule in rules)
+					if (FileUtils.IsExcludedFolder(rule.Pattern, f, name))
+						return (f, rule);
+			}
+			return null;
+		}
+
+		/// <summary>The user's exclusion that covers the folder or one above it, as the engine reads it (ScanEngine.IsBlackListed).</summary>
+		static string? UserExclusionOver(string folder, AgentConfig cfg) {
+			foreach (string pattern in cfg.ExcludeFolders) {
+				if (string.IsNullOrWhiteSpace(pattern)) continue;
+				string asRead = pattern;
+				// The engine resolves a full path without wildcards before matching (NormalizeScanPaths).
+				if (pattern.IndexOfAny(['*', '?']) < 0 && Path.IsPathRooted(pattern)) {
+					try { asRead = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pattern)); }
+					catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { }
+				}
+				if (ScanEngine.IsBlackListed(folder, asRead))
+					return pattern;
+			}
+			return null;
+		}
+
+		/// <summary>
+		/// Why a scan of <paramref name="root"/> doesn't walk down to <paramref name="folder"/> inside it:
+		/// the reason for the first folder on the way (the folder itself included, the root not) that it
+		/// leaves out. Null when it gets there.
+		/// </summary>
+		internal static string? ExemptBelow(string root, string folder, IReadOnlyList<Rule> rules) {
+			string rel = Path.GetRelativePath(root, folder);
+			if (rel == ".") return null;
+			string current = root;
+			foreach (string part in rel.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)) {
+				current = Path.Combine(current, part);
+				if (ExemptReason(new DirectoryInfo(current), rules) is { } reason)
+					return reason;
+			}
+			return null;
 		}
 
 		/// <summary>
