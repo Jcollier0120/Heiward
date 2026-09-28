@@ -25,6 +25,18 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-decoder-reuse")
 			return DecoderReuseProbe.Run(args);
 
+		// In-process tiled HEIF decode vs the FFmpeg process, on a folder of real photos.
+		if (args.Length > 0 && args[0] == "--probe-heif-tiles")
+			return TiledHeifProbe.Run(args);
+
+		// WIC vs FFmpeg 32x32 gray frames for the same photos (see GrayParityProbe).
+		if (args.Length > 0 && args[0] == "--probe-gray")
+			return GrayParityProbe.Run(args);
+
+		// WIC photo decoding per file type, MTA vs STA (see WicDecodeProbe).
+		if (args.Length > 0 && args[0] == "--probe-wic")
+			return WicDecodeProbe.Run(args);
+
 		// Synthetic compare-phase probe (ScanForDuplicates + HighlightBestMatches).
 		if (args.Length > 0 && args[0] == "--probe-compare")
 			return ComparePhaseProbe.Run(args);

@@ -52,12 +52,18 @@ namespace VDF.Core.AI {
 		volatile bool faulted;
 		int embeddedCount;
 
-		public EmbeddingPipeline(string modelPath, UnionEmbeddingStore store, CancellationToken token) {
+		public EmbeddingPipeline(string modelPath, UnionEmbeddingStore store, CancellationToken token)
+			: this(new OnnxEmbedder(modelPath), store, token) { }
+
+		/// <summary>Takes ownership of <paramref name="embedder"/> (disposed with the pipeline).</summary>
+		public EmbeddingPipeline(OnnxEmbedder embedder, UnionEmbeddingStore store, CancellationToken token) {
 			this.store = store;
 			this.token = token;
-			embedder = new OnnxEmbedder(modelPath);
+			this.embedder = embedder;
 			worker = Task.Run(WorkerLoop, CancellationToken.None);
 		}
+
+		public string DeviceName => embedder.DeviceName;
 
 		public int EmbeddedCount => embeddedCount;
 		public bool Faulted => faulted;
@@ -92,7 +98,11 @@ namespace VDF.Core.AI {
 					batchFrames.Clear();
 					(FileEntry entry, double key, byte[] rgb) item;
 					try {
-						item = queue.Take(token);
+						if (!queue.TryTake(out item)) {
+							// Nothing queued: the decoders are busy. Let other NPU tools in meanwhile.
+							embedder.YieldNpu();
+							item = queue.Take(token);
+						}
 					}
 					catch (OperationCanceledException) { break; }
 					catch (InvalidOperationException) { break; } // completed and empty

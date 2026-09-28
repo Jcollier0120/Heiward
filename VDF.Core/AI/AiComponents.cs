@@ -41,7 +41,14 @@ namespace VDF.Core.AI {
 		/// PackageReference. 1.23.2 is the newest release that still ships osx-x86_64
 		/// binaries (1.24+ dropped Intel macs, which VDF releases still target).
 		/// </summary>
-		public const string RuntimeVersion = "1.23.2";
+		public const string PortableRuntimeVersion = "1.23.2";
+		/// <summary>
+		/// Windows ARM64 runs a newer native runtime under the same 1.23.2 managed wrapper (the C
+		/// API is versioned and backward compatible): Qualcomm's QNN plugin, which drives the
+		/// Snapdragon NPU (<see cref="NpuComponents"/>), needs ONNX Runtime 1.24 or newer.
+		/// </summary>
+		public const string WinArm64RuntimeVersion = "1.27.0";
+		public static string RuntimeVersion => NpuComponents.IsSupportedPlatform ? WinArm64RuntimeVersion : PortableRuntimeVersion;
 		public const string ModelFileName = "dinov2-small-int8.onnx";
 		/// <summary>SHA256 of the model file (Xenova/dinov2-small ONNX export, quantized, Apache-2.0).</summary>
 		public const string ModelSha256 = "3afdc8bc63b50558d6e5770f5b799bb82455c2311183a2de43803f343a29d917";
@@ -119,6 +126,14 @@ namespace VDF.Core.AI {
 		/// Must run before the first OnnxRuntime native call (OnnxEmbedder does so).
 		/// SetDllImportResolver may only be called once per assembly, hence the guard.
 		/// </summary>
+		/// <summary>
+		/// Loads ONNX Runtime from this folder instead of {ai} (the GPU pack's DirectML build). Only
+		/// effective before the first ONNX Runtime call: a process loads one runtime.
+		/// </summary>
+		internal static string? RuntimeFolderOverride;
+		/// <summary>Set once the resolver has loaded a runtime; after that the choice is fixed.</summary>
+		internal static volatile bool RuntimeLoaded;
+
 		internal static void EnsureResolverInstalled() {
 			if (resolverInstalled) return;
 			lock (resolverLock) {
@@ -126,9 +141,13 @@ namespace VDF.Core.AI {
 				NativeLibrary.SetDllImportResolver(typeof(InferenceSession).Assembly, (name, _, _) => {
 					if (!name.Contains("onnxruntime", StringComparison.OrdinalIgnoreCase))
 						return IntPtr.Zero;
-					string? lib = FindRuntimeLibrary();
-					if (lib != null && NativeLibrary.TryLoad(lib, out IntPtr handle))
+					string? lib = RuntimeFolderOverride is { } folder && File.Exists(Path.Combine(folder, "onnxruntime.dll"))
+						? Path.Combine(folder, "onnxruntime.dll")
+						: FindRuntimeLibrary();
+					if (lib != null && NativeLibrary.TryLoad(lib, out IntPtr handle)) {
+						RuntimeLoaded = true;
 						return handle;
+					}
 					return IntPtr.Zero; // fall through to default probing (PATH / app dir)
 				});
 				resolverInstalled = true;

@@ -30,6 +30,7 @@ namespace VDF.Core {
 		SilentAudioTrack = 128,      // File has audio but it's silent; fingerprint is all zeros and unusable
 		ReparsePoint = 256,          // File has FILE_ATTRIBUTE_REPARSE_POINT (symlink, junction, cloud placeholder)
 		ReparsePointChecked = 512,   // ReparsePoint has been populated; entries from older databases lack it
+		GrayFromRgb224V1 = 1024,     // Image gray frame computed from its 224x224 RGB frame, version 1 (GrayBytesUtils.FromRgb224). A change to how photos' RGB frames are made gets a new bit (V2...), so cached gray frames are recomputed once
 
 		AllErrors = ThumbnailError | MetadataError | TooDark
 	}

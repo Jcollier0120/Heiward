@@ -76,10 +76,13 @@ public class FftServiceTests {
 
 		FftService.Forward(re, im);
 
-		// Find the bin with maximum magnitude (excluding DC)
+		// Find the bin with maximum magnitude (excluding DC) in the positive-frequency half.
+		// A real input's spectrum is mirrored: bins k and N-k carry the same magnitude, so
+		// searching all of them let rounding pick the winner — ARM64 fuses multiply-adds,
+		// rounds differently from x86, and reported bin 13 for a correct transform.
 		double maxMag = 0;
 		int maxBin = 0;
-		for (int k = 1; k < n; k++) {
+		for (int k = 1; k <= n / 2; k++) {
 			double mag = Math.Sqrt(re[k] * re[k] + im[k] * im[k]);
 			if (mag > maxMag) {
 				maxMag = mag;
@@ -88,6 +91,8 @@ public class FftServiceTests {
 		}
 
 		Assert.Equal(targetBin, maxBin);
+		double mirror = Math.Sqrt(re[n - targetBin] * re[n - targetBin] + im[n - targetBin] * im[n - targetBin]);
+		Assert.Equal(maxMag, mirror, 9);
 	}
 
 	[Fact]

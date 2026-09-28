@@ -121,6 +121,18 @@ namespace VDF.Core {
 		// Per-drive done/total accounting; non-null only while GatherInfos runs, so progress
 		// events of every other phase carry Drives = null and the UI hides the drive rows.
 		DriveProgressTracker? driveProgressTracker;
+		readonly ConcurrentDictionary<string, TimeSpan> listingTimes = new(StringComparer.OrdinalIgnoreCase);
+		readonly ConcurrentDictionary<string, TimeSpan> analysisTimes = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>Wall-clock time the last search spent listing each folder of <see cref="Settings.IncludeList"/>.</summary>
+		public IReadOnlyDictionary<string, TimeSpan> ListingTimes => listingTimes;
+		/// <summary>
+		/// Wall-clock time the last search spent analysing each drive's files (decoding, fingerprints),
+		/// keyed by the drive's root. Drives run concurrently, each at its own parallelism.
+		/// </summary>
+		public IReadOnlyDictionary<string, TimeSpan> AnalysisTimes => analysisTimes;
+		readonly List<(string Path, long Size)> foundFiles = new();
+		/// <summary>Every photo and video the last search listed in the included folders, with its size.</summary>
+		public IReadOnlyList<(string Path, long Size)> FoundFiles => foundFiles;
 		// True between StartSearch beginning a log session and the chained StartCompare
 		// joining it; lets a standalone StartCompare open its own session instead.
 		bool compareIsChainedToSearch;
@@ -177,6 +189,16 @@ namespace VDF.Core {
 		}
 
 		int MatchingParallelDegree => CalculateMatchingParallelism(Settings.MatchingMaxDegreeOfParallelism, Environment.ProcessorCount);
+
+		/// <summary>Photos decode through WIC first (Windows only), FFmpeg second.</summary>
+		bool UseWic => Settings.UseWindowsImageDecoder && WicImageDecoder.IsAvailable;
+
+		/// <summary>
+		/// Marks photos whose gray frame was computed from their RGB frame with today's rules. Bump it
+		/// (a new EntryFlags bit) whenever the RGB frames change materially: cached gray frames made
+		/// under older rules are then recomputed once instead of silently mismatching new ones.
+		/// </summary>
+		const EntryFlags CurrentImageGrayVersion = EntryFlags.GrayFromRgb224V1;
 
 		// The pHash quorum's requiredMatches is identical for every pair in a scan
 		// (sampleCount always equals positionList.Count), so the compare phase precomputes
@@ -347,8 +369,12 @@ namespace VDF.Core {
 				FilesEnumerated?.Invoke(this, new EventArgs());
 				try {
 					if (!cancelationTokenSource.IsCancellationRequested && Settings.UseAiMatching) {
-						unionEmbeddingStore = AI.UnionEmbeddingStore.Load();
-						aiEmbeddingPipeline = new AI.EmbeddingPipeline(AI.AiComponents.ModelPath, unionEmbeddingStore, cancelationTokenSource.Token);
+						// The embedder first: which device it landed on decides which sidecar
+						// its vectors belong in (NPU and CPU models are never mixed).
+						var embedder = AI.OnnxEmbedder.Create(Settings.AiDevice);
+						unionEmbeddingStore = AI.UnionEmbeddingStore.Load(embedder.CacheKey);
+						aiEmbeddingPipeline = new AI.EmbeddingPipeline(embedder, unionEmbeddingStore, cancelationTokenSource.Token);
+						Logger.Instance.Info($"AI embeddings run on the {embedder.DeviceName}.");
 					}
 					Logger.Instance.Info(T("Log.GatheringMediaInfo"));
 					if (!cancelationTokenSource.IsCancellationRequested)
@@ -480,6 +506,9 @@ namespace VDF.Core {
 				AI.AiComponents.EnsureReady();
 
 			CancelAllTasks();
+			listingTimes.Clear();
+			analysisTimes.Clear();
+			foundFiles.Clear();
 
 			FfmpegEngine.HardwareAccelerationMode = Settings.HardwareAccelerationMode;
 			FfmpegEngine.CustomFFArguments = Settings.CustomFFArguments;
@@ -526,9 +555,15 @@ namespace VDF.Core {
 		/// every database entry — scans found 0 duplicates with no hint why (issue #790).
 		/// </summary>
 		void NormalizeScanPaths() {
-			static HashSet<string> Normalize(HashSet<string> paths) {
+			static HashSet<string> Normalize(HashSet<string> paths, bool keepPatterns = false) {
 				var result = new HashSet<string>();
 				foreach (var path in paths) {
+					// Folder names ("node_modules") and wildcard patterns ("*.lrdata", "?:\Windows") are
+					// matched as written: resolving them against the working directory would break them.
+					if (keepPatterns && (path.IndexOfAny(['*', '?']) >= 0 || !Path.IsPathRooted(path))) {
+						result.Add(path);
+						continue;
+					}
 					string normalized = path;
 					try {
 						normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
@@ -539,7 +574,7 @@ namespace VDF.Core {
 				return result;
 			}
 			Settings.IncludeList = Normalize(Settings.IncludeList);
-			Settings.BlackList = Normalize(Settings.BlackList);
+			Settings.BlackList = Normalize(Settings.BlackList, keepPatterns: true);
 		}
 
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -721,10 +756,13 @@ namespace VDF.Core {
 					continue;
 				}
 
+				long listingStart = Stopwatch.GetTimestamp();
 				foreach (FileInfo file in FileUtils.GetFilesRecursive(path, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
-					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken)) {
+					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
+					Settings.SkipFoldersContaining, Settings.SkipFolderLinks)) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
+					foundFiles.Add((file.FullName, file.Length));
 					FileEntry fEntry;
 					try {
 						fEntry = new(file);
@@ -745,6 +783,7 @@ namespace VDF.Core {
 					else
 						RefreshExistingEntry(fEntry, dbEntry);
 				}
+				listingTimes[path] = Stopwatch.GetElapsedTime(listingStart);
 			}
 
 			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
@@ -874,7 +913,7 @@ namespace VDF.Core {
 			if (Settings.FilterByFilePathContains) {
 				bool contains = false;
 				foreach (var f in Settings.FilePathContainsTexts) {
-					if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(f, entry.Path)) {
+					if (FileUtils.MatchesWildcards(f, entry.Path)) {
 						contains = true;
 						break;
 					}
@@ -904,7 +943,7 @@ namespace VDF.Core {
 			if (Settings.FilterByFilePathNotContains) {
 				bool contains = false;
 				foreach (var f in Settings.FilePathNotContainsTexts) {
-					if (System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(f, entry.Path)) {
+					if (FileUtils.MatchesWildcards(f, entry.Path)) {
 						contains = true;
 						break;
 					}
@@ -970,8 +1009,15 @@ namespace VDF.Core {
 
 		// Returns true if folderPath is covered by blacklistEntry.
 		// Supports wildcard patterns (*, ?) in blacklistEntry — see https://github.com/0x90d/videoduplicatefinder/issues/582
-		static bool IsBlackListed(string folderPath, string blacklistEntry) {
+		internal static bool IsBlackListed(string folderPath, string blacklistEntry) {
 			bool hasWildcard = blacklistEntry.IndexOfAny(['*', '?']) >= 0;
+			bool hasSeparator = blacklistEntry.Contains(Path.DirectorySeparatorChar) ||
+								blacklistEntry.Contains(Path.AltDirectorySeparatorChar);
+			// A folder name without wildcards ("node_modules"): any segment of folderPath, as the
+			// file enumeration matches it (FileUtils.IsExcludedFolder).
+			if (!hasWildcard && !hasSeparator && !Path.IsPathRooted(blacklistEntry))
+				return folderPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries)
+					.Any(s => s.Equals(blacklistEntry, StringComparison.OrdinalIgnoreCase));
 			if (!hasWildcard) {
 				if (!folderPath.StartsWith(blacklistEntry, StringComparison.OrdinalIgnoreCase))
 					return false;
@@ -982,15 +1028,17 @@ namespace VDF.Core {
 				return !relativePath.StartsWith('.') && !Path.IsPathRooted(relativePath);
 			}
 			// Wildcard pattern without path separators: match against each individual segment of folderPath
-			bool hasSeparator = blacklistEntry.Contains(Path.DirectorySeparatorChar) ||
-								blacklistEntry.Contains(Path.AltDirectorySeparatorChar);
 			if (!hasSeparator) {
 				string[] segments = folderPath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
 					StringSplitOptions.RemoveEmptyEntries);
-				return segments.Any(s => System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(blacklistEntry, s));
+				return segments.Any(s => FileUtils.MatchesWildcards(blacklistEntry, s));
 			}
-			// Wildcard pattern with path separators: match against the full path
-			return System.IO.Enumeration.FileSystemName.MatchesSimpleExpression(blacklistEntry, folderPath);
+			// Wildcard pattern with path separators: the folder or any folder above it, as the file
+			// enumeration leaves out a matching folder with everything inside ("?:\Users\*\AppData").
+			for (string? folder = folderPath; !string.IsNullOrEmpty(folder); folder = Path.GetDirectoryName(folder))
+				if (FileUtils.MatchesWildcards(blacklistEntry, folder))
+					return true;
+			return false;
 		}
 
 		// True if the entry's folder is covered by the current include list (honours IncludeSubDirectories).
@@ -1141,13 +1189,17 @@ namespace VDF.Core {
 						if (entry.IsImage) {
 							ScanCrashJournal.Begin(ScanCrashJournal.PhaseImage, entry.Path);
 							try {
+								// Gray frames made under older rules are not comparable with today's (~96% apart
+								// for the same picture): recompute them once.
+								if (entry.grayBytes.Count > 0 && !entry.Flags.Has(CurrentImageGrayVersion))
+									entry.grayBytes.Clear();
 								if (entry.grayBytes.Count == 0) {
-									if (!GetGrayBytesFromImage(entry, Settings.UseExifCreationDate, Settings.ExtendedFFToolsLogging, aiEmbeddingPipeline))
+									if (!GetGrayBytesFromImage(entry, Settings.UseExifCreationDate, Settings.ExtendedFFToolsLogging, aiEmbeddingPipeline, UseWic))
 										entry.invalid = true;
 								}
 								else {
 									// Gray bytes cached from an earlier scan — backfill just the embedding.
-									TryQueueImageEmbeddingFrame(entry, aiEmbeddingPipeline, Settings.ExtendedFFToolsLogging);
+									TryQueueImageEmbeddingFrame(entry, aiEmbeddingPipeline, Settings.ExtendedFFToolsLogging, UseWic);
 								}
 							}
 							finally {
@@ -1219,8 +1271,8 @@ namespace VDF.Core {
 					driveProgressTracker = new DriveProgressTracker(driveGroups, CountsTowardDriveProgress, classified: false);
 					for (int i = 0; i < driveGroups.Count; i++) {
 						DriveProgressTracker.Counter counter = driveProgressTracker.CounterFor(i);
-						await Parallel.ForEachAsync(driveGroups[i].Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 },
-							(entry, token) => ProcessEntry(entry, counter, token));
+						await TimeDrive(driveGroups[i].Root, Parallel.ForEachAsync(driveGroups[i].Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 },
+							(entry, token) => ProcessEntry(entry, counter, token)));
 					}
 				}
 				else {
@@ -1236,10 +1288,21 @@ namespace VDF.Core {
 						DriveScanGroup group = driveGroups[i];
 						DriveProgressTracker.Counter counter = driveProgressTracker.CounterFor(i);
 						Logger.Instance.Info($"Drive '{group.Root}': {group.Entries.Count:N0} file(s), concurrency {group.DegreeOfParallelism} ({(group.SpeedClass == DriveSpeedClass.Fast ? "fast" : "slow")}, {group.ClassSource})");
-						driveTasks.Add(Parallel.ForEachAsync(group.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = group.DegreeOfParallelism },
-							(entry, token) => ProcessEntry(entry, counter, token)));
+						driveTasks.Add(TimeDrive(group.Root, Parallel.ForEachAsync(group.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = group.DegreeOfParallelism },
+							(entry, token) => ProcessEntry(entry, counter, token))));
 					}
 					await Task.WhenAll(driveTasks);
+				}
+
+				// A drive's loop starts when its Parallel.ForEachAsync is created.
+				async Task TimeDrive(string root, Task loop) {
+					long start = Stopwatch.GetTimestamp();
+					try {
+						await loop;
+					}
+					finally {
+						analysisTimes[root] = Stopwatch.GetElapsedTime(start);
+					}
 				}
 			}
 			catch (OperationCanceledException) { }
@@ -1680,7 +1743,7 @@ namespace VDF.Core {
 			{
 				if (Settings.UseAiMatching && unionEmbeddingStore == null) {
 					// Compare-only run (no scan phase loaded the sidecar in this process).
-					unionEmbeddingStore = AI.UnionEmbeddingStore.Load();
+					unionEmbeddingStore = AI.UnionEmbeddingStore.Load(AI.NpuComponents.CacheKeyFor(Settings.AiDevice));
 					if (unionEmbeddingStore.Count == 0)
 						Logger.Instance.Info("AI matching: no cached embeddings found — the AI pass will abstain. Run a scan to compute them.");
 				}
@@ -2934,35 +2997,61 @@ namespace VDF.Core {
 		/// sink still needs it. Failures are non-fatal: the image just stays without an
 		/// embedding and the AI pass abstains for it.
 		/// </summary>
-		static void TryQueueImageEmbeddingFrame(FileEntry imageFile, AI.IEmbeddingFrameSink? embeddingSink, bool extendedLogging) {
+		static void TryQueueImageEmbeddingFrame(FileEntry imageFile, AI.IEmbeddingFrameSink? embeddingSink, bool extendedLogging, bool useWic = false) {
 			if (embeddingSink?.WantsEmbedding(imageFile, 0) != true)
 				return;
-			byte[]? rgb = FfmpegEngine.GetThumbnail(new FfmpegSettings {
+			byte[]? rgb = null;
+			// Same order as GetGrayBytesFromImage: WIC first, except HEIC/HEIF (FFmpeg first).
+			bool wicFirst = useWic && !FileUtils.IsHeifImageFile(imageFile.Path);
+			if (wicFirst)
+				WicImageDecoder.TryDecode(imageFile.Path, out _, out rgb, out _, out _);
+			rgb ??= FfmpegEngine.GetThumbnail(new FfmpegSettings {
 				File = imageFile.Path,
 				Position = TimeSpan.Zero,
 				Rgb224 = true,
 				SoftwareDecodeOnly = true,
 			}, extendedLogging);
+			if (rgb == null && useWic && !wicFirst)
+				WicImageDecoder.TryDecode(imageFile.Path, out _, out rgb, out _, out _);
 			if (rgb != null)
 				embeddingSink.SubmitFrame(imageFile, 0, rgb);
 		}
 
-		static bool GetGrayBytesFromImage(FileEntry imageFile, bool useExifIfAvailable, bool extendedLogging, AI.IEmbeddingFrameSink? embeddingSink = null) {
+		static bool GetGrayBytesFromImage(FileEntry imageFile, bool useExifIfAvailable, bool extendedLogging, AI.IEmbeddingFrameSink? embeddingSink = null, bool useWic = false) {
 			try {
-				// Decode through FFmpeg — the same pipeline videos use — so image and video
-				// gray bytes share identical grayscale conversion and scaling.
-				byte[]? grayBytes;
-				// RGB frame from the combined CLI fallback; submitted only after the
-				// dark check below, so failed/too-dark images stay without an embedding
-				// exactly like on the two-call path.
-				byte[]? pendingRgb = null;
-				bool rgbFromCombinedCall = false;
-				int width, height;
-				if (!FfmpegEngine.TryGetImageInfoAndGrayBytes(imageFile.Path, out grayBytes, out width, out height, extendedLogging)) {
+				// Every photo's gray frame is computed from its 224x224 RGB frame (the AI's input),
+				// whichever decoder made it: a JPEG export (WIC) and its HEIC original (FFmpeg) then
+				// agree to ~99.8%, where the decoders' own gray scaling left them ~96% apart
+				// (GrayBytesUtils.FromRgb224). Videos keep FFmpeg's gray frames; they are never
+				// compared with photos. On Windows, WIC goes first when enabled
+				// (Settings.UseWindowsImageDecoder); anything it can't read falls through to FFmpeg.
+				byte[]? rgb = null;
+				int width = 0, height = 0;
+				bool sizeFromHeader = false;
+				// HEIC/HEIF go to FFmpeg first: Windows' HEIF codec decodes one photo at a time
+				// (~2 per second on a Snapdragon X2, however many threads ask), while FFmpeg
+				// processes decode them in parallel, ~5x faster. WIC stays their fallback.
+				bool heif = FileUtils.IsHeifImageFile(imageFile.Path);
+				bool wicFirst = useWic && !heif;
+				bool TryWic() {
+					long start = Stopwatch.GetTimestamp();
+					bool ok = WicImageDecoder.TryDecode(imageFile.Path, out _, out rgb, out width, out height);
+					if (!ok)
+						Logger.Instance.Info($"WIC could not decode '{imageFile.Path}' ({WicImageDecoder.LastFailure}).");
+					else if (Stopwatch.GetElapsedTime(start) > TimeSpan.FromSeconds(5))
+						Logger.Instance.Info($"Slow WIC decode: {Stopwatch.GetElapsedTime(start).TotalMilliseconds:N0} ms for '{imageFile.Path}'.");
+					return ok;
+				}
+				// Last resort only: a gray frame from FFmpeg's own scaling, when no RGB frame could be
+				// made. Left unmarked, so the next scan tries again.
+				byte[]? fallbackGray = null;
+				bool decoded = wicFirst && TryWic();
+				if (!decoded && !FfmpegEngine.TryGetImageInfoAndRgb224(imageFile.Path, out rgb, out width, out height, extendedLogging)) {
 					// CLI fallback. Read dimensions straight from the file header first: some
 					// PNGs trip FFprobe's demuxer with a bogus "chunk too big" error (#805),
 					// and the header carries the dimensions without decoding. Only fall back
 					// to FFprobe when the header reader doesn't recognise the format.
+					sizeFromHeader = true;
 					if (!ImageHeader.TryGetDimensions(imageFile.Path, out width, out height)) {
 						MediaInfo? info = FFProbeEngine.GetMediaInfo(imageFile.Path, extendedLogging);
 						// Largest stream, not the first: tiled HEIFs expose dozens of streams
@@ -2973,26 +3062,30 @@ namespace VDF.Core {
 						width = stream?.Width ?? 0;
 						height = stream?.Height ?? 0;
 					}
-					if (embeddingSink?.WantsEmbedding(imageFile, 0) == true &&
-						string.IsNullOrWhiteSpace(FfmpegEngine.CustomFFArguments)) {
-						// Embedding wanted too: fetch gray + RGB in one decode instead of two.
-						(grayBytes, pendingRgb) = FfmpegEngine.GetGrayAndRgb224Cli(imageFile.Path, TimeSpan.Zero, softwareDecodeOnly: true, extendedLogging);
-						rgbFromCombinedCall = true;
-					}
-					else {
-						grayBytes = FfmpegEngine.GetThumbnail(new FfmpegSettings {
-							File = imageFile.Path,
-							Position = TimeSpan.Zero,
-							GrayScale = 1,
-							SoftwareDecodeOnly = true,
-						}, extendedLogging);
-					}
+					// One FFmpeg run for both frames. CustomFFArguments don't apply to photos: the
+					// in-process path above never could apply them, and the hash must not depend on
+					// which path decoded the file.
+					(fallbackGray, rgb) = FfmpegEngine.GetGrayAndRgb224Cli(imageFile.Path, TimeSpan.Zero, softwareDecodeOnly: true, extendedLogging);
 				}
 
+				// FFmpeg missing, broken, or unable to read this HEIC: WIC still can, slowly.
+				if (rgb == null && useWic && !wicFirst && TryWic())
+					fallbackGray = null;
+				// Tiled HEIC through FFprobe reports one tile's size (its largest stream is a tile;
+				// the picture is a stream group). WIC reads the displayed size from the header.
+				if (sizeFromHeader && heif && useWic && WicImageDecoder.TryGetSize(imageFile.Path, out int heifW, out int heifH)) {
+					width = heifW;
+					height = heifH;
+				}
+
+				byte[]? grayBytes = rgb != null ? GrayBytesUtils.FromRgb224(rgb) : fallbackGray;
+				imageFile.Flags.Set(CurrentImageGrayVersion, rgb != null);
 				if (grayBytes == null) {
 					imageFile.Flags.Set(EntryFlags.ThumbnailError);
 					return false;
 				}
+				if (rgb == null)
+					Logger.Instance.Info($"No RGB frame for '{imageFile.Path}'; its gray frame comes from FFmpeg's own scaling until a later scan makes one.");
 
 				imageFile.mediaInfo = new MediaInfo {
 					Streams = new[] {
@@ -3020,20 +3113,17 @@ namespace VDF.Core {
 				if (!GrayBytesUtils.VerifyGrayScaleValues(grayBytes)) {
 					imageFile.Flags.Set(EntryFlags.TooDark);
 					Logger.Instance.Warn($"Graybytes too dark of: {imageFile.Path}");
+					AI.FramePool.Shared.Return(rgb);
 					return false;
 				}
 
 				imageFile.grayBytes.Add(0, grayBytes);
-				if (rgbFromCombinedCall) {
-					// The RGB frame came out of the same decode; a null here means the RGB
-					// branch failed — non-fatal, the AI pass abstains (no second attempt:
-					// the native path already failed for this file and the CLI just ran).
-					if (pendingRgb != null && embeddingSink?.WantsEmbedding(imageFile, 0) == true)
-						embeddingSink.SubmitFrame(imageFile, 0, pendingRgb);
-				}
-				else {
-					TryQueueImageEmbeddingFrame(imageFile, embeddingSink, extendedLogging);
-				}
+				// The AI frame is the one the gray frame came from. Without one the AI pass abstains
+				// (no second attempt: every decoder already tried this file).
+				if (rgb != null && embeddingSink?.WantsEmbedding(imageFile, 0) == true)
+					embeddingSink.SubmitFrame(imageFile, 0, rgb);
+				else
+					AI.FramePool.Shared.Return(rgb);
 				return true;
 			}
 			catch (Exception ex) {

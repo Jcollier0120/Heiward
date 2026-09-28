@@ -18,6 +18,7 @@ using System.Buffers;
 using System.Diagnostics;
 using System.IO;
 using System.Reflection.Metadata.Ecma335;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
@@ -72,6 +73,14 @@ namespace VDF.Core.Utils {
 					throw new IOException($"Failed to create hard link '{linkPath}' -> '{existingFilePath}' (Win32 error {Marshal.GetLastPInvokeError()}). Note: hard links require both paths to be on the same volume.");
 				return;
 			}
+			CreateHardLinkUnix(linkPath, existingFilePath);
+		}
+
+		// Its own non-inlined method: the JIT resolves every type a method body mentions when it
+		// compiles the method, so with the Mono call inline, Windows needed Mono.Posix.NETStandard
+		// just to create a hard link — and on win-arm64 that package ships no assembly at all.
+		[MethodImpl(MethodImplOptions.NoInlining)]
+		static void CreateHardLinkUnix(string linkPath, string existingFilePath) {
 			if (Mono.Unix.Native.Syscall.link(existingFilePath, linkPath) != 0)
 				throw new IOException($"Failed to create hard link '{linkPath}' -> '{existingFilePath}' (errno {Mono.Unix.Native.Stdlib.GetLastError()}). Note: hard links require both paths to be on the same filesystem.");
 		}
@@ -106,6 +115,7 @@ namespace VDF.Core.Utils {
 			return AreSameFilePosix(filepath, otherFilepath);
 		}
 
+		[MethodImpl(MethodImplOptions.NoInlining)] // keeps Mono.Posix out of AreSameFile's JIT on Windows
 		static bool AreSameFilePosix(string filepath, string otherFilepath) {
 			if (Mono.Unix.Native.Syscall.stat(filepath, out var statA) != 0)
 				return false;
