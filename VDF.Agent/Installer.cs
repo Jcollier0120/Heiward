@@ -20,6 +20,7 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32;
 using VDF.Core.AI;
 using VDF.Core.FFTools;
+using VDF.Core.Utils;
 
 namespace VDF.Agent {
 	/// <summary>
@@ -49,7 +50,8 @@ namespace VDF.Agent {
 
 		/// <param name="device">Force the AI device (unattended installs); null = the NPU if there is one, else ask.</param>
 		/// <param name="onDemand">True: no scheduled scans, only "Scan now". Null: ask when there's no NPU.</param>
-		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null) {
+		/// <param name="reuseFrom">Folders whose bin\ and ai\ may already hold the prerequisites (<see cref="ComponentReuse"/>).</param>
+		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
 			if (!WrongBuildConfirmed(assumeYes)) {
@@ -68,27 +70,20 @@ namespace VDF.Agent {
 					var psi = new ProcessStartInfo(InstalledExe) { UseShellExecute = false };
 					foreach (string a in Environment.GetCommandLineArgs().Skip(1)) psi.ArgumentList.Add(a);
 					if (!psi.ArgumentList.Contains("install")) psi.ArgumentList.Insert(0, "install");
+					// The installed copy starts empty: it can copy what the folder it came from already has.
+					psi.ArgumentList.Add("--reuse-from");
+					psi.ArgumentList.Add(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!);
 					using var p = Process.Start(psi)!;
 					await p.WaitForExitAsync(ct);
 					return p.ExitCode;
 				}
 			}
 
-			// Prerequisites. Downloads are SHA-256 pinned; nothing here needs admin rights.
+			// Prerequisites: copied from a copy that already has them, else downloaded. No admin rights needed.
 			bool arm64 = RuntimeInformation.OSArchitecture == Architecture.Arm64;
+			var sources = ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
 			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? ", Qualcomm NPU pack" : ""));
-			if (!dryRun) {
-				if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) == null || FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) == null)
-					Console.WriteLine($"  FFmpeg -> {await FfmpegDownloader.DownloadAndInstallAsync(null, ct)}");
-				if (!AiComponents.IsReady) {
-					Console.WriteLine($"  AI components (ONNX Runtime {AiComponents.RuntimeVersion} + model, ~100 MB)...");
-					await AiComponents.DownloadAsync(null, ct);
-				}
-				if (NpuComponents.IsSupportedPlatform && !NpuComponents.IsInstalled) {
-					Console.WriteLine($"  NPU pack (Qualcomm QNN {NpuComponents.QnnPackageVersion} + model, ~230 MB)...");
-					await NpuComponents.DownloadAsync(null, ct);
-				}
-			}
+			await EnsurePrerequisitesAsync(sources, dryRun, ct);
 
 			bool npu = device is null or AiDevice.Auto or AiDevice.Npu && (!dryRun ? NpuComponents.WillUseNpu(AiDevice.Auto) : NpuComponents.IsSupportedPlatform);
 			Step(npu ? "NPU found: AI matching runs on the Hexagon NPU." : $"No supported NPU on this PC ({(arm64 ? "ARM64" : RuntimeInformation.OSArchitecture.ToString())}).");
@@ -101,13 +96,22 @@ namespace VDF.Agent {
 					return 3;
 				}
 				if (choice == AiDevice.Gpu) {
-					Step("GPU pack: ONNX Runtime DirectML + DirectML (~215 MB)");
+					Step("GPU pack: ONNX Runtime DirectML + DirectML");
+					if (dryRun && ComponentReuse.Find(ComponentReuse.GpuPack, sources) is string gpuFrom)
+						Console.WriteLine($"  would be copied from {gpuFrom}");
 					if (!dryRun) {
-						await GpuComponents.DownloadAsync(null, ct);
 						// A process loads one ONNX Runtime, so the GPU check runs in its own process.
-						if (!await ProbeDeviceAsync("gpu", ct)) {
-							Console.WriteLine("  The GPU could not run the model here; using the CPU instead.");
-							choice = AiDevice.Cpu;
+						string? from = GpuComponents.IsInstalled ? null : await ComponentReuse.TryCopyAsync(ComponentReuse.GpuPack, sources, CoreUtils.StateFolder,
+							async () => GpuComponents.IsInstalled && await ProbeDeviceAsync("gpu", ct));
+						if (from != null)
+							Console.WriteLine($"  copied from {from}");
+						else {
+							Console.WriteLine("  downloading (~215 MB)...");
+							await GpuComponents.DownloadAsync(null, ct);
+							if (!await ProbeDeviceAsync("gpu", ct)) {
+								Console.WriteLine("  The GPU could not run the model here; using the CPU instead.");
+								choice = AiDevice.Cpu;
+							}
 						}
 					}
 				}
@@ -213,16 +217,77 @@ namespace VDF.Agent {
 			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('d');
 		}
 
+		/// <summary>
+		/// FFmpeg, ONNX Runtime and the model, and on Snapdragon PCs the NPU pack, next to this exe: each copied
+		/// from one of <paramref name="sources"/> when a copy there passes the same check (see
+		/// <see cref="ComponentReuse"/>), otherwise downloaded. Downloads are SHA-256 pinned. Shared by
+		/// install and setup.
+		/// </summary>
+		internal static async Task EnsurePrerequisitesAsync(IReadOnlyList<string> sources, bool dryRun, CancellationToken ct) {
+			if (dryRun) {
+				var parts = new List<ComponentReuse.Part> { ComponentReuse.Ffmpeg, ComponentReuse.AiRuntime };
+				if (NpuComponents.IsSupportedPlatform) parts.Add(ComponentReuse.NpuPack);
+				foreach (var part in parts)
+					Console.WriteLine(ComponentReuse.Find(part, sources) is string from ? $"  {Capital(part.Name)}: would be copied from {from}" : $"  {Capital(part.Name)}: would be downloaded, unless already here");
+				return;
+			}
+
+			if (File.Exists(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe"))) { /* already here */ }
+			else if (await ComponentReuse.TryCopyAsync(ComponentReuse.Ffmpeg, sources, CoreUtils.CurrentFolder,
+				() => Task.FromResult(Starts(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe")) && Starts(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffprobe.exe")))) is string ffFrom)
+				Console.WriteLine($"  FFmpeg: copied from {ffFrom}");
+			else if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) == null || FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) == null)
+				Console.WriteLine($"  FFmpeg -> {await FfmpegDownloader.DownloadAndInstallAsync(null, ct)}");
+
+			if (!AiComponents.IsReady) {
+				if (await ComponentReuse.TryCopyAsync(ComponentReuse.AiRuntime, sources, CoreUtils.StateFolder, () => Task.FromResult(AiComponents.IsReady)) is string aiFrom)
+					Console.WriteLine($"  AI components: copied from {aiFrom}");
+				else {
+					Console.WriteLine($"  AI components (ONNX Runtime {AiComponents.RuntimeVersion} + model, ~100 MB)...");
+					await AiComponents.DownloadAsync(null, ct);
+				}
+			}
+
+			if (NpuComponents.IsSupportedPlatform && !NpuComponents.IsInstalled) {
+				// The pack carries no version marker, so a copy has to run the model on the NPU, in its own process.
+				if (await ComponentReuse.TryCopyAsync(ComponentReuse.NpuPack, sources, CoreUtils.StateFolder,
+					async () => NpuComponents.IsInstalled && await ProbeDeviceAsync("npu", ct)) is string npuFrom)
+					Console.WriteLine($"  NPU pack: copied from {npuFrom}");
+				else {
+					Console.WriteLine($"  NPU pack (Qualcomm QNN {NpuComponents.QnnPackageVersion} + model, ~230 MB)...");
+					await NpuComponents.DownloadAsync(null, ct);
+				}
+			}
+		}
+
+		static string Capital(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+		/// <summary>The tool starts and prints its version: an FFmpeg build that crashes on load (as some ARM64 ones do) fails this.</summary>
+		static bool Starts(string exe) {
+			try {
+				using var p = Process.Start(new ProcessStartInfo(exe, "-hide_banner -version") {
+					UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+				});
+				if (p == null) return false;
+				p.StandardOutput.ReadToEnd();
+				return p.WaitForExit(15_000) && p.ExitCode == 0;
+			}
+			catch { return false; }
+		}
+
 		/// <summary>Runs "hei probe --device {device}" in its own process: true when the model runs there.</summary>
 		static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct) {
-			var psi = new ProcessStartInfo(InstalledExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+			var psi = new ProcessStartInfo(CurrentExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.ArgumentList.Add("probe");
 			psi.ArgumentList.Add("--device");
 			psi.ArgumentList.Add(device);
 			using var p = Process.Start(psi)!;
+			// ONNX Runtime writes its warnings to stderr: they go to the log when the probe fails, not the window.
+			Task<string> errors = p.StandardError.ReadToEndAsync(ct);
 			string output = await p.StandardOutput.ReadToEndAsync(ct);
 			await p.WaitForExitAsync(ct);
 			Console.WriteLine("  " + output.Trim());
+			if (p.ExitCode != 0) AgentPaths.AppendLog($"probe --device {device} failed: {(await errors).Trim()}");
 			return p.ExitCode == 0;
 		}
 

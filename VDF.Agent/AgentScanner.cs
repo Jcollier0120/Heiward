@@ -98,7 +98,7 @@ namespace VDF.Agent {
 				ReviewServer.EnsureRunningInBackground(cfg);
 				await Toast.ShowAsync($"{fresh.Count} new set{(fresh.Count == 1 ? "" : "s")} of likely duplicates",
 					bytes > 0 ? $"Review them to free up to {Format.Bytes(bytes)}. Nothing is deleted until you choose." : "Review them when you have a minute.",
-					$"http://127.0.0.1:{cfg.Port}/");
+					ReviewServer.PageUrl(cfg.Port));
 			}
 			return 0;
 		}

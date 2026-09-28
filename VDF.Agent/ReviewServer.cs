@@ -39,12 +39,14 @@ namespace VDF.Agent {
 		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct) {
 			int port = cfg.Port;
 			if (await IsUpAsync(port)) {
-				Console.WriteLine($"The review page is already running: http://127.0.0.1:{port}/");
+				Console.WriteLine($"The review page is already running: {PageUrl(port)}");
 				if (openBrowser) OpenBrowser(port);
 				return 0;
 			}
 			string token = Convert.ToHexString(RandomNumberGenerator.GetBytes(24)).ToLowerInvariant();
-			var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { $"127.0.0.1:{port}", $"localhost:{port}" };
+			// heiward.localhost is the name the page is opened under: browsers resolve every *.localhost name to
+			// this PC themselves (no hosts file, no admin rights), so no DNS answer can point it anywhere else.
+			var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { $"{HostName}:{port}", $"127.0.0.1:{port}", $"localhost:{port}" };
 
 			var builder = WebApplication.CreateSlimBuilder();
 			builder.Logging.ClearProviders();
@@ -174,7 +176,7 @@ namespace VDF.Agent {
 			}, CancellationToken.None);
 
 			await app.StartAsync(ct);
-			Console.WriteLine($"Review page: http://127.0.0.1:{port}/");
+			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
@@ -261,7 +263,12 @@ namespace VDF.Agent {
 			Process.Start(psi);
 		}
 
+		/// <summary>The name the page goes by: Heiward's own, on this PC only (see the Host check).</summary>
+		public const string HostName = "heiward.localhost";
+
+		public static string PageUrl(int port) => $"http://{HostName}:{port}/";
+
 		public static void OpenBrowser(int port) =>
-			Process.Start(new ProcessStartInfo($"http://127.0.0.1:{port}/") { UseShellExecute = true });
+			Process.Start(new ProcessStartInfo(PageUrl(port)) { UseShellExecute = true });
 	}
 }

@@ -29,6 +29,8 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 </details>
 
+**Already downloaded?** If another copy of Heiward or Video Duplicate Finder already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from, and in Video Duplicate Finder's own per-user folder. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
+
 Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans). Preview every step without changing anything: `hei install --dry-run`.
 
 Heiward does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
@@ -122,7 +124,7 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review |
-| `port` | 18484 | The review page, on 127.0.0.1 only |
+| `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |
 | `toast` | true | A notification when a scan finds something new |
 | `developerMode` | `auto` | `off`: no developer cleanup. `auto`: check once a day |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
@@ -137,8 +139,8 @@ hei status          settings, last scan, schedule, NPU lock
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
-hei setup           download FFmpeg and the AI components
-hei install         [--dry-run] [--yes] [--device npu|gpu|cpu]
+hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
+hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
 ```
 
@@ -160,7 +162,7 @@ Folder names are read live from disk; counts come from the last scan (`index.jso
 
 ## The review page is local only
 
-- It listens on 127.0.0.1 and answers only its own Host header, so a DNS-rebinding page can't reach it.
+- It listens on 127.0.0.1 and answers only its own names (`heiward.localhost`, `127.0.0.1`, `localhost`), so a DNS-rebinding page can't reach it. Browsers resolve every `*.localhost` name to this PC themselves, so `heiward.localhost` needs no hosts file and can't be pointed elsewhere.
 - Every button needs a token that exists only inside the page it served, plus a same-origin Origin header.
 - Thumbnails are served only for files in the current report.
 - It stops after an hour unused.

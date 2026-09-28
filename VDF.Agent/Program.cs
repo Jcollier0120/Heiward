@@ -19,6 +19,7 @@ using System.Runtime.InteropServices;
 using VDF.Agent;
 using VDF.Core.AI;
 using VDF.Core.FFTools;
+using VDF.Core.Utils;
 
 // hei (Heiward): finds likely duplicate photos and videos in the background (on the NPU when there
 // is one), and stale developer files once a day, and lists them on a local review page. It never deletes anything on its own; files the user
@@ -82,21 +83,13 @@ openCmd.SetAction(async (r, ct) => {
 });
 root.Subcommands.Add(openCmd);
 
-var setup = new Command("setup", "Download FFmpeg and the AI components (and the NPU pack on Snapdragon PCs), then report what this PC will use.");
-setup.SetAction(async (_, ct) => {
+var reuseFrom = new Option<string[]>("--reuse-from") {
+	Description = "A folder where another Heiward or Video Duplicate Finder keeps its bin\\ and ai\\ folders: copy FFmpeg and the AI components from it instead of downloading them. Repeatable.",
+};
+var setup = new Command("setup", "Get FFmpeg and the AI components (and the NPU pack on Snapdragon PCs), copied from --reuse-from folders when they have them, then report what this PC will use.") { reuseFrom };
+setup.SetAction(async (r, ct) => {
 	try {
-		if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) == null || FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) == null) {
-			Console.WriteLine("Downloading FFmpeg...");
-			Console.WriteLine($"FFmpeg installed to {await FfmpegDownloader.DownloadAndInstallAsync(null, ct)}");
-		}
-		if (!AiComponents.IsReady) {
-			Console.WriteLine($"Downloading the AI components (ONNX Runtime {AiComponents.RuntimeVersion} + model, ~100 MB)...");
-			await AiComponents.DownloadAsync(null, ct);
-		}
-		if (NpuComponents.IsSupportedPlatform && !NpuComponents.IsInstalled) {
-			Console.WriteLine($"Downloading the NPU pack (Qualcomm QNN {NpuComponents.QnnPackageVersion} + model, ~230 MB)...");
-			await NpuComponents.DownloadAsync(null, ct);
-		}
+		await Installer.EnsurePrerequisitesAsync(ComponentReuse.Sources(r.GetValue(reuseFrom), CoreUtils.StateFolder), dryRun: false, ct);
 		using var embedder = OnnxEmbedder.Create(AiDevice.Auto);
 		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}.");
 		return 0;
@@ -112,9 +105,9 @@ var dryRun = new Option<bool>("--dry-run") { Description = "Print every step wit
 var yes = new Option<bool>("--yes", "-y") { Description = "Answer yes to questions (unattended install)." };
 var deviceOpt = new Option<AiDevice?>("--device") { Description = "Where the AI runs: npu, gpu or cpu. Default: the NPU if there is one, otherwise ask (GPU or CPU)." };
 var onDemandOpt = new Option<bool>("--on-demand") { Description = "No scheduled scans: scan only when you press Scan now. Default without an NPU: ask (every 6 hours or on demand)." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, reuseFrom };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
-	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null));
+	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime).
