@@ -15,7 +15,7 @@
 //
 using System.Globalization;
 using MemoryPack;
-using VDF.Core;
+using HEI.Core;
 
 namespace FakeDatabaseGenerator {
 	internal static class Program {

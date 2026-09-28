@@ -134,11 +134,11 @@ jobs:
           fi
           # Build GUI (Native AOT — verified AOT-safe for 4.0: compiled bindings,
           # source-generated JSON, statically-registered MemoryPack formatters)
-          dotnet publish ./VDF.GUI/VDF.GUI.csproj -c Release -v q -p:PublishAot=true -p:VersionPrefix="$VERSION" -r "${{ matrix.target }}" -o "outputGUI"
+          dotnet publish ./HEI.GUI/HEI.GUI.csproj -c Release -v q -p:PublishAot=true -p:VersionPrefix="$VERSION" -r "${{ matrix.target }}" -o "outputGUI"
           # Build CLI (Native AOT)
-          dotnet publish ./VDF.CLI/VDF.CLI.csproj -c Release -v q -p:PublishAot=true -p:VersionPrefix="$VERSION" -r "${{ matrix.target }}" -o "outputCLI"
+          dotnet publish ./HEI.CLI/HEI.CLI.csproj -c Release -v q -p:PublishAot=true -p:VersionPrefix="$VERSION" -r "${{ matrix.target }}" -o "outputCLI"
           # Build Web (JIT, self-contained — Blazor Server is not supported under Native AOT)
-          dotnet publish ./VDF.Web/VDF.Web.csproj -c Release -v q --self-contained -p:VersionPrefix="$VERSION" -r "${{ matrix.target }}" -o "outputWeb"
+          dotnet publish ./HEI.Web/HEI.Web.csproj -c Release -v q --self-contained -p:VersionPrefix="$VERSION" -r "${{ matrix.target }}" -o "outputWeb"
           # Pack files
           if [[ "${{ matrix.target }}" == win-* ]]; then
             7z a -tzip "GUI-${{ matrix.target }}.zip" "./outputGUI/*"
@@ -149,33 +149,33 @@ jobs:
             mkdir -p "Video Duplicate Finder.app/Contents/MacOS"
             mkdir -p "Video Duplicate Finder.app/Contents/Resources"
             cp -r outputGUI/. "Video Duplicate Finder.app/Contents/MacOS/"
-            cp "VDF.GUI/Assets/macOS/icon.icns" "Video Duplicate Finder.app/Contents/Resources/icon.icns"
-            cp "VDF.GUI/Assets/macOS/Info.plist" "Video Duplicate Finder.app/Contents/Info.plist"
+            cp "HEI.GUI/Assets/macOS/icon.icns" "Video Duplicate Finder.app/Contents/Resources/icon.icns"
+            cp "HEI.GUI/Assets/macOS/Info.plist" "Video Duplicate Finder.app/Contents/Info.plist"
             plutil -replace CFBundleShortVersionString -string "$VERSION" "Video Duplicate Finder.app/Contents/Info.plist"
             plutil -replace CFBundleVersion -string "$VERSION" "Video Duplicate Finder.app/Contents/Info.plist"
-            chmod +x "Video Duplicate Finder.app/Contents/MacOS/VDF.GUI"
+            chmod +x "Video Duplicate Finder.app/Contents/MacOS/HEI.GUI"
             # Ad-hoc sign every binary in the bundle. macOS 14+ (and especially Tahoe 26)
             # rejects unsigned dylibs under Library Validation, which previously caused
             # "library load disallowed by system policy" on launch.
             codesign --force --deep --sign - \
-              --entitlements "VDF.GUI/Assets/macOS/entitlements.plist" \
+              --entitlements "HEI.GUI/Assets/macOS/entitlements.plist" \
               "Video Duplicate Finder.app"
             codesign --verify --deep --strict --verbose=2 "Video Duplicate Finder.app"
             tar czvf "GUI-${{ matrix.target }}.tar.gz" "Video Duplicate Finder.app"
-            chmod +x outputCLI/vdf-cli
-            chmod +x outputWeb/VDF.Web
+            chmod +x outputCLI/hei-cli
+            chmod +x outputWeb/HEI.Web
             codesign --force --deep --sign - \
-              --entitlements "VDF.GUI/Assets/macOS/entitlements.plist" \
-              outputCLI/vdf-cli
+              --entitlements "HEI.GUI/Assets/macOS/entitlements.plist" \
+              outputCLI/hei-cli
             codesign --force --deep --sign - \
-              --entitlements "VDF.GUI/Assets/macOS/entitlements.plist" \
-              outputWeb/VDF.Web
+              --entitlements "HEI.GUI/Assets/macOS/entitlements.plist" \
+              outputWeb/HEI.Web
             tar czvf "CLI-${{ matrix.target }}.tar.gz" "outputCLI"
             tar czvf "Web-${{ matrix.target }}.tar.gz" "outputWeb"
           else
             # Bundle .desktop file and icon for Linux desktop integration
-            cp "VDF.GUI/Assets/Linux/icon.png" "outputGUI/icon.png"
-            cp "VDF.GUI/Assets/Linux/videoduplicatefinder.desktop" "outputGUI/videoduplicatefinder.desktop"
+            cp "HEI.GUI/Assets/Linux/icon.png" "outputGUI/icon.png"
+            cp "HEI.GUI/Assets/Linux/videoduplicatefinder.desktop" "outputGUI/videoduplicatefinder.desktop"
             tar czvf "GUI-${{ matrix.target }}.tar.gz" "outputGUI"
             tar czvf "CLI-${{ matrix.target }}.tar.gz" "outputCLI"
             tar czvf "Web-${{ matrix.target }}.tar.gz" "outputWeb"

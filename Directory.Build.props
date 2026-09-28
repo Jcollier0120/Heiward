@@ -1,7 +1,7 @@
 <Project>
 
   <PropertyGroup>
-    <!-- Base version for all VDF assemblies. The rolling "4.1.x" release keeps it as is,
+    <!-- Base version for all HEI assemblies. The rolling "4.1.x" release keeps it as is,
          so there the git commit baked in below is the real build identifier the About
          box / diagnostics report show. A versioned release (tag v4.1.1) overrides it
          with the tag's version in releases.yml, which refuses a tag whose major.minor
@@ -22,21 +22,21 @@
           StandardErrorImportance="Low"
           StandardOutputImportance="Low"
           WorkingDirectory="$(MSBuildThisFileDirectory)">
-      <Output TaskParameter="ConsoleOutput" PropertyName="_VdfGitCommit" />
-      <Output TaskParameter="ExitCode" PropertyName="_VdfGitExitCode" />
+      <Output TaskParameter="ConsoleOutput" PropertyName="_HeiGitCommit" />
+      <Output TaskParameter="ExitCode" PropertyName="_HeiGitExitCode" />
     </Exec>
     <PropertyGroup>
-      <_VdfGitCommit Condition="'$(_VdfGitExitCode)' != '0' or '$(_VdfGitCommit)' == ''">unknown</_VdfGitCommit>
-      <_VdfBuildDate>$([System.DateTime]::UtcNow.ToString('yyyy-MM-dd'))</_VdfBuildDate>
+      <_HeiGitCommit Condition="'$(_HeiGitExitCode)' != '0' or '$(_HeiGitCommit)' == ''">unknown</_HeiGitCommit>
+      <_HeiBuildDate>$([System.DateTime]::UtcNow.ToString('yyyy-MM-dd'))</_HeiBuildDate>
     </PropertyGroup>
     <ItemGroup>
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>CommitId</_Parameter1>
-        <_Parameter2>$(_VdfGitCommit.Trim())</_Parameter2>
+        <_Parameter2>$(_HeiGitCommit.Trim())</_Parameter2>
       </AssemblyAttribute>
       <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
         <_Parameter1>BuildDate</_Parameter1>
-        <_Parameter2>$(_VdfBuildDate)</_Parameter2>
+        <_Parameter2>$(_HeiBuildDate)</_Parameter2>
       </AssemblyAttribute>
     </ItemGroup>
   </Target>

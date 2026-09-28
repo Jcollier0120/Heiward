@@ -4,7 +4,7 @@ Heiward is Windows-only today. This is what a Linux and a macOS version take, in
 
 ## Already portable
 
-- **The engine** (`VDF.Core`) targets `net10.0`, and upstream Video Duplicate Finder ships it for Linux and macOS.
+- **The engine** (`HEI.Core`) targets `net10.0`, and upstream Video Duplicate Finder ships it for Linux and macOS.
 - **Downloads.** FFmpeg already downloads for Linux (x64, Arm64) and macOS (Intel, Apple Silicon), and ONNX Runtime for all four.
 - **Photos.** They decode through FFmpeg in-process, iPhone HEIC included. WIC is only a Windows speed-up.
 - **The review page** is ASP.NET Core plus plain HTML and JavaScript. Opening it uses `xdg-open` or `open`, which .NET already calls for a URL.
@@ -12,7 +12,7 @@ Heiward is Windows-only today. This is what a Linux and a macOS version take, in
 
 ## Windows-only today
 
-About 680 of `VDF.Agent`'s 3,700 lines, plus Windows specifics inside the scan scope and developer mode:
+About 680 of `HEI.Agent`'s 3,700 lines, plus Windows specifics inside the scan scope and developer mode:
 
 | Part | Windows | Linux | macOS |
 |---|---|---|---|
@@ -51,5 +51,5 @@ About 680 of `VDF.Agent`'s 3,700 lines, plus Windows specifics inside the scan s
 - **Linux:** WSL2 on this PC, or any Linux PC.
 - **macOS:** a Mac with Apple Silicon.
 - **Windows NPUs:**
-  - An Intel Core Ultra PC: install and scan, nothing else. An older Intel PC has no NPU, so Heiward rightly uses its GPU or CPU; setting `VDF_NPU_TEST=openvino-cpu` makes it run the Intel pack on the CPU instead, which tests everything but the NPU itself.
-  - An AMD Ryzen AI PC on Windows 11 24H2 or later: install and scan. The Windows ML route it uses is tested on a Snapdragon PC with `VDF_NPU_TEST=winml-qnn` (same 82 groups on the 600-photo test set as Qualcomm's own pack).
+  - An Intel Core Ultra PC: install and scan, nothing else. An older Intel PC has no NPU, so Heiward rightly uses its GPU or CPU; setting `HEI_NPU_TEST=openvino-cpu` makes it run the Intel pack on the CPU instead, which tests everything but the NPU itself.
+  - An AMD Ryzen AI PC on Windows 11 24H2 or later: install and scan. The Windows ML route it uses is tested on a Snapdragon PC with `HEI_NPU_TEST=winml-qnn` (same 82 groups on the 600-photo test set as Qualcomm's own pack).
