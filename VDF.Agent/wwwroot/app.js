@@ -1324,8 +1324,10 @@ async function renderContent() {
     panel.append(icon('info'));
     const text = el('div');
     text.append(el('div', null, 'Not scanned: ' + data.exempt.toLowerCase() + '.'));
-    text.append(el('div', 'muted small', 'Pictures and videos here belong to Windows, a program, a game or a project, which could break if a "duplicate" went. ' +
-      'To scan a folder anyway, remove its rule from the settings; to leave out more, add to "excludeFolders".'));
+    text.append(el('div', 'muted small', data.exempt === 'Excluded in settings'
+      ? 'You left it out under "excludeFolders" in the settings. Take it out there to scan it.'
+      : 'Pictures and videos here belong to Windows, a program, a game or a project, which could break if a "duplicate" went. ' +
+        'To scan a folder anyway, add it to "folders" in the settings; to leave out more, add to "excludeFolders".'));
     panel.append(text);
     frag.append(panel);
     content.replaceChildren(frag);

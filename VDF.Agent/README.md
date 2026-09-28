@@ -73,6 +73,8 @@ Every fixed drive: internal drives, and external disks that Windows reports as f
 | `AccountPictures` | Windows' account picture at nine sizes |
 | Folder links (junctions, symbolic links) | Scanned where they point, not twice |
 
+A folder you add to `folders` is scanned even inside one of these, for example a folder of photos inside a dot-folder or under `AppData`; the rules still apply to the folders below it. Your own `excludeFolders` are different: they win over `folders`, so a listed folder inside one is skipped, and `hei scope` and the scan say so.
+
 `hei scope` lists all of it; `hei scope --count` also counts the photos and videos per folder, without opening any file. Add your own with `excludeFolders`.
 
 ## Developer mode
@@ -117,8 +119,8 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | Field | Default | |
 |---|---|---|
 | `scanAllDrives` | true | Every fixed drive, minus the folders above |
-| `folders` | none | More folders to scan, e.g. a USB drive or `\\nas\photos` (the only ones when `scanAllDrives` is false) |
-| `excludeFolders` | none | A path (`D:\Scans`), a folder name at any depth (`Backups`), or either with wildcards (`D:\Old\*`, `*.bak`) |
+| `folders` | none | More folders to scan, e.g. a USB drive or `\\nas\photos` (the only ones when `scanAllDrives` is false). Scanned even inside a folder left out by default |
+| `excludeFolders` | none | A path (`D:\Scans`), a folder name at any depth (`Backups`), or either with wildcards (`D:\Old\*`, `*.bak`). Wins over `folders` |
 | `excludeExtensions` | none | e.g. `[".heic"]` |
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |

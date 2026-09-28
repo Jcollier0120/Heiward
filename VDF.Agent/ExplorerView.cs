@@ -88,11 +88,12 @@ namespace VDF.Agent {
 			if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return null;
 			string full = Path.GetFullPath(path);
 			var roots = index?.Roots ?? ScanScope.Roots(cfg);
-			string? root = roots.FirstOrDefault(r => IsSameOrUnder(full, r));
+			// The deepest root: a listed folder inside an exempt one is a root of its own.
+			string? root = roots.Where(r => IsSameOrUnder(full, r)).MaxBy(r => r.TrimEnd(Path.DirectorySeparatorChar).Length);
 			if (root == null || !Directory.Exists(full)) return null;
 
 			var rules = ScanScope.ExclusionRules(cfg);
-			string? exempt = ExemptAlongTheWay(root, full, rules);
+			string? exempt = ScanScope.ExemptBelow(root, full, rules);
 			var (files, bytes) = index?.Subtree(full) ?? (0, 0);
 			var children = new List<TreeNode>();
 			int hidden = 0;
@@ -119,19 +120,6 @@ namespace VDF.Agent {
 				}
 			}
 			return new TreeListing(full, exempt, files, bytes, Stats(full, pending), children, hidden);
-		}
-
-		/// <summary>The reason the folder (or one above it, below the scanned root) is left out of scans.</summary>
-		static string? ExemptAlongTheWay(string root, string folder, IReadOnlyList<ScanScope.Rule> rules) {
-			string rel = Path.GetRelativePath(root, folder);
-			if (rel == ".") return null;
-			string current = root;
-			foreach (string part in rel.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)) {
-				current = Path.Combine(current, part);
-				if (ScanScope.ExemptReason(new DirectoryInfo(current), rules) is { } reason)
-					return reason;
-			}
-			return null;
 		}
 
 		/// <summary>

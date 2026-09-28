@@ -87,11 +87,15 @@ namespace VDF.Agent {
 		/// (<see cref="ScanScope"/>). Off: only <see cref="Folders"/>.
 		/// </summary>
 		public bool ScanAllDrives { get; set; } = true;
-		/// <summary>More folders to scan, subfolders included: e.g. a USB drive or a network share.</summary>
+		/// <summary>
+		/// More folders to scan, subfolders included: e.g. a USB drive or a network share. Scanned even
+		/// inside a folder the built-in rules leave out (the rules still apply below it).
+		/// </summary>
 		public List<string> Folders { get; set; } = new();
 		/// <summary>
 		/// Folders to leave out, besides the built-in ones: a full path (C:\Scans), a folder name at any
-		/// depth (node_modules), or either with wildcards (*.lrdata, D:\Backups\*).
+		/// depth (node_modules), or either with wildcards (*.lrdata, D:\Backups\*). Wins over
+		/// <see cref="Folders"/>: a listed folder inside one is skipped, with a note.
 		/// </summary>
 		public List<string> ExcludeFolders { get; set; } = new();
 		/// <summary>File types to leave out, e.g. ".heic" (HEIC decodes through FFmpeg, which is ~5x faster than Windows' codec).</summary>
