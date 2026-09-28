@@ -505,15 +505,50 @@ function repoSection(repos) {
     const act = el('td', 'num size');
     const btn = el('button', 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'None');
     btn.disabled = !r.merged.length || devBusy;
-    btn.title = r.merged.length ? 'Delete ' + count(r.merged.length, 'local branch', 'local branches') + ' merged into ' + r.default : 'No merged branches';
     btn.addEventListener('click', () => pruneRepo(r));
-    act.append(btn);
+    act.append(pruneTip(r, btn));
     row.append(act);
     tbody.append(row);
   }
   table.append(tbody);
   box.append(table);
   return box;
+}
+
+/** The Prune button with a tooltip (hover or keyboard focus) saying what it does and why nothing is lost. */
+function pruneTip(r, btn) {
+  const wrap = el('span', 'tip');
+  const body = el('div', 'tip-body');
+  body.id = 'prune-tip-' + r.id;
+  body.setAttribute('role', 'tooltip');
+  btn.setAttribute('aria-describedby', body.id);
+  const target = r.default || 'the remote\'s main branch';
+  body.append(el('div', 'tip-title', r.merged.length
+    ? 'Deletes ' + count(r.merged.length, 'local branch', 'local branches') + ' in ' + r.name
+    : 'Nothing to prune in ' + r.name));
+  body.append(el('p', null, 'Branches whose work is already in ' + target + ': they were merged, so they only clutter your branch list.'));
+  body.append(el('div', 'tip-title', 'Why it\'s safe'));
+  const why = el('ul');
+  for (const line of [
+    'It fetches first, so "merged" is judged against the remote as it is now.',
+    'Every commit on these branches is already in ' + target + '. Nothing is lost, and you can recreate any of them from there.',
+    'main, master, develop and branches checked out in a worktree are never deleted.',
+    'Only your local copies go: nothing on the remote changes.',
+    'git does the deleting (git branch -d), which refuses anything unmerged.',
+  ]) why.append(el('li', null, line));
+  body.append(why);
+  wrap.append(btn, body);
+  // Above the button when it fits in the scrolling view, otherwise below: the view scrolls down to
+  // whatever doesn't fit there, while a tooltip clipped at the top can't be read.
+  const place = () => {
+    const view = wrap.closest('.view');
+    if (!view) return;
+    const above = wrap.getBoundingClientRect().top - view.getBoundingClientRect().top;
+    wrap.classList.toggle('below', above < body.offsetHeight + 12);
+  };
+  wrap.addEventListener('mouseenter', place);
+  wrap.addEventListener('focusin', place);
+  return wrap;
 }
 
 async function pruneRepo(r) {

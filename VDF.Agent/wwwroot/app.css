@@ -203,6 +203,23 @@ button { font: inherit; color: inherit; }
 .repo-row td { vertical-align: top; }
 .repo-row .btn { white-space: nowrap; }
 .branches summary { cursor: pointer; color: var(--accent); margin-top: 2px; }
+
+/* Tooltip: opens above its button on hover or keyboard focus (the wrapper gets hover even when the button is disabled). */
+.tip { position: relative; display: inline-block; }
+.tip-body {
+  position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 10;
+  width: 320px; max-width: min(320px, 80vw); padding: 10px 12px;
+  background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-size: 12px; font-weight: 400; line-height: 1.45; text-align: left; white-space: normal;
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.12s ease 0.2s, visibility 0s linear 0.32s;
+}
+.tip.below .tip-body { bottom: auto; top: calc(100% + 8px); }
+.tip:hover .tip-body, .tip:focus-within .tip-body { opacity: 1; visibility: visible; transition-delay: 0.2s, 0s; }
+.tip-body p { margin: 2px 0 6px; color: var(--muted); }
+.tip-body ul { margin: 4px 0 0; padding-left: 16px; }
+.tip-body li { margin: 2px 0; }
+.tip-title { font-weight: 600; }
 .branch-list { margin-top: 2px; }
 
 .history summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); padding: 4px 0; }
