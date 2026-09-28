@@ -149,6 +149,8 @@ It's laid out like File Explorer, so you can go where you care most instead of s
   - One button moves every ticked copy in the folder to the Recycle Bin, keeping the kept file of each set.
 - **Exempt folders** (system, programs, games, code, other accounts) are greyed out with the reason. Many of them together fold into one row. Folders without photos or videos are hidden behind a "show" link.
 
+**Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser.
+
 Folder names are read live from disk; counts come from the last scan (`index.json` next to the report).
 
 ## The review page is local only

@@ -75,6 +75,7 @@ namespace VDF.Agent {
 			// Revalidated on every load, so an updated agent's page never runs yesterday's script.
 			app.MapGet("/app.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/app.css", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.css"), "text/css; charset=utf-8"); });
+			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward" }));
 			app.MapGet("/api/state", () => Results.Json(State(cfg), AgentConfig.Json));
 			// Folder names only, and only below what the agent scans (a GET from another site can't read

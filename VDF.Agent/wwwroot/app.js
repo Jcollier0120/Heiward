@@ -56,6 +56,8 @@ const ICONS = {
   stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
   merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
+  palette: [['path', 'M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.5-.6 1.5-1.4 0-.9-.8-1.3-.8-2.1 0-.8.6-1.3 1.4-1.3h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.2 11.5 1.8 8 1.8z', 'stroke'],
+    ['circle', '5,7.2,1', 'fill'], ['circle', '7.4,4.6,1', 'fill'], ['circle', '10.6,5.3,1', 'fill'], ['circle', '5.3,10.5,1', 'fill']],
 };
 
 // Developer cleanup's mark: code brackets on an accent tile.
@@ -1674,6 +1676,82 @@ async function refresh(force) {
   }
 }
 
+// ---------------------------------------------------------------- theme menu
+
+// The themes and the saved choice come from theme.js, which has already applied it.
+const THEME_KEY = 'heiward:theme';
+const currentTheme = () => document.documentElement.dataset.theme || 'system';
+
+function setTheme(name) {
+  if (name === 'system') delete document.documentElement.dataset.theme;
+  else document.documentElement.dataset.theme = name;
+  try { localStorage.setItem(THEME_KEY, name); } catch (e) { /* storage blocked: it holds for this visit */ }
+  for (const item of $('theme-menu').querySelectorAll('.theme-item'))
+    item.setAttribute('aria-checked', String(item.dataset.theme === name));
+}
+
+function swatch(colors) {
+  const s = el('span', 'swatch');
+  ['sw-bg', 'sw-accent', 'sw-fg'].forEach((cls, i) => {
+    const part = el('span', cls);
+    part.style.background = colors[i];
+    s.append(part);
+  });
+  return s;
+}
+
+function setupThemeMenu() {
+  const btn = $('theme-btn');
+  const menu = $('theme-menu');
+  btn.append(icon('palette'));
+  const labels = { windows: 'Windows', colour: 'Colour themes' };
+  let group = null;
+  for (const t of window.heiwardThemes || []) {
+    if (t.group !== group) {
+      group = t.group;
+      menu.append(el('div', 'menu-label', labels[group] || ''));
+    }
+    const item = el('button', 'theme-item');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(t.name === currentTheme()));
+    item.dataset.theme = t.name;
+    const text = el('span', 'ti-text');
+    text.append(el('span', 'ti-label', t.label), el('span', 'ti-desc', t.description));
+    item.append(swatch(t.swatch), text, icon('check', 'ti-check'));
+    // The menu stays open, so themes can be tried one after another.
+    item.addEventListener('click', () => setTheme(t.name));
+    menu.append(item);
+  }
+  const items = () => [...menu.querySelectorAll('.theme-item')];
+  const show = (open) => {
+    menu.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) (items().find((i) => i.getAttribute('aria-checked') === 'true') || items()[0])?.focus();
+  };
+  btn.addEventListener('click', () => show(menu.classList.contains('hidden')));
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) show(false);
+  });
+  menu.addEventListener('keydown', (e) => {
+    const list = items();
+    const at = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      list[(at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length].focus();
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault();
+      list[e.key === 'Home' ? 0 : list.length - 1].focus();
+    } else if (e.key === 'Escape') {
+      show(false);
+      btn.focus();
+    } else if (e.key === 'Tab') {
+      show(false);
+    }
+  });
+}
+
+setupThemeMenu();
 $('nav-back').append(icon('back'));
 $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
