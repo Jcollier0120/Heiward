@@ -21,6 +21,8 @@ jobs:
       run: dotnet publish HEI.Web/HEI.Web.csproj -c Release -v q --self-contained -r win-x64
     - name: Run Unit Tests
       run: dotnet test HEI.Core.Tests/HEI.Core.Tests.csproj -c Release -v q
+    - name: Run Heiward Tests
+      run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q
     - name: Run CLI Tests
       run: dotnet test HEI.CLI.Tests/HEI.CLI.Tests.csproj -c Release -v q
     - name: Run GUI Tests
