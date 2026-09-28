@@ -14,6 +14,8 @@
 // */
 //
 
+using VDF.Core.Utils;
+
 namespace VDF.Agent {
 	/// <summary>
 	/// What a scan looks at: every fixed drive by default, minus the folders that belong to Windows,
@@ -22,32 +24,46 @@ namespace VDF.Agent {
 	/// if a "duplicate" goes, and they would bury the user's own copies in the report.
 	/// </summary>
 	static class ScanScope {
+		/// <summary>A folder left out of scans, and the reason shown for it on the review page.</summary>
+		internal readonly record struct Rule(string Pattern, string Reason);
+
+		const string SystemReason = "Windows", Programs = "Installed programs", AppData = "App data", Games = "Game library",
+			Code = "Code", PhotoApp = "Photo app library", Drivers = "Drivers", DevTools = "Developer tools";
+
 		/// <summary>
 		/// Left out at any depth, by folder name (wildcards allowed). VDF matches a pattern without a
 		/// backslash against the folder's name.
 		/// </summary>
-		internal static readonly string[] ExcludedNames = {
+		internal static readonly Rule[] ExcludedNames = {
 			// System and recovery folders ($Recycle.Bin, $WinREAgent, $Windows.~BT, $SysReset).
-			"$*",
+			new("$*", SystemReason),
 			// Programs' own data and tool caches (.git, .vscode, .nuget, .cache, .thumbnails, .Trash-1000).
-			".*",
-			"node_modules",
+			new(".*", AppData),
+			new("node_modules", Code),
 			// Game stores' libraries, wherever the user put them.
-			"steamapps", "SteamLibrary", "Epic Games", "GOG Games", "EA Games", "Origin Games", "Riot Games",
-			"Ubisoft Game Launcher", "XboxGames", "WindowsApps", "ModifiableWindowsApps",
+			new("steamapps", Games), new("SteamLibrary", Games), new("Epic Games", Games), new("GOG Games", Games),
+			new("EA Games", Games), new("Origin Games", Games), new("Riot Games", Games), new("Ubisoft Game Launcher", Games),
+			new("XboxGames", Games), new("WindowsApps", Programs), new("ModifiableWindowsApps", Games),
 			// Photo and video apps' libraries: originals and previews they manage themselves.
-			"*.photoslibrary", "*.photolibrary", "*.aplibrary", "*.lrdata", "*.lrlibrary", "*.cocatalog",
-			"Media Cache Files", "CacheClip",
+			new("*.photoslibrary", PhotoApp), new("*.photolibrary", PhotoApp), new("*.aplibrary", PhotoApp),
+			new("*.lrdata", PhotoApp), new("*.lrlibrary", PhotoApp), new("*.cocatalog", PhotoApp),
+			new("Media Cache Files", "Video editor cache"), new("CacheClip", "Video editor cache"),
 			// Windows' account pictures: one picture at nine sizes, which would all look like smaller copies.
-			"AccountPictures",
+			new("AccountPictures", "Account pictures"),
 		};
 
 		/// <summary>Left out at the root of every drive (<c>?</c> is the drive letter).</summary>
-		internal static readonly string[] ExcludedAtDriveRoot = {
-			"Windows", "Windows.old", "Program Files", "Program Files (x86)", "Program Files (Arm)", "ProgramData", "Recovery", "PerfLogs", "System Volume Information",
-			"OneDriveTemp", "MSOCache", "Config.Msi", "ESD", "Intel", "AMD", "NVIDIA", "Drivers", "inetpub",
-			"msys64", "cygwin", "cygwin64",
+		internal static readonly Rule[] ExcludedAtDriveRoot = {
+			new("Windows", SystemReason), new("Windows.old", SystemReason), new("Recovery", SystemReason), new("PerfLogs", SystemReason),
+			new("System Volume Information", SystemReason), new("Config.Msi", SystemReason), new("ESD", SystemReason),
+			new("Program Files", Programs), new("Program Files (x86)", Programs), new("Program Files (Arm)", Programs),
+			new("ProgramData", AppData), new("OneDriveTemp", AppData), new("MSOCache", AppData),
+			new("Intel", Drivers), new("AMD", Drivers), new("NVIDIA", Drivers), new("Drivers", Drivers),
+			new("inetpub", "Web server"), new("msys64", DevTools), new("cygwin", DevTools), new("cygwin64", DevTools),
 		};
+
+		/// <summary>Windows' own profile folders: the template for new accounts and its old-style links.</summary>
+		static readonly HashSet<string> WindowsProfiles = new(StringComparer.OrdinalIgnoreCase) { "Default", "Default User", "All Users", "defaultuser0", "defaultuser100000" };
 
 		/// <summary>A folder holding one of these is a code repository: its pictures belong to the project.</summary>
 		internal static readonly string[] RepositoryMarkers = { ".git", ".hg", ".svn" };
@@ -71,17 +87,46 @@ namespace VDF.Agent {
 		}
 
 		/// <summary>Folders left out: the built-in ones, other people's profiles, then the user's own.</summary>
-		public static List<string> Exclusions(AgentConfig cfg) {
-			var excluded = new List<string>(ExcludedNames);
-			excluded.AddRange(ExcludedAtDriveRoot.Select(name => @"?:\" + name));
+		public static List<string> Exclusions(AgentConfig cfg) =>
+			ExclusionRules(cfg).Select(r => r.Pattern).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+		internal static List<Rule> ExclusionRules(AgentConfig cfg) {
+			var rules = new List<Rule>(ExcludedNames);
+			rules.AddRange(ExcludedAtDriveRoot.Select(r => r with { Pattern = @"?:\" + r.Pattern }));
 			// Every profile's app data: browser caches, app icons, game saves, and this agent's own home.
-			excluded.Add(@"?:\Users\*\AppData");
+			rules.Add(new(@"?:\Users\*\AppData", AppData));
 			string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
 			if (!string.IsNullOrEmpty(windows))
-				excluded.Add(windows);
-			excluded.AddRange(OtherProfiles());
-			excluded.AddRange(cfg.ExcludeFolders);
-			return excluded.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+				rules.Add(new(windows, SystemReason));
+			rules.AddRange(OtherProfiles().Select(p => new Rule(p, WindowsProfiles.Contains(Path.GetFileName(p)) ? SystemReason : "Another account")));
+			rules.AddRange(cfg.ExcludeFolders.Select(p => new Rule(p, "Excluded in settings")));
+			return rules;
+		}
+
+		/// <summary>
+		/// Whether a scan walks into <paramref name="folder"/>, and if not, why, by the same rules as the
+		/// file enumeration (FileUtils.GetFilesRecursive): exclusions, hidden system folders, folder links
+		/// and code repositories. Only the folder itself is judged, not the folders above it.
+		/// </summary>
+		internal static string? ExemptReason(DirectoryInfo folder, IReadOnlyList<Rule> rules) {
+			foreach (Rule rule in rules)
+				if (FileUtils.IsExcludedFolder(rule.Pattern, folder))
+					return rule.Reason;
+			FileAttributes attributes;
+			try { attributes = folder.Attributes; }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "Not readable"; }
+			if ((attributes & (FileAttributes.Hidden | FileAttributes.System)) == (FileAttributes.Hidden | FileAttributes.System))
+				return SystemReason;
+			if ((attributes & FileAttributes.ReparsePoint) != 0) {
+				try {
+					if (folder.LinkTarget != null) return "Link to another folder";
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "Link to another folder"; }
+			}
+			foreach (string marker in RepositoryMarkers)
+				if (Path.Exists(Path.Combine(folder.FullName, marker)))
+					return "Code repository";
+			return null;
 		}
 
 		/// <summary>

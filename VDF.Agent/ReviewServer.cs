@@ -72,10 +72,19 @@ namespace VDF.Agent {
 			});
 
 			app.MapGet("/", () => Results.Content(Asset("index.html").Replace("__AGENT_TOKEN__", token), "text/html; charset=utf-8"));
-			app.MapGet("/app.js", () => Results.Content(Asset("app.js"), "text/javascript; charset=utf-8"));
-			app.MapGet("/app.css", () => Results.Content(Asset("app.css"), "text/css; charset=utf-8"));
+			// Revalidated on every load, so an updated agent's page never runs yesterday's script.
+			app.MapGet("/app.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.js"), "text/javascript; charset=utf-8"); });
+			app.MapGet("/app.css", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.css"), "text/css; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(new { app = "vdf-agent" }));
 			app.MapGet("/api/state", () => Results.Json(State(cfg), AgentConfig.Json));
+			// Folder names only, and only below what the agent scans (a GET from another site can't read
+			// the answer: no CORS, and a foreign Host header is refused above).
+			app.MapGet("/api/tree", (string path, bool? all) => {
+				var decisions = DecisionStore.Load();
+				var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
+				TreeListing? listing = ExplorerView.Tree(path, all == true, cfg, ScanIndex.Load(), pending);
+				return listing == null ? Results.NotFound(new { error = "That folder isn't one the agent scans." }) : Results.Json(listing, AgentConfig.Json);
+			});
 
 			app.MapGet("/api/thumb/{key}/{index:int}", (string key, int index, HttpContext ctx) => {
 				ReportGroup? g = Report.Load()?.Groups.FirstOrDefault(x => x.Key == key);
@@ -133,6 +142,7 @@ namespace VDF.Agent {
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {
 			Report? report = Report.Load();
+			ScanIndex? index = ScanIndex.Load();
 			var decisions = DecisionStore.Load();
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
@@ -158,6 +168,8 @@ namespace VDF.Agent {
 					reclaimableBytes = pending.Sum(g => g.ReclaimBytes),
 					recycledBytes = decisions.Values.Sum(d => d.RecycledBytes),
 				},
+				drives = ExplorerView.Drives(cfg, index, pending),
+				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
 				config = new { folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config },

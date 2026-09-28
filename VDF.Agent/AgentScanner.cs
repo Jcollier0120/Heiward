@@ -79,6 +79,7 @@ namespace VDF.Agent {
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);
 			report.Save();
+			ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
 
 			var decisions = DecisionStore.Load();
 			var known = new HashSet<string>(previous?.Groups.Select(g => g.Key) ?? Enumerable.Empty<string>());

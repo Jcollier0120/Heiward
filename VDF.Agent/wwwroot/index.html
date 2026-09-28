@@ -9,40 +9,70 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <main class="wrap">
-    <header class="top">
-      <div>
-        <h1>Duplicate check</h1>
-        <p class="muted" id="subtitle">Loading…</p>
-      </div>
-      <div class="scan">
-        <div class="progress hidden" id="progress"><div class="bar" id="progress-bar"></div></div>
-        <span class="muted small" id="progress-text"></span>
-        <button class="btn" id="scan-now">Scan now</button>
-      </div>
-    </header>
+  <header class="titlebar">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
+        <rect x="3" y="4" width="12" height="12" rx="2.5" class="bm-back"/>
+        <rect x="9" y="9" width="12" height="12" rx="2.5" class="bm-front"/>
+      </svg>
+      <span>Duplicate check</span>
+    </div>
+    <div class="scanstate">
+      <div class="progress hidden" id="progress"><div class="bar" id="progress-bar"></div></div>
+      <span class="muted small" id="progress-text"></span>
+      <button class="btn" id="scan-now">Scan now</button>
+    </div>
+  </header>
+
+  <nav class="commandbar" aria-label="Location">
+    <div class="navbtns">
+      <button class="icon-btn" id="nav-back" title="Back" aria-label="Back"></button>
+      <button class="icon-btn" id="nav-fwd" title="Forward" aria-label="Forward"></button>
+      <button class="icon-btn" id="nav-up" title="Up one level" aria-label="Up one level"></button>
+    </div>
+    <ol class="crumbs" id="crumbs"></ol>
+    <span class="muted small subtitle" id="subtitle">Loading…</span>
+  </nav>
+
+  <div class="banners">
     <p class="error hidden" id="error"></p>
     <ul class="notes" id="notes"></ul>
+  </div>
 
-    <section class="tiles" id="tiles">
-      <div class="tile"><div class="tile-value" id="t-groups">–</div><div class="muted small">sets to review</div></div>
+  <main id="home" class="view home">
+    <section class="tiles">
+      <div class="tile"><div class="tile-value" id="t-groups">–</div><div class="muted small">sets of copies to review</div></div>
       <div class="tile"><div class="tile-value" id="t-free">–</div><div class="muted small">you could free</div></div>
       <div class="tile"><div class="tile-value" id="t-freed">–</div><div class="muted small">freed so far</div></div>
     </section>
 
     <section>
-      <h2>Needs you</h2>
-      <p class="muted small">Ticked files go to the Recycle Bin, where you can restore them. Nothing is deleted until you press the button, and at least one copy of everything always stays.</p>
-      <div id="groups"></div>
-      <button class="btn secondary hidden" id="more">Show more</button>
+      <h2>Devices and drives</h2>
+      <div class="drives" id="drives"></div>
+    </section>
+
+    <section id="hotspots-section">
+      <h2>Where the duplicates are</h2>
+      <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
+      <div class="hotspots" id="hotspots"></div>
     </section>
 
     <section>
-      <h2>Done</h2>
-      <div id="done"></div>
+      <details class="history" id="history">
+        <summary>History</summary>
+        <div id="done"></div>
+      </details>
     </section>
 
     <footer class="muted small" id="footer"></footer>
+  </main>
+
+  <main id="folder" class="view split hidden">
+    <aside class="navpane" id="navpane" aria-label="Folders">
+      <button class="navpane-toggle" id="navpane-toggle" aria-expanded="false">Folders</button>
+      <div class="tree" id="tree" role="tree"></div>
+    </aside>
+    <section class="content" id="content"></section>
   </main>
 </body>
 </html>

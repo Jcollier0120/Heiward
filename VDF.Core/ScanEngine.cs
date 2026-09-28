@@ -121,6 +121,18 @@ namespace VDF.Core {
 		// Per-drive done/total accounting; non-null only while GatherInfos runs, so progress
 		// events of every other phase carry Drives = null and the UI hides the drive rows.
 		DriveProgressTracker? driveProgressTracker;
+		readonly ConcurrentDictionary<string, TimeSpan> listingTimes = new(StringComparer.OrdinalIgnoreCase);
+		readonly ConcurrentDictionary<string, TimeSpan> analysisTimes = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>Wall-clock time the last search spent listing each folder of <see cref="Settings.IncludeList"/>.</summary>
+		public IReadOnlyDictionary<string, TimeSpan> ListingTimes => listingTimes;
+		/// <summary>
+		/// Wall-clock time the last search spent analysing each drive's files (decoding, fingerprints),
+		/// keyed by the drive's root. Drives run concurrently, each at its own parallelism.
+		/// </summary>
+		public IReadOnlyDictionary<string, TimeSpan> AnalysisTimes => analysisTimes;
+		readonly List<(string Path, long Size)> foundFiles = new();
+		/// <summary>Every photo and video the last search listed in the included folders, with its size.</summary>
+		public IReadOnlyList<(string Path, long Size)> FoundFiles => foundFiles;
 		// True between StartSearch beginning a log session and the chained StartCompare
 		// joining it; lets a standalone StartCompare open its own session instead.
 		bool compareIsChainedToSearch;
@@ -494,6 +506,9 @@ namespace VDF.Core {
 				AI.AiComponents.EnsureReady();
 
 			CancelAllTasks();
+			listingTimes.Clear();
+			analysisTimes.Clear();
+			foundFiles.Clear();
 
 			FfmpegEngine.HardwareAccelerationMode = Settings.HardwareAccelerationMode;
 			FfmpegEngine.CustomFFArguments = Settings.CustomFFArguments;
@@ -741,11 +756,13 @@ namespace VDF.Core {
 					continue;
 				}
 
+				long listingStart = Stopwatch.GetTimestamp();
 				foreach (FileInfo file in FileUtils.GetFilesRecursive(path, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
 					Settings.IncludeSubDirectories, Settings.IncludeImages, Settings.BlackList.ToList(), cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
 					Settings.SkipFoldersContaining, Settings.SkipFolderLinks)) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
+					foundFiles.Add((file.FullName, file.Length));
 					FileEntry fEntry;
 					try {
 						fEntry = new(file);
@@ -766,6 +783,7 @@ namespace VDF.Core {
 					else
 						RefreshExistingEntry(fEntry, dbEntry);
 				}
+				listingTimes[path] = Stopwatch.GetElapsedTime(listingStart);
 			}
 
 			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
@@ -1253,8 +1271,8 @@ namespace VDF.Core {
 					driveProgressTracker = new DriveProgressTracker(driveGroups, CountsTowardDriveProgress, classified: false);
 					for (int i = 0; i < driveGroups.Count; i++) {
 						DriveProgressTracker.Counter counter = driveProgressTracker.CounterFor(i);
-						await Parallel.ForEachAsync(driveGroups[i].Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 },
-							(entry, token) => ProcessEntry(entry, counter, token));
+						await TimeDrive(driveGroups[i].Root, Parallel.ForEachAsync(driveGroups[i].Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = 1 },
+							(entry, token) => ProcessEntry(entry, counter, token)));
 					}
 				}
 				else {
@@ -1270,10 +1288,21 @@ namespace VDF.Core {
 						DriveScanGroup group = driveGroups[i];
 						DriveProgressTracker.Counter counter = driveProgressTracker.CounterFor(i);
 						Logger.Instance.Info($"Drive '{group.Root}': {group.Entries.Count:N0} file(s), concurrency {group.DegreeOfParallelism} ({(group.SpeedClass == DriveSpeedClass.Fast ? "fast" : "slow")}, {group.ClassSource})");
-						driveTasks.Add(Parallel.ForEachAsync(group.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = group.DegreeOfParallelism },
-							(entry, token) => ProcessEntry(entry, counter, token)));
+						driveTasks.Add(TimeDrive(group.Root, Parallel.ForEachAsync(group.Entries, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = group.DegreeOfParallelism },
+							(entry, token) => ProcessEntry(entry, counter, token))));
 					}
 					await Task.WhenAll(driveTasks);
+				}
+
+				// A drive's loop starts when its Parallel.ForEachAsync is created.
+				async Task TimeDrive(string root, Task loop) {
+					long start = Stopwatch.GetTimestamp();
+					try {
+						await loop;
+					}
+					finally {
+						analysisTimes[root] = Stopwatch.GetElapsedTime(start);
+					}
 				}
 			}
 			catch (OperationCanceledException) { }

@@ -98,6 +98,20 @@ vdf-agent install         [--dry-run] [--yes] [--device npu|gpu|cpu]
 vdf-agent uninstall       [--purge] [--dry-run]
 ```
 
+## The review page
+
+It's laid out like File Explorer, so you can go where you care most instead of scrolling every duplicate on the PC:
+
+- **This PC:** a card per drive with its free space, how many photos and videos it holds, how long its last scan took, and its sets of copies and space to free. Below the cards, the folders where cleaning up frees the most, and the history of what you've done.
+- **A folder:** the navigation tree on the left and the folder on the right:
+  - Its subfolders in a details view you can sort by space to free, with only the duplicates that touch this folder below.
+  - Copies and look-alikes are shown separately.
+  - A copy kept in another folder is dimmed and says so.
+  - One button moves every ticked copy in the folder to the Recycle Bin, keeping the kept file of each set.
+- **Exempt folders** (system, programs, games, code, other accounts) are greyed out with the reason. Many of them together fold into one row. Folders without photos or videos are hidden behind a "show" link.
+
+Folder names are read live from disk; counts come from the last scan (`index.json` next to the report).
+
 ## The review page is local only
 
 - It listens on 127.0.0.1 and answers only its own Host header, so a DNS-rebinding page can't reach it.
