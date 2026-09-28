@@ -217,6 +217,7 @@ namespace VDF.Agent {
 				drives = ExplorerView.Drives(cfg, index, pending),
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
+				ai = AiStatus.Load(),
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
 				config = new { folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config },
 			};

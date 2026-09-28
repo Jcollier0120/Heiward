@@ -63,7 +63,7 @@ namespace VDF.CLI.Commands {
 				Console.Error.WriteLine("[scan] GPU pack ready.");
 			}
 			if (needNpu) {
-				Console.Error.WriteLine($"[scan] Downloading the NPU pack (Qualcomm QNN {VDF.Core.AI.NpuComponents.QnnPackageVersion} + FP32 model, ~230 MB) to '{VDF.Core.AI.AiComponents.AiFolder}'...");
+				Console.Error.WriteLine($"[scan] Downloading the NPU pack ({VDF.Core.AI.NpuComponents.PackDescription}) to '{VDF.Core.AI.AiComponents.AiFolder}'...");
 				try {
 					await VDF.Core.AI.NpuComponents.DownloadAsync(progress, ct);
 					Console.Error.WriteLine("[scan] NPU pack ready.");

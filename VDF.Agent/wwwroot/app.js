@@ -252,6 +252,45 @@ window.addEventListener('hashchange', () => {
 
 // ---------------------------------------------------------------- header and command bar
 
+// Where AI matching runs, from ai-status.json: the install and "hei setup" write it, then every scan,
+// with the device it actually used. Green only when the NPU is set up and (after a scan) really ran.
+function renderAiBadge(ai) {
+  const badge = $('ai-badge');
+  if (!ai) { badge.classList.add('hidden'); return; }
+  const npu = ai.npuDisplayName || ai.npuName || 'The NPU';
+  let text, tone, tip;
+  if (ai.device === 'NPU') {
+    tone = 'good';
+    text = ai.source === 'scan' ? 'Running on the NPU' : 'NPU ready';
+    tip = ai.source === 'scan' ? npu + ' ran the last scan.' : npu + ' is set up; scans run on it.';
+  } else if (ai.device === 'off') {
+    tone = 'warn';
+    text = 'AI matching off';
+    tip = 'The AI components are not installed. Run "hei setup".';
+  } else {
+    const on = ai.device;
+    if (ai.npuVendor === 'None') {
+      tone = 'quiet'; text = 'No NPU available · ' + on;
+      tip = 'This PC has no NPU, so AI matching runs on the ' + on + '.';
+    } else if (!ai.npuSupported) {
+      tone = 'warn'; text = 'Unsupported NPU · ' + on;
+      tip = (ai.npuName || 'This NPU') + ' isn\'t supported by this version yet, so AI matching runs on the ' + on + '.';
+    } else if (!ai.npuInstalled) {
+      tone = 'warn'; text = 'NPU not set up · ' + on;
+      tip = 'The ' + npu + ' pack is not installed. Run "hei setup" to download it.';
+    } else if (ai.setting === 'gpu' || ai.setting === 'cpu') {
+      tone = 'quiet'; text = 'On the ' + on;
+      tip = 'settings.json asks for the ' + ai.setting.toUpperCase() + ' (aiDevice), so the ' + npu + ' is not used.';
+    } else {
+      tone = 'warn'; text = 'NPU fell back · ' + on;
+      tip = 'The ' + npu + ' is set up, but it could not run the model, so AI matching ran on the ' + on + '. heiward.log has the reason.';
+    }
+  }
+  badge.textContent = text;
+  badge.title = tip;
+  badge.className = 'ai-badge ' + tone;
+}
+
 function renderHeader(s) {
   const r = s.report;
   const parts = [];
@@ -264,6 +303,7 @@ function renderHeader(s) {
   if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   $('subtitle').textContent = parts.join(' · ');
+  renderAiBadge(s.ai);
 
   const running = s.scan.running;
   $('scan-now').disabled = running;

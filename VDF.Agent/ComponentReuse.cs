@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Runtime.InteropServices;
 using FFmpeg.AutoGen;
 using VDF.Core.AI;
 using VDF.Core.Utils;
@@ -36,30 +37,35 @@ namespace VDF.Agent {
 		/// <summary>FFmpeg: ffmpeg.exe, ffprobe.exe and the shared libraries the in-process decoder loads.</summary>
 		internal static readonly Part Ffmpeg = new("FFmpeg",
 			root => File.Exists(Path.Combine(root, "bin", "ffmpeg.exe")) && File.Exists(Path.Combine(root, "bin", "ffprobe.exe")) &&
-				ffmpeg.LibraryVersionMap.All(l => File.Exists(Path.Combine(root, "bin", $"{l.Key}-{l.Value}.dll"))),
+				ffmpeg.LibraryVersionMap.All(l => File.Exists(Path.Combine(root, "bin", $"{l.Key}-{l.Value}.dll"))) &&
+				ForThisProcess(Path.Combine(root, "bin", $"avcodec-{ffmpeg.LibraryVersionMap["avcodec"]}.dll")),
 			root => FilesUnder(root, "bin", recurse: false));
 
 		/// <summary>ONNX Runtime (the version this build expects) and the int8 model, directly in ai\.</summary>
 		internal static readonly Part AiRuntime = new("the AI components",
 			root => File.Exists(Path.Combine(root, "ai", AiComponents.ModelFileName)) && File.Exists(Path.Combine(root, "ai", "onnxruntime.dll")) &&
-				ReadMarker(Path.Combine(root, "ai", RuntimeMarker)) == AiComponents.RuntimeVersion,
+				ReadMarker(Path.Combine(root, "ai", RuntimeMarker)) == AiComponents.RuntimeVersion && ForThisProcess(Path.Combine(root, "ai", "onnxruntime.dll")),
 			root => FilesUnder(root, "ai", recurse: false).Where(f => {
 				string name = Path.GetFileName(f);
 				return name.StartsWith("onnxruntime", StringComparison.OrdinalIgnoreCase) || name == RuntimeMarker || name == AiComponents.ModelFileName;
 			}));
 
-		/// <summary>The NPU pack, the fp32 model, and the NPU graphs it already compiled (so the first scan skips that).</summary>
-		internal static readonly Part NpuPack = new("the NPU pack",
-			root => File.Exists(Path.Combine(root, "ai", NpuComponents.ModelFileName)) &&
-				File.Exists(Path.Combine(root, "ai", "qnn", "onnxruntime_providers_qnn.dll")) && File.Exists(Path.Combine(root, "ai", "qnn", "QnnHtp.dll")),
-			root => FilesUnder(root, Path.Combine("ai", "qnn"), recurse: true)
-				.Concat(FilesUnder(root, Path.Combine("ai", $"qnn-cache-{NpuComponents.QnnPackageVersion}"), recurse: true))
+		internal static Part NpuPack => NpuPackFor(NpuComponents.PackFolders, NpuComponents.PackKeyFile);
+
+		/// <summary>
+		/// A vendor's NPU pack: its folders under ai\ (the plugin, and the graphs it already compiled, so the
+		/// first scan skips that) and the fp32 model; complete when the pack's key file is there.
+		/// </summary>
+		internal static Part NpuPackFor(IReadOnlyList<string> folders, string? keyFile) => new("the NPU pack",
+			root => keyFile != null && File.Exists(Path.Combine(root, "ai", NpuComponents.ModelFileName)) && ForThisProcess(Path.Combine(root, "ai", keyFile)),
+			root => folders.SelectMany(f => FilesUnder(root, Path.Combine("ai", f), recurse: true))
 				.Append(Path.Combine("ai", NpuComponents.ModelFileName)));
 
 		/// <summary>The GPU pack (ONNX Runtime DirectML and DirectML) and the fp32 model.</summary>
 		internal static readonly Part GpuPack = new("the GPU pack",
 			root => File.Exists(Path.Combine(root, "ai", NpuComponents.ModelFileName)) &&
-				new[] { "onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll" }.All(f => File.Exists(Path.Combine(root, "ai", "gpu", f))),
+				new[] { "onnxruntime.dll", "onnxruntime_providers_shared.dll", "DirectML.dll" }.All(f => File.Exists(Path.Combine(root, "ai", "gpu", f))) &&
+				ForThisProcess(Path.Combine(root, "ai", "gpu", "onnxruntime.dll")),
 			root => FilesUnder(root, Path.Combine("ai", "gpu"), recurse: true).Append(Path.Combine("ai", NpuComponents.ModelFileName)));
 
 		/// <summary>
@@ -102,6 +108,29 @@ namespace VDF.Agent {
 					try { File.Delete(f); } catch { /* a leftover is replaced by the download */ }
 			}
 			return null;
+		}
+
+		/// <summary>
+		/// True when a DLL is built for this process's processor (its PE header's machine field). A version marker
+		/// can't tell: an Arm64 copy can't load a folder of x64 libraries, nor the reverse. Conservative: a
+		/// hybrid (ARM64X) library reads as Arm64, so an x64 process downloads its own instead.
+		/// </summary>
+		internal static bool ForThisProcess(string path) {
+			try {
+				using FileStream f = File.OpenRead(path);
+				using var reader = new BinaryReader(f);
+				if (reader.ReadUInt16() != 0x5A4D) return false; // "MZ"
+				f.Position = 0x3C;
+				f.Position = reader.ReadInt32();
+				if (reader.ReadUInt32() != 0x00004550) return false; // "PE\0\0"
+				ushort machine = reader.ReadUInt16();
+				return RuntimeInformation.ProcessArchitecture switch {
+					Architecture.X64 => machine == 0x8664,
+					Architecture.Arm64 => machine == 0xAA64,
+					_ => false,
+				};
+			}
+			catch { return false; }
 		}
 
 		/// <summary>Relative paths of the files in root\sub, never following a link out of it.</summary>

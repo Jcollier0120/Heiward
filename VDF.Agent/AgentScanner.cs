@@ -74,8 +74,11 @@ namespace VDF.Agent {
 			}
 
 			Report? previous = Report.Load();
-			var groups = ReportBuilder.Build(engine.Duplicates, new ScanFingerprints(NpuComponents.CacheKeyFor(settings.AiDevice), settings.UseAiMatching));
-			string device = settings.UseAiMatching ? NpuComponents.DeviceFor(settings.AiDevice) : "off";
+			// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
+			string device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
+			string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
+			var groups = ReportBuilder.Build(engine.Duplicates, new ScanFingerprints(cacheKey, settings.UseAiMatching));
+			AiStatus.Record(cfg, device, "scan");
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);
 			report.Save();

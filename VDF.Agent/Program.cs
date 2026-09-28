@@ -86,12 +86,13 @@ root.Subcommands.Add(openCmd);
 var reuseFrom = new Option<string[]>("--reuse-from") {
 	Description = "A folder where another Heiward or Video Duplicate Finder keeps its bin\\ and ai\\ folders: copy FFmpeg and the AI components from it instead of downloading them. Repeatable.",
 };
-var setup = new Command("setup", "Get FFmpeg and the AI components (and the NPU pack on Snapdragon PCs), copied from --reuse-from folders when they have them, then report what this PC will use.") { reuseFrom };
+var setup = new Command("setup", "Get FFmpeg and the AI components (and the pack for the PC's NPU), copied from --reuse-from folders when they have them, then report what this PC will use.") { reuseFrom };
 setup.SetAction(async (r, ct) => {
 	try {
 		await Installer.EnsurePrerequisitesAsync(ComponentReuse.Sources(r.GetValue(reuseFrom), CoreUtils.StateFolder), dryRun: false, ct);
 		using var embedder = OnnxEmbedder.Create(AiDevice.Auto);
 		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}.");
+		AiStatus.Record(AgentConfig.Load(), embedder.DeviceName, "setup");
 		return 0;
 	}
 	catch (Exception e) when (e is not OperationCanceledException) {
@@ -137,6 +138,7 @@ status.SetAction(_ => {
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
+	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} (checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	var report = Report.Load();
 	if (report == null) Console.WriteLine("No scan yet: run 'hei scan'.");
 	else {
