@@ -1,3 +1,29 @@
+# Heiward
+
+Heiward is a Windows app built on this fork of Video Duplicate Finder. It tends your drives in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a local review page for you to decide. It never deletes anything on its own: files you tick go to the Recycle Bin.
+
+- **Light on power.** AI matching runs on the Snapdragon NPU where there is one, with hourly scans. Otherwise it uses the GPU or CPU every 6 hours on AC power, or only when you ask. Scheduled scans run in Windows' efficiency mode.
+- **The whole PC, minus what isn't yours.** Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded.
+- **Laid out like File Explorer.** A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you.
+- **Developer cleanup, project by project.** Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main.
+- **Themes.** Match Windows, Light, Dark, and six colour themes.
+
+The command is `hei`. Installing, settings and commands are in [VDF.Agent/README.md](VDF.Agent/README.md). No release is published yet; the build steps are there too.
+
+A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound.
+
+### What this fork changes in Video Duplicate Finder
+
+- AI matching on a Snapdragon **NPU** (Qualcomm QNN) or a **DirectML GPU**, as well as the CPU, with a machine-wide NPU lock.
+- Photos decode in-process: through **WIC** on Windows, and iPhone HEIC photos through one in-process FFmpeg decoder instead of one `ffmpeg.exe` per photo.
+- One gray-frame rule for every decoder and platform, so a HEIC and its JPEG export are recognised as copies.
+- **Windows ARM64:** faster comparisons (NEON, SDOT), a passing test suite, and a pinned FFmpeg build that loads on Snapdragon X.
+- Scan-scope fixes: wildcard folder patterns on Windows paths, folder-name excludes at any depth, and skipping folder links and repositories.
+
+Heiward is Windows-only for now. Everything below is upstream Video Duplicate Finder's README. Its GUI, CLI, Web UI and Docker image still build from this repository, and the download links point at upstream's releases.
+
+---
+
 # Video Duplicate Finder
 Video Duplicate Finder is a cross-platform software to find duplicated video (and image) files on hard disk based on similarity. Unlike other duplicate finders this one also finds duplicates which have a different resolution, frame rate and even watermarked.
 
@@ -360,6 +386,8 @@ docker compose pull && docker compose up -d
 
 # License
 Video Duplicate Finder is licensed under AGPLv3.
+
+Heiward (`VDF.Agent`) is AGPLv3 too. When it installs, it downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus Qualcomm's QNN runtime on Snapdragon PCs or DirectML for a GPU. Each carries its own licence.
 
 The optional AI components are downloaded separately on first use and carry their own licenses: ONNX Runtime (MIT) and the DINOv2-small embedding model (Apache-2.0). Neither is bundled with or linked into the release binaries.
 
