@@ -1,6 +1,6 @@
 # Heiward
 
-Heiward tends your drives. It looks for likely duplicate photos and videos and, in developer mode, stale developer files, and lists them on a local review page. It never deletes anything on its own. Files you tick go to the Recycle Bin, where you can restore them.
+Heiward tends your drives. It looks for likely duplicate photos and videos and, in developer mode, stale developer files, and lists them on a local review page. Nothing is deleted until you say so: files you tick go to the Recycle Bin, where you can restore them. Once you trust what it suggests, you can let it [clean up by itself](#automatic-cleanup).
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound. The command is `hei`.
 
@@ -64,6 +64,21 @@ Code decides everything shown on the page. No model output is trusted to delete 
 
 **Cloud-synced files** (iCloud Photos, OneDrive, Dropbox) are marked on the page, and you're asked before they go. Deleting one also deletes it from the cloud and your other devices. Files that exist only in the cloud are never read: reading one would download it.
 
+## Automatic cleanup
+
+Once you trust what the page ticks, you can let Heiward clean it up by itself. The **Automatic cleanup** card on the review page has a switch for duplicates and one for developer leftovers, both off until you turn them on (or `hei auto --duplicates on --developer on`).
+
+- **When:** after each scan, once something has been listed for 3 days (`afterDays`), counted from when you turned it on at the earliest. Each set and item on the page says when it goes, with a **Leave it** button. Developer items go right after the daily developer check, so "untouched for 30 days" is that day's answer.
+- **Duplicates:** plain copies of photos (identical, or the same picture pixel for pixel) and byte-for-byte identical videos go to the Recycle Bin, through the same checks as the page's button. It leaves for you:
+  - edits and look-alikes;
+  - copies in a cloud-synced folder, since deleting one deletes it on every device;
+  - a set whose kept file changed since the scan;
+  - sets that look like a copy of a whole folder: 20 or more sets with copies in the same two folders (say `C:\Pictures` and `D:\Backup`) are most likely a backup. The page can allow those two folders.
+- **Developer leftovers:** what the page ticks, of the kinds you pick: merged branches, temp files and crash dumps, build outputs of projects untouched for 30 days, clean and pushed worktrees untouched for 30 days, and emulator system images no emulator uses. Package caches and emulators always wait for you. They're deleted permanently, as with the button.
+- **Afterwards:** a notification says what went. History on the page marks it **Automatic**, and the card shows the last run and anything it left alone. With automatic cleanup on, the page opens at sign-in only for new sets it leaves to you, not every day.
+
+`hei auto` lists what's due and when; everything it does is also in `heiward.log`.
+
 ## What gets scanned
 
 Every fixed drive: internal drives, and external disks that Windows reports as fixed. USB sticks, card readers and network drives are left out unless you add them to `folders`. The report only lists your own files, so some folders are left out, with everything inside:
@@ -82,7 +97,7 @@ Every fixed drive: internal drives, and external disks that Windows reports as f
 
 ## Developer mode
 
-Once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there. Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
+Once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there, or turn on [automatic cleanup](#automatic-cleanup). Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
 
 The page is organised by project:
 - **Each repository** has its own page, with a section per cleanup area: build outputs, worktrees and merged branches.
@@ -128,11 +143,12 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
-| `openPageAtSignIn` | true | Once a day, only when something waits for review |
+| `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |
 | `toast` | true | A notification when a scan finds something new |
 | `developerMode` | `auto` | `off`: no developer cleanup. `auto`: check once a day |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
+| `autoClean` | off | [Automatic cleanup](#automatic-cleanup): `duplicates` and `developer` (true/false), `developerKinds` (`branches`, `temp`, `buildOutputs`, `worktrees`, `systemImages`), `afterDays` (3; 0 to 90) |
 
 ## Commands
 
@@ -144,6 +160,7 @@ hei status          settings, where AI matching runs, last scan, schedule, NPU l
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
+hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--after-days N]
 hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
 hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]

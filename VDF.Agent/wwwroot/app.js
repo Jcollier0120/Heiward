@@ -376,6 +376,8 @@ function renderCrumbs() {
 
 function renderHome(s) {
   $('t-groups').textContent = s.totals.groups - s.totals.similar;
+  const autoCopies = s.auto.settings.duplicates ? s.auto.upcoming.groups.count : 0;
+  $('t-groups-label').textContent = autoCopies ? 'sets of copies · ' + autoCopies + (autoCopies === 1 ? ' goes' : ' go') + ' automatically' : 'sets of copies to review';
   $('t-free').textContent = bytes(s.totals.reclaimableBytes);
   $('t-freed').textContent = bytes(s.totals.recycledBytes);
 
@@ -410,8 +412,201 @@ function renderHome(s) {
   }));
 
   renderDevCard(s.dev);
+  renderAutoCard(s);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- automatic cleanup
+
+// Automatic cleanup (AutoCleaner): after each scan Heiward cleans what this page would tick, once it has
+// been listed for a few days. The card turns it on and off; each set and developer item says when it goes,
+// with a "Leave it" button.
+let autoBusy = false;
+
+/** The developer kinds it can take (AutoCleaner.DeveloperKinds), safest first. */
+function autoKinds(a) {
+  return [
+    ['branches', 'Merged branches', 'Their commits are already in the remote\'s main branch.'],
+    ['temp', 'Temp files and crash dumps', 'Untouched for ' + a.tempOlderThanDays + ' days.'],
+    ['buildOutputs', 'Build outputs', 'Of projects untouched for ' + a.staleProjectDays + ' days.'],
+    ['worktrees', 'Worktrees', 'Untouched for ' + a.staleProjectDays + ' days, with everything committed and pushed.'],
+    ['systemImages', 'Emulator system images', 'That no emulator uses.'],
+  ];
+}
+
+async function saveAuto(next) {
+  autoBusy = true;
+  renderAutoCard(state);
+  try { await post('/api/auto/settings', next); } catch (e) { showError(e.message); }
+  autoBusy = false;
+  refresh(true);
+}
+
+async function autoHold(target, hold) {
+  try { await post('/api/auto/hold', { target, hold }); } catch (e) { showError(e.message); }
+  refresh(true);
+}
+
+async function autoAllow(pair) {
+  if (!confirm('Let automatic cleanup take the copies in these two folders?\n\n' +
+      'It held them back because many sets have copies in both, which is what a backup looks like. ' +
+      'Allow it only if the second copies aren\'t something you keep on purpose.')) return;
+  try { await post('/api/auto/allow', { pair, allow: true }); } catch (e) { showError(e.message); }
+  refresh(true);
+}
+
+/** When something due goes: "at the next scan", "from 14:05 today", "from tomorrow", "from Wed 1 Oct". */
+function dueText(iso, dev) {
+  const d = new Date(iso);
+  const now = new Date();
+  if (d <= now) return dev ? 'after the next daily developer check' : 'at the next scan';
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(d) - day(now)) / 86400000);
+  if (days === 0) return 'from ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' today';
+  if (days === 1) return 'from tomorrow';
+  return 'from ' + d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function autoSwitch(on, label, onChange) {
+  const wrap = el('label', 'switch');
+  const box = el('input');
+  box.type = 'checkbox';
+  box.setAttribute('role', 'switch');
+  box.setAttribute('aria-label', label);
+  box.checked = on;
+  box.disabled = autoBusy;
+  box.addEventListener('change', () => onChange(box.checked, box));
+  wrap.append(box, el('span', 'slider'));
+  return wrap;
+}
+
+/** "12 sets of copies (340 MB) go, the first at the next scan." */
+function upcomingText(u, one, many, dev, what) {
+  if (!u.count) return 'Nothing is due yet.';
+  return count(what === 'files' ? u.files : u.count, one, many) + (u.bytes ? ' (' + bytes(u.bytes) + ')' : '') + ' will go, the first ' + dueText(u.firstDueUtc, dev) + '.';
+}
+
+function renderAutoCard(s) {
+  const a = s.auto;
+  const set = a.settings;
+  const days = set.afterDays;
+  const waitText = days === 0 ? 'at the next scan after they\'re listed' : count(days, 'day', 'days') + ' after they\'re listed';
+  const card = el('div', 'auto-card');
+
+  const row = (on, title, about, onChange, extra) => {
+    const r = el('div', 'auto-row');
+    r.append(autoSwitch(on, title, onChange));
+    const text = el('div', 'auto-text');
+    text.append(el('div', 'auto-title', title), el('div', 'muted small', about));
+    for (const x of extra) if (x) text.append(x);
+    r.append(text);
+    return r;
+  };
+
+  const dupStatus = set.duplicates ? el('div', 'auto-status small', upcomingText(a.upcoming.groups, 'set of copies', 'sets of copies', false)) : null;
+  card.append(row(set.duplicates, 'Duplicate photos and videos',
+    'Plain copies go to the Recycle Bin by themselves, ' + waitText + '. Edits and look-alikes, copies in cloud-synced folders, and what looks like a backup of a whole folder always wait for you.',
+    async (on, box) => {
+      if (on && !confirm('Clean up duplicates automatically?\n\n' +
+          'After each scan, Heiward moves plain copies of photos, and byte-for-byte identical videos, to the Recycle Bin ' + waitText +
+          ', keeping the best copy of each. You can restore them from the Recycle Bin.\n\n' +
+          'Edits, look-alikes, copies in cloud-synced folders and what looks like a backup of a whole folder always wait for you. ' +
+          'Each set shows when it will go, with a "Leave it" button.')) { box.checked = false; return; }
+      await saveAuto({ ...set, duplicates: on });
+    }, [dupStatus]));
+
+  if (s.dev.enabled) {
+    let kinds = null, devStatus = null;
+    if (set.developer) {
+      kinds = el('div', 'auto-kinds');
+      for (const [k, label, hint] of autoKinds(a)) {
+        const l = el('label');
+        l.title = hint;
+        const box = el('input');
+        box.type = 'checkbox';
+        box.checked = set.developerKinds.includes(k);
+        box.disabled = autoBusy;
+        box.addEventListener('change', () => saveAuto({ ...set, developerKinds: box.checked ? [...set.developerKinds, k] : set.developerKinds.filter((x) => x !== k) }));
+        l.append(box, el('span', null, label));
+        kinds.append(l);
+      }
+      const parts = [];
+      if (a.upcoming.dev.count) parts.push(upcomingText(a.upcoming.dev, 'item', 'items', true));
+      if (a.upcoming.branches.count) parts.push(upcomingText(a.upcoming.branches, 'merged branch', 'merged branches', true, 'files'));
+      devStatus = el('div', 'auto-status small', parts.join(' ') || 'Nothing is due yet.');
+    }
+    card.append(row(set.developer, 'Developer leftovers',
+      'The kinds you tick below are deleted by themselves right after the daily developer check, ' + waitText +
+      '. They\'re deleted permanently, not to the Recycle Bin: tools recreate them. Package caches and emulators always wait for you.',
+      async (on, box) => {
+        if (on && !confirm('Clean up developer leftovers automatically?\n\n' +
+            'Right after the daily developer check, Heiward deletes what this page ticks for you (of the kinds you pick) ' + waitText + '. ' +
+            'They\'re deleted permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer. ' +
+            'Merged branches go only when every commit is in the remote\'s main branch; worktrees only when everything is committed and pushed.\n\n' +
+            'Package caches and emulators always wait for you.')) { box.checked = false; return; }
+        await saveAuto({ ...set, developer: on });
+      }, [kinds, devStatus]));
+  }
+
+  const foot = el('div', 'auto-foot');
+  const wait = el('label', 'auto-wait');
+  const select = el('select');
+  select.disabled = autoBusy;
+  for (const d of [0, 1, 3, 7, 14, 30]) {
+    const o = el('option', null, d === 0 ? 'no wait' : count(d, 'day', 'days'));
+    o.value = String(d);
+    select.append(o);
+  }
+  if (![0, 1, 3, 7, 14, 30].includes(days)) {
+    const o = el('option', null, count(days, 'day', 'days'));
+    o.value = String(days);
+    select.append(o);
+  }
+  select.value = String(days);
+  select.addEventListener('change', () => saveAuto({ ...set, afterDays: Number(select.value) }));
+  wait.append(el('span', null, 'Wait'), select, el('span', 'muted', 'after something is first listed, so you can see it coming.'));
+  foot.append(wait);
+  const last = a.lastRun;
+  if (last) {
+    const parts = [];
+    if (last.files) parts.push(count(last.files, 'copy', 'copies') + ' (' + bytes(last.fileBytes) + ') to the Recycle Bin');
+    if (last.devItems) parts.push(bytes(last.devBytes) + ' of developer leftovers');
+    if (last.branches) parts.push(count(last.branches, 'merged branch', 'merged branches'));
+    const line = el('div', 'muted small', 'Last run ' + ago(last.atUtc) + ': ' + (parts.join(' · ') || 'nothing cleaned') + '.');
+    if (last.problems.length) {
+      const more = el('details', 'auto-problems');
+      more.append(el('summary', null, count(last.problems.length, 'thing was', 'things were') + ' left alone'));
+      const list = el('ul');
+      for (const p of last.problems.slice(0, 20)) list.append(el('li', null, p));
+      more.append(list);
+      line.append(more);
+    }
+    foot.append(line);
+  }
+  card.append(foot);
+  $('auto-card').replaceChildren(card);
+}
+
+/** Under a set or developer item: when automatic cleanup takes it (with "Leave it"), or why it won't. */
+function autoLine(e, target, dueLabel) {
+  const line = el('div', 'auto-line small');
+  line.append(icon('clock'));
+  const act = (label, fn) => {
+    const b = el('button', 'link small', label);
+    b.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); fn(); });
+    return b;
+  };
+  if (e.held) {
+    line.append(el('span', null, 'You\'ll decide: automatic cleanup leaves it.'), act('Let it go automatically', () => autoHold(target, false)));
+  } else if (e.dueUtc) {
+    line.classList.add('due');
+    line.append(el('span', null, dueLabel), act('Leave it', () => autoHold(target, true)));
+  } else {
+    line.append(el('span', null, 'Not automatic: ' + e.reason + '.'));
+    if (e.folderPair) line.append(act('Allow for these folders', () => autoAllow(e.folderPair)));
+  }
+  return line;
 }
 
 // ---------------------------------------------------------------- developer cleanup
@@ -893,6 +1088,8 @@ function branchSection(branches) {
       main.append(chips);
     }
     if (r.checkedOut.length) main.append(el('div', 'muted small', 'Kept, checked out in a worktree: ' + r.checkedOut.join(', ')));
+    const auto = state.auto.repos[r.id];
+    if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'b:' + r.id, 'Merged branches are deleted automatically, the first ' + dueText(auto.dueUtc, true) + '.'));
     if (pruneResults.has(r.id)) {
       const [ok, msg] = pruneResults.get(r.id);
       main.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
@@ -935,6 +1132,8 @@ function devRow(i, showRepo) {
   if (i.blocked) name.append(el('span', 'tag', i.blocked));
   else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
   main.append(name);
+  const auto = state.auto.devItems[i.id];
+  if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'd:' + i.id, 'Deleted automatically ' + dueText(auto.dueUtc, true) + '.'));
   const where = el('div', 'folder muted small', i.location);
   where.title = i.location;
   main.append(where);
@@ -1133,6 +1332,7 @@ function renderDone(s) {
   box.replaceChildren(...s.done.map((d) => {
     const row = el('div', 'done-row');
     row.append(el('span', 'muted small', new Date(d.atUtc).toLocaleString()));
+    if (d.auto) row.append(el('span', 'tag auto', 'Automatic'));
     if (d.action === 'branches-pruned') {
       row.append(el('span', null, 'Deleted ' + count(d.recycled - 1, 'merged branch', 'merged branches') + ' in ' + (d.label || 'a repository')));
     } else if (d.action === 'dev-cleaned') {
@@ -1615,6 +1815,9 @@ function groupCard(g, folder) {
   const selectedBytes = g.items.filter((i) => set.has(i.path)).reduce((a, i) => a + i.size, 0);
   head.append(el('span', 'muted small', set.size ? 'frees ' + bytes(selectedBytes) : ''));
   card.append(head);
+  const auto = state.auto.groups[g.key];
+  if (auto && g.kind !== 'similar')
+    card.append(autoLine(auto, 'g:' + g.key, count(auto.count, 'copy goes', 'copies go') + ' to the Recycle Bin automatically ' + dueText(auto.dueUtc, false) + '.'));
   if (g.kind !== 'similar' && g.items.some((i) => !i.keep && !i.suggested))
     card.append(el('p', 'muted small', 'Plain copies are ticked. Edited, cropped or look-alike versions are not: tick them only if you don\'t want them.'));
 

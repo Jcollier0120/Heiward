@@ -22,9 +22,10 @@ using VDF.Core.FFTools;
 using VDF.Core.Utils;
 
 // hei (Heiward): finds likely duplicate photos and videos in the background (on the NPU when there
-// is one), and stale developer files once a day, and lists them on a local review page. It never deletes anything on its own; files the user
-// ticks go to the Recycle Bin. Run without arguments, it installs itself (or, once installed, opens
-// the review page), so the one exe is also the installer.
+// is one), and stale developer files once a day, and lists them on a local review page. It deletes
+// nothing on its own unless the user turns on automatic cleanup; copies go to the Recycle Bin. Run
+// without arguments, it installs itself (or, once installed, opens the review page), so the one exe
+// is also the installer.
 var root = new RootCommand("hei — Heiward finds duplicate photos and videos, and stale developer files, and lists them for review");
 root.SetAction(async (_, ct) => {
 	if (Installer.RunningInstalled) {
@@ -71,8 +72,8 @@ var onceADay = new Option<bool>("--once-a-day") { Description = "At most once pe
 var openCmd = new Command("open", "Open the review page in the default browser (starting it if needed).") { ifPending, onceADay };
 openCmd.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
-	if (r.GetValue(ifPending) && PendingCount() == 0) return 0;
 	string stamp = Path.Combine(AgentPaths.Home, "last-opened.txt");
+	if (r.GetValue(ifPending) && PendingCount(stamp) == 0) return 0;
 	string today = DateTime.Now.ToString("yyyy-MM-dd");
 	if (r.GetValue(onceADay)) {
 		try { if (File.Exists(stamp) && File.ReadAllText(stamp).Trim() == today) return 0; } catch { }
@@ -151,9 +152,37 @@ status.SetAction(_ => {
 	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'hei install')"}");
 	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
 	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");
+	PrintAutoClean(cfg, detail: false);
 	return 0;
 });
 root.Subcommands.Add(status);
+
+var autoDuplicates = new Option<string?>("--duplicates") { Description = "on or off: move plain copies of photos, and byte-identical videos, to the Recycle Bin by itself." };
+autoDuplicates.AcceptOnlyFromAmong("on", "off");
+var autoDeveloper = new Option<string?>("--developer") { Description = "on or off: delete developer leftovers by itself (merged branches, temp files and crash dumps, build outputs and worktrees of stale projects, unused emulator images)." };
+autoDeveloper.AcceptOnlyFromAmong("on", "off");
+var autoDays = new Option<int?>("--after-days") { Description = $"Days something is listed before it's cleaned (0 to {AutoCleanConfig.MaxAfterDays}; default 3)." };
+var autoCmd = new Command("auto", "Automatic cleanup: show what it will clean and when, or turn it on or off (the review page has the same switches).") { autoDuplicates, autoDeveloper, autoDays };
+autoCmd.SetAction(r => {
+	var cfg = AgentConfig.Load();
+	string? duplicates = r.GetValue(autoDuplicates), developer = r.GetValue(autoDeveloper);
+	int? days = r.GetValue(autoDays);
+	if (duplicates != null || developer != null || days != null) {
+		var next = new AutoCleanConfig {
+			Duplicates = duplicates != null ? duplicates == "on" : cfg.AutoClean.Duplicates,
+			Developer = developer != null ? developer == "on" : cfg.AutoClean.Developer,
+			DeveloperKinds = cfg.AutoClean.DeveloperKinds,
+			AfterDays = days ?? cfg.AutoClean.AfterDays,
+		}.Normalized();
+		cfg.AutoClean = next;
+		cfg.Save();
+		AutoCleanState.Update(s => AutoCleaner.SyncSince(next, s, DateTime.UtcNow));
+		AgentPaths.AppendLog($"automatic cleanup set from the command line: duplicates {(next.Duplicates ? "on" : "off")}, developer {(next.Developer ? "on" : "off")}, after {next.AfterDays} day(s)");
+	}
+	PrintAutoClean(cfg, detail: true);
+	return 0;
+});
+root.Subcommands.Add(autoCmd);
 
 var devScan = new Option<bool>("--scan") { Description = "Check again now (otherwise: show the last check)." };
 var pruneBranches = new Option<string?>("--prune-branches") { Description = "Delete the repository's local branches already merged into its remote's main/master (fetches first; never main, master, develop or a checked-out branch)." };
@@ -222,11 +251,72 @@ root.Subcommands.Add(scope);
 
 return await root.Parse(args).InvokeAsync();
 
-static int PendingCount() {
+/// <summary>
+/// Sets that wait for the user. With automatic cleanup of duplicates on, only those listed since the page
+/// last opened this way: the sign-in page shouldn't open every day for look-alikes the user leaves for later.
+/// </summary>
+static int PendingCount(string stamp) {
 	var report = Report.Load();
 	if (report == null) return 0;
+	var cfg = AgentConfig.Load();
+	var s = AutoCleanState.Load();
+	var waiting = AutoCleaner.WaitingForUser(cfg, report, DecisionStore.Load(), s, DateTime.UtcNow);
+	if (!cfg.AutoClean.Duplicates || !File.Exists(stamp)) return waiting.Count;
+	DateTime lastOpened = File.GetLastWriteTimeUtc(stamp);
+	return waiting.Count(g => !s.FirstSeenUtc.TryGetValue("g:" + g.Key, out DateTime seen) || seen > lastOpened);
+}
+
+/// <summary>Automatic cleanup's settings and what's coming; with <paramref name="detail"/>, thing by thing.</summary>
+static void PrintAutoClean(AgentConfig cfg, bool detail) {
+	AutoCleanConfig a = cfg.AutoClean;
+	if (!a.Duplicates && !a.Developer) {
+		Console.WriteLine("Automatic cleanup: off" + (detail ? " ('hei auto --duplicates on', '--developer on', or the switches on the review page)" : ""));
+		return;
+	}
+	Console.WriteLine($"Automatic cleanup: duplicates {(a.Duplicates ? "on" : "off")}, developer {(a.Developer ? $"on ({string.Join(", ", a.DeveloperKinds)})" : "off")}; " +
+		$"things wait {a.AfterDays} day(s) after they're first listed");
+	DateTime now = DateTime.UtcNow;
+	Report? report = Report.Load();
+	DevReport? dev = cfg.DeveloperModeOn ? DevReport.Load() : null;
 	var decisions = DecisionStore.Load();
-	return report.Groups.Count(g => !decisions.ContainsKey(g.Key));
+	AutoCleanState s = AutoCleanState.Load();
+	AutoPlan plan = AutoCleaner.Plan(cfg, report, dev, decisions, s, now);
+	string When(DateTime due) => due <= now ? "due now" : "from " + due.ToLocalTime().ToString("ddd d MMM HH:mm");
+	void Summary(string what, IEnumerable<AutoPlanEntry> entries) {
+		var list = entries.ToList();
+		if (list.Count == 0) return;
+		var due = list.Where(e => e.DueUtc != null).ToList();
+		var dueNow = due.Where(e => e.DueUtc <= now).ToList();
+		long bytes = dueNow.Sum(e => e.Bytes);
+		Console.WriteLine($"  {what}: {dueNow.Count} due now{(bytes > 0 ? $" ({Format.Bytes(bytes)})" : "")}, {due.Count - dueNow.Count} later" +
+			(due.Count > dueNow.Count ? $" (next {When(due.Where(e => e.DueUtc > now).Min(e => e.DueUtc!.Value))})" : "") +
+			$", {list.Count - due.Count} left for you");
+	}
+	Summary("Sets of copies", plan.Groups.Values);
+	Summary("Developer items", plan.DevItems.Values);
+	Summary("Repositories with merged branches", plan.Repos.Values);
+	if (detail) {
+		foreach (var (key, e) in plan.Groups.OrderBy(kv => kv.Value.DueUtc ?? DateTime.MaxValue).Take(30)) {
+			ReportGroup g = report!.Groups.First(x => x.Key == key);
+			string keep = g.Items.First(i => i.Keep).Name;
+			Console.WriteLine($"    {(e.DueUtc is { } d ? When(d) : e.Held ? "held" : "waits"),-22} {keep}: " +
+				(e.DueUtc != null ? $"{e.Count} cop{(e.Count == 1 ? "y" : "ies")}, {Format.Bytes(e.Bytes)}" : e.Held ? "you said leave it" : e.Reason));
+		}
+		if (plan.Groups.Count > 30) Console.WriteLine($"    and {plan.Groups.Count - 30} more sets");
+		var items = dev?.Categories.SelectMany(c => c.Items).ToDictionary(i => i.Id) ?? new();
+		foreach (var (id, e) in plan.DevItems.OrderBy(kv => kv.Value.DueUtc ?? DateTime.MaxValue).Take(30))
+			Console.WriteLine($"    {(e.DueUtc is { } d ? When(d) : e.Held ? "held" : "waits"),-22} {items[id].Name} ({items[id].Kind}, {Format.Bytes(e.Bytes)})" +
+				(e.DueUtc == null ? ": " + (e.Held ? "you said leave it" : e.Reason) : ""));
+		foreach (var (id, e) in plan.Repos) {
+			RepoBranches r = dev!.Repositories.First(x => x.Id == id);
+			Console.WriteLine($"    {(e.DueUtc is { } d ? When(d) : e.Held ? "held" : "waits"),-22} {r.Name}: {e.Count} merged branch(es)" +
+				(e.DueUtc == null ? ": " + (e.Held ? "you said leave it" : e.Reason) : ""));
+		}
+		if (plan.DevItems.Count > 0 || plan.Repos.Count > 0)
+			Console.WriteLine("  Developer items are cleaned right after the daily developer check once they're due.");
+	}
+	if (s.Runs.FirstOrDefault() is { } last)
+		Console.WriteLine($"  Last run: {last.AtUtc.ToLocalTime():g}: {last.Describe("; ")}");
 }
 
 /// <summary>Starts the review page in the background if needed, waits until it answers, opens it.</summary>

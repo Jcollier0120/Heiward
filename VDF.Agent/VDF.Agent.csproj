@@ -10,7 +10,7 @@
     <!-- The command is "hei"; Task Manager and file properties show the product name. -->
     <AssemblyName>hei</AssemblyName>
     <!-- Heiward's own version, as Apps & Features and the version option show it. Directory.Build.props's is Video Duplicate Finder's. -->
-    <VersionPrefix>1.1.0</VersionPrefix>
+    <VersionPrefix>1.2.0</VersionPrefix>
     <Product>Heiward</Product>
     <AssemblyTitle>Heiward</AssemblyTitle>
     <Description>Finds duplicate photos and videos, and stale developer files, for you to review. Based on Video Duplicate Finder.</Description>

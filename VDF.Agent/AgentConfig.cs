@@ -131,6 +131,10 @@ namespace VDF.Agent {
 		/// <summary>Repositories the user bundled into one project on the review page (each in at most one).</summary>
 		public List<DevProject> DevProjects { get; set; } = new();
 
+		/// <summary>What Heiward may clean up by itself. Off until the user turns it on (on the review page).</summary>
+		public AutoCleanConfig AutoClean { get => autoClean; set => autoClean = value ?? new(); }
+		AutoCleanConfig autoClean = new();
+
 		[JsonIgnore]
 		public bool DeveloperModeOn => !string.Equals(DeveloperMode, "off", StringComparison.OrdinalIgnoreCase);
 
@@ -151,5 +155,31 @@ namespace VDF.Agent {
 		}
 
 		public void Save() => AgentPaths.WriteAtomic(AgentPaths.Config, JsonSerializer.Serialize(this, Json));
+	}
+
+	/// <summary>
+	/// Automatic cleanup, for once the user trusts what the page suggests: after a scan, Heiward cleans
+	/// what the page ticks for them, once it has been listed for <see cref="AfterDays"/> days (<see cref="AutoCleaner"/>).
+	/// </summary>
+	sealed class AutoCleanConfig {
+		/// <summary>Plain copies of photos, and byte-identical videos, go to the Recycle Bin.</summary>
+		public bool Duplicates { get; set; }
+		/// <summary>Developer leftovers of the kinds in <see cref="DeveloperKinds"/> are deleted (tools recreate them).</summary>
+		public bool Developer { get; set; }
+		/// <summary>Some of <see cref="AutoCleaner.DeveloperKinds"/>: branches, temp, buildOutputs, worktrees, systemImages.</summary>
+		public List<string> DeveloperKinds { get => kinds; set => kinds = value ?? new(); }
+		List<string> kinds = AutoCleaner.DeveloperKinds.ToList();
+		/// <summary>Days something is listed before it's cleaned: time to see it coming and say "leave it". 0 = at the next scan.</summary>
+		public int AfterDays { get; set; } = 3;
+
+		public const int MaxAfterDays = 90;
+
+		/// <summary>What the page sent, made valid: known kinds only, each once, and days within 0–<see cref="MaxAfterDays"/>.</summary>
+		public AutoCleanConfig Normalized() => new() {
+			Duplicates = Duplicates,
+			Developer = Developer,
+			DeveloperKinds = AutoCleaner.DeveloperKinds.Where(k => DeveloperKinds.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList(),
+			AfterDays = Math.Clamp(AfterDays, 0, MaxAfterDays),
+		};
 	}
 }

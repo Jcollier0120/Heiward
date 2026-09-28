@@ -83,25 +83,36 @@ namespace VDF.Agent {
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);
 			report.Save();
 			ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
+			bool devChecked = false;
 			if (DevScan.Due(cfg)) {
-				try { DevScan.RunAndSave(cfg, ct); }
+				try { devChecked = DevScan.RunAndSave(cfg, ct) != null; }
 				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("developer check failed: " + e.Message); }
 			}
+			AutoRun? auto = null;
+			try { auto = AutoCleaner.RunAndSave(cfg, devChecked, new CleanupActions(cfg, automatic: true)); }
+			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("automatic cleanup failed: " + e.Message); }
 
 			var decisions = DecisionStore.Load();
 			var known = new HashSet<string>(previous?.Groups.Select(g => g.Key) ?? Enumerable.Empty<string>());
-			var fresh = groups.Where(g => !known.Contains(g.Key) && !decisions.ContainsKey(g.Key)).ToList();
-			string summary = $"{groups.Count} group(s), {fresh.Count} new; {files:N0} files in {timer.Elapsed.TotalSeconds:N0} s, AI on {device}";
+			// New sets that need the user; automatic cleanup takes care of the others without a word.
+			var waiting = AutoCleaner.WaitingForUser(cfg, report, decisions, AutoCleanState.Load(), DateTime.UtcNow).Select(g => g.Key).ToHashSet();
+			var fresh = groups.Where(g => !known.Contains(g.Key) && waiting.Contains(g.Key)).ToList();
+			string summary = $"{groups.Count} group(s), {fresh.Count} new to review; {files:N0} files in {timer.Elapsed.TotalSeconds:N0} s, AI on {device}";
 			AgentPaths.AppendLog("scan done: " + summary);
 			Console.Error.WriteLine("Scan done: " + summary);
+			if (auto is { DidSomething: true }) Console.Error.WriteLine("Automatic cleanup: " + auto.Describe("; "));
 			foreach (string n in notes) Console.Error.WriteLine("  note: " + n);
 
-			if (notify && cfg.Toast && fresh.Count > 0) {
-				long bytes = fresh.Sum(g => g.ReclaimBytes);
+			if (notify && cfg.Toast && (fresh.Count > 0 || auto is { DidSomething: true })) {
 				ReviewServer.EnsureRunningInBackground(cfg);
-				await Toast.ShowAsync($"{fresh.Count} new set{(fresh.Count == 1 ? "" : "s")} of likely duplicates",
-					bytes > 0 ? $"Review them to free up to {Format.Bytes(bytes)}. Nothing is deleted until you choose." : "Review them when you have a minute.",
-					ReviewServer.PageUrl(cfg.Port));
+				if (auto is { DidSomething: true })
+					await Toast.ShowAsync("Cleaned up automatically", auto.Describe() + ".", ReviewServer.PageUrl(cfg.Port));
+				if (fresh.Count > 0) {
+					long bytes = fresh.Sum(g => g.ReclaimBytes);
+					await Toast.ShowAsync($"{fresh.Count} new set{(fresh.Count == 1 ? "" : "s")} of likely duplicates",
+						bytes > 0 ? $"Review them to free up to {Format.Bytes(bytes)}. Nothing is deleted until you choose." : "Review them when you have a minute.",
+						ReviewServer.PageUrl(cfg.Port));
+				}
 			}
 			return 0;
 		}

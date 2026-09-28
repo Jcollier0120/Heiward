@@ -18,9 +18,12 @@ using System.Diagnostics;
 using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 
 namespace VDF.Agent {
 	sealed record RecycleRequest(List<string> Paths);
+	sealed record AutoHoldRequest(string Target, bool Hold);
+	sealed record AutoAllowRequest(string Pair, bool Allow);
 
 	/// <summary>
 	/// The review page on http://127.0.0.1:{port}. LOCAL ONLY, AND THE BUTTONS ARE GUARDED:
@@ -34,10 +37,9 @@ namespace VDF.Agent {
 	/// It exits after <see cref="AgentConfig.ServerIdleMinutes"/> without a request (the open page polls).
 	/// </summary>
 	static class ReviewServer {
-		static readonly object recycleGate = new();
-
 		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct) {
 			int port = cfg.Port;
+			var actions = new CleanupActions(cfg, automatic: false);
 			if (await IsUpAsync(port)) {
 				Console.WriteLine($"The review page is already running: {PageUrl(port)}");
 				if (openBrowser) OpenBrowser(port);
@@ -101,22 +103,16 @@ namespace VDF.Agent {
 			app.MapPost("/api/groups/{key}/recycle", (string key, RecycleRequest request) => {
 				ReportGroup? g = Report.Load()?.Groups.FirstOrDefault(x => x.Key == key);
 				if (g == null) return Results.NotFound(new { error = "That group is no longer in the report; scan again." });
-				RecycleResult result;
-				lock (recycleGate) {
-					result = Recycler.Recycle(g, request.Paths ?? new());
-					if (result.Recycled.Count > 0)
-						DecisionStore.Set(key, new Decision("recycled", DateTime.UtcNow, result.Recycled, result.RecycledBytes));
-				}
-				return Results.Json(result, AgentConfig.Json);
+				return Guarded(() => Results.Json(actions.Recycle(g, request.Paths ?? new()), AgentConfig.Json));
 			});
-			app.MapPost("/api/groups/{key}/keep", (string key) => {
-				DecisionStore.Set(key, new Decision("kept", DateTime.UtcNow, new(), 0));
+			app.MapPost("/api/groups/{key}/keep", (string key) => Guarded(() => {
+				using (CleanLock.Acquire()) DecisionStore.Set(key, new Decision("kept", DateTime.UtcNow, new(), 0));
 				return Results.Ok();
-			});
-			app.MapPost("/api/groups/{key}/reopen", (string key) => {
-				DecisionStore.Set(key, null);
+			}));
+			app.MapPost("/api/groups/{key}/reopen", (string key) => Guarded(() => {
+				using (CleanLock.Acquire()) DecisionStore.Set(key, null);
 				return Results.Ok();
-			});
+			}));
 			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
 			app.MapGet("/api/dev", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
 			app.MapPost("/api/dev/projects", (List<DevProject> projects) => {
@@ -134,30 +130,36 @@ namespace VDF.Agent {
 				DevItem? item = DevReport.Load()?.Categories.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == id);
 				if (item == null) return Results.NotFound(new { error = "That item is no longer in the list; check again." });
 				if (item.Blocked != null) return Results.Conflict(new { error = item.Blocked });
-				CleanResult result;
-				lock (recycleGate) {
-					result = DevCleaner.Clean(item, cfg);
-					if (result.FreedBytes > 0)
-						DecisionStore.Set("dev:" + id, new Decision("dev-cleaned", DateTime.UtcNow, new() { item.Name }, result.FreedBytes));
-					// Gone, or what's left (files in use) re-measured.
-					if (result.Error == null)
-						DevReport.Update(id, result.LeftInUse == 0 ? null : item with { Bytes = Math.Max(0, item.Bytes - result.FreedBytes), Suggested = false });
-				}
-				AgentPaths.AppendLog($"developer clean: {item.Kind} {item.Location}: freed {Format.Bytes(result.FreedBytes)}" +
-					(result.LeftInUse > 0 ? $", {result.LeftInUse} in use left" : "") + (result.Error != null ? $", {result.Error}" : ""));
-				return Results.Json(result, AgentConfig.Json);
+				return Guarded(() => Results.Json(actions.Clean(item), AgentConfig.Json));
 			});
 			app.MapPost("/api/dev/repos/{id}/prune", (string id) => {
 				RepoBranches? repo = DevReport.Load()?.Repositories.FirstOrDefault(r => r.Id == id);
 				if (repo == null) return Results.NotFound(new { error = "That repository is no longer in the list; check again." });
-				PruneResult result = BranchPruner.Prune(repo.Path);
-				if (result.Deleted.Count > 0)
-					DecisionStore.Set($"branches:{id}:{DateTime.UtcNow.Ticks}", new Decision("branches-pruned", DateTime.UtcNow, new[] { repo.Name }.Concat(result.Deleted).ToList(), 0));
-				if (BranchPruner.Inspect(repo.Path) is { } now) DevReport.UpdateRepository(now);
-				AgentPaths.AppendLog($"pruned branches in {repo.Path}: deleted {string.Join(", ", result.Deleted)}" +
-					(result.Kept.Count > 0 ? $"; kept {string.Join(", ", result.Kept.Select(k => $"{k.Branch} ({k.Reason})"))}" : "") + (result.Fetched ? "" : "; fetch failed"));
-				return Results.Json(result, AgentConfig.Json);
+				return Guarded(() => Results.Json(actions.Prune(repo, null), AgentConfig.Json));
 			});
+			// Automatic cleanup: its settings (saved to settings.json), and "leave it" / "allow" per thing.
+			app.MapPost("/api/auto/settings", (AutoCleanConfig wanted) => Guarded(() => {
+				AutoCleanConfig next = wanted.Normalized();
+				AgentConfig saved = AgentConfig.Load();
+				saved.AutoClean = next;
+				saved.Save();
+				cfg.AutoClean = next;
+				AutoCleanState.Update(s => AutoCleaner.SyncSince(next, s, DateTime.UtcNow));
+				AgentPaths.AppendLog($"automatic cleanup set: duplicates {(next.Duplicates ? "on" : "off")}, developer " +
+					(next.Developer ? $"on ({string.Join(", ", next.DeveloperKinds)})" : "off") + $", after {next.AfterDays} day(s)");
+				return Results.Json(next, AgentConfig.Json);
+			}));
+			app.MapPost("/api/auto/hold", (AutoHoldRequest request) => Guarded(() => {
+				if (request.Target == null || !AutoTarget.IsMatch(request.Target)) return Results.BadRequest(new { error = "Unknown item." });
+				AutoCleanState.Update(s => { if (request.Hold) s.Held.Add(request.Target); else s.Held.Remove(request.Target); });
+				return Results.Ok();
+			}));
+			app.MapPost("/api/auto/allow", (AutoAllowRequest request) => Guarded(() => {
+				if (request.Pair is not { Length: > 2 and < 2000 } pair || !pair.Contains('|')) return Results.BadRequest(new { error = "Unknown folders." });
+				string key = pair.ToLowerInvariant();
+				AutoCleanState.Update(s => { if (request.Allow) s.AllowedFolderPairs.Add(key); else s.AllowedFolderPairs.Remove(key); });
+				return Results.Ok();
+			}));
 			app.MapPost("/api/scan", () => {
 				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
 				StartDetached("scan");
@@ -183,11 +185,21 @@ namespace VDF.Agent {
 			return 0;
 		}
 
+		/// <summary>A set, developer item or repository automatic cleanup can be told to leave (see <see cref="AutoCleanState.Held"/>).</summary>
+		static readonly Regex AutoTarget = new("^[gdb]:[0-9a-f]{16}$", RegexOptions.CultureInvariant);
+
+		/// <summary>A cleanup endpoint: another cleanup holding the lock too long is a 409, not a crash.</summary>
+		static IResult Guarded(Func<IResult> action) {
+			try { return action(); }
+			catch (TimeoutException e) { return Results.Conflict(new { error = e.Message }); }
+		}
+
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {
 			Report? report = Report.Load();
 			ScanIndex? index = ScanIndex.Load();
 			var decisions = DecisionStore.Load();
+			DevReport? devReport = cfg.DeveloperModeOn ? DevReport.Load() : null;
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var done = decisions
@@ -199,6 +211,7 @@ namespace VDF.Agent {
 						key = d.Key, action = d.Value.Action, atUtc = d.Value.AtUtc, recycled = d.Value.Recycled.Count, recycledBytes = d.Value.RecycledBytes,
 						kind = g?.Kind, keepName = g?.Items.FirstOrDefault(i => i.Keep)?.Name, inReport = g != null,
 						label = d.Value.Action is "dev-cleaned" or "branches-pruned" ? d.Value.Recycled.FirstOrDefault() : null,
+						auto = d.Value.Auto,
 					};
 				}).ToList();
 			return new {
@@ -213,7 +226,8 @@ namespace VDF.Agent {
 					reclaimableBytes = pending.Sum(g => g.ReclaimBytes),
 					recycledBytes = decisions.Values.Sum(d => d.RecycledBytes),
 				},
-				dev = DevSummary(cfg),
+				dev = DevSummary(cfg, devReport),
+				auto = AutoView(report, devReport, decisions),
 				drives = ExplorerView.Drives(cfg, index, pending),
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
@@ -224,15 +238,36 @@ namespace VDF.Agent {
 		}
 
 		/// <summary>The home page's developer card: totals per category of the last check.</summary>
-		static object DevSummary(AgentConfig cfg) {
-			DevReport? r = cfg.DeveloperModeOn ? DevReport.Load() : null;
+		static object DevSummary(AgentConfig cfg, DevReport? r) {
 			return new {
 				enabled = cfg.DeveloperModeOn,
 				running = cfg.DeveloperModeOn && DevScan.IsRunning(),
 				scannedAtUtc = r?.ScannedAtUtc,
 				totalBytes = r?.Categories.SelectMany(c => c.Items).Sum(i => i.Bytes) ?? 0,
 				suggestedBytes = r?.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes) ?? 0,
-				categories = r?.Categories.Select(c => new { c.Key, c.Title, bytes = c.Items.Sum(i => i.Bytes), count = c.Items.Count }).ToList(),
+				// A category emptied by cleaning since the check has nothing to show.
+				categories = r?.Categories.Where(c => c.Items.Count > 0).Select(c => new { c.Key, c.Title, bytes = c.Items.Sum(i => i.Bytes), count = c.Items.Count }).ToList(),
+			};
+		}
+
+		/// <summary>Automatic cleanup for the page: the settings, what happens to each thing and when, and the last run.</summary>
+		static object AutoView(Report? report, DevReport? dev, Dictionary<string, Decision> decisions) {
+			AgentConfig fresh = AgentConfig.Load(); // settings.json, as the page or the user last left it
+			AutoCleanState s = AutoCleanState.Load();
+			AutoPlan plan = AutoCleaner.Plan(fresh, report, dev, decisions, s, DateTime.UtcNow);
+			static object Upcoming(IEnumerable<AutoPlanEntry> entries) {
+				var due = entries.Where(e => e.DueUtc != null).ToList();
+				return new { count = due.Count, files = due.Sum(e => e.Count), bytes = due.Sum(e => e.Bytes), firstDueUtc = due.Min(e => e.DueUtc) };
+			}
+			return new {
+				settings = fresh.AutoClean,
+				fresh.StaleProjectDays,
+				fresh.TempOlderThanDays,
+				groups = plan.Groups,
+				devItems = plan.DevItems,
+				repos = plan.Repos,
+				upcoming = new { groups = Upcoming(plan.Groups.Values), dev = Upcoming(plan.DevItems.Values), branches = Upcoming(plan.Repos.Values) },
+				lastRun = s.Runs.FirstOrDefault(),
 			};
 		}
 
