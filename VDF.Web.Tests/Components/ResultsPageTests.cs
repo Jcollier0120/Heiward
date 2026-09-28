@@ -129,15 +129,19 @@ public sealed class ResultsPageTests : BunitContext {
 		return new[] { C("creation_time", "2023-08-15T12:34:56Z"), C("com.apple.quicktime.creationdate", date) };
 	};
 
-	IRenderedComponent<VDF.Web.Components.Pages.Results> OpenMetadataOfFirstGroup() {
+	// Awaited, the click ends once the tags are read and the table is rendered. Click() plus
+	// WaitForAssertion resumed inside that render while the renderer was still busy, so the
+	// next Change() queued behind it and the test asserted before the handler had run.
+	// Later events are awaited for the same reason.
+	async Task<IRenderedComponent<VDF.Web.Components.Pages.Results>> OpenMetadataOfFirstGroup() {
 		var page = RenderPage();
-		page.Find(".metadata-btn").Click();
-		page.WaitForAssertion(() => Assert.NotEmpty(page.FindAll(".metadata-table")));
+		await page.Find(".metadata-btn").ClickAsync(new());
+		Assert.NotEmpty(page.FindAll(".metadata-table"));
 		return page;
 	}
 
 	[Fact]
-	public void Metadata_MarksTheOneCopyWithTheOtherDate() {
+	public async Task Metadata_MarksTheOneCopyWithTheOtherDate() {
 		MetadataLookup.Reader = FakeTags;
 		try {
 			Guid group = Guid.NewGuid();
@@ -145,7 +149,7 @@ public sealed class ResultsPageTests : BunitContext {
 			Seed("right.mov", group);
 			Seed("wrong2.mov", group);
 
-			var page = OpenMetadataOfFirstGroup();
+			var page = await OpenMetadataOfFirstGroup();
 
 			Assert.Contains("1 of 2 fields differ", page.Find(".metadata-summary").TextContent);
 			var row = Assert.Single(page.FindAll(".metadata-table tbody tr"), r => r.QuerySelector("th[scope=row]") != null);
@@ -156,7 +160,7 @@ public sealed class ResultsPageTests : BunitContext {
 			Assert.Equal("Container", page.Find(".metadata-section th").TextContent);
 
 			// Untick the filter: the shared creation_time shows too, unmarked.
-			page.Find(".metadata-toolbar input").Change(false);
+			await page.Find(".metadata-toolbar input").ChangeAsync(false);
 			Assert.Equal(2, page.FindAll(".metadata-table th[scope=row]").Count);
 			Assert.Single(page.FindAll("td.metadata-odd"));
 		}
@@ -164,7 +168,7 @@ public sealed class ResultsPageTests : BunitContext {
 	}
 
 	[Fact]
-	public void Metadata_ColumnCheckbox_SelectsTheFileOnThePage_AndEscCloses() {
+	public async Task Metadata_ColumnCheckbox_SelectsTheFileOnThePage_AndEscCloses() {
 		MetadataLookup.Reader = FakeTags;
 		try {
 			Guid group = Guid.NewGuid();
@@ -172,15 +176,15 @@ public sealed class ResultsPageTests : BunitContext {
 			Seed("right.mov", group);
 			Seed("gone.mov", group);
 
-			var page = OpenMetadataOfFirstGroup();
+			var page = await OpenMetadataOfFirstGroup();
 
 			var gone = page.FindAll(".metadata-table thead th").Single(th => th.TextContent.Contains("gone.mov"));
 			Assert.Contains("file not available", gone.TextContent);
-			page.FindAll(".metadata-table thead input").Single(i => i.GetAttribute("aria-label") == "Select wrong1.mov").Change(true);
+			await page.FindAll(".metadata-table thead input").Single(i => i.GetAttribute("aria-label") == "Select wrong1.mov").ChangeAsync(true);
 			Assert.Contains("1 selected", page.Markup);
 			Assert.Contains("selected", page.FindAll(".dup-card").Single(c => c.TextContent.Contains("wrong1.mov")).ClassName);
 
-			page.Find("#metadata-modal").KeyDown(new Microsoft.AspNetCore.Components.Web.KeyboardEventArgs { Key = "Escape" });
+			await page.Find("#metadata-modal").KeyDownAsync(new Microsoft.AspNetCore.Components.Web.KeyboardEventArgs { Key = "Escape" });
 			Assert.Empty(page.FindAll("#metadata-modal"));
 		}
 		finally { MetadataLookup.Reader = VDF.Core.Utils.FileMetadata.Read; }
