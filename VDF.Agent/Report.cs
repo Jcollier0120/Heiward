@@ -118,22 +118,56 @@ namespace VDF.Agent {
 		internal const float PlainCopyPercent = 99.5f;
 
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints) {
-			var groups = new List<ReportGroup>();
-			foreach (var g in duplicates.GroupBy(d => d.GroupId)) {
-				List<DuplicateItem> items = g.Where(d => File.Exists(d.Path)).ToList();
-				if (items.Count < 2)
-					continue;
-				groups.Add(BuildGroup(items, fingerprints));
-			}
-			return groups
+			var hashes = new ContentHashes();
+			List<List<DuplicateItem>> members = duplicates.GroupBy(d => d.GroupId)
+				.Select(g => g.Where(d => File.Exists(d.Path)).ToList())
+				.ToList();
+			GatherSplitCopies(members, hashes, fingerprints);
+			return members
+				.Where(items => items.Count >= 2)
+				.Select(items => BuildGroup(items, hashes, fingerprints))
 				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
 				.ThenByDescending(g => g.ReclaimBytes)
 				.ToList();
 		}
 
-		static ReportGroup BuildGroup(List<DuplicateItem> items, IFingerprints fingerprints) {
+		/// <summary>
+		/// VDF puts each file in one group, so byte-identical files can end up apart: a burst shot's
+		/// original grouped with its neighbour as a look-alike, and its copy elsewhere grouped with an
+		/// export of it, kept there as the best file. Each set of identical files moves into the group
+		/// holding its closest other match (a group of nothing but those copies counts as closest), and
+		/// a group left with one file is dropped.
+		/// </summary>
+		static void GatherSplitCopies(List<List<DuplicateItem>> groups, ContentHashes hashes, IFingerprints fingerprints) {
+			var splitBySize = groups
+				.SelectMany((items, g) => items.Select(item => (Item: item, Group: g)))
+				.GroupBy(x => x.Item.SizeLong)
+				.Where(same => same.Select(x => x.Group).Distinct().Count() > 1) // hash only what could be split
+				.ToList();
+			foreach (var sameSize in splitBySize)
+				foreach (var identical in sameSize.GroupBy(x => hashes.Get(x.Item.Path)).Where(h => h.Key != null)) {
+					List<int> apart = identical.Select(x => x.Group).Distinct().ToList();
+					if (apart.Count < 2)
+						continue;
+					var copies = identical.Select(x => x.Item).ToHashSet();
+					int target = apart.MaxBy(g => Closeness(groups[g], copies, fingerprints));
+					foreach (int g in apart.Where(g => g != target))
+						groups[g].RemoveAll(copies.Contains);
+					groups[target].AddRange(copies.Where(c => !groups[target].Contains(c)));
+				}
+		}
+
+		/// <summary>How close the group's other files are to the copies in it (100 when there are none).</summary>
+		static float Closeness(List<DuplicateItem> group, HashSet<DuplicateItem> copies, IFingerprints fingerprints) {
+			var others = group.Where(i => !copies.Contains(i)).ToList();
+			if (others.Count == 0)
+				return 100f;
+			var here = group.Where(copies.Contains).ToList();
+			return others.SelectMany(o => here.Select(c => fingerprints.GrayPercent(o.Path, c.Path) ?? 0f)).Max();
+		}
+
+		static ReportGroup BuildGroup(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints) {
 			bool isImage = items[0].IsImage;
-			var hashes = new ContentHashes();
 			(DuplicateItem keep, string reason) = isImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
 
 			var reportItems = new List<ReportItem>(items.Count);
@@ -261,7 +295,7 @@ namespace VDF.Agent {
 				return ha != null && ha == hb;
 			}
 
-			string? Get(string path) {
+			public string? Get(string path) {
 				if (!cache.TryGetValue(path, out string? h))
 					cache[path] = h = Compute(path);
 				return h;

@@ -138,6 +138,24 @@ public sealed class ReportBuilderTests : IDisposable {
 	}
 
 	[Fact]
+	public void IdenticalCopiesSplitAcrossGroups_JoinTheGroupOfTheirClosestMatch() {
+		// Regression (a real library): VDF grouped a burst shot's original with its neighbour as a
+		// look-alike, and the original's copy with a JPEG export of it, where the copy was kept.
+		byte[] heic = Bytes(8000, 1);
+		var neighbour = Photo(@"iCloud\IMG_3727.heic", 4032, 3024, Bytes(8100, 2), gray: 96.2f, ai: 95f);
+		var original = Photo(@"iCloud\IMG_3730.heic", 4032, 3024, heic, modified: new DateTime(2026, 2, 11, 0, 0, 0, DateTimeKind.Utc));
+		var copy = Photo(@"Test\IMG_3730.heic", 4032, 3024, heic, modified: new DateTime(2026, 9, 27, 0, 0, 0, DateTimeKind.Utc));
+		var export = Photo(@"Test\IMG_3730 (exported).jpg", 2016, 1512, Bytes(3000, 3), gray: 99.82f);
+		neighbour.GroupId = original.GroupId = Guid.NewGuid();
+
+		var g = Single(neighbour, original, copy, export); // the neighbour, left alone, is no group
+		Assert.Equal(original.Path, g.KeepPath);
+		Assert.Equal("identical", g.Items.Single(i => i.Path == copy.Path).Relation);
+		Assert.Equal("smaller", Named(g, "IMG_3730 (exported).jpg").Relation);
+		Assert.All(g.Items.Where(i => !i.Keep), i => Assert.True(i.Suggested));
+	}
+
+	[Fact]
 	public void GroupKey_IgnoresOrderAndCase() {
 		Assert.Equal(ReportBuilder.GroupKey(new[] { @"C:\A\x.jpg", @"C:\B\y.jpg" }), ReportBuilder.GroupKey(new[] { @"c:\b\Y.JPG", @"C:\A\x.jpg" }));
 		Assert.NotEqual(ReportBuilder.GroupKey(new[] { @"C:\A\x.jpg", @"C:\B\y.jpg" }), ReportBuilder.GroupKey(new[] { @"C:\A\x.jpg", @"C:\B\z.jpg" }));
