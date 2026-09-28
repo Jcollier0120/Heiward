@@ -161,9 +161,18 @@ status.SetAction(_ => {
 root.Subcommands.Add(status);
 
 var devScan = new Option<bool>("--scan") { Description = "Check again now (otherwise: show the last check)." };
-var dev = new Command("dev", "Developer mode: build outputs, worktrees, caches, emulators and temp files that tools recreate.") { devScan };
+var pruneBranches = new Option<string?>("--prune-branches") { Description = "Delete the repository's local branches already merged into its remote's main/master (fetches first; never main, master, develop or a checked-out branch)." };
+var dev = new Command("dev", "Developer mode: build outputs, worktrees, caches, emulators and temp files that tools recreate.") { devScan, pruneBranches };
 dev.SetAction(r => {
 	var cfg = AgentConfig.Load();
+	if (r.GetValue(pruneBranches) is { } repoPath) {
+		PruneResult pruned = BranchPruner.Prune(Path.GetFullPath(repoPath));
+		if (pruned.Error != null) { Console.Error.WriteLine(pruned.Error); return 1; }
+		if (!pruned.Fetched) Console.WriteLine("Couldn't fetch; used the last fetched state.");
+		Console.WriteLine(pruned.Deleted.Count == 0 ? "No merged branches to delete." : $"Deleted {pruned.Deleted.Count}: {string.Join(", ", pruned.Deleted)}");
+		foreach (PruneKept k in pruned.Kept) Console.WriteLine($"Kept {k.Branch}: {k.Reason}");
+		return 0;
+	}
 	DevReport? report = r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load();
 	if (report == null) {
 		Console.WriteLine("No developer check yet: run 'vdf-agent dev --scan'.");

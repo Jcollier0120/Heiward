@@ -137,6 +137,17 @@ namespace VDF.Agent {
 					(result.LeftInUse > 0 ? $", {result.LeftInUse} in use left" : "") + (result.Error != null ? $", {result.Error}" : ""));
 				return Results.Json(result, AgentConfig.Json);
 			});
+			app.MapPost("/api/dev/repos/{id}/prune", (string id) => {
+				RepoBranches? repo = DevReport.Load()?.Repositories.FirstOrDefault(r => r.Id == id);
+				if (repo == null) return Results.NotFound(new { error = "That repository is no longer in the list; check again." });
+				PruneResult result = BranchPruner.Prune(repo.Path);
+				if (result.Deleted.Count > 0)
+					DecisionStore.Set($"branches:{id}:{DateTime.UtcNow.Ticks}", new Decision("branches-pruned", DateTime.UtcNow, new[] { repo.Name }.Concat(result.Deleted).ToList(), 0));
+				if (BranchPruner.Inspect(repo.Path) is { } now) DevReport.UpdateRepository(now);
+				AgentPaths.AppendLog($"pruned branches in {repo.Path}: deleted {string.Join(", ", result.Deleted)}" +
+					(result.Kept.Count > 0 ? $"; kept {string.Join(", ", result.Kept.Select(k => $"{k.Branch} ({k.Reason})"))}" : "") + (result.Fetched ? "" : "; fetch failed"));
+				return Results.Json(result, AgentConfig.Json);
+			});
 			app.MapPost("/api/scan", () => {
 				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
 				StartDetached("scan");
@@ -177,7 +188,7 @@ namespace VDF.Agent {
 					return new {
 						key = d.Key, action = d.Value.Action, atUtc = d.Value.AtUtc, recycled = d.Value.Recycled.Count, recycledBytes = d.Value.RecycledBytes,
 						kind = g?.Kind, keepName = g?.Items.FirstOrDefault(i => i.Keep)?.Name, inReport = g != null,
-						label = d.Value.Action == "dev-cleaned" ? d.Value.Recycled.FirstOrDefault() : null,
+						label = d.Value.Action is "dev-cleaned" or "branches-pruned" ? d.Value.Recycled.FirstOrDefault() : null,
 					};
 				}).ToList();
 			return new {

@@ -179,6 +179,63 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Equal(tool, DevScanner.ToolHome(p));
 	}
 
+	static string G(string dir, params string[] args) {
+		var psi = new ProcessStartInfo(Git.Exe!) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = dir };
+		foreach (string a in new[] { "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false" }.Concat(args))
+			psi.ArgumentList.Add(a);
+		using var p = Process.Start(psi)!;
+		string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();
+		p.WaitForExit();
+		Assert.True(p.ExitCode == 0, $"git {string.Join(' ', args)}: {output}");
+		return output;
+	}
+
+	[Fact]
+	public void PruneBranches_DeletesOnlyWhatsMergedOnTheRemote_AndKeepsCheckedOutOnes() {
+		if (Git.Exe == null) return; // needs git
+		string remote = Dir("remote.git");
+		G(remote, "init", "--bare");
+		string seed = Dir("seed");
+		G(seed, "init");
+		File.WriteAllText(Path.Combine(seed, "a.txt"), "1");
+		G(seed, "add", ".");
+		G(seed, "commit", "-m", "one");
+		G(seed, "remote", "add", "origin", remote);
+		G(seed, "push", "-u", "origin", "main");
+
+		string repo = Path.Combine(root, "repo");
+		G(root, "clone", remote, repo);
+		G(repo, "branch", "open-work");             // made before the merges below: not in main
+		G(repo, "checkout", "-b", "feature-merged");
+		File.WriteAllText(Path.Combine(repo, "b.txt"), "2");
+		G(repo, "add", ".");
+		G(repo, "commit", "-m", "feature");
+		G(repo, "checkout", "-b", "wt-merged");
+		G(repo, "checkout", "main");
+		G(repo, "merge", "--ff-only", "feature-merged");
+		G(repo, "push", "origin", "main");
+		G(repo, "checkout", "open-work");           // so feature-merged isn't merged into HEAD: git -d alone would refuse
+		File.WriteAllText(Path.Combine(repo, "c.txt"), "3");
+		G(repo, "add", ".");
+		G(repo, "commit", "-m", "open");
+		G(repo, "worktree", "add", Path.Combine(root, "wt"), "wt-merged");
+
+		RepoBranches before = BranchPruner.Inspect(repo)!;
+		Assert.Equal("origin/main", before.Default);
+		Assert.Equal(new[] { "feature-merged" }, before.Merged);
+		Assert.Equal(new[] { "wt-merged" }, before.CheckedOut);
+
+		PruneResult result = BranchPruner.Prune(repo);
+		Assert.True(result.Fetched);
+		Assert.Equal(new[] { "feature-merged" }, result.Deleted);
+		Assert.Contains(result.Kept, k => k.Branch == "wt-merged");
+		string branches = G(repo, "branch", "--format=%(refname:short)");
+		Assert.DoesNotContain("feature-merged", branches);
+		foreach (string kept in new[] { "main", "open-work", "wt-merged" }) Assert.Contains(kept, branches);
+		Assert.Contains("feature", G(repo, "log", "--oneline", "origin/main")); // the remote is untouched
+		G(repo, "worktree", "remove", Path.Combine(root, "wt"));
+	}
+
 	[Fact]
 	public void Clean_ReChecksAProjectFolderBeforeDeleting() {
 		string app = Dir("p", "app");

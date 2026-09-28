@@ -456,15 +456,85 @@ function renderDev() {
     view.replaceChildren(frag);
     return;
   }
-  if (!devReport.categories.length) {
-    frag.append(el('div', 'empty-state', 'Nothing to clean up.'));
-    view.replaceChildren(frag);
-    return;
+  if (!devReport.categories.length) frag.append(el('div', 'empty-state', 'Nothing to clean up.'));
+  else {
+    frag.append(devActionBar());
+    for (const c of devReport.categories) frag.append(devCategory(c));
   }
-
-  frag.append(devActionBar());
-  for (const c of devReport.categories) frag.append(devCategory(c));
+  if ((devReport.repositories || []).length) frag.append(repoSection(devReport.repositories));
   view.replaceChildren(frag);
+}
+
+const pruneResults = new Map(); // repository id -> [ok, message] after pruning
+
+function repoSection(repos) {
+  const box = el('section', 'dev-category');
+  const head = el('div', 'section-head');
+  const merged = repos.reduce((a, r) => a + r.merged.length, 0);
+  head.append(el('h2', null, 'Repositories · ' + count(merged, 'merged branch', 'merged branches')));
+  box.append(head);
+  box.append(el('p', 'muted small', 'Local branches already merged into the remote\'s main or master. Pruning fetches first, then deletes those local branches with git. ' +
+    'Never main, master, develop or a branch checked out in a worktree; branches on the remote are never touched.'));
+  const table = el('table', 'details dev-table');
+  const tbody = el('tbody');
+  for (const r of repos) {
+    const row = el('tr', 'repo-row');
+    const what = el('td', 'what');
+    what.colSpan = 2;
+    const name = el('div', 'dev-name');
+    name.append(el('span', null, r.name));
+    what.append(name);
+    const where = el('div', 'folder muted small', r.path);
+    where.title = r.path;
+    what.append(where);
+    what.append(el('div', 'muted small', r.default
+      ? count(r.localBranches, 'local branch', 'local branches') + ' · compared with ' + r.default
+      : r.note || ''));
+    if (r.merged.length) {
+      const list = el('details', 'branches');
+      list.append(el('summary', 'small', count(r.merged.length, 'merged branch', 'merged branches') + ' to delete'));
+      list.append(el('div', 'muted small branch-list', r.merged.join(', ')));
+      what.append(list);
+    }
+    if (r.checkedOut.length) what.append(el('div', 'muted small', 'Kept (checked out): ' + r.checkedOut.join(', ')));
+    if (pruneResults.has(r.id)) {
+      const [ok, msg] = pruneResults.get(r.id);
+      what.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
+    }
+    row.append(what);
+    const act = el('td', 'num size');
+    const btn = el('button', 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'None');
+    btn.disabled = !r.merged.length || devBusy;
+    btn.title = r.merged.length ? 'Delete ' + count(r.merged.length, 'local branch', 'local branches') + ' merged into ' + r.default : 'No merged branches';
+    btn.addEventListener('click', () => pruneRepo(r));
+    act.append(btn);
+    row.append(act);
+    tbody.append(row);
+  }
+  table.append(tbody);
+  box.append(table);
+  return box;
+}
+
+async function pruneRepo(r) {
+  if (!confirm('Delete the local branches in ' + r.name + ' that are merged into ' + r.default + '?\n\n' +
+      'It fetches first, so the list can change: ' + r.merged.slice(0, 12).join(', ') + (r.merged.length > 12 ? ', …' : '') +
+      '\n\nThe commits stay in ' + r.default + '; branches on the remote are not touched.')) return;
+  devBusy = true;
+  renderDev();
+  try {
+    const res = await post('/api/dev/repos/' + encodeURIComponent(r.id) + '/prune');
+    const parts = [res.deleted.length ? 'Deleted ' + count(res.deleted.length, 'branch', 'branches') + ': ' + res.deleted.join(', ') + '.' : 'No merged branches to delete.'];
+    if (res.kept.length) parts.push('Kept ' + res.kept.map((k) => k.branch + ' (' + k.reason + ')').join(', ') + '.');
+    if (!res.fetched) parts.push('Couldn\'t fetch, so the last fetched state was used.');
+    pruneResults.set(r.id, [!res.error, res.error || parts.join(' ')]);
+  } catch (e) {
+    pruneResults.set(r.id, [false, e.message]);
+  }
+  devBusy = false;
+  await loadDevReport();
+  renderDev();
+  refresh(true);
 }
 
 function devActionBar() {
@@ -632,7 +702,9 @@ function renderDone(s) {
   box.replaceChildren(...s.done.map((d) => {
     const row = el('div', 'done-row');
     row.append(el('span', 'muted small', new Date(d.atUtc).toLocaleString()));
-    if (d.action === 'dev-cleaned') {
+    if (d.action === 'branches-pruned') {
+      row.append(el('span', null, 'Deleted ' + count(d.recycled - 1, 'merged branch', 'merged branches') + ' in ' + (d.label || 'a repository')));
+    } else if (d.action === 'dev-cleaned') {
       row.append(el('span', null, 'Cleaned ' + (d.label || 'developer files') + ', freed ' + bytes(d.recycledBytes) + ' (deleted permanently)'));
     } else if (d.action === 'recycled') {
       row.append(el('span', null, 'Moved ' + d.recycled + ' file(s), ' + bytes(d.recycledBytes) + ', to the Recycle Bin' + (d.keepName ? ', kept ' + d.keepName : '')));

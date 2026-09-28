@@ -37,6 +37,8 @@ namespace VDF.Agent {
 		public double DurationSec { get; set; }
 		public int StaleDays { get; set; }
 		public List<DevCategory> Categories { get; set; } = new();
+		/// <summary>Repositories with a remote, and their local branches merged into its default branch.</summary>
+		public List<RepoBranches> Repositories { get; set; } = new();
 
 		public static string FilePath => Path.Combine(AgentPaths.Home, "dev-report.json");
 		static readonly object gate = new();
@@ -51,6 +53,17 @@ namespace VDF.Agent {
 		}
 
 		public void Save() => AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(this, AgentConfig.Json));
+
+		/// <summary>Replaces one repository's branch state in the saved report.</summary>
+		public static void UpdateRepository(RepoBranches repo) {
+			lock (gate) {
+				DevReport? report = Load();
+				if (report == null) return;
+				int i = report.Repositories.FindIndex(r => r.Id == repo.Id);
+				if (i >= 0) report.Repositories[i] = repo;
+				report.Save();
+			}
+		}
 
 		/// <summary>Replaces one item (or drops it, when <paramref name="replacement"/> is null) in the saved report.</summary>
 		public static void Update(string id, DevItem? replacement) {
@@ -111,6 +124,10 @@ namespace VDF.Agent {
 				TempItems(cfg.TempOlderThanDays).ToList()));
 
 			report.Categories.RemoveAll(c => c.Items.Count == 0);
+			// Main checkouts only: a repository's worktrees share its branches.
+			report.Repositories = repos.Where(r => Directory.Exists(Path.Combine(r, ".git")))
+				.Select(BranchPruner.Inspect).Where(r => r != null).Select(r => r!)
+				.OrderByDescending(r => r.Merged.Count).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
 			report.DurationSec = Math.Round(timer.Elapsed.TotalSeconds, 1);
 			return report;
 		}
@@ -470,6 +487,93 @@ namespace VDF.Agent {
 			Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(kind + "|" + key.ToLowerInvariant())))[..16].ToLowerInvariant();
 	}
 
+	/// <summary>A repository's local branches, and those already merged into its remote's default branch.</summary>
+	sealed record RepoBranches(string Id, string Name, string Path, string? Default, int LocalBranches, List<string> Merged,
+		List<string> CheckedOut, string? Note);
+
+	sealed record PruneKept(string Branch, string Reason);
+	sealed record PruneResult(List<string> Deleted, List<PruneKept> Kept, bool Fetched, string? Error);
+
+	/// <summary>
+	/// Deletes local branches that are merged into the remote's default branch (origin/main or origin/master),
+	/// the tidy-up developers do with a PowerShell one-liner, with the guards spelled out:
+	/// <list type="bullet">
+	/// <item>it fetches first (fetch --prune), so "merged" means merged on the remote; if the fetch fails, the
+	/// last fetched state is used, which only ever finds fewer branches;</item>
+	/// <item>only branches whose every commit is in the default branch (git branch --merged);</item>
+	/// <item>never main, master, develop, dev, trunk, the default branch, or a branch checked out in any worktree;</item>
+	/// <item>git branch -d first; -D only when git objects that the branch isn't merged into the current branch,
+	/// after checking again that it is an ancestor of the remote default.</item>
+	/// </list>
+	/// Remote branches are never touched.
+	/// </summary>
+	static class BranchPruner {
+		static readonly HashSet<string> Protected = new(StringComparer.OrdinalIgnoreCase) { "main", "master", "develop", "dev", "trunk" };
+
+		/// <summary>From what's already fetched: no network.</summary>
+		public static RepoBranches? Inspect(string repo) {
+			if (Git.Exe == null) return null;
+			string name = System.IO.Path.GetFileName(repo.TrimEnd('\\'));
+			string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("branches|" + repo.ToLowerInvariant())))[..16].ToLowerInvariant();
+			var (rc, remotes) = Git.Run(repo, "remote");
+			var remoteList = remotes.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+			if (rc != 0 || remoteList.Count == 0) return null; // no remote: nothing is "merged on the remote"
+			string remote = remoteList.Contains("origin") ? "origin" : remoteList[0];
+			string? defaultRef = DefaultBranch(repo, remote);
+			var (_, all) = Git.Run(repo, "branch", "--format=%(refname:short)");
+			int local = Lines(all).Count;
+			if (defaultRef == null)
+				return new RepoBranches(id, name, repo, null, local, new(), new(), $"No {remote}/main or {remote}/master to compare with");
+			var (mc, mergedText) = Git.Run(repo, "branch", "--format=%(refname:short)", "--merged", defaultRef);
+			if (mc != 0) return new RepoBranches(id, name, repo, defaultRef, local, new(), new(), "git couldn't list merged branches");
+			string defaultShort = defaultRef[(defaultRef.IndexOf('/') + 1)..];
+			var checkedOut = CheckedOutBranches(repo);
+			var merged = Lines(mergedText).Where(b => !Protected.Contains(b) && !b.Equals(defaultShort, StringComparison.OrdinalIgnoreCase)).ToList();
+			return new RepoBranches(id, name, repo, defaultRef, local,
+				merged.Where(b => !checkedOut.Contains(b)).ToList(), merged.Where(checkedOut.Contains).ToList(), null);
+		}
+
+		public static PruneResult Prune(string repo) {
+			if (Git.Exe == null) return new PruneResult(new(), new(), false, "git not found");
+			var (_, remotes) = Git.Run(repo, "remote");
+			var remoteList = Lines(remotes);
+			if (remoteList.Count == 0) return new PruneResult(new(), new(), false, "The repository has no remote");
+			string remote = remoteList.Contains("origin") ? "origin" : remoteList[0];
+			bool fetched = Git.Run(repo, "fetch", "--prune", "--quiet", remote).Code == 0;
+			RepoBranches? state = Inspect(repo);
+			if (state?.Default == null) return new PruneResult(new(), new(), fetched, state?.Note ?? "Nothing to compare with");
+			var deleted = new List<string>();
+			var kept = state.CheckedOut.Select(b => new PruneKept(b, "checked out in a worktree")).ToList();
+			foreach (string branch in state.Merged) {
+				var (code, output) = Git.Run(repo, "branch", "-d", "--", branch);
+				if (code != 0 && output.Contains("not fully merged", StringComparison.OrdinalIgnoreCase) &&
+					Git.Run(repo, "merge-base", "--is-ancestor", "refs/heads/" + branch, state.Default).Code == 0)
+					(code, output) = Git.Run(repo, "branch", "-D", "--", branch); // merged on the remote, just not into this checkout
+				if (code == 0) deleted.Add(branch);
+				else kept.Add(new PruneKept(branch, FirstLine(output)));
+			}
+			return new PruneResult(deleted, kept, fetched, null);
+		}
+
+		static string? DefaultBranch(string repo, string remote) {
+			var (code, head) = Git.Run(repo, "symbolic-ref", "--quiet", "--short", $"refs/remotes/{remote}/HEAD");
+			if (code == 0 && head.Trim().Length > 0) return head.Trim();
+			foreach (string b in new[] { "main", "master" })
+				if (Git.Run(repo, "rev-parse", "--verify", "--quiet", $"refs/remotes/{remote}/{b}").Code == 0)
+					return $"{remote}/{b}";
+			return null;
+		}
+
+		static HashSet<string> CheckedOutBranches(string repo) {
+			var (_, text) = Git.Run(repo, "worktree", "list", "--porcelain");
+			return Lines(text).Where(l => l.StartsWith("branch refs/heads/", StringComparison.Ordinal))
+				.Select(l => l["branch refs/heads/".Length..]).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		}
+
+		static List<string> Lines(string text) => text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
+		static string FirstLine(string text) => Lines(text).FirstOrDefault() ?? "git refused";
+	}
+
 	/// <summary>One developer-mode check at a time (dev-scan.lock), from the scheduled scan or the page.</summary>
 	static class DevScan {
 		static string LockPath => Path.Combine(AgentPaths.Home, "dev-scan.lock");
@@ -521,6 +625,7 @@ namespace VDF.Agent {
 		public static (int Code, string Output) Run(string workingDir, params string[] args) {
 			if (Exe == null) return (-1, "");
 			var psi = new ProcessStartInfo(Exe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			psi.Environment["GIT_TERMINAL_PROMPT"] = "0"; // a fetch that needs a password fails instead of waiting forever
 			psi.ArgumentList.Add("-C");
 			psi.ArgumentList.Add(workingDir);
 			foreach (string a in args) psi.ArgumentList.Add(a);

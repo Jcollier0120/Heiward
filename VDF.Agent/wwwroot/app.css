@@ -200,6 +200,10 @@ button { font: inherit; color: inherit; }
 .dev-row.exempt { cursor: default; }
 .dev-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-weight: 600; }
 .tag.suggested { border-color: transparent; background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+.repo-row td { vertical-align: top; }
+.repo-row .btn { white-space: nowrap; }
+.branches summary { cursor: pointer; color: var(--accent); margin-top: 2px; }
+.branch-list { margin-top: 2px; }
 
 .history summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); padding: 4px 0; }
 .done-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }

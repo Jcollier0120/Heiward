@@ -80,6 +80,14 @@ Once a day, after a scheduled scan, it also looks for what development tools lea
 
 Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `vdf-agent dev` shows the last check; `vdf-agent dev --scan` checks now. Set `"developerMode": "off"` to turn it off.
 
+**Merged branches.** Each repository with a remote gets a **Prune** button:
+- It fetches first (`git fetch --prune`), then deletes the local branches already merged into the remote's default branch (`origin/HEAD`, else `main` or `master`).
+- It never deletes `main`, `master`, `develop`, `dev`, `trunk` or a branch checked out in any worktree.
+- It uses `git branch -d`; `-D` only when git objects that the branch isn't merged into the current checkout, after re-checking that it is in the remote's default branch.
+- Branches on the remote are never touched.
+
+From a terminal: `vdf-agent dev --prune-branches <repo>`.
+
 ## Sharing the NPU
 
 Other NPU tools on the PC can use the NPU at the same time, for example npu-agent's maintenance jobs, which run a local LLM on the NPU. The agent takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists:
@@ -114,6 +122,7 @@ vdf-agent open            open the review page
 vdf-agent status          settings, last scan, schedule, NPU lock
 vdf-agent scope [--count] what a scan looks at and leaves out
 vdf-agent dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
+vdf-agent dev --prune-branches <repo>   delete local branches merged into the remote's main/master
 vdf-agent setup           download FFmpeg and the AI components
 vdf-agent install         [--dry-run] [--yes] [--device npu|gpu|cpu]
 vdf-agent uninstall       [--purge] [--dry-run]
