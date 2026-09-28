@@ -86,8 +86,9 @@ button { font: inherit; color: inherit; }
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
 .brand-mark { width: 22px; height: 22px; }
-.bm-back { fill: var(--folder); }
-.bm-front { fill: var(--accent); opacity: 0.9; }
+.bm-back { fill: var(--ok-bg); stroke: var(--ok); stroke-width: 1.6; stroke-linejoin: round; }
+.bm-front { fill: var(--ok); }
+.bm-vein { stroke: var(--ok-bg); stroke-width: 1.2; stroke-linecap: round; fill: none; }
 .scanstate { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .progress { width: 160px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .progress .bar { height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
@@ -279,6 +280,8 @@ button { font: inherit; color: inherit; }
 .done-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 footer { margin-top: 28px; }
 footer code { font-size: 12px; }
+footer .about { margin-top: 10px; }
+footer a { color: var(--accent); }
 
 /* ---- Folder view: navigation pane + content ---- */
 .split { display: grid; grid-template-columns: minmax(240px, 300px) 1fr; overflow: hidden; }

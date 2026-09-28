@@ -27,7 +27,7 @@ public sealed class SchedulerTests {
 
 	[Fact]
 	public void ScanTask_WithoutAnNpu_RepeatsEverySixHours_AndNotOnBattery() {
-		string xml = Scheduler.ScanXml(new AgentConfig { ScanEveryMinutes = Installer.GpuCpuScanMinutes, ScanOnBattery = false }, @"C:\x\vdf-agent.exe");
+		string xml = Scheduler.ScanXml(new AgentConfig { ScanEveryMinutes = Installer.GpuCpuScanMinutes, ScanOnBattery = false }, @"C:\x\hei.exe");
 		Assert.Contains("<Interval>PT360M</Interval>", xml);
 		Assert.Contains("<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>", xml);
 		Assert.Contains("scan --notify --scheduled", xml);

@@ -20,23 +20,23 @@ using System.Text.Json.Serialization;
 namespace VDF.Agent {
 	/// <summary>Where the agent keeps its state: one folder, nothing inside the scanned libraries.</summary>
 	static class AgentPaths {
-		/// <summary>%LOCALAPPDATA%\VDF Agent, or VDF_AGENT_HOME.</summary>
+		/// <summary>%LOCALAPPDATA%\Heiward, or HEIWARD_HOME.</summary>
 		public static string Home {
 			get {
-				string? overridden = Environment.GetEnvironmentVariable("VDF_AGENT_HOME");
+				string? overridden = Environment.GetEnvironmentVariable("HEIWARD_HOME");
 				return !string.IsNullOrWhiteSpace(overridden)
 					? overridden
-					: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VDF Agent");
+					: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Heiward");
 			}
 		}
-		public static string Config => Path.Combine(Home, "agent.json");
+		public static string Config => Path.Combine(Home, "settings.json");
 		public static string Report => Path.Combine(Home, "report.json");
 		public static string Decisions => Path.Combine(Home, "decisions.json");
 		public static string ScanStatus => Path.Combine(Home, "scan-status.json");
 		public static string ScanLock => Path.Combine(Home, "scan.lock");
 		public static string Database => Path.Combine(Home, "db");
 		public static string Thumbnails => Path.Combine(Home, "thumbs");
-		public static string Log => Path.Combine(Home, "agent.log");
+		public static string Log => Path.Combine(Home, "heiward.log");
 
 		/// <summary>Writes a file atomically (temp file, then replace), so readers never see half of it.</summary>
 		public static void WriteAtomic(string path, string contents) {
@@ -80,7 +80,7 @@ namespace VDF.Agent {
 		}
 	}
 
-	/// <summary>The user's choices, in agent.json. Every field has a working default.</summary>
+	/// <summary>The user's choices, in settings.json. Every field has a working default.</summary>
 	sealed class AgentConfig {
 		/// <summary>
 		/// Scan every fixed drive, minus Windows', apps', games' and other programs' own folders
@@ -145,7 +145,7 @@ namespace VDF.Agent {
 					return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(AgentPaths.Config), Json) ?? new AgentConfig();
 			}
 			catch (Exception e) {
-				AgentPaths.AppendLog($"agent.json unreadable, using defaults: {e.Message}");
+				AgentPaths.AppendLog($"settings.json unreadable, using defaults: {e.Message}");
 			}
 			return new AgentConfig();
 		}

@@ -25,23 +25,23 @@ namespace VDF.Agent {
 	/// <summary>
 	/// The whole install, per user and without admin rights, from the one self-contained exe:
 	/// <list type="number">
-	/// <item>copy the exe to %LOCALAPPDATA%\Programs\VDF Agent (its downloads land next to it);</item>
+	/// <item>copy the exe to %LOCALAPPDATA%\Programs\Heiward (its downloads land next to it);</item>
 	/// <item>fetch FFmpeg, the AI runtime and model, and on Snapdragon PCs the NPU pack; probe the NPU;</item>
-	/// <item>write agent.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
+	/// <item>write settings.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
 	/// <item>register the scan task and the sign-in "open the review page" task;</item>
-	/// <item>add a Start menu entry and an Apps &amp; Features entry (so Windows can uninstall it);</item>
+	/// <item>add a Start menu entry, the name its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
 	/// <item>start the first scan and open the review page.</item>
 	/// </list>
 	/// <c>--dry-run</c> prints every step without changing anything.
 	/// </summary>
 	static class Installer {
-		const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\VDFAgent";
-		const string DisplayName = "Duplicate check (VDF Agent)";
+		const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward";
+		const string DisplayName = "Heiward";
 
-		public static string InstallDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "VDF Agent");
-		public static string InstalledExe => Path.Combine(InstallDir, "vdf-agent.exe");
-		static string StartMenuShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Duplicate check.lnk");
-		static string CurrentExe => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "vdf-agent.exe");
+		public static string InstallDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Heiward");
+		public static string InstalledExe => Path.Combine(InstallDir, "hei.exe");
+		static string StartMenuShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Heiward.lnk");
+		static string CurrentExe => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
 		public static bool RunningInstalled => string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
 
 		/// <summary>Scheduled scans without an NPU: every 6 hours, on AC power.</summary>
@@ -134,6 +134,8 @@ namespace VDF.Agent {
 
 			Step($"Start menu: {StartMenuShortcut}");
 			if (!dryRun) CreateShortcut(StartMenuShortcut);
+			Step($"Notifications: shown as {DisplayName} (HKCU\\{Toast.AppIdKey})");
+			if (!dryRun) Toast.Register(DisplayName);
 			Step($"Apps & Features entry: HKCU\\{UninstallKey}");
 			if (!dryRun) RegisterUninstall();
 
@@ -149,9 +151,10 @@ namespace VDF.Agent {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
 			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
-			Step($"Remove {StartMenuShortcut} and the Apps & Features entry");
+			Step($"Remove {StartMenuShortcut}, the notification name and the Apps & Features entry");
 			if (!dryRun) {
 				try { File.Delete(StartMenuShortcut); } catch { }
+				Toast.Unregister();
 				try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
 				StopRunningAgents();
 			}
@@ -193,7 +196,7 @@ namespace VDF.Agent {
 			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('d');
 		}
 
-		/// <summary>Runs "vdf-agent probe --device {device}" in its own process: true when the model runs there.</summary>
+		/// <summary>Runs "hei probe --device {device}" in its own process: true when the model runs there.</summary>
 		static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct) {
 			var psi = new ProcessStartInfo(InstalledExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
 			psi.ArgumentList.Add("probe");
@@ -206,9 +209,9 @@ namespace VDF.Agent {
 			return p.ExitCode == 0;
 		}
 
-		/// <summary>Stops other vdf-agent processes (a review page or a scan) so the exe can be replaced or removed.</summary>
+		/// <summary>Stops other hei processes (a review page or a scan) so the exe can be replaced or removed.</summary>
 		static void StopRunningAgents() {
-			foreach (var p in Process.GetProcessesByName("vdf-agent").Where(p => p.Id != Environment.ProcessId)) {
+			foreach (var p in Process.GetProcessesByName("hei").Where(p => p.Id != Environment.ProcessId)) {
 				try { p.Kill(entireProcessTree: true); p.WaitForExit(5000); } catch { }
 				p.Dispose();
 			}
@@ -222,7 +225,7 @@ namespace VDF.Agent {
 				$s.TargetPath = '{conhost}'
 				$s.Arguments = '--headless "{InstalledExe.Replace("'", "''")}" open'
 				$s.IconLocation = '{InstalledExe.Replace("'", "''")},0'
-				$s.Description = 'Review likely duplicate photos and videos'
+				$s.Description = 'Review duplicate photos and videos, and stale developer files'
 				$s.WorkingDirectory = '{InstallDir.Replace("'", "''")}'
 				$s.Save()
 				""";
@@ -234,7 +237,7 @@ namespace VDF.Agent {
 			string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
 			key.SetValue("DisplayName", DisplayName);
 			key.SetValue("DisplayVersion", version);
-			key.SetValue("Publisher", "VDF Agent (Video Duplicate Finder fork)");
+			key.SetValue("Publisher", "Heiward (based on Video Duplicate Finder)");
 			key.SetValue("DisplayIcon", InstalledExe);
 			key.SetValue("InstallLocation", InstallDir);
 			key.SetValue("UninstallString", $"\"{InstalledExe}\" uninstall");

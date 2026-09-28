@@ -16,14 +16,34 @@
 
 using System.Diagnostics;
 using System.Text;
+using Microsoft.Win32;
 
 namespace VDF.Agent {
 	/// <summary>
-	/// A Windows notification through Windows PowerShell's WinRT projection, under PowerShell's own
-	/// AppUserModelID: no registered app, no extra package. Clicking it opens the review page.
+	/// A Windows notification through Windows PowerShell's WinRT projection: no extra package. The install
+	/// registers an AppUserModelID (a registry key, no shortcut needed) so notifications say "Heiward";
+	/// a copy that isn't installed sends them under PowerShell's own. Clicking one opens the review page.
 	/// </summary>
 	static class Toast {
 		const string PowerShellAumid = @"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
+		const string AppId = "Heiward";
+		public const string AppIdKey = @"Software\Classes\AppUserModelId\" + AppId;
+
+		public static void Register(string displayName) {
+			using RegistryKey key = Registry.CurrentUser.CreateSubKey(AppIdKey);
+			key.SetValue("DisplayName", displayName);
+		}
+
+		public static void Unregister() {
+			try { Registry.CurrentUser.DeleteSubKeyTree(AppIdKey, throwOnMissingSubKey: false); } catch { }
+		}
+
+		static string SenderId {
+			get {
+				using RegistryKey? key = Registry.CurrentUser.OpenSubKey(AppIdKey);
+				return key != null ? AppId : PowerShellAumid;
+			}
+		}
 
 		const string Script = """
 			$ErrorActionPreference = 'Stop'
@@ -43,7 +63,7 @@ namespace VDF.Agent {
 					psi.ArgumentList.Add(a);
 				psi.Environment["VDF_TOAST_TITLE"] = title.Length > 120 ? title[..120] : title;
 				psi.Environment["VDF_TOAST_BODY"] = body.Length > 400 ? body[..400] : body;
-				psi.Environment["VDF_TOAST_APPID"] = PowerShellAumid;
+				psi.Environment["VDF_TOAST_APPID"] = SenderId;
 				psi.Environment["VDF_TOAST_LAUNCH"] = launchUrl;
 				using var p = Process.Start(psi)!;
 				string err = await p.StandardError.ReadToEndAsync();

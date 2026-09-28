@@ -7,7 +7,11 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>vdf-agent</AssemblyName>
+    <!-- The command is "hei"; Task Manager and file properties show the product name. -->
+    <AssemblyName>hei</AssemblyName>
+    <Product>Heiward</Product>
+    <AssemblyTitle>Heiward</AssemblyTitle>
+    <Description>Finds duplicate photos and videos, and stale developer files, for you to review. Based on Video Duplicate Finder.</Description>
     <RootNamespace>VDF.Agent</RootNamespace>
     <!-- The review page's files are compiled in: one exe, nothing to serve from disk. -->
     <EnableDefaultContentItems>false</EnableDefaultContentItems>

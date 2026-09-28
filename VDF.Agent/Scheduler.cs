@@ -31,8 +31,8 @@ namespace VDF.Agent {
 	/// Both run through conhost --headless: the console app gets its console, the user no window.
 	/// </summary>
 	static class Scheduler {
-		public const string Folder = @"VDF Agent";
-		public const string ScanTask = Folder + @"\Duplicate scan";
+		public const string Folder = @"Heiward";
+		public const string ScanTask = Folder + @"\Scan";
 		public const string OpenTask = Folder + @"\Open review page";
 
 		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
@@ -102,7 +102,7 @@ namespace VDF.Agent {
 			""";
 
 		public static void Register(string name, string xml) {
-			string file = Path.Combine(Path.GetTempPath(), $"vdf-agent-task-{Guid.NewGuid():N}.xml");
+			string file = Path.Combine(Path.GetTempPath(), $"heiward-task-{Guid.NewGuid():N}.xml");
 			File.WriteAllText(file, xml, System.Text.Encoding.Unicode);
 			try {
 				(int code, string output) = Run("/Create", "/TN", name, "/XML", file, "/F");

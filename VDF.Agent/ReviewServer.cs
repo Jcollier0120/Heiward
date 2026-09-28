@@ -75,7 +75,7 @@ namespace VDF.Agent {
 			// Revalidated on every load, so an updated agent's page never runs yesterday's script.
 			app.MapGet("/app.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/app.css", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.css"), "text/css; charset=utf-8"); });
-			app.MapGet("/api/ping", () => Results.Json(new { app = "vdf-agent" }));
+			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward" }));
 			app.MapGet("/api/state", () => Results.Json(State(cfg), AgentConfig.Json));
 			// Folder names only, and only below what the agent scans (a GET from another site can't read
 			// the answer: no CORS, and a foreign Host header is refused above).
@@ -83,7 +83,7 @@ namespace VDF.Agent {
 				var decisions = DecisionStore.Load();
 				var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
 				TreeListing? listing = ExplorerView.Tree(path, all == true, cfg, ScanIndex.Load(), pending);
-				return listing == null ? Results.NotFound(new { error = "That folder isn't one the agent scans." }) : Results.Json(listing, AgentConfig.Json);
+				return listing == null ? Results.NotFound(new { error = "That folder isn't one Heiward scans." }) : Results.Json(listing, AgentConfig.Json);
 			});
 
 			app.MapGet("/api/thumb/{key}/{index:int}", (string key, int index, HttpContext ctx) => {
@@ -243,7 +243,7 @@ namespace VDF.Agent {
 			try {
 				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
 				string body = await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping");
-				return body.Contains("vdf-agent", StringComparison.Ordinal);
+				return body.Contains("\"heiward\"", StringComparison.Ordinal);
 			}
 			catch { return false; }
 		}
@@ -255,7 +255,7 @@ namespace VDF.Agent {
 		}
 
 		static void StartDetached(params string[] args) {
-			var psi = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "vdf-agent.exe")) { UseShellExecute = false, CreateNoWindow = true };
+			var psi = new ProcessStartInfo(Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			Process.Start(psi);
 		}

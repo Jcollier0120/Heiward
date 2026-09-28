@@ -1,8 +1,10 @@
-# VDF Agent: duplicate check in the background
+# Heiward
 
-`vdf-agent` looks through your photo and video folders for likely duplicates and lists them on a local review page. It never deletes anything on its own. Files you tick go to the Recycle Bin, where you can restore them.
+Heiward tends your drives. It looks for likely duplicate photos and videos and, in developer mode, stale developer files, and lists them on a local review page. It never deletes anything on its own. Files you tick go to the Recycle Bin, where you can restore them.
 
-It is built on Video Duplicate Finder's engine. The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
+A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound. The command is `hei`.
+
+Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videoduplicatefinder) and uses its engine. Like it, Heiward is free software under the GNU AGPL v3. The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
 - the **NPU** of a Snapdragon PC: fast, and it barely uses power, so scans can run every hour;
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
@@ -11,20 +13,20 @@ Scheduled scans run in Windows' efficiency mode (EcoQoS), on efficient cores at 
 
 ## Install
 
-Download `vdf-agent.exe` and run it. It is one self-contained file: no .NET, no admin rights. It then:
+Download `hei.exe` and run it. It is one self-contained file: no .NET, no admin rights. It then:
 
-1. copies itself to `%LOCALAPPDATA%\Programs\VDF Agent`;
+1. copies itself to `%LOCALAPPDATA%\Programs\Heiward`;
 2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack on Snapdragon PCs. Every download is SHA-256 pinned;
 3. checks for an NPU. Without one, it asks whether the AI should run on the **GPU** or the **CPU**;
 4. schedules scans with Task Scheduler (per user):
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
 5. opens the review page in your browser once a day at sign-in, and only when something waits for review;
-6. adds **Duplicate check** to the Start menu, and an entry in Apps & Features so Windows can uninstall it.
+6. adds **Heiward** to the Start menu, registers the name its notifications show, and adds an entry in Apps & Features so Windows can uninstall it.
 
-Unattended: `vdf-agent install --yes --device gpu` (add `--on-demand` for no scheduled scans). Preview every step without changing anything: `vdf-agent install --dry-run`.
+Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans). Preview every step without changing anything: `hei install --dry-run`.
 
-The agent does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
+Heiward does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
 
 ## What it decides, and what it leaves to you
 
@@ -64,7 +66,7 @@ Every fixed drive: internal drives, and external disks that Windows reports as f
 | `AccountPictures` | Windows' account picture at nine sizes |
 | Folder links (junctions, symbolic links) | Scanned where they point, not twice |
 
-`vdf-agent scope` lists all of it; `vdf-agent scope --count` also counts the photos and videos per folder, without opening any file. Add your own with `excludeFolders`.
+`hei scope` lists all of it; `hei scope --count` also counts the photos and videos per folder, without opening any file. Add your own with `excludeFolders`.
 
 ## Developer mode
 
@@ -72,7 +74,7 @@ Once a day, after a scheduled scan, it also looks for what development tools lea
 
 The page is organised by project:
 - **Each repository** has its own page, with a section per cleanup area: build outputs, worktrees and merged branches.
-- **Projects:** "Group repositories into a project" bundles repositories that belong together, such as an app and its backend, under one name. The bundles are saved in `agent.json` (`devProjects`), and a project's page can take a repository out or ungroup it.
+- **Projects:** "Group repositories into a project" bundles repositories that belong together, such as an app and its backend, under one name. The bundles are saved in `settings.json` (`devProjects`), and a project's page can take a repository out or ungroup it.
 - **Shared by all projects:** package caches, emulators and temp files, since they belong to no single repository.
 
 Tick items anywhere; a selection bar at the bottom cleans them all at once.
@@ -85,7 +87,7 @@ Tick items anywhere; a selection bar at the bottom cleans them all at once.
 | Android emulators and system images | the AVD folder and the SDK's `system-images` | system images no emulator uses. Emulators themselves aren't ticked, since they hold app data. Blocked while an emulator runs |
 | Temp files and crash dumps | `%TEMP%` entries untouched for 7 days (`tempOlderThanDays`), `%LOCALAPPDATA%\CrashDumps` | yes |
 
-Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `vdf-agent dev` shows the last check; `vdf-agent dev --scan` checks now. Set `"developerMode": "off"` to turn it off.
+Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `hei dev` shows the last check; `hei dev --scan` checks now. Set `"developerMode": "off"` to turn it off.
 
 **Merged branches.** Each repository with a remote gets a **Prune** button:
 - It fetches first (`git fetch --prune`), then deletes the local branches already merged into the remote's default branch (`origin/HEAD`, else `main` or `master`).
@@ -93,17 +95,17 @@ Deletion never follows a link (pnpm's `node_modules` are full of junctions into 
 - It uses `git branch -d`; `-D` only when git objects that the branch isn't merged into the current checkout, after re-checking that it is in the remote's default branch.
 - Branches on the remote are never touched.
 
-From a terminal: `vdf-agent dev --prune-branches <repo>`.
+From a terminal: `hei dev --prune-branches <repo>`.
 
 ## Sharing the NPU
 
-Other NPU tools on the PC can use the NPU at the same time, for example npu-agent's maintenance jobs, which run a local LLM on the NPU. The agent takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists:
+Other NPU tools on the PC can use the NPU at the same time, for example npu-agent's maintenance jobs, which run a local LLM on the NPU. Heiward takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists:
 - it holds the lock for at most 2 seconds at a time, so the other tool never waits longer than that;
 - a stuck holder is evicted after 10 minutes.
 
 ## Settings
 
-`%LOCALAPPDATA%\VDF Agent\agent.json`. Every field has a default.
+`%LOCALAPPDATA%\Heiward\settings.json`. Every field has a default.
 
 | Field | Default | |
 |---|---|---|
@@ -123,16 +125,16 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 ## Commands
 
 ```
-vdf-agent                 install (or, once installed, open the review page)
-vdf-agent scan [--open]   scan now
-vdf-agent open            open the review page
-vdf-agent status          settings, last scan, schedule, NPU lock
-vdf-agent scope [--count] what a scan looks at and leaves out
-vdf-agent dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
-vdf-agent dev --prune-branches <repo>   delete local branches merged into the remote's main/master
-vdf-agent setup           download FFmpeg and the AI components
-vdf-agent install         [--dry-run] [--yes] [--device npu|gpu|cpu]
-vdf-agent uninstall       [--purge] [--dry-run]
+hei                 install (or, once installed, open the review page)
+hei scan [--open]   scan now
+hei open            open the review page
+hei status          settings, last scan, schedule, NPU lock
+hei scope [--count] what a scan looks at and leaves out
+hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
+hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
+hei setup           download FFmpeg and the AI components
+hei install         [--dry-run] [--yes] [--device npu|gpu|cpu]
+hei uninstall       [--purge] [--dry-run]
 ```
 
 ## The review page
@@ -164,4 +166,4 @@ dotnet test VDF.Agent.Tests -c Release
 dotnet publish VDF.Agent -c Release -r win-arm64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
 ```
 
-Use `-r win-x64` for Intel and AMD PCs. The single file is about 50 MB. Set `VDF_AGENT_HOME` to keep a test copy's settings and report somewhere else.
+Use `-r win-x64` for Intel and AMD PCs. The single file (`hei.exe`) is about 50 MB. Set `HEIWARD_HOME` to keep a test copy's settings and report somewhere else.

@@ -25,7 +25,7 @@ namespace VDF.Agent.Tests;
 /// different shots 94.3), so these tests pin the calibration, not just the code paths.
 /// </summary>
 public sealed class ReportBuilderTests : IDisposable {
-	readonly string dir = Path.Combine(Path.GetTempPath(), "vdf-agent-tests-" + Guid.NewGuid().ToString("N"));
+	readonly string dir = Path.Combine(Path.GetTempPath(), "heiward-tests-" + Guid.NewGuid().ToString("N"));
 	readonly Guid group = Guid.NewGuid();
 	readonly FakeFingerprints fingerprints = new();
 

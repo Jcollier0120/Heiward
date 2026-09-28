@@ -124,17 +124,17 @@ namespace VDF.Agent {
 			s.UseNativeFfmpegBinding = ScanEngine.NativeFFmpegExists;
 			foreach (string e in cfg.ExcludeExtensions) s.ExcludedExtensions.Add(e.StartsWith('.') ? e : "." + e);
 			if (s.ExcludedExtensions.Contains(".heic"))
-				notes.Add("HEIC/HEIF photos are skipped (agent.json, excludeExtensions).");
+				notes.Add("HEIC/HEIF photos are skipped (settings.json, excludeExtensions).");
 
 			if (!AiComponents.IsReady) {
 				s.UseAiMatching = false;
-				notes.Add("AI matching is off: run 'vdf-agent setup' to install it (finds cropped, edited and mirrored copies).");
+				notes.Add("AI matching is off: run 'hei setup' to install it (finds cropped, edited and mirrored copies).");
 			}
 			if (!FfmpegWorks()) {
 				// Photos decode through WIC without FFmpeg (HEIC too, slowly); videos can't. Leave them
 				// out and say so, rather than failing every video one by one.
 				foreach (string e in FileUtils.VideoExtensions) s.ExcludedExtensions.Add(e);
-				notes.Add("Videos were skipped and HEIC photos decode slowly: FFmpeg is missing or doesn't start on this PC. Run 'vdf-agent setup'.");
+				notes.Add("Videos were skipped and HEIC photos decode slowly: FFmpeg is missing or doesn't start on this PC. Run 'hei setup'.");
 			}
 			return s;
 		}

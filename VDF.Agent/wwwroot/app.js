@@ -467,7 +467,7 @@ const DEV_META = {
   temp: { short: 'Temp & dumps', icon: 'clock' },
 };
 const SHARED = ['caches', 'android', 'temp'];
-let devProjects = [];         // [{ name, repos: [path] }] from agent.json
+let devProjects = [];         // [{ name, repos: [path] }] from settings.json
 let devResult = null;         // [ok, message] after the last clean, shown until the next
 let groupMode = false;        // picking repositories to bundle into a project
 const groupPick = new Set();  // repository keys picked
@@ -1121,6 +1121,24 @@ function renderFooter(s) {
   const p = el('div', null, 'Settings: ');
   p.append(el('code', null, s.config.path));
   f.append(p);
+  f.append(aboutLine());
+}
+
+// The licence's "appropriate legal notices": whose work this is, that it's free to share, no warranty.
+function aboutLine() {
+  const link = (text, href) => {
+    const a = el('a', null, text);
+    a.href = href;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    return a;
+  };
+  const d = el('div', 'about', 'Heiward is based on ');
+  d.append(link('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
+    ' (© 0x90d and contributors). It is free software: you can share and change it under the ',
+    link('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
+    '. It comes with no warranty.');
+  return d;
 }
 
 // ---------------------------------------------------------------- folder tree
@@ -1273,7 +1291,7 @@ async function renderContent() {
   const data = await listing(path, showAll.has(key(path)));
   if (route.view !== 'folder' || !sameFolder(route.path, path)) return; // navigated on meanwhile
   if (!data) {
-    content.replaceChildren(el('div', 'empty-state', 'This folder isn\'t part of what the agent scans, or it no longer exists.'));
+    content.replaceChildren(el('div', 'empty-state', 'This folder isn\'t part of what Heiward scans, or it no longer exists.'));
     return;
   }
   const frag = document.createDocumentFragment();
@@ -1621,7 +1639,7 @@ async function renderRoute() {
     return;
   }
   if (!cardFor(route.path)) {
-    $('content').replaceChildren(el('div', 'empty-state', 'That folder isn\'t on a drive the agent scans.'));
+    $('content').replaceChildren(el('div', 'empty-state', 'That folder isn\'t on a drive Heiward scans.'));
     return;
   }
   const y = $('content').scrollTop;
@@ -1651,7 +1669,7 @@ async function refresh(force) {
     }
     timer = setTimeout(refresh, s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
-    showError('The agent is not responding (' + e.message + '). Run "vdf-agent open" to start it again.');
+    showError('Heiward is not responding (' + e.message + '). Run "hei open" to start it again.');
     timer = setTimeout(refresh, 5000);
   }
 }

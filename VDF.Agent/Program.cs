@@ -20,11 +20,11 @@ using VDF.Agent;
 using VDF.Core.AI;
 using VDF.Core.FFTools;
 
-// vdf-agent: finds likely duplicate photos and videos in the background (on the NPU when there is
-// one) and lists them on a local review page. It never deletes anything on its own; files the user
+// hei (Heiward): finds likely duplicate photos and videos in the background (on the NPU when there
+// is one), and stale developer files once a day, and lists them on a local review page. It never deletes anything on its own; files the user
 // ticks go to the Recycle Bin. Run without arguments, it installs itself (or, once installed, opens
 // the review page), so the one exe is also the installer.
-var root = new RootCommand("vdf-agent — finds likely duplicate photos and videos and lists them for review");
+var root = new RootCommand("hei — Heiward finds duplicate photos and videos, and stale developer files, and lists them for review");
 root.SetAction(async (_, ct) => {
 	if (Installer.RunningInstalled) {
 		await OpenReviewPageAsync(AgentConfig.Load(), ct);
@@ -132,7 +132,7 @@ root.Subcommands.Add(probe);
 root.Subcommands.Add(install);
 
 var purge = new Option<bool>("--purge") { Description = "Also delete settings, the report and caches." };
-var uninstall = new Command("uninstall", "Remove the agent, its tasks and shortcuts. Keeps the report and settings unless --purge.") { purge, dryRun };
+var uninstall = new Command("uninstall", "Remove Heiward, its tasks and shortcuts. Keeps the report and settings unless --purge.") { purge, dryRun };
 uninstall.SetAction(r => Installer.Uninstall(r.GetValue(purge), r.GetValue(dryRun)));
 root.Subcommands.Add(uninstall);
 
@@ -141,11 +141,11 @@ status.SetAction(_ => {
 	var cfg = AgentConfig.Load();
 	Console.WriteLine($"Installed: {(File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
-	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'vdf-agent scope')" : "")}");
+	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
 	var report = Report.Load();
-	if (report == null) Console.WriteLine("No scan yet: run 'vdf-agent scan'.");
+	if (report == null) Console.WriteLine("No scan yet: run 'hei scan'.");
 	else {
 		Console.WriteLine($"Last scan: {report.ScannedAtUtc.ToLocalTime():g}, {report.FilesScanned:N0} files in {report.DurationSec:N0} s, AI on {report.Device}");
 		var decisions = DecisionStore.Load();
@@ -153,7 +153,7 @@ status.SetAction(_ => {
 		Console.WriteLine($"To review: {pending.Count} set(s), up to {Format.Bytes(pending.Sum(g => g.ReclaimBytes))} to free");
 		foreach (string n in report.Notes) Console.WriteLine("  note: " + n);
 	}
-	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'vdf-agent install')"}");
+	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'hei install')"}");
 	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
 	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");
 	return 0;
@@ -175,7 +175,7 @@ dev.SetAction(r => {
 	}
 	DevReport? report = r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load();
 	if (report == null) {
-		Console.WriteLine("No developer check yet: run 'vdf-agent dev --scan'.");
+		Console.WriteLine("No developer check yet: run 'hei dev --scan'.");
 		return 0;
 	}
 	Console.WriteLine($"Checked {report.ScannedAtUtc.ToLocalTime():g} in {report.DurationSec:N0} s.");
