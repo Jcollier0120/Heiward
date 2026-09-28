@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="1.7 1.7 20.6 20.6">
+  <!-- Heiward's mark (the title bar's shield and leaf) for the browser tab, in the Light and Dark themes' greens. -->
+  <style>
+    .back { fill: #dff6e8; stroke: #0f7b3f; }
+    .front { fill: #0f7b3f; }
+    .vein { stroke: #dff6e8; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #173323; stroke: #6ccb8f; }
+      .front { fill: #6ccb8f; }
+      .vein { stroke: #173323; }
+    }
+  </style>
+  <path class="back" stroke-width="1.6" stroke-linejoin="round" d="M12 2.5 20 5.4v6.1c0 4.9-3.3 8.6-8 10-4.7-1.4-8-5.1-8-10V5.4z"/>
+  <path class="front" d="M8.2 16.2c-.4-4.9 2.6-8.2 7.6-8.4.3 5-2.9 8.2-7.6 8.4z"/>
+  <path class="vein" fill="none" stroke-width="1.2" stroke-linecap="round" d="M8.2 16.2 13 11.4"/>
+</svg>
