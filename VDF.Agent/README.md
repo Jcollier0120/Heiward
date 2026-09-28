@@ -186,7 +186,7 @@ powershell -ExecutionPolicy Bypass -File VDF.Agent\release.ps1
 It builds both exes into `artifacts\heiward` as `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe`, and writes `SHA256SUMS.txt`. The version is `VersionPrefix` in `VDF.Agent.csproj`. Then publish them:
 
 ```
-gh release create v<version> artifacts/heiward/* --target master --title "Heiward <version>" --notes "..."
+gh release create v<version> artifactsheiwardHeiward-<version>-x64.exe artifactsheiwardHeiward-<version>-arm64.exe artifactsheiwardSHA256SUMS.txt --target master --title "Heiward <version>" --notes "..."
 ```
 
-GitHub attaches the source code to every release by itself.
+The files are named one by one because PowerShell doesn't expand `*` for other programs. GitHub attaches the source code to every release by itself.
