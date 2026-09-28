@@ -13,7 +13,10 @@ Scheduled scans run in Windows' efficiency mode (EcoQoS), on efficient cores at 
 
 ## Install
 
-Download `hei.exe` and run it. It is one self-contained file: no .NET, no admin rights. It then:
+Download `hei.exe` and run it. There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself, checks every download against a pinned SHA-256, and runs its first scan. On a PC without an NPU it asks whether the AI should run on the **GPU** or the **CPU**, and whether to scan every 6 hours or only when you ask.
+
+<details>
+<summary>Everything the installer sets up</summary>
 
 1. copies itself to `%LOCALAPPDATA%\Programs\Heiward`;
 2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack on Snapdragon PCs. Every download is SHA-256 pinned;
@@ -23,6 +26,8 @@ Download `hei.exe` and run it. It is one self-contained file: no .NET, no admin 
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
 5. opens the review page in your browser once a day at sign-in, and only when something waits for review;
 6. adds **Heiward** to the Start menu, registers the name its notifications show, and adds an entry in Apps & Features so Windows can uninstall it.
+
+</details>
 
 Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans). Preview every step without changing anything: `hei install --dry-run`.
 
