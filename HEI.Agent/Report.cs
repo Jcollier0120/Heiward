@@ -205,24 +205,46 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// What stays with each kept file: its copies, edits and look-alikes at <see cref="MinAlikePercent"/>
-		/// or more. Burst shots of the kept file (<see cref="BurstSeries"/>) and less alike pictures leave;
-		/// what's left over is judged again around its own kept file, so a burst shot's copy in a backup
-		/// folder still finds its original. A set of one is no set.
+		/// or more, with one shot of each burst (<see cref="BurstSeries"/>) at most: the kept file, or else
+		/// the shot most like it. The burst's other shots leave, however alike, as do less alike pictures.
+		/// Without that, IMG_0569 and IMG_0570 both stayed as look-alikes of an older IMG_0538, and a
+		/// burst shot scoring 99.9% against a renamed copy of its neighbour was ticked as a resaved copy.
+		/// What's left over is judged again around its own kept file, so a burst shot's copy in a backup
+		/// folder still finds its original; a shot whose burst a set already shows goes only with its own
+		/// copies, not into a second set of the same look-alikes. A set of one is no set.
 		/// </summary>
 		static IEnumerable<List<DuplicateItem>> LeaveOutUnrelated(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			var rest = new List<DuplicateItem>(items);
+			var shown = new HashSet<DuplicateItem>(); // shots of a burst that a set already shows
 			while (rest.Count >= 2) {
 				DuplicateItem keep = PickKeeper(rest).Item1;
-				var set = rest.Where(i => ReferenceEquals(i, keep) || Belongs(i, keep, hashes, fingerprints, bursts)).ToList();
+				var set = new List<DuplicateItem> { keep };
+				var burstMates = new List<DuplicateItem>();
+				// The closest first: of two shots of one burst, the one more like the kept file stays.
+				var candidates = rest.Where(i => !ReferenceEquals(i, keep))
+					.Select(i => (Item: i, Relation: Relation(i, keep, hashes, fingerprints, bursts)))
+					.Select(c => (c.Item, c.Relation, Alike(c.Item, keep, c.Relation, fingerprints).Percent))
+					.OrderByDescending(c => c.Relation == "identical").ThenByDescending(c => IsPlainCopy(c.Relation)).ThenByDescending(c => c.Percent)
+					.ToList();
+				foreach (var (i, relation, percent) in candidates) {
+					if (relation == "identical") {
+						set.Add(i);
+						continue;
+					}
+					if (relation == "burst" || set.Skip(1).Any(s => bursts.AreSiblings(s.Path, i.Path) && !(s.SizeLong == i.SizeLong && hashes.Same(s.Path, i.Path)))) {
+						burstMates.Add(i);
+						continue;
+					}
+					if (percent < MinAlikePercent || (!IsPlainCopy(relation) && (shown.Contains(keep) || shown.Contains(i))))
+						continue;
+					set.Add(i);
+				}
 				rest.RemoveAll(set.Contains);
-				if (set.Count >= 2)
+				if (set.Count >= 2) {
+					shown.UnionWith(burstMates);
 					yield return set;
+				}
 			}
-		}
-
-		static bool Belongs(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
-			string relation = Relation(i, keep, hashes, fingerprints, bursts);
-			return relation != "burst" && Alike(i, keep, relation, fingerprints).Percent >= MinAlikePercent;
 		}
 
 		/// <summary>

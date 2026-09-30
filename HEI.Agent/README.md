@@ -52,7 +52,10 @@ Code decides everything shown on the page. No model output is trusted to delete 
 | Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only | no |
 
 **Not listed at all:**
-- **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. Heiward sorts the names in each folder and checks whether a photo sits in such a series; if it or the kept photo does, and their numbers are at most 20 apart, it leaves the set. A byte-identical copy of a burst shot, say in a backup folder, still shows up as a copy of that shot. `(1)`, ` - Copy`, `_Original` and `-edited` are the same shot, not the next one.
+- **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. So are photos named after the time they were taken a few seconds apart, like `20201105_205359` and `20201105_205401` (Samsung), `PXL_…` (Pixel) or `Screenshot_…`.
+  - Heiward sorts the names in each folder and checks whether a photo sits in such a series. Two photos are shots of one burst when one of them does, and their numbers are at most 20 apart, or their times at most 5 minutes.
+  - A set holds one shot of a burst at most: the kept photo, or else the shot most like it. The burst's other shots leave the set.
+  - A byte-identical copy of a burst shot, say in a backup folder, still shows up as a copy of that shot. `(1)`, ` - Copy`, `_Original` and `-edited` are the same shot, not the next one.
 - **Pictures less than 75% alike** to the kept one (the percentage the page shows). The engine's sets chain, so a picture like one that is like another could end up in a set it has nothing to do with.
 
 A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a file in that folder is kept as it is and leaves the list, as one line in History, where **review again** brings them back.
