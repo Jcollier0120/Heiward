@@ -14,8 +14,9 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
 - **`Heiward.exe`**, the Start menu entry. It's `hei.exe`'s .NET app host with the Windows GUI subsystem, so it runs `hei open` without a console window.
 - **The `hei` command** in a terminal, as an app execution alias. The alias's path, `%LOCALAPPDATA%\Microsoft\WindowsApps\hei.exe`, stays the same across updates while the package's own folder changes with every version. That makes it the path for the scheduled tasks.
 - **FFmpeg** in `bin\`, where Heiward looks for it first. The Store signs it with the rest of the package, so Smart App Control lets it load, and nothing is downloaded after install. Its licenses and build notes are in `licenses\FFmpeg`.
-  - **arm64:** the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), the same pinned release the GitHub exe downloads.
-  - **x64:** not chosen yet. Until it is, `store.ps1` builds only with `-Arch arm64`.
+  - It's the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), pinned by release and SHA-256.
+  - **arm64:** `n8.1.3-2`, the same one the GitHub exe downloads.
+  - **x64:** `n8.1.3-3`, the same configuration built for x64.
 - **Logos** in `Store\Assets`, rendered from `wwwroot\favicon.svg` by `make-icon.ps1`, and a `resources.pri` that lets Windows pick one per size.
 
 ## Partner Center
@@ -62,5 +63,3 @@ The package builds and Windows accepts it, but Heiward doesn't run as a packaged
   - **How hard to work:** every PC gets this question.
     - **Background:** low power and efficient, on the NPU as much as possible, a bit slower.
     - **Full speed:** as many resources as it takes, to finish as fast as possible.
-- **Process lookups:** `GetProcessesByName("hei")` also counts `Heiward`, the Start menu entry's process.
-- **FFmpeg on x64:** the lean build is Arm-only. The x64 package needs its own pinned build in `$ffmpegBuilds` in `store.ps1`.

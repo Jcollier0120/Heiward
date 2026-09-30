@@ -26,6 +26,11 @@ $ffmpegBuilds = @{
 		Url = 'https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-2/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip'
 		Sha256 = 'c85a17d94e8f9e75f9d2ce01d29ae2c1feb6c1d0cc85c13c3662e165d45ec74e'
 	}
+	# The same lean configuration built for x64 (the GitHub exe downloads BtbN's build there).
+	x64 = @{
+		Url = 'https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-3/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip'
+		Sha256 = '8d4eb0811d0d3260eeeb1442d7e983cf4f66fa70fbb9ffea39c8ca4d77c520c9'
+	}
 }
 
 if (-not ((dotnet --list-sdks 2>$null) -match '^10\.')) {
