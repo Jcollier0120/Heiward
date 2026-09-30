@@ -32,8 +32,12 @@ public sealed class ReportBuilderTests : IDisposable {
 	/// <summary>Each file's similarity to whichever file ends up kept (the builder asks "file vs keeper").</summary>
 	sealed class FakeFingerprints : IFingerprints {
 		public readonly Dictionary<string, (float Gray, float? Ai)> ToKeeper = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>A video's soundtrack against the kept one's (unset: no sound to compare).</summary>
+		public readonly Dictionary<string, float> AudioToKeeper = new(StringComparer.OrdinalIgnoreCase);
 		public float? GrayPercent(string a, string b) => ToKeeper.TryGetValue(a, out var v) ? v.Gray : null;
 		public float? AiPercent(string a, string b) => ToKeeper.TryGetValue(a, out var v) ? v.Ai : null;
+		public float? AudioPercent(string a, string b) =>
+			AudioToKeeper.TryGetValue(a, out float x) ? x : AudioToKeeper.TryGetValue(b, out float y) ? y : null;
 	}
 
 	public ReportBuilderTests() => Directory.CreateDirectory(dir);
@@ -51,6 +55,23 @@ public sealed class ReportBuilderTests : IDisposable {
 			Path = path, Folder = Path.GetDirectoryName(path)!, SizeLong = content.Length, IsImage = true,
 			FrameSize = $"{w}x{h}", FrameSizeInt = w + h, Similarity = gray, GroupId = group,
 			Flags = ai != null ? DuplicateFlags.AiMatched : DuplicateFlags.None, DateModified = when.ToLocalTime(),
+		};
+	}
+
+	/// <param name="audio">Its soundtrack against the kept one's (null: not compared); <paramref name="languages"/>: its audio tracks' tags.</param>
+	DuplicateItem Video(string relPath, byte[] content, float gray = 100f, float? audio = null, string languages = "", bool sound = true) {
+		string path = Path.Combine(dir, relPath);
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		File.WriteAllBytes(path, content);
+		var when = new DateTime(2004, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+		File.SetLastWriteTimeUtc(path, when);
+		fingerprints.ToKeeper[path] = (gray, null);
+		if (audio != null) fingerprints.AudioToKeeper[path] = audio.Value;
+		return new DuplicateItem {
+			Path = path, Folder = Path.GetDirectoryName(path)!, SizeLong = content.Length, IsImage = false,
+			FrameSize = "640x480", FrameSizeInt = 1120, Duration = TimeSpan.FromSeconds(95), BitRateKbs = 1500, Fps = 25,
+			Similarity = gray, GroupId = group, DateModified = when.ToLocalTime(),
+			AudioFormat = sound ? "wmav2" : null, AudioLanguages = languages,
 		};
 	}
 
@@ -253,6 +274,74 @@ public sealed class ReportBuilderTests : IDisposable {
 		Assert.Equal("identical", g.Kind);
 		Assert.Equal(new[] { "holiday.jpg", "IMG_1002.jpg" }, g.Items.Select(i => i.Name));
 	}
+
+	[Theory]
+	[InlineData(@"Game\Movies\intro_en.wmv", @"Game\Movies\intro_de.wmv")]
+	[InlineData(@"Game\Movies\intro.wmv", @"Game\Movies\intro_fr.wmv")]           // the default language unnamed
+	[InlineData(@"Game\Movies\English\intro.bik", @"Game\Movies\German\intro.bik")] // a folder per language
+	[InlineData(@"Game\Video\EN-US\intro.avi", @"Game\Video\EN-GB\intro.avi")]
+	[InlineData(@"Game\Movies\INTRO_ENG.wmv", @"Old\intro_ger.wmv")]               // elsewhere, still the German one
+	public void OneVideoInTwoLanguages_ByItsNames_IsNoSet(string a, string b) {
+		// Regression: an older game's cutscenes, one per language with the same pictures, matched
+		// frame for frame and were ticked as resaved copies of each other.
+		Assert.Empty(ReportBuilder.Build(new[] { Video(a, Bytes(9000, 1)), Video(b, Bytes(9000, 2), gray: 99.9f) }, fingerprints));
+	}
+
+	[Fact]
+	public void OneVideoInTwoLanguages_ByItsAudioTags_IsNoSet() =>
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Video(@"Films\Heist.mkv", Bytes(9000, 1), languages: "ENG"),
+			Video(@"Films\Heist (1).mkv", Bytes(9000, 2), gray: 99.9f, languages: "GER"),
+		}, fingerprints));
+
+	[Fact]
+	public void AVideoWithAnotherSoundtrack_IsNoSet() =>
+		// Nothing in the names: the sound is another voice over the same score (79–85% measured).
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Video(@"Game\cine\c01.wmv", Bytes(9000, 1)),
+			Video(@"Backup\cine\c01 old.wmv", Bytes(9000, 2), gray: 99.9f, audio: 80f),
+		}, fingerprints));
+
+	[Fact]
+	public void AVideoReEncodedWithTheSameSoundtrack_IsStillACopy() {
+		// Same quality: the smaller file is kept (VDF's order), and the other is a plain copy of it.
+		var g = Single(Video(@"Videos\party.mp4", Bytes(9000, 1), gray: 99.8f, audio: 96f), Video(@"Downloads\party.wmv", Bytes(4000, 2)));
+		Assert.Equal("copies", g.Kind);
+		Assert.True(Named(g, "party.mp4").Suggested);
+	}
+
+	[Fact]
+	public void AVideoWithoutSound_IsNoPlainCopyOfOneWithSound() {
+		// The muted copy is smaller, which would make it the one kept; the one with sound is kept, and nothing is ticked.
+		var g = Single(Video(@"Videos\party.mp4", Bytes(9000, 1)), Video(@"Videos\party muted.mp4", Bytes(8000, 2), gray: 99.9f, sound: false));
+		Assert.Equal(Path.Combine(dir, @"Videos\party.mp4"), g.KeepPath);
+		Assert.Equal("variant", Named(g, "party muted.mp4").Relation);
+		Assert.DoesNotContain(g.Items, i => i.Suggested);
+	}
+
+	[Fact]
+	public void ALanguageVersionsOwnCopy_IsStillACopy() {
+		// The German cutscene backed up elsewhere: a copy of the German one, while the English one leaves.
+		byte[] german = Bytes(9000, 2);
+		var g = Single(
+			Video(@"Game\Movies\intro_en.wmv", Bytes(9000, 1)),
+			Video(@"Game\Movies\intro_de.wmv", german, gray: 99.9f),
+			Video(@"Backup\Movies\intro_de.wmv", german, gray: 99.9f));
+		Assert.Equal("identical", g.Kind);
+		Assert.All(g.Items, i => Assert.Equal("intro_de.wmv", i.Name));
+	}
+
+	[Theory]
+	[InlineData(@"C:\G\intro_en.wmv", @"C:\G\intro_de.wmv", true)]
+	[InlineData(@"C:\G\intro_en.wmv", @"C:\G\intro_english.wmv", false)] // one language, named two ways
+	[InlineData(@"C:\G\intro_en.wmv", @"D:\Backup\intro_en.wmv", false)] // a copy of the English one
+	[InlineData(@"C:\G\Movies\EN\intro.wmv", @"D:\Backup\Movies\EN\intro.wmv", false)]
+	[InlineData(@"C:\G\intro_en.wmv", @"C:\G\outro_de.wmv", false)]      // two videos
+	[InlineData(@"C:\G\Movies\intro.wmv", @"C:\Other\Films\intro.wmv", false)]
+	[InlineData(@"C:\G\Movies Deutsch\intro.wmv", @"C:\G\Movies\intro.wmv", true)]
+	[InlineData(@"C:\G\c01_pt-BR.webm", @"C:\G\c01_pt-PT.webm", true)]
+	public void LanguageVersions_ReadTheNames(string a, string b, bool versions) =>
+		Assert.Equal(versions, LanguageVersions.ByName(a, b));
 
 	[Fact]
 	public void NumberedCopies_OfOneShot_AreStillCopies() {

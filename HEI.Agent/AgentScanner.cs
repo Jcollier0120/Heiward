@@ -90,7 +90,12 @@ namespace HEI.Agent {
 			// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
 			string device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 			string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
-			var groups = ReportBuilder.Build(engine.Duplicates, new ScanFingerprints(cacheKey, settings.UseAiMatching));
+			var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, ct);
+			var groups = ReportBuilder.Build(engine.Duplicates, fingerprints);
+			// The report fingerprints the sound of the videos in it, once: the next scan reuses them.
+			if (fingerprints.AudioAdded)
+				try { DatabaseUtils.SaveDatabase(); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the audio fingerprints failed: " + e.Message); }
 			AiStatus.Record(cfg, device, "scan");
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);

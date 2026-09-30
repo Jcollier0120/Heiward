@@ -49,13 +49,17 @@ Code decides everything shown on the page. No model output is trusted to delete 
 | Identical copy | Byte-for-byte the same file (SHA-256) | yes |
 | Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed | yes |
 | Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`) | no |
-| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only | no |
+| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only, and a video without sound next to the same video with it (the one with sound is kept) | no |
 
 **Not listed at all:**
 - **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. So are photos named after the time they were taken a few seconds apart, like `20201105_205359` and `20201105_205401` (Samsung), `PXL_…` (Pixel) or `Screenshot_…`.
   - Heiward sorts the names in each folder and checks whether a photo sits in such a series. Two photos are shots of one burst when one of them does, and their numbers are at most 20 apart, or their times at most 5 minutes.
   - A set holds one shot of a burst at most: the kept photo, or else the shot most like it. The burst's other shots leave the set.
   - A byte-identical copy of a burst shot, say in a backup folder, still shows up as a copy of that shot. `(1)`, ` - Copy`, `_Original` and `-edited` are the same shot, not the next one.
+- **A video in another language, or with another soundtrack.** Older games ship each cutscene once per language, with the same pictures, which match frame for frame. Each is the game's own file, not a copy. A video leaves the set when any of these tells it apart from the kept one:
+  - **The names** differ only by a language, in the file name or a folder above it: `intro_en.wmv` and `intro_de.wmv`, `intro.wmv` and `intro_fr.wmv`, `Movies\English\intro.bik` and `Movies\German\intro.bik`, `EN-US` and `EN-GB`.
+  - **The audio tracks' language tags** differ, when both files have them (`ENG` and `GER`).
+  - **The sound** differs: the two soundtracks' audio fingerprints match less than 90%, at the offset where they match best. Heiward makes a fingerprint only for the videos in the report, once, and keeps it with the scan's database. The same sound re-encoded, even to 24 kb/s WMA, scored 96% and more; another voice over the same music 79–85%. A copy whose sound is shifted by half a second (trimmed mid-second) scores like another soundtrack, so it isn't offered.
 - **Pictures less than 75% alike** to the kept one (the percentage the page shows). The engine's sets chain, so a picture like one that is like another could end up in a set it has nothing to do with.
 
 A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a file in that folder is kept as it is and leaves the list, as one line in History, where **review again** brings them back.

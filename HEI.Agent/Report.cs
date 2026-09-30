@@ -70,17 +70,47 @@ namespace HEI.Agent {
 		float? GrayPercent(string a, string b);
 		/// <summary>Cosine (percent) of the two files' AI embeddings, averaged over common positions.</summary>
 		float? AiPercent(string a, string b);
+		/// <summary>
+		/// How alike (percent) the two videos' soundtracks are, from their audio fingerprints at the
+		/// offset where they match best; null when either has no sound to compare.
+		/// </summary>
+		float? AudioPercent(string a, string b);
 	}
 
 	/// <summary>The fingerprints of the scan that just ran: its database's gray frames and its embedding cache.</summary>
 	sealed class ScanFingerprints : IFingerprints {
 		readonly Dictionary<string, FileEntry> entries;
 		readonly UnionEmbeddingStore? embeddings;
+		readonly CancellationToken ct;
 
-		public ScanFingerprints(string? embeddingCacheKey, bool withAi) {
+		/// <summary>An audio fingerprint was made for a video in the report: the database is worth saving again.</summary>
+		public bool AudioAdded { get; private set; }
+
+		public ScanFingerprints(string? embeddingCacheKey, bool withAi, CancellationToken ct = default) {
 			entries = new Dictionary<string, FileEntry>(StringComparer.OrdinalIgnoreCase);
 			foreach (FileEntry e in DatabaseUtils.Database) entries[e.Path] = e;
 			embeddings = withAi ? UnionEmbeddingStore.Load(embeddingCacheKey) : null;
+			this.ct = ct;
+		}
+
+		public float? AudioPercent(string a, string b) {
+			if (Audio(a) is not { } fa || Audio(b) is not { } fb) return null;
+			var (shorter, longer) = fa.Length <= fb.Length ? (fa, fb) : (fb, fa);
+			return 100f * ScanEngine.SlidingWindowCompare(shorter, longer).similarity;
+		}
+
+		/// <summary>
+		/// The video's audio fingerprint, made the first time a video needs one (the scan itself makes
+		/// none) and kept in the database; null for no sound, silence, or a file FFmpeg can't read.
+		/// </summary>
+		uint[]? Audio(string path) {
+			if (!entries.TryGetValue(path, out FileEntry? e) || e.IsImage)
+				return null;
+			if (e.AudioFingerprint == null && !e.Flags.Any(EntryFlags.NoAudioTrack | EntryFlags.AudioFingerprintError | EntryFlags.SilentAudioTrack)) {
+				ScanEngine.ExtractAudioFingerprint(e, ct);
+				AudioAdded |= e.AudioFingerprint != null;
+			}
+			return e.AudioFingerprint is { Length: > 0 } fp ? fp : null;
 		}
 
 		public float? GrayPercent(string a, string b) => Average(a, b, e => e.grayBytes,
@@ -122,6 +152,15 @@ namespace HEI.Agent {
 		/// without this a set could hold a picture that looks nothing like the one kept.
 		/// </summary>
 		internal const float MinAlikePercent = 75f;
+		/// <summary>
+		/// Two videos' soundtracks at or above this are one soundtrack; below it, the video has another
+		/// one (another language, other music). Measured with a score under a voice: re-encoded to WMA at
+		/// 24 and 64 kb/s, as MP2, or trimmed by whole seconds, the same audio scored 96.0–97.0%; another
+		/// voice, other lines or the score alone 79.3–84.7%; unrelated audio 56%. A copy whose sound is
+		/// shifted by half a second (trimmed mid-second) scores like another soundtrack, 83%: it isn't
+		/// offered, which costs a set, never a file.
+		/// </summary>
+		internal const float SameSoundtrackPercent = 90f;
 
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints) {
 			var hashes = new ContentHashes();
@@ -209,17 +248,19 @@ namespace HEI.Agent {
 		/// the shot most like it. The burst's other shots leave, however alike, as do less alike pictures.
 		/// Without that, IMG_0569 and IMG_0570 both stayed as look-alikes of an older IMG_0538, and a
 		/// burst shot scoring 99.9% against a renamed copy of its neighbour was ticked as a resaved copy.
-		/// What's left over is judged again around its own kept file, so a burst shot's copy in a backup
-		/// folder still finds its original; a shot whose burst a set already shows goes only with its own
-		/// copies, not into a second set of the same look-alikes. A set of one is no set.
+		/// Other versions of a video (<see cref="IsOtherVersion"/>: another language, another soundtrack)
+		/// leave the same way. What's left over is judged again around its own kept file, so a burst
+		/// shot's copy in a backup folder still finds its original; a version that a set already shows
+		/// another version of goes only with its own copies, not into a second set of the same
+		/// look-alikes. A set of one is no set.
 		/// </summary>
 		static IEnumerable<List<DuplicateItem>> LeaveOutUnrelated(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			var rest = new List<DuplicateItem>(items);
-			var shown = new HashSet<DuplicateItem>(); // shots of a burst that a set already shows
+			var shown = new HashSet<DuplicateItem>(); // versions whose burst or video a set already shows
 			while (rest.Count >= 2) {
 				DuplicateItem keep = PickKeeper(rest).Item1;
 				var set = new List<DuplicateItem> { keep };
-				var burstMates = new List<DuplicateItem>();
+				var otherVersions = new List<DuplicateItem>();
 				// The closest first: of two shots of one burst, the one more like the kept file stays.
 				var candidates = rest.Where(i => !ReferenceEquals(i, keep))
 					.Select(i => (Item: i, Relation: Relation(i, keep, hashes, fingerprints, bursts)))
@@ -231,8 +272,8 @@ namespace HEI.Agent {
 						set.Add(i);
 						continue;
 					}
-					if (relation == "burst" || set.Skip(1).Any(s => bursts.AreSiblings(s.Path, i.Path) && !(s.SizeLong == i.SizeLong && hashes.Same(s.Path, i.Path)))) {
-						burstMates.Add(i);
+					if (IsOtherVersion(relation) || set.Skip(1).Any(s => Versions(s, i, bursts) && !(s.SizeLong == i.SizeLong && hashes.Same(s.Path, i.Path)))) {
+						otherVersions.Add(i);
 						continue;
 					}
 					if (percent < MinAlikePercent || (!IsPlainCopy(relation) && (shown.Contains(keep) || shown.Contains(i))))
@@ -241,7 +282,7 @@ namespace HEI.Agent {
 				}
 				rest.RemoveAll(set.Contains);
 				if (set.Count >= 2) {
-					shown.UnionWith(burstMates);
+					shown.UnionWith(otherVersions);
 					yield return set;
 				}
 			}
@@ -256,6 +297,17 @@ namespace HEI.Agent {
 			float? ai = relation is "edited" or "variant" ? fingerprints.AiPercent(i.Path, keep.Path) : null;
 			return ai != null ? (ai.Value, true) : (fingerprints.GrayPercent(i.Path, keep.Path) ?? i.Similarity, false);
 		}
+
+		/// <summary>
+		/// Another version of the kept file rather than a copy: another shot of its burst, or the same
+		/// video in another language or with another soundtrack. It leaves the set however alike.
+		/// </summary>
+		static bool IsOtherVersion(string relation) => relation is "burst" or "language" or "soundtrack";
+
+		/// <summary>Two files in a set are versions of each other (their soundtracks aren't compared here: that takes decoding).</summary>
+		static bool Versions(DuplicateItem a, DuplicateItem b, BurstSeries bursts) =>
+			bursts.AreSiblings(a.Path, b.Path) ||
+			(!a.IsImage && !b.IsImage && (LanguageVersions.ByName(a.Path, b.Path) || LanguageVersions.ByTags(a, b)));
 
 		static (DuplicateItem, string) PickKeeper(List<DuplicateItem> items) => items[0].IsImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
 
@@ -296,7 +348,9 @@ namespace HEI.Agent {
 		/// 99.91–99.98%, recompressed 99.79–99.97%, while crops scored 97.35–97.66%, colour edits
 		/// 97.12–97.99%, flips 96.16–97.32% and two different shots 94.3%. Below that, the AI's
 		/// cosine says "same picture, edited" (≥ <see cref="SamePictureAiPercent"/>) or "variant".
-		/// <c>burst</c>: another shot of the kept file's burst, which is no duplicate however alike.
+		/// <c>burst</c>: another shot of the kept file's burst, which is no duplicate however alike;
+		/// <c>language</c> and <c>soundtrack</c>: the same video in another language or with another
+		/// soundtrack (<see cref="LanguageVersions"/>, <see cref="SameSoundtrackPercent"/>).
 		/// </summary>
 		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			if (i.SizeLong == keep.SizeLong && hashes.Same(i.Path, keep.Path))
@@ -309,6 +363,17 @@ namespace HEI.Agent {
 			// below would pass for a resaved copy and be ticked.
 			if (bursts.AreSiblings(i.Path, keep.Path))
 				return "burst";
+			if (!i.IsImage && !keep.IsImage) {
+				// One video in two languages (an older game's intro_en.wmv and intro_de.wmv), or with
+				// another soundtrack: the pictures match frame for frame, and each is its own file.
+				if (LanguageVersions.ByName(i.Path, keep.Path) || LanguageVersions.ByTags(i, keep))
+					return "language";
+				if (fingerprints.AudioPercent(i.Path, keep.Path) < SameSoundtrackPercent)
+					return "soundtrack";
+				// One has sound and the other none: the same pictures, but not a plain copy.
+				if ((i.AudioFormat == null) != (keep.AudioFormat == null))
+					return "variant";
+			}
 			// An animated picture is compared by its first frame only: two GIFs that start alike, or a
 			// still taken from one, are not copies of each other.
 			if (MayBeAnimated(i.Path) || MayBeAnimated(keep.Path))
@@ -366,10 +431,14 @@ namespace HEI.Agent {
 			return (PreferOriginalLooking(largest), "same picture and size; kept the original-looking name and folder");
 		}
 
-		/// <summary>Videos: VDF's own default order (duration, resolution, bitrate, fps), then the oldest, then the smaller file.</summary>
+		/// <summary>
+		/// Videos: VDF's own default order (duration, resolution, bitrate, fps), then the oldest, then the
+		/// smaller file; one with sound before one without, right after the duration.
+		/// </summary>
 		static (DuplicateItem, string) PickVideoKeeper(List<DuplicateItem> items) {
 			var ordered = items
 				.OrderByDescending(i => Math.Round(i.Duration.TotalSeconds))
+				.ThenByDescending(i => i.AudioFormat != null)
 				.ThenByDescending(i => i.FrameSizeInt)
 				.ThenByDescending(i => i.BitRateKbs)
 				.ThenByDescending(i => i.Fps)
@@ -379,6 +448,7 @@ namespace HEI.Agent {
 			DuplicateItem keep = ordered[0], next = ordered[1];
 			string reason =
 				Math.Round(keep.Duration.TotalSeconds) > Math.Round(next.Duration.TotalSeconds) ? "longest (the others are shorter cuts)" :
+				keep.AudioFormat != null && next.AudioFormat == null ? "the one with sound" :
 				keep.FrameSizeInt > next.FrameSizeInt ? $"highest resolution ({keep.FrameSize?.Replace("x", " × ")})" :
 				keep.BitRateKbs > next.BitRateKbs ? $"highest bitrate ({keep.BitRateKbs:N0} kb/s)" :
 				keep.Fps > next.Fps ? $"highest frame rate ({keep.Fps:0.##} fps)" :
