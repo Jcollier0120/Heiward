@@ -14,7 +14,7 @@ Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videodupli
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 
-Scheduled scans run in Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority. A rescan only checks new and changed files.
+Scheduled scans run in the background: Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority, on half the cores. A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** on the page (`"scanSpeed": "background"`). A rescan only checks new and changed files.
 
 ## Install
 
@@ -30,7 +30,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
 5. opens the review page in your browser once a day at sign-in, and only when something waits for review;
-6. adds **Heiward** to the Start menu, registers the name its notifications show, and adds an entry in Apps & Features so Windows can uninstall it.
+6. adds **Heiward** shortcuts to the Start menu and the desktop (they open the review page, starting it if needed), registers the name and icon its notifications show, and adds an entry in Apps & Features so Windows can uninstall it.
 
 </details>
 
@@ -49,7 +49,13 @@ Code decides everything shown on the page. No model output is trusted to delete 
 | Identical copy | Byte-for-byte the same file (SHA-256) | yes |
 | Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed | yes |
 | Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`) | no |
-| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike, such as bursts. Also animated pictures (GIF, WebP), which are compared by their first frame only | no |
+| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only | no |
+
+**Not listed at all:**
+- **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. Heiward sorts the names in each folder and checks whether a photo sits in such a series; if it or the kept photo does, and their numbers are at most 20 apart, it leaves the set. A byte-identical copy of a burst shot, say in a backup folder, still shows up as a copy of that shot. `(1)`, ` - Copy`, `_Original` and `-edited` are the same shot, not the next one.
+- **Pictures less than 75% alike** to the kept one (the percentage the page shows). The engine's sets chain, so a picture like one that is like another could end up in a set it has nothing to do with.
+
+A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a file in that folder is kept as it is and leaves the list, as one line in History, where **review again** brings them back.
 
 **Which copy to keep:**
 - **Photos:** the highest resolution, then the camera original (it has a capture date), then the oldest file, then the largest. File size alone isn't quality: a colour edit makes a bigger JPEG than the original.
@@ -96,6 +102,12 @@ Every fixed drive: internal drives, and external disks that Windows reports as f
 A folder you add to `folders` is scanned even inside one of these, for example a folder of photos inside a dot-folder or under `AppData`; the rules still apply to the folders below it. Your own `excludeFolders` are different: they win over `folders`, so a listed folder inside one is skipped, and `hei scope` and the scan say so.
 
 `hei scope` lists all of it; `hei scope --count` also counts the photos and videos per folder, without opening any file. Add your own with `excludeFolders`.
+
+**On the page:** right-click a folder (or press the menu key on it) and choose **Include in scans** or **Leave out of scans**, whichever it isn't now. An exempt folder's page has the same button. It edits the same two lists:
+- leaving a folder out adds it to `excludeFolders`, or takes it out of `folders` if that's where it came from;
+- including one takes its own path out of `excludeFolders`, or adds it to `folders` if a built-in rule left it out.
+
+If a wider rule of yours covers it (`Old*`, or a folder above it), the page asks before removing that rule, since the rule covers other folders too. A whole drive can't be left out this way. The next scan follows.
 
 ## Developer mode
 
@@ -145,6 +157,9 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
+| `scanSpeed` | `auto` | `auto`: Scan now, and scheduled scans while the review page is open, at full speed; other scans in the background. `background`: every scan in the background |
+| `parallelism` | 0 | Files decoded at once; 0: every core but one at full speed, half of them in the background |
+| `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |
 | `toast` | true | A notification when a scan finds something new |
@@ -172,7 +187,10 @@ hei uninstall       [--purge] [--dry-run]
 
 It's laid out like File Explorer, so you can go where you care most instead of scrolling every duplicate on the PC:
 
-- **This PC:** a card per drive with its free space, how many photos and videos it holds, how long its last scan took, and its sets of copies and space to free. Below the cards, the folders where cleaning up frees the most, and the history of what you've done.
+- **This PC:** a card per drive with its free space, how many photos and videos it holds, how long its last scan took, and its sets of copies and space to free. Below the cards, the folders where cleaning up frees the most, and the history of what you've done:
+  - A folder's cleanup, or its **Skip all**, is one line.
+  - **Clear history** empties the list and forgets the file names in it. Sets you kept stay hidden, and "freed so far" stays.
+  - **Keep a history** off lists nothing new.
 - **A folder:** the navigation tree on the left and the folder on the right:
   - Its subfolders in a details view you can sort by space to free, with only the duplicates that touch this folder below.
   - Copies and look-alikes are shown separately.
@@ -202,6 +220,8 @@ dotnet publish HEI.Agent -c Release -r win-arm64 --self-contained -p:PublishSing
 ```
 
 Use `-r win-x64` for Intel and AMD PCs. The single file (`hei.exe`) is about 50 MB. Set `HEIWARD_HOME` to keep a test copy's settings and report somewhere else.
+
+The icon (`heiward.ico`, and `wwwroot\heiward.png` for notifications) is rendered from `wwwroot\favicon.svg` by `make-icon.ps1`; run it again after changing the mark.
 
 ### Making a release
 

@@ -32,9 +32,13 @@ namespace HEI.Agent {
 	/// tree listed live from disk, each folder marked scanned or exempt (and why) by the scan's own rules.
 	/// </summary>
 	static class ExplorerView {
+		/// <summary>
+		/// The drives, and the extra folders, the next scan looks at: from the settings rather than the last
+		/// scan, so a folder the user includes or leaves out on the page shows so at once.
+		/// </summary>
 		public static List<DriveCard> Drives(AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending) {
 			var cards = new List<DriveCard>();
-			var roots = index?.Roots ?? ScanScope.Roots(cfg);
+			var roots = ScanScope.Roots(cfg);
 			foreach (DriveInfo drive in DriveInfo.GetDrives()) {
 				string type = drive.DriveType switch {
 					DriveType.Fixed => "fixed", DriveType.Removable => "removable", DriveType.Network => "network", _ => "",
@@ -80,14 +84,15 @@ namespace HEI.Agent {
 				.ToList();
 
 		/// <summary>
-		/// The folder's subfolders as they are on disk now. Below a drive's top level, folders with no
-		/// photos or videos (and not exempt) are counted in <see cref="TreeListing.HiddenEmpty"/> unless
-		/// <paramref name="all"/>. Null when the folder is outside what the agent scans, or missing.
+		/// The folder's subfolders as they are on disk now, each scanned or exempt by the settings as they
+		/// are now. Below a drive's top level, folders with no photos or videos (and not exempt) are
+		/// counted in <see cref="TreeListing.HiddenEmpty"/> unless <paramref name="all"/>. Null when the
+		/// folder is outside what the agent scans, or missing.
 		/// </summary>
 		public static TreeListing? Tree(string path, bool all, AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending) {
 			if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return null;
 			string full = Path.GetFullPath(path);
-			var roots = index?.Roots ?? ScanScope.Roots(cfg);
+			var roots = ScanScope.Roots(cfg);
 			// The deepest root: a listed folder inside an exempt one is a root of its own.
 			string? root = roots.Where(r => IsSameOrUnder(full, r)).MaxBy(r => r.TrimEnd(Path.DirectorySeparatorChar).Length);
 			if (root == null || !Directory.Exists(full)) return null;
@@ -108,7 +113,9 @@ namespace HEI.Agent {
 					subfolders = Array.Empty<DirectoryInfo>();
 				}
 				foreach (DirectoryInfo d in subfolders) {
-					string? reason = ScanScope.ExemptReason(d, rules);
+					// A folder in "folders" inside one the rules leave out is scanned as a root of its own.
+					string? reason = roots.Any(r => r.TrimEnd(Path.DirectorySeparatorChar).Equals(d.FullName, StringComparison.OrdinalIgnoreCase))
+						? null : ScanScope.ExemptReason(d, rules);
 					var (f, b) = reason == null ? index?.Subtree(d.FullName) ?? (0, 0) : (0, 0);
 					DupStats dup = reason == null ? Stats(d.FullName, pending) : new DupStats(0, 0, 0);
 					if (reason == null && f == 0 && dup.Copies + dup.Lookalikes == 0 && !topLevel && !all) {

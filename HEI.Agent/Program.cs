@@ -42,7 +42,7 @@ root.SetAction(async (_, ct) => {
 
 var notify = new Option<bool>("--notify") { Description = "Show a Windows notification when the scan finds new duplicates." };
 var open = new Option<bool>("--open") { Description = "Open the review page (it shows the scan's progress)." };
-var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge." };
+var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge; run in the background unless the review page is open." };
 var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
@@ -51,14 +51,12 @@ scan.SetAction(async (r, ct) => {
 			AgentPaths.AppendLog("scheduled scan skipped: " + why);
 			return 0;
 		}
-		// Background scans take their time: Windows runs them on efficient cores at low clocks.
-		AgentPaths.AppendLog(Power.EnterEfficiencyMode() ? "scheduled scan in efficiency mode" : "scheduled scan: efficiency mode unavailable");
 	}
 	if (r.GetValue(open)) {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
 		_ = OpenReviewPageAsync(cfg, ct);
 	}
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), ct);
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct);
 });
 root.Subcommands.Add(scan);
 
@@ -107,7 +105,7 @@ var dryRun = new Option<bool>("--dry-run") { Description = "Print every step wit
 var yes = new Option<bool>("--yes", "-y") { Description = "Answer yes to questions (unattended install)." };
 var deviceOpt = new Option<AiDevice?>("--device") { Description = "Where the AI runs: npu, gpu or cpu. Default: the NPU if there is one, otherwise ask (GPU or CPU)." };
 var onDemandOpt = new Option<bool>("--on-demand") { Description = "No scheduled scans: scan only when you press Scan now. Default without an NPU: ask (every 6 hours or on demand)." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, reuseFrom };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, reuseFrom };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
 	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom)));
 
@@ -383,19 +381,20 @@ namespace HEI.Agent {
 		static extern bool SetPriorityClass(IntPtr process, uint priorityClass);
 
 		/// <summary>
-		/// EcoQoS, the power half of Task Manager's "Efficiency mode": Windows runs the process on
-		/// efficient cores at low clocks, so a background scan takes longer and costs little power.
+		/// In the background: EcoQoS, the power half of Task Manager's "Efficiency mode", so Windows runs
+		/// the process on efficient cores at low clocks and a scan takes longer and costs little power.
 		/// Priority stays below normal rather than idle: the scan holds the shared NPU lock for up to
 		/// two seconds at a time, and an idle-priority thread starved while holding it would make
-		/// other NPU tools wait.
+		/// other NPU tools wait. At full speed: normal priority, and throttling explicitly off, so
+		/// Windows doesn't guess that a windowless process may run slowly.
 		/// </summary>
-		public static bool EnterEfficiencyMode() {
+		public static bool SetPace(bool fullSpeed) {
 			const int ProcessPowerThrottling = 4;
-			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000;
-			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = ExecutionSpeed };
-			bool eco = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
-			bool low = SetPriorityClass(GetCurrentProcess(), BelowNormalPriorityClass);
-			return eco && low;
+			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000, NormalPriorityClass = 0x20;
+			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = fullSpeed ? 0 : ExecutionSpeed };
+			bool qos = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
+			bool priority = SetPriorityClass(GetCurrentProcess(), fullSpeed ? NormalPriorityClass : BelowNormalPriorityClass);
+			return qos && priority;
 		}
 
 		public static bool ShouldSkip(AgentConfig cfg, out string why) {

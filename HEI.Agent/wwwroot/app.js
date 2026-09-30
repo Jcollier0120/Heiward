@@ -209,13 +209,41 @@ async function post(url, body) {
   });
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) throw new Error((data && data.error) || res.status + ' ' + res.statusText);
+  if (!res.ok) {
+    const err = new Error((data && data.error) || res.status + ' ' + res.statusText);
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
 function showError(msg) {
   $('error').textContent = msg;
   $('error').classList.toggle('hidden', !msg);
+}
+
+let noticeTimer = null;
+/** A short green line under the command bar after an action, with an optional button; it goes after a while. */
+function showNotice(msg, action) {
+  const n = $('notice');
+  clearTimeout(noticeTimer);
+  n.replaceChildren(el('span', null, msg));
+  if (action) {
+    const b = el('button', 'btn secondary', action.label);
+    b.addEventListener('click', () => { n.classList.add('hidden'); action.run(); });
+    n.append(b);
+  }
+  n.classList.remove('hidden');
+  noticeTimer = setTimeout(() => n.classList.add('hidden'), 12000);
+}
+
+/** One action on a whole folder: its sets share this id, so History lists them as one row. */
+function batchId() {
+  return [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function scanNow() {
+  try { await post('/api/scan'); refresh(true); } catch (e) { showError(e.message); }
 }
 
 function ticked(g) {
@@ -310,13 +338,17 @@ function renderHeader(s) {
   $('scan-now').textContent = running ? 'Scanning…' : 'Scan now';
   $('progress').classList.toggle('hidden', !running);
   const st = s.scan.status;
+  const pace = st ? (st.fullSpeed ? ' · full speed' : ' · in the background') : '';
   if (running && st && st.max > 0) {
     $('progress-bar').style.width = Math.min(100, (100 * st.position) / st.max) + '%';
-    $('progress-text').textContent = st.stage + ' ' + st.position.toLocaleString() + ' / ' + st.max.toLocaleString();
+    $('progress-text').textContent = st.stage + ' ' + st.position.toLocaleString() + ' / ' + st.max.toLocaleString() + pace;
   } else {
     $('progress-bar').style.width = running ? '5%' : '0';
-    $('progress-text').textContent = running ? (st ? st.stage : 'Starting') + '…' : '';
+    $('progress-text').textContent = running ? (st ? st.stage : 'Starting') + '…' + pace : '';
   }
+  $('progress-text').title = st ? (st.fullSpeed
+    ? 'Full speed: every core but one, at normal priority.'
+    : 'In the background: Windows\' efficiency mode, low priority, half the cores. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
   $('notes').replaceChildren(...((r && r.notes) || []).map((n) => el('li', null, n)));
 }
 
@@ -413,8 +445,40 @@ function renderHome(s) {
 
   renderDevCard(s.dev);
   renderAutoCard(s);
+  renderScanCard(s);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- scanning and history settings
+
+let settingsBusy = false;
+
+async function saveSettings(next) {
+  settingsBusy = true;
+  try { await post('/api/settings', next); } catch (e) { showError(e.message); }
+  settingsBusy = false;
+  refresh(true);
+}
+
+/** How hard scans work: full speed while someone waits for them, or always in the background (ScanPace). */
+function renderScanCard(s) {
+  const c = s.config;
+  const full = c.scanSpeed !== 'background';
+  const card = el('div', 'auto-card');
+  const row = el('div', 'auto-row');
+  row.style.borderBottom = '0';
+  row.append(toggleSwitch(full, 'Full speed when you\'re here', settingsBusy, (on) => saveSettings({ scanSpeed: on ? 'auto' : 'background' })));
+  const text = el('div', 'auto-text');
+  text.append(el('div', 'auto-title', 'Full speed when you\'re here'));
+  text.append(el('div', 'muted small', full
+    ? 'Scan now, and a scheduled scan while this page is open, use ' + count(c.fullSpeedCores, 'core', 'cores') + ' at normal priority. ' +
+      'With the page closed, scheduled scans run in the background: Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores') + '.'
+    : 'Off: every scan runs in the background, as scheduled scans do: Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores') +
+      '. Slower, and light on the battery and the fans.'));
+  row.append(text);
+  card.append(row);
+  $('scan-card').replaceChildren(card);
 }
 
 // ---------------------------------------------------------------- automatic cleanup
@@ -469,13 +533,18 @@ function dueText(iso, dev) {
 }
 
 function autoSwitch(on, label, onChange) {
+  return toggleSwitch(on, label, autoBusy, onChange);
+}
+
+/** A Windows-style on/off switch. */
+function toggleSwitch(on, label, disabled, onChange) {
   const wrap = el('label', 'switch');
   const box = el('input');
   box.type = 'checkbox';
   box.setAttribute('role', 'switch');
   box.setAttribute('aria-label', label);
   box.checked = on;
-  box.disabled = autoBusy;
+  box.disabled = disabled;
   box.addEventListener('change', () => onChange(box.checked, box));
   wrap.append(box, el('span', 'slider'));
   return wrap;
@@ -1322,18 +1391,64 @@ function driveCard(d) {
   return card;
 }
 
+/** The top of History: keep one or not, and clear it. */
+function historyBar(s) {
+  const bar = el('div', 'history-bar');
+  const keep = s.config.keepHistory;
+  bar.append(toggleSwitch(keep, 'Keep a history', settingsBusy, (on) => saveSettings({ keepHistory: on })));
+  const text = el('div', 'auto-text');
+  text.append(el('div', 'auto-title', 'Keep a history'),
+    el('div', 'muted small', keep
+      ? 'What you and automatic cleanup clean up or keep is listed here, with file names.'
+      : 'Off: nothing new is listed here, and no file names are kept. Kept sets still stay hidden.'));
+  bar.append(text);
+  const clear = el('button', 'btn secondary', 'Clear history');
+  clear.disabled = !s.done.length;
+  clear.addEventListener('click', async () => {
+    if (!confirm('Clear the history?\n\nThe list empties and the file names in it are forgotten. Nothing on disk changes: sets you kept stay hidden, and "freed so far" stays.')) return;
+    try {
+      await post('/api/history/clear');
+      showNotice('History cleared.');
+      refresh(true);
+    } catch (e) { showError(e.message); }
+  });
+  bar.append(clear);
+  return bar;
+}
+
 function renderDone(s) {
   const box = $('done');
   $('history').querySelector('summary').textContent = 'History' + (s.done.length ? ' (' + s.done.length + ')' : '');
   if (!s.done.length) {
-    box.replaceChildren(el('p', 'muted small', 'Nothing yet.'));
+    box.replaceChildren(historyBar(s), el('p', 'muted small', s.config.keepHistory ? 'Nothing yet.' : 'Nothing listed.'));
     return;
   }
-  box.replaceChildren(...s.done.map((d) => {
+  const where = (folder) => {
+    const w = el('span', 'where', nameOf(folder));
+    w.title = folder;
+    return w;
+  };
+  box.replaceChildren(historyBar(s), ...s.done.map((d) => {
     const row = el('div', 'done-row');
     row.append(el('span', 'muted small', new Date(d.atUtc).toLocaleString()));
     if (d.auto) row.append(el('span', 'tag auto', 'Automatic'));
-    if (d.action === 'branches-pruned') {
+    if (d.batch && d.action === 'kept') {
+      // "Skip all" on a folder's look-alikes.
+      row.append(el('span', null, 'Skipped ' + count(d.sets, 'look-alike set', 'look-alike sets') + (d.folder ? ' in' : '')));
+      if (d.folder) row.append(where(d.folder));
+      if (d.inReport) {
+        const undo = el('button', 'link', 'review again');
+        undo.addEventListener('click', async () => {
+          try { await post('/api/history/reopen', { batch: d.batch }); refresh(true); } catch (e) { showError(e.message); }
+        });
+        row.append(undo);
+      }
+    } else if (d.batch && d.action === 'recycled') {
+      // A folder's "Move to Recycle Bin", set by set.
+      row.append(el('span', null, 'Moved ' + count(d.recycled, 'file', 'files') + ', ' + bytes(d.recycledBytes) + ', from ' + count(d.sets, 'set', 'sets') +
+        ' to the Recycle Bin' + (d.folder ? ', in' : '')));
+      if (d.folder) row.append(where(d.folder));
+    } else if (d.action === 'branches-pruned') {
       row.append(el('span', null, 'Deleted ' + count(d.recycled - 1, 'merged branch', 'merged branches') + ' in ' + (d.label || 'a repository')));
     } else if (d.action === 'dev-cleaned') {
       row.append(el('span', null, 'Cleaned ' + (d.label || 'developer files') + ', freed ' + bytes(d.recycledBytes) + ' (deleted permanently)'));
@@ -1462,6 +1577,7 @@ async function treeItem(node, depth) {
   });
   row.addEventListener('click', () => go(node.path));
   row.addEventListener('keydown', (e) => treeKeys(e, node));
+  row.addEventListener('contextmenu', (e) => openFolderMenu(e, node));
   li.append(row);
 
   if (node.expandable && open) {
@@ -1525,6 +1641,101 @@ function treeKeys(e, node) {
   else if (e.key === 'ArrowLeft' && expanded.has(key(node.path))) { toggle(node.path); e.preventDefault(); }
 }
 
+// ---------------------------------------------------------------- folder menu (right-click)
+
+// Right-click a folder (or press the menu key on it) to include it in scans or leave it out, whichever it
+// isn't now. Saved to "folders" / "excludeFolders" in the settings; the next scan follows.
+let menuReturn = null;
+
+function closeFolderMenu(focusBack) {
+  const m = $('folder-menu');
+  if (m.classList.contains('hidden')) return;
+  m.classList.add('hidden');
+  if (focusBack && menuReturn && document.contains(menuReturn)) menuReturn.focus();
+  menuReturn = null;
+}
+
+/** node: { name, path, exempt, drive } as the tree and the folder table have them. */
+function openFolderMenu(e, node) {
+  e.preventDefault();
+  e.stopPropagation();
+  const m = $('folder-menu');
+  const items = [];
+  const item = (label, run, why) => {
+    const b = el('button', 'menu-item', label);
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    if (why) { b.disabled = true; b.title = why; }
+    else b.addEventListener('click', () => { closeFolderMenu(false); run(); });
+    items.push(b);
+    return b;
+  };
+  item('Open', () => go(node.path));
+  const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
+  let hint = null;
+  if (node.exempt) {
+    item('Include in scans', () => overrideFolder(node.path, true));
+    hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
+  } else if (card && card.type !== 'folder') {
+    item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
+  } else {
+    item('Leave out of scans', () => overrideFolder(node.path, false));
+  }
+  m.replaceChildren(el('div', 'menu-label', node.name), ...items);
+  if (hint) m.append(el('div', 'menu-hint', hint));
+  m.classList.remove('hidden');
+  // At the pointer; from the keyboard, under the row.
+  const r = e.currentTarget.getBoundingClientRect();
+  const fromKeys = !e.clientX && !e.clientY;
+  const x = Math.max(8, Math.min(fromKeys ? r.left + 28 : e.clientX, window.innerWidth - m.offsetWidth - 8));
+  const y = Math.max(8, Math.min(fromKeys ? r.bottom : e.clientY, window.innerHeight - m.offsetHeight - 8));
+  m.style.left = x + 'px';
+  m.style.top = y + 'px';
+  menuReturn = e.currentTarget;
+  (items.find((b) => !b.disabled) || items[0]).focus();
+}
+
+function setupFolderMenu() {
+  const m = $('folder-menu');
+  document.addEventListener('mousedown', (e) => { if (!m.contains(e.target)) closeFolderMenu(false); });
+  window.addEventListener('blur', () => closeFolderMenu(false));
+  window.addEventListener('resize', () => closeFolderMenu(false));
+  window.addEventListener('hashchange', () => closeFolderMenu(false));
+  document.addEventListener('scroll', () => closeFolderMenu(false), true);
+  m.addEventListener('keydown', (e) => {
+    const list = [...m.querySelectorAll('.menu-item:not(:disabled)')];
+    const at = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.length) list[(at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length].focus();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeFolderMenu(true);
+    } else if (e.key === 'Tab') {
+      closeFolderMenu(false);
+    }
+  });
+}
+
+/** Includes the folder in scans, or leaves it out; asks first when that means removing a wider rule of the user's. */
+async function overrideFolder(path, include, removeRule) {
+  try {
+    const r = await post('/api/folders/override', { path, include, removeRule: removeRule || null });
+    listings.clear();
+    await refresh(true);
+    showNotice(nameOf(path) + ': ' + (r.message || 'saved.'),
+      include && r.scanned && !state.scan.running ? { label: 'Scan now', run: scanNow } : null);
+  } catch (e) {
+    const rule = e.data && e.data.rule;
+    if (rule && !removeRule) {
+      if (confirm(e.message + '\n\nRemove the rule "' + rule + '" from the settings? Everything it leaves out is scanned again.'))
+        await overrideFolder(path, include, rule);
+      return;
+    }
+    showError(e.message);
+  }
+}
+
 // ---------------------------------------------------------------- folder content
 
 async function renderContent() {
@@ -1565,9 +1776,12 @@ async function renderContent() {
     const text = el('div');
     text.append(el('div', null, 'Not scanned: ' + data.exempt.toLowerCase() + '.'));
     text.append(el('div', 'muted small', data.exempt === 'Excluded in settings'
-      ? 'You left it out under "excludeFolders" in the settings. Take it out there to scan it.'
-      : 'Pictures and videos here belong to Windows, a program, a game or a project, which could break if a "duplicate" went. ' +
-        'To scan a folder anyway, add it to "folders" in the settings; to leave out more, add to "excludeFolders".'));
+      ? 'You left it out (excludeFolders in the settings).'
+      : 'Pictures and videos here usually belong to Windows, a program, a game or a project, which could break if a "duplicate" went. ' +
+        'Include it only if the pictures in it are yours.'));
+    const include = el('button', 'btn secondary', 'Include in scans');
+    include.addEventListener('click', () => overrideFolder(data.path, true));
+    text.append(include);
     panel.append(text);
     frag.append(panel);
     content.replaceChildren(frag);
@@ -1582,7 +1796,7 @@ async function renderContent() {
 function subfolderTable(path, data) {
   const box = el('div');
   const head = el('div', 'section-head');
-  head.append(el('h2', null, 'Folders'));
+  head.append(el('h2', null, 'Folders'), el('span', 'muted small', 'Right-click a folder to include it in scans or leave it out.'));
   box.append(head);
   const table = el('table', 'details');
   const thead = el('thead');
@@ -1633,6 +1847,7 @@ function subfolderTable(path, data) {
     const open = () => { expanded.add(key(path)); go(c.path); };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+    row.addEventListener('contextmenu', (e) => openFolderMenu(e, c));
     tbody.append(row);
   }
   if (folded) {
@@ -1690,8 +1905,11 @@ function duplicatesSection(path) {
     return box;
   }
   if (groupFilter === 'copies' && copies.length) box.append(cleanupBar(path, copies));
-  if (groupFilter === 'similar')
-    box.append(el('p', 'muted small', 'These look alike but may be edits or different shots (a burst, a retake). Nothing is ticked; pick what you don\'t need, set by set.'));
+  if (groupFilter === 'similar') {
+    box.append(el('p', 'muted small', 'These look alike but may be edits or different shots. Nothing is ticked; pick what you don\'t need, set by set. ' +
+      'Burst shots (photos numbered in a row, like IMG_1234 and IMG_1235) and pictures less than 75% alike aren\'t listed: they\'re different photos.'));
+    if (similar.length) box.append(skipBar(path, similar));
+  }
   if (groupFilter === 'copies' && !copies.length)
     box.append(el('div', 'empty-state', 'Nothing to clean up in this folder.'));
   for (const g of shownGroups.slice(0, groupsShown)) box.append(groupCard(g, path));
@@ -1711,6 +1929,33 @@ function duplicatesSection(path) {
     if (showKeptHere.has(k)) for (const g of keptHere) box.append(groupCard(g, path));
   }
   return box;
+}
+
+/** "Skip all": every look-alike set with a file in this folder is kept as it is, and leaves the list. */
+function skipBar(path, groups) {
+  const bar = el('div', 'cleanup');
+  const text = el('div');
+  text.append(el('div', null, count(groups.length, 'look-alike set', 'look-alike sets') + ' with a file in this folder.'));
+  text.append(el('div', 'muted small', 'Nothing worth a look? Skip them all: nothing is deleted, they leave the list, and a set only comes back if its files change.'));
+  bar.append(text);
+  const btn = el('button', 'btn secondary', 'Skip all ' + groups.length);
+  btn.addEventListener('click', async () => {
+    if (!confirm('Skip all ' + count(groups.length, 'look-alike set', 'look-alike sets') + ' in ' + nameOf(path) + '?\n\nNothing is deleted: they leave the list' +
+        (state.config.keepHistory ? ', and History can bring them back.' : '. History is off, so they won\'t be listed there.'))) return;
+    btn.disabled = true;
+    try {
+      const r = await post('/api/groups/skip', { keys: groups.map((g) => g.key), batch: batchId(), folder: trimSep(path) });
+      for (const g of groups) ticks.delete(g.key);
+      groupsShown = PAGE;
+      showNotice('Skipped ' + count(r.skipped, 'look-alike set', 'look-alike sets') + '.');
+      refresh(true);
+    } catch (e) {
+      showError(e.message);
+      btn.disabled = false;
+    }
+  });
+  bar.append(btn);
+  return bar;
 }
 
 /** One button for every ticked copy inside this folder, set by set, each keeping at least one copy. */
@@ -1745,10 +1990,11 @@ function cleanupBar(path, groups) {
     btn.disabled = true;
     let moved = 0, freed = 0;
     const failed = [];
+    const batch = batchId(); // one History row for the whole folder
     for (const [i, p] of plan.entries()) {
       result.textContent = 'Moving… set ' + (i + 1) + ' of ' + plan.length;
       try {
-        const r = await post('/api/groups/' + encodeURIComponent(p.g.key) + '/recycle', { paths: p.paths });
+        const r = await post('/api/groups/' + encodeURIComponent(p.g.key) + '/recycle', { paths: p.paths, batch, folder: trimSep(path) });
         moved += r.recycled.length;
         freed += r.recycledBytes;
         for (const f of r.failed) failed.push(f.path.split(SEP).pop() + ' (' + f.reason + ')');
@@ -1899,12 +2145,13 @@ let timer = null;
 async function refresh(force) {
   clearTimeout(timer);
   try {
-    const res = await fetch('/api/state');
+    // "seen": this page is showing, so a scan runs at full speed; a hidden tab doesn't say so.
+    const res = await fetch('/api/state' + (document.visibilityState === 'visible' ? '?seen=true' : ''));
     if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
     const s = await res.json();
     const changed = force || !state ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
-      s.done.length !== state.done.length || s.scan.running !== state.scan.running ||
+      s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
@@ -2011,8 +2258,9 @@ $('navpane-toggle').addEventListener('click', () => {
   const open = $('navpane').classList.toggle('open');
   $('navpane-toggle').setAttribute('aria-expanded', String(open));
 });
-$('scan-now').addEventListener('click', async () => {
-  try { await post('/api/scan'); refresh(true); } catch (e) { showError(e.message); }
-});
+$('scan-now').addEventListener('click', scanNow);
+// A tab coming back into view tells the agent at once, so a scan running in the background speeds up.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+setupFolderMenu();
 if (route.view === 'folder') expanded.add(key(route.path));
 refresh(true);

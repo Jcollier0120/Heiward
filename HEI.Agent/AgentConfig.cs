@@ -37,6 +37,8 @@ namespace HEI.Agent {
 		public static string Database => Path.Combine(Home, "db");
 		public static string Thumbnails => Path.Combine(Home, "thumbs");
 		public static string Log => Path.Combine(Home, "heiward.log");
+		/// <summary>Touched while the review page is open and showing (it polls): scans run at full speed then.</summary>
+		public static string PageSeen => Path.Combine(Home, "page-seen");
 
 		/// <summary>Writes a file atomically (temp file, then replace), so readers never see half of it.</summary>
 		public static void WriteAtomic(string path, string contents) {
@@ -102,8 +104,17 @@ namespace HEI.Agent {
 		public List<string> ExcludeExtensions { get; set; } = new();
 		/// <summary>auto (the NPU when there is one), cpu, or npu.</summary>
 		public string AiDevice { get; set; } = "auto";
-		/// <summary>Files decoded at once; 0 = half the logical processors (at least 2).</summary>
+		/// <summary>Files decoded at once; 0 = automatic (<see cref="ParallelismFor"/>).</summary>
 		public int Parallelism { get; set; }
+		/// <summary>
+		/// "auto": a scan the user starts (Scan now, <c>hei scan</c>), and a scheduled one while the review
+		/// page is open, runs at full speed: every core but one, normal priority, no efficiency mode. Other
+		/// scheduled scans run in the background. "background": every scan runs in the background, in
+		/// Windows' efficiency mode at below-normal priority on half the cores (<see cref="ScanPace"/>).
+		/// </summary>
+		public string ScanSpeed { get; set; } = "auto";
+		/// <summary>List what was cleaned up and kept on the review page's History. Off: nothing new is listed, and no file names are kept.</summary>
+		public bool KeepHistory { get; set; } = true;
 		/// <summary>
 		/// Minutes between scheduled scans; 0 = no scheduled scans, only "Scan now". A rescan only looks at
 		/// new and changed files, so an hourly scan with nothing new is a directory listing. Without an
@@ -143,7 +154,11 @@ namespace HEI.Agent {
 		public bool DeveloperModeOn => !string.Equals(DeveloperMode, "off", StringComparison.OrdinalIgnoreCase);
 
 		[JsonIgnore]
-		public int EffectiveParallelism => Parallelism > 0 ? Parallelism : Math.Max(2, Environment.ProcessorCount / 2);
+		public bool AlwaysInBackground => string.Equals(ScanSpeed, "background", StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>Files decoded at once: <see cref="Parallelism"/> when set; else every core but one at full speed, half of them in the background (at least 2).</summary>
+		public int ParallelismFor(bool fullSpeed) =>
+			Parallelism > 0 ? Parallelism : Math.Max(2, fullSpeed ? Environment.ProcessorCount - 1 : Environment.ProcessorCount / 2);
 
 		internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 

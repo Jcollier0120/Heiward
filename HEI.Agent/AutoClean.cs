@@ -396,11 +396,14 @@ namespace HEI.Agent {
 			this.automatic = automatic;
 		}
 
-		public RecycleResult Recycle(ReportGroup group, IReadOnlyCollection<string> paths) {
+		public RecycleResult Recycle(ReportGroup group, IReadOnlyCollection<string> paths) => Recycle(group, paths, null, null);
+
+		/// <param name="batch">Part of one cleanup of a whole folder (<paramref name="folder"/>): one History row for all its sets.</param>
+		public RecycleResult Recycle(ReportGroup group, IReadOnlyCollection<string> paths, string? batch, string? folder) {
 			using (CleanLock.Acquire()) {
 				RecycleResult result = Recycler.Recycle(group, paths);
 				if (result.Recycled.Count > 0)
-					DecisionStore.Set(group.Key, new Decision("recycled", DateTime.UtcNow, result.Recycled, result.RecycledBytes, automatic));
+					DecisionStore.Record(cfg, group.Key, new Decision("recycled", DateTime.UtcNow, result.Recycled, result.RecycledBytes, automatic, batch, folder));
 				return result;
 			}
 		}
@@ -410,12 +413,13 @@ namespace HEI.Agent {
 			using (CleanLock.Acquire()) {
 				result = DevCleaner.Clean(item, cfg);
 				if (result.FreedBytes > 0)
-					DecisionStore.Set("dev:" + item.Id, new Decision("dev-cleaned", DateTime.UtcNow, new() { item.Name }, result.FreedBytes, automatic));
+					DecisionStore.Record(cfg, "dev:" + item.Id, new Decision("dev-cleaned", DateTime.UtcNow, new() { item.Name }, result.FreedBytes, automatic));
 				// Gone, or what's left (files in use) re-measured.
 				if (result.Error == null)
 					DevReport.Update(item.Id, result.LeftInUse == 0 ? null : item with { Bytes = Math.Max(0, item.Bytes - result.FreedBytes), Suggested = false });
 			}
-			AgentPaths.AppendLog($"developer clean{(automatic ? " (automatic)" : "")}: {item.Kind} {item.Location}: freed {Format.Bytes(result.FreedBytes)}" +
+			// Without a history, the log keeps no names either.
+			AgentPaths.AppendLog($"developer clean{(automatic ? " (automatic)" : "")}: {item.Kind}{(cfg.KeepHistory ? " " + item.Location : "")}: freed {Format.Bytes(result.FreedBytes)}" +
 				(result.LeftInUse > 0 ? $", {result.LeftInUse} in use left" : "") + (result.Error != null ? $", {result.Error}" : ""));
 			return result;
 		}
@@ -425,12 +429,14 @@ namespace HEI.Agent {
 			using (CleanLock.Acquire()) {
 				result = BranchPruner.Prune(repo.Path, branches);
 				if (result.Deleted.Count > 0)
-					DecisionStore.Set($"branches:{repo.Id}:{DateTime.UtcNow.Ticks}",
+					DecisionStore.Record(cfg, $"branches:{repo.Id}:{DateTime.UtcNow.Ticks}",
 						new Decision("branches-pruned", DateTime.UtcNow, new[] { repo.Name }.Concat(result.Deleted).ToList(), 0, automatic));
 				if (BranchPruner.Inspect(repo.Path) is { } now) DevReport.UpdateRepository(now);
 			}
-			AgentPaths.AppendLog($"pruned branches{(automatic ? " (automatic)" : "")} in {repo.Path}: deleted {string.Join(", ", result.Deleted)}" +
-				(result.Kept.Count > 0 ? $"; kept {string.Join(", ", result.Kept.Select(k => $"{k.Branch} ({k.Reason})"))}" : "") + (result.Fetched ? "" : "; fetch failed"));
+			AgentPaths.AppendLog(cfg.KeepHistory
+				? $"pruned branches{(automatic ? " (automatic)" : "")} in {repo.Path}: deleted {string.Join(", ", result.Deleted)}" +
+					(result.Kept.Count > 0 ? $"; kept {string.Join(", ", result.Kept.Select(k => $"{k.Branch} ({k.Reason})"))}" : "") + (result.Fetched ? "" : "; fetch failed")
+				: $"pruned branches{(automatic ? " (automatic)" : "")}: deleted {result.Deleted.Count}, kept {result.Kept.Count}" + (result.Fetched ? "" : "; fetch failed"));
 			return result;
 		}
 	}

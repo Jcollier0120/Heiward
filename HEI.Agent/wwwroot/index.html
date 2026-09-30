@@ -44,6 +44,7 @@
 
   <div class="banners">
     <p class="error hidden" id="error"></p>
+    <div class="notice hidden" id="notice" role="status"></div>
     <ul class="notes" id="notes"></ul>
   </div>
 
@@ -67,6 +68,11 @@
     <section id="auto-section">
       <h2>Automatic cleanup</h2>
       <div id="auto-card"></div>
+    </section>
+
+    <section id="scan-section">
+      <h2>Scanning</h2>
+      <div id="scan-card"></div>
     </section>
 
     <section id="hotspots-section">
@@ -100,5 +106,7 @@
     </aside>
     <section class="content" id="content"></section>
   </main>
+
+  <div class="ctx-menu hidden" id="folder-menu" role="menu" aria-label="Folder"></div>
 </body>
 </html>
