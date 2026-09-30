@@ -16,7 +16,7 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
 - **FFmpeg** in `bin\`, where Heiward looks for it first. The Store signs it with the rest of the package, so Smart App Control lets it load, and nothing is downloaded after install. Its licenses and build notes are in `licenses\FFmpeg`.
   - **arm64:** the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), the same pinned release the GitHub exe downloads.
   - **x64:** not chosen yet. Until it is, `store.ps1` builds only with `-Arch arm64`.
-- **Logos** in `Store\Assets`, and a `resources.pri` that lets Windows pick one per size.
+- **Logos** in `Store\Assets`, rendered from `wwwroot\favicon.svg` by `make-icon.ps1`, and a `resources.pri` that lets Windows pick one per size.
 
 ## Partner Center
 
@@ -44,10 +44,6 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
 
 The package builds and Windows accepts it, but Heiward doesn't run as a packaged app yet: it still installs itself as it does from GitHub. What's left:
 
-- **Logos:** `make-icon.ps1` renders the `Store\Assets` PNGs from `wwwroot\favicon.svg`:
-  - `StoreLogo` at 50 and 100 px;
-  - `Square150x150Logo` at 150 and 300 px;
-  - `Square44x44Logo` at 44 and 88 px, plus `targetsize-16/24/32/48/256`, each with an `_altform-unplated` twin.
 - **Knowing it's packaged:** `GetCurrentPackageFullName` returns `APPMODEL_ERROR_NO_PACKAGE` when it isn't.
 - **The installer, packaged:**
   - no copy to `%LOCALAPPDATA%\Programs`, no Apps & Features entry, no shortcuts and no `AppUserModelId` key, because the package provides those;
