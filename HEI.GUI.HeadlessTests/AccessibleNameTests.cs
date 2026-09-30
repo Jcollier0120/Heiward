@@ -150,7 +150,13 @@ public class AccessibleNameTests {
 		Assert.StartsWith("Group 1, 2 files", rows[0].Name);
 		Assert.StartsWith("beach_2019_final.mp4, ", rows[1].Name);
 		Assert.Contains("1920x1080", rows[1].Name);
-		Assert.Contains(@"D:\Videos\Holiday", rows[1].Name);
+		Assert.Contains(ResultsFixture.HolidayFolder, rows[1].Name);
+		Assert.DoesNotContain("Offline", rows[1].Name);
+		Assert.DoesNotContain("Already deleted", rows[1].Name);
+
+		// The badges are drawn, so they have to be said as well.
+		Assert.Contains(", Offline", rows.Single(r => r.Name.Contains("wedding.mkv")).Name);
+		Assert.Contains(", Already deleted, ", rows.Single(r => r.Name.StartsWith("wedding_small.mp4, ")).Name);
 		window.Close();
 	});
 
@@ -179,7 +185,7 @@ public class AccessibleNameTests {
 		// whole path, and used to get none of it.
 		var folders = PeerTree.Walk(window).Where(n => n.Owner is Controls.MiddleEllipsisTextBlock).Select(n => n.Name).ToList();
 
-		Assert.Contains(@"D:\Videos\Holiday\copy", folders);
+		Assert.Contains(Path.Combine(ResultsFixture.HolidayFolder, "copy"), folders);
 		window.Close();
 	});
 

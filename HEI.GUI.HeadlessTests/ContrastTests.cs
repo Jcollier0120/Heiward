@@ -202,6 +202,38 @@ public class ContrastTests {
 		}
 	});
 
+	/// <summary>
+	/// The Results measurements are only as good as the rows they get to see. The Offline badge
+	/// was below 4.5:1 for a long time, unnoticed while the fixture's files happened to show as
+	/// Already deleted on the machine that ran this.
+	/// </summary>
+	[Fact]
+	public Task Results_TheMeasuredView_ShowsEveryKindOfRow() => HeadlessUi.Run(() => {
+		var (view, cleanup) = Create("Results");
+		var window = new Window { Width = 1300, Height = 950, Content = view };
+		window.Show();
+		HeadlessUi.Pump();
+		try {
+			var vm = (MainWindowVM)view.DataContext!;
+			var list = window.GetVisualDescendants().OfType<ListBox>().First(l => l.Name == "ResultsList");
+			string Badges(DuplicateItemVM item) {
+				var row = list.ContainerFromIndex(vm.ResultsRows.IndexOf(vm.ResultsRows.OfType<ResultsItemRow>().Single(r => r.Item == item)));
+				Assert.NotNull(row); // drawn, so measured
+				return string.Join(" ", row.GetVisualDescendants().OfType<TextBlock>()
+					.Where(t => t.IsEffectivelyVisible && t.Text is ("Offline" or "Already deleted")).Select(t => t.Text));
+			}
+
+			Assert.Equal("", Badges(vm.Duplicates[0]));
+			Assert.Equal("", Badges(vm.Duplicates[1]));
+			Assert.Equal("Offline", Badges(vm.Duplicates[2]));
+			Assert.Equal("Already deleted", Badges(vm.Duplicates[3]));
+		}
+		finally {
+			window.Close();
+			cleanup();
+		}
+	});
+
 	[Theory]
 	[InlineData("Dark", false)]
 	[InlineData("Dark", true)]
