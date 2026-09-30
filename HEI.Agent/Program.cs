@@ -30,6 +30,11 @@ using HEI.Core.Utils;
 // Windows removes that storage with the app.
 if (StorePackage.IsPackaged) CoreUtils.UseStateFolder(Path.Combine(StorePackage.Storage, "components"));
 
+// A heiward: link arrives as an argument. heiward://start is the review page's "Start Heiward", when it
+// can't reach Heiward: start it in the background, the page reloads by itself. Any other opens the page.
+if (args.FirstOrDefault(a => a.StartsWith("heiward:", StringComparison.OrdinalIgnoreCase)) is string link)
+	args = link.TrimEnd('/').EndsWith("start", StringComparison.OrdinalIgnoreCase) ? new[] { "serve", "--no-browser" } : new[] { "open" };
+
 var root = new RootCommand("hei — Heiward finds duplicate photos and videos, and stale developer files, and lists them for review");
 root.SetAction(async (_, ct) => {
 	// From the Store package's folder but without its identity, as its desktop shortcut starts it: the packaged
@@ -54,6 +59,10 @@ var scan = new Command("scan", "Scan the configured folders now and update the r
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
+		if (AgentPause.Load() is { } pause) {
+			AgentPaths.AppendLog("scheduled scan skipped: scans are paused " + pause.Describe(DateTime.UtcNow));
+			return 0;
+		}
 		if (Power.ShouldSkip(cfg, out string why)) {
 			AgentPaths.AppendLog("scheduled scan skipped: " + why);
 			return 0;
@@ -66,6 +75,36 @@ scan.SetAction(async (r, ct) => {
 	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct);
 });
 root.Subcommands.Add(scan);
+
+var pauseMinutes = new Option<int?>("--minutes") { Description = $"How long, 1 to {AgentPause.MaxMinutes}. Without it: until 'hei resume'." };
+var pauseCmd = new Command("pause", "Pause scheduled scans and stop the one running: for --minutes, or until 'hei resume'. Scan now still works.") { pauseMinutes };
+pauseCmd.SetAction(r => {
+	var pause = AgentPause.Start(r.GetValue(pauseMinutes), DateTime.UtcNow);
+	if (AgentScanner.IsRunning()) ScanStop.Request();
+	Console.WriteLine($"Scheduled scans are paused {pause.Describe(DateTime.UtcNow)}.");
+	return 0;
+});
+root.Subcommands.Add(pauseCmd);
+
+var resumeCmd = new Command("resume", "Resume scheduled scans after 'hei pause'.");
+resumeCmd.SetAction(_ => {
+	AgentPause.Resume();
+	Console.WriteLine("Scheduled scans are back on.");
+	return 0;
+});
+root.Subcommands.Add(resumeCmd);
+
+var stopCmd = new Command("stop", "Stop the scan that's running (scheduled scans carry on; 'hei pause' stops those too).");
+stopCmd.SetAction(_ => {
+	if (!AgentScanner.IsRunning()) {
+		Console.WriteLine("No scan is running.");
+		return 0;
+	}
+	ScanStop.Request();
+	Console.WriteLine("The scan stops within a few seconds.");
+	return 0;
+});
+root.Subcommands.Add(stopCmd);
 
 var noBrowser = new Option<bool>("--no-browser") { Description = "Don't open a browser tab." };
 var serve = new Command("serve", "Serve the review page on 127.0.0.1 until it sits unused.") { noBrowser };
@@ -160,6 +199,7 @@ status.SetAction(_ => {
 		foreach (string n in report.Notes) Console.WriteLine("  note: " + n);
 	}
 	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'hei install')"}");
+	if (AgentPause.Load() is { } paused) Console.WriteLine($"Paused: scheduled scans skip themselves {paused.Describe(DateTime.UtcNow)} ('hei resume').");
 	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
 	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");
 	PrintAutoClean(cfg, detail: false);

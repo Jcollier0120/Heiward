@@ -30,7 +30,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
 5. opens the review page in your browser once a day at sign-in, and only when something waits for review;
-6. adds **Heiward** shortcuts to the Start menu and the desktop (they open the review page, starting it if needed), registers the name and icon its notifications show, and adds an entry in Apps & Features so Windows can uninstall it.
+6. adds **Heiward** shortcuts to the Start menu and the desktop (they open the review page in your default browser: a new tab if it's open, a new window if not, starting Heiward if needed), registers the name and icon its notifications show and `heiward:` links (the review page's "Start Heiward"), and adds an entry in Apps & Features so Windows can uninstall it.
 
 </details>
 
@@ -172,6 +172,9 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 ```
 hei                 install (or, once installed, open the review page)
 hei scan [--open]   scan now
+hei stop            stop the scan that's running
+hei pause           pause scheduled scans and stop the running one  [--minutes N] (without it: until resumed)
+hei resume          resume scheduled scans
 hei open            open the review page
 hei status          settings, where AI matching runs, last scan, schedule, NPU lock
 hei scope [--count] what a scan looks at and leaves out
@@ -200,7 +203,13 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 
 **Where AI matching runs:** a badge in the title bar. It's green ("NPU ready", then "Running on the NPU" once a scan has used it). Otherwise it names the device and why: "No NPU available", "Unsupported NPU" (an NPU this version can't drive yet), "NPU not set up" (its pack isn't downloaded), or "NPU fell back" (it couldn't run the model; `heiward.log` says why). The install, `hei setup` and every scan write this to `ai-status.json`, so the page reads one small file and is right from the first visit.
 
-**Settings:** the gear in the title bar opens every switch in one place: **Full speed when you're here**, **Automatic cleanup**, and **Keep a history** (with Clear history). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
+**Scanning on its own:** the title bar has the controls, and a banner says when Heiward isn't scanning by itself.
+- **Scan now** turns into **Stop scan** while a scan runs: the scan stops within a second, without a report (`hei stop`).
+- **Pause** stops the scan that's running, and scheduled scans skip themselves: for an hour, 4 hours, until tomorrow morning, or until you resume (`hei pause`, `hei resume`). Scan now still works while paused.
+- **Its scan task gone or turned off** in Task Scheduler: **Turn them back on** registers it again.
+- **Heiward not running** (it stopped, or the PC slept): the page stays as it was, says so, and offers **Start Heiward**, a `heiward://start` link the installer registers. Once Heiward is back, the page reloads by itself.
+
+**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, and **Keep a history** (with Clear history). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
 
 **Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser.
 

@@ -24,6 +24,10 @@
       <div class="progress hidden" id="progress"><div class="bar" id="progress-bar"></div></div>
       <span class="muted small" id="progress-text"></span>
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
+      <div class="theme-picker">
+        <button class="icon-btn" id="pause-btn" title="Pause scans" aria-label="Pause scans" aria-haspopup="menu" aria-expanded="false" aria-controls="pause-menu"></button>
+        <div class="theme-menu pause-menu hidden" id="pause-menu" role="menu" aria-label="Pause scans"></div>
+      </div>
       <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings"></button>
       <div class="theme-picker">
         <button class="icon-btn" id="theme-btn" title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded="false" aria-controls="theme-menu"></button>
@@ -44,6 +48,7 @@
   </nav>
 
   <div class="banners">
+    <div class="agent-banner hidden" id="agent-banner" role="status"></div>
     <p class="error hidden" id="error"></p>
     <div class="notice hidden" id="notice" role="status"></div>
     <ul class="notes" id="notes"></ul>

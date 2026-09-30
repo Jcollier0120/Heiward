@@ -595,6 +595,11 @@ button { font: inherit; color: inherit; }
 /* A notice after an action (a folder included, sets skipped), with an optional button. */
 .notice { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--ok-bg); color: var(--ok); padding: 8px 12px; border-radius: 6px; margin: 8px 0 0; }
 .notice .btn { padding: 3px 12px; }
+/* Whether Heiward scans on its own: paused, its task gone, or Heiward not running at all. */
+.agent-banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--warn-bg); color: var(--warn); padding: 8px 12px; border-radius: 6px; margin: 8px 0 0; }
+.agent-banner.down { background: var(--alert-bg); color: var(--alert); }
+.agent-banner .btn { padding: 3px 12px; text-decoration: none; }
+.pause-menu { width: 250px; }
 
 /* Right-click menu on folders: the theme menu's look, at the pointer. */
 .ctx-menu {

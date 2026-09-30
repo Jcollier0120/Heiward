@@ -52,6 +52,10 @@ namespace HEI.Agent {
 			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : "in the background")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", priority unchanged")}): {string.Join("; ", settings.IncludeList)}");
 			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, stopPacing.Token);
+			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would.
+			ScanStop.Clear();
+			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			Task watching = ScanStop.WatchAsync(started, stopped, stopPacing.Token);
 
 			var engine = new ScanEngine { Settings = settings };
 			int files = 0;
@@ -67,7 +71,7 @@ namespace HEI.Agent {
 			engine.FilesEnumerated += (_, _) => stage = "Checking files";
 			WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, 0, 0, fullSpeed));
 			try {
-				await RunEngineAsync(engine, () => stage = "Comparing", ct);
+				await RunEngineAsync(engine, () => stage = "Comparing", stopped.Token);
 			}
 			catch (OperationCanceledException) {
 				AgentPaths.AppendLog("scan aborted");
@@ -77,6 +81,8 @@ namespace HEI.Agent {
 			finally {
 				stopPacing.Cancel();
 				await pacing;
+				await watching;
+				ScanStop.Clear();
 				try { File.Delete(AgentPaths.ScanStatus); } catch { }
 			}
 

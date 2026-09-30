@@ -26,6 +26,8 @@ namespace HEI.Agent {
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
 	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed);
+	/// <param name="Minutes">How long; null: until the user resumes.</param>
+	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
@@ -239,6 +241,29 @@ namespace HEI.Agent {
 				AutoCleanState.Update(s => { if (request.Allow) s.AllowedFolderPairs.Add(key); else s.AllowedFolderPairs.Remove(key); });
 				return Results.Ok();
 			}));
+			// The agent: stop the scan that's running, pause scheduled scans for a while (and stop the running
+			// one), resume them, or register the tasks again when they're gone or disabled.
+			app.MapPost("/api/scan/stop", () => {
+				if (!AgentScanner.IsRunning()) return Results.Conflict(new { error = "No scan is running." });
+				ScanStop.Request();
+				return Results.Accepted();
+			});
+			app.MapPost("/api/agent/pause", (PauseRequest request) => {
+				if (request.Minutes is < 1 or > AgentPause.MaxMinutes) return Results.BadRequest(new { error = "Pause for 1 minute to a week, or until you resume." });
+				AgentPause.Start(request.Minutes, DateTime.UtcNow);
+				if (AgentScanner.IsRunning()) ScanStop.Request();
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
+			});
+			app.MapPost("/api/agent/resume", () => {
+				AgentPause.Resume();
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
+			});
+			app.MapPost("/api/agent/schedule", () => {
+				if (Installer.RegisterTasks(AgentConfig.Load()) is string error) return Results.Conflict(new { error });
+				AgentPause.Resume();
+				AgentPaths.AppendLog("scheduled scans turned back on from the review page");
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
+			});
 			app.MapPost("/api/scan", () => {
 				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
@@ -326,12 +351,29 @@ namespace HEI.Agent {
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
 				setup = StoreSetup.View(),
+				agent = AgentView(cfg),
 				ai = AiStatus.Load(),
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
 				config = new {
 					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
 					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true), backgroundCores = cfg.ParallelismFor(false),
 				},
+			};
+		}
+
+		/// <summary>
+		/// Whether Heiward scans on its own: paused (and until when), or with its scan task gone or disabled in
+		/// Task Scheduler although settings.json asks for scheduled scans.
+		/// </summary>
+		static object AgentView(AgentConfig cfg) {
+			DateTime now = DateTime.UtcNow;
+			AgentPause? pause = AgentPause.Load(now);
+			return new {
+				paused = pause != null,
+				pausedUntilUtc = pause?.UntilUtc,
+				pausedText = pause?.Describe(now),
+				scheduleMissing = cfg.ScanEveryMinutes > 0 && Scheduler.NextRun() == null,
+				stopping = AgentScanner.IsRunning() && ScanStop.Requested(AgentScanner.ReadStatus()?.StartedUtc ?? DateTime.MinValue),
 			};
 		}
 

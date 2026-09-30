@@ -37,6 +37,10 @@ namespace HEI.Agent {
 		public static string Database => Path.Combine(Home, "db");
 		public static string Thumbnails => Path.Combine(Home, "thumbs");
 		public static string Log => Path.Combine(Home, "heiward.log");
+		/// <summary>Scheduled scans are paused (<see cref="AgentPause"/>).</summary>
+		public static string Paused => Path.Combine(Home, "paused.json");
+		/// <summary>The user asked the running scan to stop (<see cref="ScanStop"/>).</summary>
+		public static string StopScan => Path.Combine(Home, "stop-scan.txt");
 		/// <summary>
 		/// The Store version's setup is done. In the package's storage, which Windows removes with the app:
 		/// set up again after a reinstall, as its scheduled tasks deleted themselves.

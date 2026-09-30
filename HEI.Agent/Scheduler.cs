@@ -134,20 +134,29 @@ namespace HEI.Agent {
 
 		static (DateTime At, string? Next) cachedQuery;
 
-		/// <summary>"Next Run Time" of the scan task, or null when it isn't registered. Cached for a minute.</summary>
+		/// <summary>
+		/// "Next Run Time" of the scan task, or null when it isn't registered or someone disabled it in Task
+		/// Scheduler: either way no scheduled scan comes. Cached for a minute.
+		/// </summary>
 		public static string? NextRun() {
 			if (DateTime.UtcNow - cachedQuery.At < TimeSpan.FromMinutes(1)) return cachedQuery.Next;
 			string? next = null;
 			try {
 				(int code, string output) = Run("/Query", "/TN", ScanTask, "/FO", "LIST", "/V");
-				if (code == 0)
-					next = output.Split('\n').Select(l => l.Trim())
-						.FirstOrDefault(l => l.StartsWith("Next Run Time:", StringComparison.OrdinalIgnoreCase))?["Next Run Time:".Length..].Trim() ?? "scheduled";
+				if (code == 0) {
+					var lines = output.Split('\n').Select(l => l.Trim()).ToList();
+					string? Field(string name) => lines.FirstOrDefault(l => l.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase))?[(name.Length + 1)..].Trim();
+					if (!string.Equals(Field("Scheduled Task State"), "Disabled", StringComparison.OrdinalIgnoreCase))
+						next = Field("Next Run Time") ?? "scheduled";
+				}
 			}
 			catch { }
 			cachedQuery = (DateTime.UtcNow, next);
 			return next;
 		}
+
+		/// <summary>The next <see cref="NextRun"/> asks Task Scheduler again (the tasks just changed).</summary>
+		public static void Forget() => cachedQuery = default;
 
 		static (int, string) Run(params string[] args) {
 			var psi = new ProcessStartInfo(Schtasks) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };

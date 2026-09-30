@@ -169,11 +169,7 @@ namespace HEI.Agent {
 				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, TaskExe, fromStore));
 				Console.WriteLine(Scheduler.OpenXml(TaskExe, fromStore));
 			}
-			else {
-				if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
-				else Scheduler.Remove(Scheduler.ScanTask);
-				if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, fromStore));
-			}
+			else RegisterTasks(cfg);
 
 			if (fromStore) {
 				Step("Start menu, notifications and Apps & Features: the Store package's own");
@@ -189,6 +185,8 @@ namespace HEI.Agent {
 				if (!dryRun) Toast.Register(DisplayName, WriteIconPng());
 				Step($"Apps & Features entry: HKCU\\{UninstallKey}");
 				if (!dryRun) RegisterUninstall();
+				Step($"heiward: links start the review page (its \"Start Heiward\" button): HKCU\\{ProtocolKey}");
+				if (!dryRun) RegisterProtocol();
 			}
 
 			if (dryRun) return 0;
@@ -212,6 +210,7 @@ namespace HEI.Agent {
 					DeleteOwnShortcut(DesktopShortcut);
 					Toast.Unregister();
 					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
+					try { Registry.CurrentUser.DeleteSubKeyTree(ProtocolKey, throwOnMissingSubKey: false); } catch { }
 					StopRunningAgents();
 				}
 			}
@@ -234,6 +233,23 @@ namespace HEI.Agent {
 			}
 			Console.WriteLine(dryRun ? "" : "Uninstalled. Files you reviewed stay where they are; recycled ones are in the Recycle Bin.");
 			return 0;
+		}
+
+		/// <summary>
+		/// The scan task (when <see cref="AgentConfig.ScanEveryMinutes"/> asks for one) and the sign-in task, for
+		/// the installed copy or the Store version. Also the review page's "Turn scheduled scans back on", after
+		/// someone deleted or disabled them in Task Scheduler.
+		/// </summary>
+		/// <returns>Why they can't be registered, or null.</returns>
+		public static string? RegisterTasks(AgentConfig cfg) {
+			// A copy run from Downloads has nothing a task could run once it's gone: install it first.
+			if (!StorePackage.IsPackaged && !File.Exists(InstalledExe)) return "Heiward isn't installed on this PC: run the downloaded Heiward once to install it.";
+			bool fromStore = StorePackage.IsPackaged;
+			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
+			else Scheduler.Remove(Scheduler.ScanTask);
+			if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, fromStore));
+			Scheduler.Forget();
+			return null;
 		}
 
 		/// <summary>
@@ -372,6 +388,7 @@ namespace HEI.Agent {
 			// Through reg.exe: the package's own registry changes stay in the package (its view of HKCU
 			// shows them gone while the user's keys stay), a program outside the package reaches the real ones.
 			DeleteUserKey(Toast.AppIdKey);
+			DeleteUserKey(ProtocolKey); // the Store version's own heiward: links come with its package
 			bool entryLeft = !DeleteUserKey(UninstallKey);
 			// A process that just stopped can hold its exe for a moment.
 			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
@@ -492,6 +509,20 @@ namespace HEI.Agent {
 				$s.Save()
 				""";
 			RunPowerShell(ps);
+		}
+
+		/// <summary>heiward: links, which the review page offers when it can't reach Heiward ("Start Heiward").</summary>
+		const string ProtocolKey = @"Software\Classes\heiward";
+
+		static void RegisterProtocol() {
+			string conhost = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
+			using RegistryKey key = Registry.CurrentUser.CreateSubKey(ProtocolKey);
+			key.SetValue("", "URL:Heiward");
+			key.SetValue("URL Protocol", "");
+			using (RegistryKey icon = key.CreateSubKey("DefaultIcon")) icon.SetValue("", $"\"{InstalledExe}\",0");
+			using RegistryKey command = key.CreateSubKey(@"shell\open\command");
+			// The link itself is the argument: heiward://start starts Heiward, any other opens the page (Program.cs).
+			command.SetValue("", $"\"{conhost}\" --headless \"{InstalledExe}\" \"%1\"");
 		}
 
 		static void RegisterUninstall() {

@@ -12,6 +12,13 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
 
 - **`hei.exe`** and the .NET runtime, published as separate files rather than one: the single-file exe from GitHub unpacks its native libraries into `%TEMP%` at startup, where the package's signature doesn't cover them.
 - **`Heiward.exe`**, the Start menu entry. It's `hei.exe`'s .NET app host with the Windows GUI subsystem, so it runs `hei open` without a console window.
+- **A desktop shortcut** (`desktop7:Shortcut`), which Windows adds and removes with the app, on Windows 11 (Windows 10 ignores it).
+  - It starts `Heiward.exe` by its path, without the package's identity.
+  - Heiward notices (its folder has an `AppxManifest.xml`) and hands over to the packaged app, as the Start menu starts it: `IApplicationActivationManager`, with the app ID worked out from the manifest's name and publisher.
+  - It never takes itself for the GitHub download.
+- **`heiward:` links** (`windows.protocol`): the review page's "Start Heiward", when it can't reach Heiward.
+  - `heiward://start` starts it in the background, and the page reloads by itself.
+  - Any other `heiward:` link opens the page.
 - **The `hei` command** in a terminal, as an app execution alias. The alias's path, `%LOCALAPPDATA%\Microsoft\WindowsApps\hei.exe`, stays the same across updates while the package's own folder changes with every version. That makes it the path for the scheduled tasks.
 - **FFmpeg** in `bin\`, where Heiward looks for it first. The Store signs it with the rest of the package, so Smart App Control lets it load, and nothing is downloaded after install. Its licenses and build notes are in `licenses\FFmpeg`.
   - It's the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), pinned by release and SHA-256.
@@ -39,7 +46,10 @@ With Developer Mode on (**Settings > System > For developers**), register an unp
 Add-AppxPackage -Register artifacts\store\layout-x64\AppxManifest.xml
 ```
 
-Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`.
+Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`. Removing it deletes its storage (the AI components and the setup marker), so the next install runs setup again.
+
+- **A new build of an installed copy:** stop its processes and copy the files over the registered folder. It runs the new files at once.
+- **A changed manifest:** Windows re-registers it only under a higher version. Raise the fourth number in the registered copy's `AppxManifest.xml` (1.3.0.1). Store packages keep it at 0.
 
 ## How the Store version runs
 
@@ -53,7 +63,9 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
     - **In the background:** Windows' efficiency mode, low priority. Slower.
     - **At full speed:** as many cores as it takes, at normal priority.
   - **A copy from GitHub:** when one is installed, a ticked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
-    - The removal takes the copy's processes, shortcuts, notification name, Apps & Features entry and folder.
+    - The removal takes the copy's processes, shortcuts, notification name, `heiward:` links, Apps & Features entry and folder.
+    - It deletes the registry keys with `reg.exe`. The package's own registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay.
+    - A `Heiward.lnk` is deleted only when it names the GitHub copy's folder: the Store version's desktop shortcut has the same name.
     - Settings, the report and the history stay: the Store version uses them.
     - It runs after the AI components were copied from that folder, and before the Store version's tasks take over the same names.
 

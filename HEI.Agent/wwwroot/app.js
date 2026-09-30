@@ -58,6 +58,8 @@ const ICONS = {
   stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
   merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
+  pause: [['path', 'M6 3.5v9M10 3.5v9', 'stroke']],
+  play: [['path', 'M5.5 3.2v9.6l7.5-4.8z', 'stroke']],
   chip: [['rect', '4,4,8,8,1.5', 'stroke'], ['rect', '6.5,6.5,3,3,0.5', 'fill'],
     ['path', 'M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5', 'stroke']],
   palette: [['path', 'M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.5-.6 1.5-1.4 0-.9-.8-1.3-.8-2.1 0-.8.6-1.3 1.4-1.3h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.2 11.5 1.8 8 1.8z', 'stroke'],
@@ -246,8 +248,107 @@ function batchId() {
   return [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+/** The title bar's button: Scan now, or Stop scan while one runs. */
 async function scanNow() {
-  try { await post('/api/scan'); refresh(true); } catch (e) { showError(e.message); }
+  const running = state && state.scan.running;
+  try { await post(running ? '/api/scan/stop' : '/api/scan'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+// ---------------------------------------------------------------- the agent: pause, resume, start
+
+// Whether Heiward scans on its own. Paused (scheduled scans skip themselves for a while), its scan task
+// gone or disabled in Task Scheduler, or Heiward not running at all (this page then can't reach it): a
+// banner says so, with the button that fixes it.
+async function pauseScans(minutes) {
+  try { await post('/api/agent/pause', { minutes }); refresh(true); } catch (e) { showError(e.message); }
+}
+
+async function resumeScans() {
+  try { await post('/api/agent/resume'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+async function startSchedule() {
+  try { await post('/api/agent/schedule'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+/** One banner at a time; rebuilt only when it says something else, so a poll doesn't steal the focus. */
+function showAgentBanner(text, action, down) {
+  const banner = $('agent-banner');
+  banner.classList.toggle('hidden', !text);
+  banner.classList.toggle('down', !!down);
+  const key = text ? text + '|' + (action ? action[0] : '') : '';
+  if (banner.dataset.key === key) return;
+  banner.dataset.key = key;
+  if (!text) { banner.replaceChildren(); return; }
+  const parts = [el('span', null, text)];
+  if (action) {
+    const [label, run] = action;
+    const b = typeof run === 'string' ? el('a', 'btn', label) : el('button', 'btn', label);
+    if (typeof run === 'string') b.href = run;
+    else b.addEventListener('click', run);
+    parts.push(b);
+  }
+  banner.replaceChildren(...parts);
+}
+
+function renderAgent(s) {
+  const a = s.agent;
+  const btn = $('pause-btn');
+  const label = a.paused ? 'Resume scans' : 'Pause scans';
+  btn.replaceChildren(icon(a.paused ? 'play' : 'pause'));
+  btn.title = a.paused ? 'Resume scans (paused ' + a.pausedText + ')' : label;
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('aria-haspopup', a.paused ? 'false' : 'menu');
+  btn.setAttribute('aria-pressed', String(a.paused));
+  btn.disabled = s.setup.needed;
+  if (s.setup.needed) showAgentBanner(null);
+  else if (a.paused) {
+    showAgentBanner('Scans are paused ' + a.pausedText + ': scheduled scans skip themselves. Scan now still works.', ['Resume scans', resumeScans]);
+  } else if (a.scheduleMissing) {
+    showAgentBanner('Scheduled scans aren\'t running: Heiward\'s scan task is missing, or turned off in Task Scheduler.', ['Turn them back on', startSchedule]);
+  } else showAgentBanner(null);
+}
+
+/** The pause button's menu: how long to pause for. While paused, the button resumes at once. */
+function setupPauseMenu() {
+  const btn = $('pause-btn');
+  const menu = $('pause-menu');
+  const show = (open) => {
+    menu.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) menu.querySelector('.theme-item')?.focus();
+  };
+  const tomorrowMorning = () => {
+    const at = new Date();
+    at.setDate(at.getDate() + 1);
+    at.setHours(8, 0, 0, 0);
+    return Math.round((at - new Date()) / 60000);
+  };
+  menu.append(el('div', 'menu-label', 'Pause scans, and stop the one running'));
+  for (const [label, minutes] of [['For 1 hour', () => 60], ['For 4 hours', () => 240], ['Until tomorrow morning', tomorrowMorning], ['Until I resume', () => null]]) {
+    const item = el('button', 'theme-item');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.append(el('span', 'ti-label', label));
+    item.addEventListener('click', () => { show(false); pauseScans(minutes()); });
+    menu.append(item);
+  }
+  btn.append(icon('pause'));
+  btn.addEventListener('click', () => { if (state && state.agent.paused) resumeScans(); else show(menu.classList.contains('hidden')); });
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) show(false);
+  });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('.theme-item')];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    } else if (e.key === 'Escape') {
+      show(false);
+      btn.focus();
+    } else if (e.key === 'Tab') show(false);
+  });
 }
 
 function ticked(g) {
@@ -333,14 +434,18 @@ function renderHeader(s) {
   } else {
     parts.push('No scan yet');
   }
-  if (s.schedule.next) parts.push('next ' + s.schedule.next);
+  if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
+  else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   $('subtitle').textContent = parts.join(' · ');
   renderAiBadge(s.ai);
 
   const running = s.scan.running;
-  $('scan-now').disabled = running || s.setup.needed;
-  $('scan-now').textContent = running ? 'Scanning…' : 'Scan now';
+  const scanBtn = $('scan-now');
+  scanBtn.disabled = s.setup.needed || s.agent.stopping;
+  scanBtn.textContent = running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
+  scanBtn.classList.toggle('secondary', running);
+  renderAgent(s);
   $('progress').classList.toggle('hidden', !running);
   const st = s.scan.status;
   const pace = st ? (st.fullSpeed ? ' · full speed' : ' · in the background') : '';
@@ -2383,6 +2488,7 @@ async function renderRoute() {
 }
 
 let timer = null;
+let serverLost = false;
 async function refresh(force) {
   clearTimeout(timer);
   try {
@@ -2390,6 +2496,8 @@ async function refresh(force) {
     const res = await fetch('/api/state' + (document.visibilityState === 'visible' ? '?seen=true' : ''));
     if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
     const s = await res.json();
+    // Heiward is back, as a new process: its buttons need the token of a page it served.
+    if (serverLost) { location.reload(); return; }
     const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
@@ -2404,7 +2512,11 @@ async function refresh(force) {
     }
     timer = setTimeout(refresh, s.setup.running ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
-    showError('Heiward is not responding (' + e.message + '). Run "hei open" to start it again.');
+    // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
+    serverLost = true;
+    showAgentBanner('Heiward isn\'t running, so this page can\'t update or clean up. Start it, and the page carries on.',
+      ['Start Heiward', 'heiward://start'], true);
+    $('scan-now').disabled = true;
     timer = setTimeout(refresh, 5000);
   }
 }
@@ -2485,6 +2597,7 @@ function setupThemeMenu() {
 }
 
 setupThemeMenu();
+setupPauseMenu();
 $('nav-back').append(icon('back'));
 $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));

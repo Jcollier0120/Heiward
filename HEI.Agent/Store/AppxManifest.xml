@@ -49,6 +49,12 @@
         <desktop7:Extension Category="windows.shortcut">
           <desktop7:Shortcut File="[{Desktop}]\Heiward.lnk" Icon="[{Package}]\Assets\heiward.ico" Description="Review duplicate photos and videos, and stale developer files" />
         </desktop7:Extension>
+        <!-- heiward: links: the review page offers one ("Start Heiward") when it can't reach Heiward. -->
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="heiward">
+            <uap:DisplayName>Heiward</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
         <!-- "hei" in a terminal. It's also the path the scheduled tasks run, %LOCALAPPDATA%\Microsoft\WindowsApps\hei.exe,
              which stays the same across updates while the package's own folder changes with every version. -->
         <uap3:Extension Category="windows.appExecutionAlias" Executable="hei.exe" EntryPoint="Windows.FullTrustApplication">
