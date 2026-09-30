@@ -13,8 +13,9 @@
   xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop7="http://schemas.microsoft.com/appx/manifest/desktop/windows10/7"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap3 uap10 desktop rescap">
+  IgnorableNamespaces="uap uap3 uap10 desktop desktop7 rescap">
 
   <Identity Name="TheNexus.Heiward" Publisher="CN=71D8D20A-F4D5-405B-9F54-12741B793F6D" Version="$Version$" ProcessorArchitecture="$Arch$" />
 
@@ -43,6 +44,11 @@
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png" />
       <Extensions>
+        <!-- A desktop shortcut to the review page, as the GitHub copy's installer makes. Windows adds it with the
+             package and removes it with the package (Windows 11; Windows 10 ignores it). -->
+        <desktop7:Extension Category="windows.shortcut">
+          <desktop7:Shortcut File="[{Desktop}]\Heiward.lnk" Icon="[{Package}]\Assets\heiward.ico" Description="Review duplicate photos and videos, and stale developer files" />
+        </desktop7:Extension>
         <!-- "hei" in a terminal. It's also the path the scheduled tasks run, %LOCALAPPDATA%\Microsoft\WindowsApps\hei.exe,
              which stays the same across updates while the package's own folder changes with every version. -->
         <uap3:Extension Category="windows.appExecutionAlias" Executable="hei.exe" EntryPoint="Windows.FullTrustApplication">

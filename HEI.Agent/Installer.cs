@@ -49,7 +49,7 @@ namespace HEI.Agent {
 		/// <summary>The mark as a picture, for notifications (Windows shows the exe's icon everywhere else).</summary>
 		static string IconPng => Path.Combine(InstallDir, "heiward.png");
 		static string CurrentExe => StorePackage.IsPackaged ? StorePackage.ConsoleExe : Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
-		public static bool RunningInstalled => StorePackage.IsPackaged || string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
+		public static bool RunningInstalled => StorePackage.IsPackaged || StorePackage.InPackageFolder || string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
 		/// <summary>What the scheduled tasks run: the installed exe, or the Store version's alias.</summary>
 		static string TaskExe => StorePackage.IsPackaged ? StorePackage.Alias : InstalledExe;
 
@@ -66,6 +66,10 @@ namespace HEI.Agent {
 			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
+			if (StorePackage.InPackageFolder && !StorePackage.IsPackaged) {
+				Console.WriteLine("This is the Microsoft Store version, started by its path: open Heiward from the Start menu, or run \"hei\".");
+				return 1;
+			}
 			// The Store installs the package built for the PC.
 			if (!StorePackage.IsPackaged && !WrongBuildConfirmed(assumeYes)) {
 				Console.WriteLine("Nothing installed.");
@@ -204,8 +208,8 @@ namespace HEI.Agent {
 			if (!StorePackage.IsPackaged) {
 				Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
 				if (!dryRun) {
-					try { File.Delete(StartMenuShortcut); } catch { }
-					try { File.Delete(DesktopShortcut); } catch { }
+					DeleteOwnShortcut(StartMenuShortcut);
+					DeleteOwnShortcut(DesktopShortcut);
 					Toast.Unregister();
 					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
 					StopRunningAgents();
@@ -363,22 +367,58 @@ namespace HEI.Agent {
 		/// </summary>
 		static void RemoveGitHubCopy() {
 			StopGitHubCopy();
-			try { File.Delete(StartMenuShortcut); } catch { }
-			try { File.Delete(DesktopShortcut); } catch { }
-			Toast.Unregister();
-			try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
+			DeleteOwnShortcut(StartMenuShortcut);
+			DeleteOwnShortcut(DesktopShortcut);
+			// Through reg.exe: the package's own registry changes stay in the package (its view of HKCU
+			// shows them gone while the user's keys stay), a program outside the package reaches the real ones.
+			DeleteUserKey(Toast.AppIdKey);
+			bool entryLeft = !DeleteUserKey(UninstallKey);
 			// A process that just stopped can hold its exe for a moment.
 			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
 				try { Directory.Delete(InstallDir, recursive: true); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Thread.Sleep(1000); }
 			}
-			bool entryLeft;
-			using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(UninstallKey)) entryLeft = key != null;
 			if (Directory.Exists(InstallDir) || entryLeft) {
 				Console.WriteLine("  Some of it is still there: uninstall the other Heiward in Settings > Apps > Installed apps.");
 				AgentPaths.AppendLog($"removing the copy from GitHub left {(entryLeft ? "its Apps & Features entry" : InstallDir)}");
 			}
 			else AgentPaths.AppendLog("removed the copy from GitHub");
+		}
+
+		/// <summary>
+		/// Deletes a Heiward.lnk only if it's the GitHub copy's: the Store version's desktop shortcut has the
+		/// same name and must survive the GitHub copy's removal or uninstall.
+		/// </summary>
+		static void DeleteOwnShortcut(string lnk) {
+			try {
+				if (File.Exists(lnk) && PointsAt(File.ReadAllBytes(lnk), InstallDir)) File.Delete(lnk);
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+		}
+
+		/// <summary>A .lnk file names <paramref name="folder"/> (its target and arguments are stored as UTF-16 or ANSI text).</summary>
+		internal static bool PointsAt(byte[] lnk, string folder) =>
+			System.Text.Encoding.Unicode.GetString(lnk).Contains(folder, StringComparison.OrdinalIgnoreCase) ||
+			lnk.Length > 1 && System.Text.Encoding.Unicode.GetString(lnk, 1, lnk.Length - 1).Contains(folder, StringComparison.OrdinalIgnoreCase) ||
+			System.Text.Encoding.Latin1.GetString(lnk).Contains(folder, StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>Deletes an HKCU key with reg.exe; true when the user's registry doesn't have it any more.</summary>
+		static bool DeleteUserKey(string key) {
+			string reg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
+			int Run(params string[] args) {
+				var psi = new ProcessStartInfo(reg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+				foreach (string a in args) psi.ArgumentList.Add(a);
+				using var p = Process.Start(psi)!;
+				p.StandardOutput.ReadToEnd();
+				p.StandardError.ReadToEnd();
+				p.WaitForExit(10_000);
+				return p.ExitCode;
+			}
+			try {
+				Run("delete", @"HKCU\" + key, "/f");
+				return Run("query", @"HKCU\" + key) != 0;
+			}
+			catch { return false; }
 		}
 
 		/// <summary>

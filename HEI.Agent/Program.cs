@@ -32,6 +32,9 @@ if (StorePackage.IsPackaged) CoreUtils.UseStateFolder(Path.Combine(StorePackage.
 
 var root = new RootCommand("hei — Heiward finds duplicate photos and videos, and stale developer files, and lists them for review");
 root.SetAction(async (_, ct) => {
+	// From the Store package's folder but without its identity, as its desktop shortcut starts it: the packaged
+	// app takes over, as from the Start menu.
+	if (StorePackage.InPackageFolder && !StorePackage.IsPackaged && StorePackage.ActivateFromFolder()) return 0;
 	if (Installer.RunningInstalled) {
 		await OpenReviewPageAsync(AgentConfig.Load(), ct);
 		return 0;

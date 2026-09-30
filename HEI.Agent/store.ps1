@@ -160,6 +160,8 @@ try {
 		Add-Ffmpeg $a $layout
 
 		Copy-Item $assets (Join-Path $layout 'Assets') -Recurse
+		# The desktop shortcut's icon: a shortcut the package declares takes an .ico, not an exe's icon.
+		Copy-Item (Join-Path $PSScriptRoot 'heiward.ico') (Join-Path $layout 'Assets\heiward.ico')
 		$appxManifest = Join-Path $layout 'AppxManifest.xml'
 		[IO.File]::WriteAllText($appxManifest, $manifest.Replace('$Version$', $packageVersion).Replace('$Arch$', $a), (New-Object System.Text.UTF8Encoding $false))
 

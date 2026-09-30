@@ -51,6 +51,59 @@ namespace HEI.Agent {
 		/// </summary>
 		public static string Storage => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Packages", FamilyName ?? "", "LocalCache");
 
+		/// <summary>
+		/// This exe sits in a Store package's folder, next to its AppxManifest.xml, with or without the package's
+		/// identity. Started by its path, as the package's desktop shortcut does, it has none: it must never
+		/// take itself for the GitHub download and install itself.
+		/// </summary>
+		public static bool InPackageFolder => File.Exists(Path.Combine(AppContext.BaseDirectory, "AppxManifest.xml"));
+
+		/// <summary>
+		/// Started from the package's folder without its identity: hands over to the packaged app, the way the
+		/// Start menu starts it. False when that didn't work.
+		/// </summary>
+		public static bool ActivateFromFolder() {
+			try {
+				var manifest = System.Xml.Linq.XDocument.Load(Path.Combine(AppContext.BaseDirectory, "AppxManifest.xml"));
+				System.Xml.Linq.XNamespace ns = "http://schemas.microsoft.com/appx/manifest/foundation/windows10";
+				var identity = manifest.Root!.Element(ns + "Identity")!;
+				string appId = manifest.Root.Element(ns + "Applications")!.Element(ns + "Application")!.Attribute("Id")!.Value;
+				string aumid = $"{identity.Attribute("Name")!.Value}_{PublisherId(identity.Attribute("Publisher")!.Value)}!{appId}";
+				((IApplicationActivationManager)new ApplicationActivationManager()).ActivateApplication(aumid, null, 0, out _);
+				return true;
+			}
+			catch (Exception e) {
+				AgentPaths.AppendLog($"couldn't hand over to the Store app: {e.Message}");
+				return false;
+			}
+		}
+
+		/// <summary>
+		/// The publisher part of a package family name (mcanr0hfqkj1g): the first 8 bytes of the SHA-256 of the
+		/// publisher (UTF-16), in 13 characters of Crockford's base32.
+		/// </summary>
+		internal static string PublisherId(string publisher) {
+			byte[] hash = System.Security.Cryptography.SHA256.HashData(Encoding.Unicode.GetBytes(publisher));
+			ulong bits = System.Buffers.Binary.BinaryPrimitives.ReadUInt64BigEndian(hash);
+			const string alphabet = "0123456789abcdefghjkmnpqrstvwxyz";
+			var id = new StringBuilder(13);
+			// 64 bits and a zero bit: 13 groups of 5.
+			for (int i = 0; i < 13; i++) {
+				int shift = 64 - 5 * (i + 1);
+				int group = shift >= 0 ? (int)(bits >> shift) & 31 : (int)(bits << -shift) & 31;
+				id.Append(alphabet[group]);
+			}
+			return id.ToString();
+		}
+
+		[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+		interface IApplicationActivationManager {
+			void ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId, [MarshalAs(UnmanagedType.LPWStr)] string? arguments, int options, out uint processId);
+		}
+
+		[ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")]
+		class ApplicationActivationManager { }
+
 		static string? ReadFamilyName() {
 			try {
 				int length = 0;

@@ -68,6 +68,24 @@ public sealed class SchedulerTests {
 		Assert.Null(StoreSetup.Arguments(new SetupRequest(device, false, speed)));
 
 	[Theory]
+	[InlineData(0, true)]   // the target and arguments as UTF-16, at an even or odd offset
+	[InlineData(1, true)]
+	[InlineData(2, false)]  // ANSI
+	public void GitHubShortcut_IsTellsApart_ByTheFolderItNames(int layout, bool unicode) {
+		const string dir = @"C:\Users\me\AppData\Local\Programs\Heiward";
+		byte[] path = unicode ? System.Text.Encoding.Unicode.GetBytes(@"--headless """ + dir + @"\hei.exe"" open") : System.Text.Encoding.Latin1.GetBytes(dir + @"\hei.exe");
+		byte[] lnk = new byte[] { 0x4C, 0, 0, 0 }.Concat(new byte[layout == 1 ? 1 : 0]).Concat(path).Concat(new byte[] { 0, 0 }).ToArray();
+		Assert.True(Installer.PointsAt(lnk, dir));
+		// The Store version's desktop shortcut runs the package's Heiward.exe.
+		Assert.False(Installer.PointsAt(System.Text.Encoding.Unicode.GetBytes(@"C:\Program Files\WindowsApps\TheNexus.Heiward_1.3.0.0_x64__mcanr0hfqkj1g\Heiward.exe"), dir));
+	}
+
+	[Fact]
+	public void StorePackage_WorksOutThePackageFamily_FromThePublisher() =>
+		// Partner Center's package family for Heiward is TheNexus.Heiward_mcanr0hfqkj1g.
+		Assert.Equal("mcanr0hfqkj1g", StorePackage.PublisherId("CN=71D8D20A-F4D5-405B-9F54-12741B793F6D"));
+
+	[Theory]
 	[InlineData("Snapdragon(R) X2 Elite Extreme - X2E94100 - Qualcomm(R) Hexagon(TM) NPU", "Snapdragon X2 Elite Extreme - X2E94100 - Qualcomm Hexagon NPU")]
 	[InlineData("Intel® AI Boost", "Intel AI Boost")]
 	public void StoreSetup_NamesTheNpu_WithoutTrademarkMarks(string windows, string shown) =>
