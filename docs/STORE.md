@@ -30,13 +30,85 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
 
 Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4CW3D` and package family `TheNexus.Heiward_mcanr0hfqkj1g`. The manifest's identity (**Product management > Product identity**) is filled in.
 
-Still to fill in before the first submission:
-1. **The listing:**
-   - **Description:** the README's opening.
-   - **Screenshots:** from `docs/screenshots`.
-   - **Privacy policy URL:** Heiward reads the user's photos and videos, so the Store requires one. A page saying that nothing leaves the PC, and what it downloads, is enough.
-2. **The age rating questionnaire.**
-3. **Why it needs the restricted `runFullTrust` capability.** For example: "Heiward is a desktop app. It scans the user's drives for duplicate photos and videos, schedules its scans with Task Scheduler, moves the files the user picks to the Recycle Bin, and serves its review page on 127.0.0.1."
+### Releasing
+
+1. **Build the bundle** from a clean checkout of `master`, with `store.ps1` (above). The package's version is `VersionPrefix` in `HEI.Agent.csproj` with a `.0`; every submission needs a higher one than the last.
+2. **The first submission goes to a private audience.** The Store installs a flight only for an app that has a published submission, and an app published to everyone can't go back to private. So the first one is the test (**Pricing and availability > Visibility > Private audience**), with a known user group holding your personal Microsoft account's email address.
+3. **Install it from the Store** with the link Partner Center gives for the private audience, and try it on each architecture you can: setup, a scan, Scan now, the desktop shortcut, a `heiward:` link, `hei` in a terminal, and a notification.
+   - First remove any copy registered from a build folder (`Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`). It has the same identity, so the Store can't install next to it. Removing it deletes its AI components and setup marker: setup runs again, with the settings and history kept.
+4. **Go public:** a new submission with **Public audience**. It may go through certification again.
+
+### What each page asks
+
+**Pricing and availability:** Free, in every market. Visibility as in step 2 above.
+
+**Properties:**
+- **Category:** Utilities & tools.
+- **Privacy policy URL:** `https://github.com/Jcollier0120/Heiward/blob/master/docs/PRIVACY.md` ([PRIVACY.md](PRIVACY.md)). The Store requires one because Heiward reads the user's photos and videos.
+- **Website:** `https://github.com/Jcollier0120/Heiward`
+- **Support contact info:** `https://github.com/Jcollier0120/Heiward/issues`
+- **System requirements:** Windows 10 version 2004 or later, on an x64 or Arm64 PC. An NPU (Qualcomm Snapdragon, Intel Core Ultra or AMD Ryzen AI) is recommended, not required.
+
+**Age ratings:** the questionnaire's app category is the one for utilities and productivity apps, not games. Heiward has no user-to-user contact, no sharing of the user's location, no purchases and no web browsing, so every answer is No.
+
+**Packages:** `artifacts\store\Heiward-<version>.msixbundle`.
+
+**Store listings (English, United States):**
+- **Description:**
+  ```
+  Heiward keeps your Windows PC tidy in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a review page on your PC. Nothing is removed until you say so, and files you tick go to the Recycle Bin. Once you trust what it suggests, it can clean up by itself.
+
+  Light on power. AI matching runs on the NPU where there is one (Qualcomm Snapdragon, Intel Core Ultra, or AMD Ryzen AI), with hourly scans. Otherwise it uses the graphics card or the processor, every 6 hours on AC power, or only when you ask. Scheduled scans run in Windows' efficiency mode.
+
+  The whole PC, minus what isn't yours. Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded. Right-click a folder on the page to include it or leave it out.
+
+  Laid out like File Explorer. A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you. Burst shots and pictures less than 75% alike aren't offered as look-alikes.
+
+  Developer cleanup, project by project. Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main.
+
+  Automatic cleanup, when you're ready. Two switches let it clean plain copies and developer leftovers by itself, a few days after listing them, with a "Leave it" button on each. Edits, look-alikes, cloud-synced copies and anything that looks like a backup always wait for you.
+
+  Private. No account, no ads, no telemetry: nothing about you or your files leaves your PC.
+
+  Heiward is free and open source (AGPL-3.0), built on Video Duplicate Finder. The source is at github.com/Jcollier0120/Heiward.
+  ```
+- **What's new in this version:** `The first release in the Microsoft Store.`
+- **Product features** (one per line in Partner Center):
+  ```
+  Finds duplicate photos and videos on every fixed drive, including copies in other formats and sizes
+  AI matching on the NPU, the graphics card or the processor
+  A review page laid out like File Explorer: a card per drive, a folder tree, and each folder's duplicates
+  Nothing is removed until you say so, and removed files go to the Recycle Bin
+  Developer cleanup: build outputs, finished worktrees, package caches, emulator images and old temp files
+  Optional automatic cleanup of plain copies and developer leftovers, with a "Leave it" button on each
+  Scheduled scans in Windows' efficiency mode; Scan now runs at full speed
+  Cloud-only files are never downloaded
+  Match Windows, Light, Dark, and six colour themes
+  No account and no telemetry: nothing leaves your PC
+  ```
+- **Screenshots** (2560 × 1600, from `docs/screenshots`), in this order, with these captions:
+  1. `home.png`: `A card per drive or folder with its sets of copies, developer cleanup, and where cleaning up frees the most`
+  2. `duplicates.png`: `A folder and its duplicates. Each set keeps one file; the copies go to the Recycle Bin`
+  3. `developer.png`: `Developer cleanup, project by project (Carbon theme)`
+  4. `themes.png`: `Match Windows, Light, Dark, or one of six colour themes (Quest here)`
+- **Search terms** (up to 7): `duplicate photos`, `duplicate videos`, `duplicate finder`, `disk cleanup`, `photo cleanup`, `NPU`, `developer cleanup`.
+- **Copyright and trademark info:** `© 2026 Jeremy Collier. Built on Video Duplicate Finder.`
+- **Additional license terms:** `Heiward is free software under the GNU Affero General Public License v3: https://www.gnu.org/licenses/agpl-3.0.html. Its source code is at https://github.com/Jcollier0120/Heiward.`
+
+**Submission options:**
+- **Why it needs `runFullTrust`** (a restricted capability):
+  ```
+  Heiward is a desktop app (full trust). It scans the user's fixed drives for duplicate photos and videos, schedules its scans with Task Scheduler, moves the files the user picks to the Recycle Bin, and serves its review page to the user's browser on 127.0.0.1 only.
+  ```
+- **Notes for certification:**
+  ```
+  Heiward's window is a page in the default browser, served by Heiward on http://127.0.0.1:18484. No account or sign-in is needed.
+
+  1. Start Heiward from the Start menu. The page opens with first-run setup.
+  2. Pick where the AI runs (the NPU when the PC has one, otherwise the graphics card or the processor) and how hard scans work, then start. Setup downloads the AI components (ONNX Runtime and a small image model from GitHub and NuGet; about 215 MB more for the graphics card), so the PC needs internet access.
+  3. The first scan starts by itself; its progress is on the page. With few photos on the PC it finds little: copy a photo to a second folder to see a set of duplicates. Tick a copy and move it to the Recycle Bin.
+  4. "hei" in a terminal is the command line (hei --help).
+  ```
 
 ## Trying a build locally
 
@@ -85,7 +157,6 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
 
 A GitHub copy kept alongside uses the same task names: whichever set up last runs the scheduled scans.
 
-## Still to do before the first submission
+## Not tried yet
 
-- **Partner Center:** the listing, the privacy policy and the age rating (above).
-- **A real Store install:** a Partner Center flight to a private audience. That's the only way to try the package from `WindowsApps`, signed by the Store; a local `-Register` runs it from a writable folder.
+**A Store install.** The package has only run registered from a build folder, which is writable and unsigned. From the Store it runs from `WindowsApps`, read-only and signed by the Store. The private-audience submission ([Releasing](#releasing), step 2) is the first time it does.
