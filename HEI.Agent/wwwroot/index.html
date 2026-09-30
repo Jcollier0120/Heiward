@@ -24,6 +24,7 @@
       <div class="progress hidden" id="progress"><div class="bar" id="progress-bar"></div></div>
       <span class="muted small" id="progress-text"></span>
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
+      <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings"></button>
       <div class="theme-picker">
         <button class="icon-btn" id="theme-btn" title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded="false" aria-controls="theme-menu"></button>
         <div class="theme-menu hidden" id="theme-menu" role="menu" aria-label="Theme"></div>
@@ -65,16 +66,6 @@
       <div id="dev-card"></div>
     </section>
 
-    <section id="auto-section">
-      <h2>Automatic cleanup</h2>
-      <div id="auto-card"></div>
-    </section>
-
-    <section id="scan-section">
-      <h2>Scanning</h2>
-      <div id="scan-card"></div>
-    </section>
-
     <section id="hotspots-section">
       <h2>Where the duplicates are</h2>
       <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
@@ -89,6 +80,28 @@
     </section>
 
     <footer class="muted small" id="footer"></footer>
+  </main>
+
+  <main id="settingsview" class="view home settings hidden">
+    <section>
+      <h2>Scanning</h2>
+      <div id="scan-card"></div>
+    </section>
+
+    <section>
+      <h2>Automatic cleanup</h2>
+      <div id="auto-card"></div>
+    </section>
+
+    <section>
+      <h2>History</h2>
+      <div id="history-card"></div>
+    </section>
+
+    <section>
+      <h2>Everything else</h2>
+      <div id="more-card"></div>
+    </section>
   </main>
 
   <main id="devview" class="view split hidden">

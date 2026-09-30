@@ -14,7 +14,7 @@ Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videodupli
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 
-Scheduled scans run in the background: Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority, on half the cores. A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** on the page (`"scanSpeed": "background"`). A rescan only checks new and changed files.
+Scheduled scans run in the background: Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority, on half the cores. A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`). A rescan only checks new and changed files.
 
 ## Install
 
@@ -72,7 +72,7 @@ A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a fil
 
 ## Automatic cleanup
 
-Once you trust what the page ticks, you can let Heiward clean it up by itself. The **Automatic cleanup** card on the review page has a switch for duplicates and one for developer leftovers, both off until you turn them on (or `hei auto --duplicates on --developer on`).
+Once you trust what the page ticks, you can let Heiward clean it up by itself. The **Automatic cleanup** card in the review page's Settings (the gear in the title bar) has a switch for duplicates and one for developer leftovers, both off until you turn them on (or `hei auto --duplicates on --developer on`).
 
 - **When:** after each scan, once something has been listed for 3 days (`afterDays`), counted from when you turned it on at the earliest. Each set and item on the page says when it goes, with a **Leave it** button. Developer items go right after the daily developer check, so "untouched for 30 days" is that day's answer.
 - **Duplicates:** plain copies of photos (identical, or the same picture pixel for pixel) and byte-for-byte identical videos go to the Recycle Bin, through the same checks as the page's button. It leaves for you:
@@ -190,7 +190,7 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 - **This PC:** a card per drive with its free space, how many photos and videos it holds, how long its last scan took, and its sets of copies and space to free. Below the cards, the folders where cleaning up frees the most, and the history of what you've done:
   - A folder's cleanup, or its **Skip all**, is one line.
   - **Clear history** empties the list and forgets the file names in it. Sets you kept stay hidden, and "freed so far" stays.
-  - **Keep a history** off lists nothing new.
+  - **Keep a history** off (in Settings) lists nothing new.
 - **A folder:** the navigation tree on the left and the folder on the right:
   - Its subfolders in a details view you can sort by space to free, with only the duplicates that touch this folder below.
   - Copies and look-alikes are shown separately.
@@ -199,6 +199,8 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 - **Exempt folders** (system, programs, games, code, other accounts) are greyed out with the reason. Many of them together fold into one row. Folders without photos or videos are hidden behind a "show" link.
 
 **Where AI matching runs:** a badge in the title bar. It's green ("NPU ready", then "Running on the NPU" once a scan has used it). Otherwise it names the device and why: "No NPU available", "Unsupported NPU" (an NPU this version can't drive yet), "NPU not set up" (its pack isn't downloaded), or "NPU fell back" (it couldn't run the model; `heiward.log` says why). The install, `hei setup` and every scan write this to `ai-status.json`, so the page reads one small file and is right from the first visit.
+
+**Settings:** the gear in the title bar opens every switch in one place: **Full speed when you're here**, **Automatic cleanup**, and **Keep a history** (with Clear history). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
 
 **Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser.
 

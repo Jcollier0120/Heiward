@@ -327,6 +327,7 @@ button { font: inherit; color: inherit; }
 .icon-btn:hover:not(:disabled) { background: var(--hover); }
 .icon-btn:disabled { color: var(--faint); cursor: default; }
 .icon-btn svg { width: 16px; height: 16px; }
+.icon-btn[aria-pressed="true"] { background: var(--selected); color: var(--accent-text); }
 
 /* ---- Where AI matching runs ---- */
 .ai-badge {

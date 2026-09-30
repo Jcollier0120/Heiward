@@ -53,6 +53,8 @@ const ICONS = {
   db: [['path', 'M3 4c0-1.1 2.2-2 5-2s5 .9 5 2-2.2 2-5 2-5-.9-5-2zM3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2', 'stroke']],
   phone: [['rect', '4.5,1.5,7,13,1.6', 'stroke'], ['path', 'M7 12.2h2', 'stroke']],
   clock: [['circle', '8,8,6', 'stroke'], ['path', 'M8 4.8V8l2.3 1.4', 'stroke']],
+  gear: [['circle', '8,8,2', 'stroke'],
+    ['path', 'M6.9 1.8h2.2l.4 1.8 1.2.7 1.7-.6 1.1 1.9-1.3 1.2v1.4l1.3 1.2-1.1 1.9-1.7-.6-1.2.7-.4 1.8H6.9l-.4-1.8-1.2-.7-1.7.6-1.1-1.9 1.3-1.2V7.3L2.5 6.1l1.1-1.9 1.7.6 1.2-.7z', 'stroke']],
   stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
   merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
@@ -255,6 +257,7 @@ function ticked(g) {
 
 function parseRoute() {
   const h = location.hash;
+  if (h === '#/settings') return { view: 'settings' };
   if (h === '#/dev') return { view: 'dev', cat: null };
   if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
   if (h.startsWith('#/dev/s/')) return { view: 'dev', cat: decodeURIComponent(h.slice(8)) };
@@ -367,6 +370,15 @@ function renderCrumbs() {
     items.push(li);
   };
   crumb('This PC', pcIcon(), null);
+  if (route.view === 'settings') {
+    const li = el('li');
+    li.append(icon('sep', 'sep'));
+    const b = el('button', 'crumb');
+    b.append(icon('gear'), el('span', null, 'Settings'));
+    b.addEventListener('click', () => { location.hash = '#/settings'; });
+    li.append(b);
+    items.push(li);
+  }
   if (route.view === 'dev') {
     const li = el('li');
     li.append(icon('sep', 'sep'));
@@ -444,10 +456,53 @@ function renderHome(s) {
   }));
 
   renderDevCard(s.dev);
-  renderAutoCard(s);
-  renderScanCard(s);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- settings
+
+// Every switch in one place: how hard scans work, automatic cleanup, the history. The rest of
+// settings.json (folders, file types, the AI device) is listed with where to change it.
+function renderSettings(s) {
+  renderScanCard(s);
+  renderAutoCard(s);
+  renderHistoryCard(s);
+  renderMoreCard(s);
+}
+
+function renderHistoryCard(s) {
+  const card = el('div', 'auto-card');
+  card.append(historyBar(s, true));
+  $('history-card').replaceChildren(card);
+}
+
+/** What the page has no switch for: where it's set, and what it's set to now. */
+function renderMoreCard(s) {
+  const c = s.config;
+  const card = el('div', 'auto-card');
+  const extra = c.folders.filter((f) => trimSep(f).length > 3); // not a drive's root
+  const rows = [
+    ['What\'s scanned', c.allDrives
+      ? 'Every fixed drive, minus Windows, programs, games, app data and code.' + (extra.length ? ' Also: ' + extra.join('; ') : '')
+      : c.folders.join('; ') || 'Nothing: add folders in the settings file.',
+      'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
+    ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', 'excludeExtensions in the settings file.'],
+    ['Where AI matching runs', c.aiDevice === 'auto' ? 'On the NPU when there is one, otherwise as set up.' : 'On the ' + c.aiDevice.toUpperCase() + '.', 'aiDevice in the settings file: auto, npu, gpu or cpu.'],
+  ];
+  for (const [title, value, how] of rows) {
+    const r = el('div', 'auto-row');
+    const text = el('div', 'auto-text');
+    text.append(el('div', 'auto-title', title), el('div', null, value), el('div', 'muted small', how));
+    r.append(text);
+    card.append(r);
+  }
+  const foot = el('div', 'auto-foot');
+  const file = el('div', 'muted small', 'Settings file: ');
+  file.append(el('code', null, c.path));
+  foot.append(file, el('div', 'muted small', 'Changes to the file apply at the next scan. The page\'s own switches above save to it too.'));
+  card.append(foot);
+  $('more-card').replaceChildren(card);
 }
 
 // ---------------------------------------------------------------- scanning and history settings
@@ -467,7 +522,6 @@ function renderScanCard(s) {
   const full = c.scanSpeed !== 'background';
   const card = el('div', 'auto-card');
   const row = el('div', 'auto-row');
-  row.style.borderBottom = '0';
   row.append(toggleSwitch(full, 'Full speed when you\'re here', settingsBusy, (on) => saveSettings({ scanSpeed: on ? 'auto' : 'background' })));
   const text = el('div', 'auto-text');
   text.append(el('div', 'auto-title', 'Full speed when you\'re here'));
@@ -478,6 +532,11 @@ function renderScanCard(s) {
       '. Slower, and light on the battery and the fans.'));
   row.append(text);
   card.append(row);
+  const foot = el('div', 'auto-foot');
+  foot.append(el('div', 'muted small', s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
+    : s.schedule.everyMinutes === 0 ? 'No scheduled scans: scans run when you press Scan now.'
+      : 'Scheduled scans aren\'t set up on this PC: run "hei install".'));
+  card.append(foot);
   $('scan-card').replaceChildren(card);
 }
 
@@ -1391,16 +1450,28 @@ function driveCard(d) {
   return card;
 }
 
-/** The top of History: keep one or not, and clear it. */
-function historyBar(s) {
+/**
+ * History's controls. In Settings (withSwitch): keep one or not, and clear it. Above the list on the
+ * home page: clear it, and a pointer to Settings while it's off.
+ */
+function historyBar(s, withSwitch) {
   const bar = el('div', 'history-bar');
   const keep = s.config.keepHistory;
-  bar.append(toggleSwitch(keep, 'Keep a history', settingsBusy, (on) => saveSettings({ keepHistory: on })));
   const text = el('div', 'auto-text');
-  text.append(el('div', 'auto-title', 'Keep a history'),
-    el('div', 'muted small', keep
-      ? 'What you and automatic cleanup clean up or keep is listed here, with file names.'
-      : 'Off: nothing new is listed here, and no file names are kept. Kept sets still stay hidden.'));
+  if (withSwitch) {
+    bar.style.borderBottom = '0';
+    bar.append(toggleSwitch(keep, 'Keep a history', settingsBusy, (on) => saveSettings({ keepHistory: on })));
+    text.append(el('div', 'auto-title', 'Keep a history'),
+      el('div', 'muted small', keep
+        ? 'What you and automatic cleanup clean up or keep is listed under History on the home page, with file names.'
+        : 'Off: nothing new is listed, and no file names are kept. Sets you kept still stay hidden.'));
+  } else if (!keep) {
+    const off = el('div', 'muted small', 'History is off: nothing new is listed. ');
+    const link = el('button', 'link small', 'Settings');
+    link.addEventListener('click', () => { location.hash = '#/settings'; });
+    off.append(link);
+    text.append(off);
+  }
   bar.append(text);
   const clear = el('button', 'btn secondary', 'Clear history');
   clear.disabled = !s.done.length;
@@ -2119,8 +2190,14 @@ async function renderRoute() {
   renderCrumbs();
   const folder = route.view === 'folder';
   $('home').classList.toggle('hidden', route.view !== 'home');
+  $('settingsview').classList.toggle('hidden', route.view !== 'settings');
   $('devview').classList.toggle('hidden', route.view !== 'dev');
   $('folder').classList.toggle('hidden', !folder);
+  $('settings-btn').setAttribute('aria-pressed', String(route.view === 'settings'));
+  if (route.view === 'settings') {
+    renderSettings(state);
+    return;
+  }
   if (route.view === 'dev') {
     if (!devReport || (state.dev.scannedAtUtc && devReport.scannedAtUtc !== state.dev.scannedAtUtc)) await loadDevReport();
     renderCrumbs(); // a project's name comes with the report
@@ -2249,7 +2326,9 @@ $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
 $('nav-back').addEventListener('click', () => history.back());
 $('nav-fwd').addEventListener('click', () => history.forward());
-$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } });
+$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } else if (route.view === 'settings') go(null); });
+$('settings-btn').append(icon('gear'));
+$('settings-btn').addEventListener('click', () => { location.hash = route.view === 'settings' ? '#/' : '#/settings'; });
 $('dev-nav-toggle').addEventListener('click', () => {
   const open = $('dev-nav').classList.toggle('open');
   $('dev-nav-toggle').setAttribute('aria-expanded', String(open));
