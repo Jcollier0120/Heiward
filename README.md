@@ -2,9 +2,9 @@
 
 Heiward keeps your Windows PC tidy in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a local review page. Nothing is removed until you say so, and files you tick go to the Recycle Bin. Once you trust what it suggests, it can clean up by itself.
 
-- **Light on power.** AI matching runs on the NPU where there is one (Qualcomm Snapdragon, Intel Core Ultra, or AMD Ryzen AI), with hourly scans. A badge in the title bar shows where it runs, and why not on the NPU. Otherwise it uses the GPU or CPU every 6 hours on AC power, or only when you ask. Scheduled scans run in Windows' efficiency mode.
-- **The whole PC, minus what isn't yours.** Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded.
-- **Laid out like File Explorer.** A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you.
+- **Light on power.** AI matching runs on the NPU where there is one (Qualcomm Snapdragon, Intel Core Ultra, or AMD Ryzen AI), with hourly scans. A badge in the title bar shows where it runs, and why not on the NPU. Otherwise it uses the GPU or CPU every 6 hours on AC power, or only when you ask. Scheduled scans run in Windows' efficiency mode; Scan now, and any scan while the page is open, runs at full speed.
+- **The whole PC, minus what isn't yours.** Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded. Right-click a folder on the page to include it or leave it out.
+- **Laid out like File Explorer.** A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you. Burst shots (`IMG_1234`, `IMG_1235`) and pictures less than 75% alike aren't offered as look-alikes, and a folder's look-alikes can be skipped all at once.
 - **Developer cleanup, project by project.** Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main.
 - **Automatic cleanup, when you're ready.** Two switches let it clean plain copies and developer leftovers by itself, a few days after listing them, with a "Leave it" button on each. Edits, look-alikes, cloud-synced copies and anything that looks like a backup always wait for you.
 - **Themes.** Match Windows, Light, Dark, and six colour themes.
@@ -37,7 +37,7 @@ A *heiward* (Middle English, "hedge warden") was the village officer who kept th
    Not sure which? **Settings > System > About** says "x64-based processor" or "ARM-based processor".
 2. Run it.
 
-There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan, and the review page opens in your browser to show its progress. On a PC without an NPU it asks one question: run the AI on the graphics card or the processor.
+There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan, and the review page opens in your browser to show its progress. It asks how hard scans should work: in the background, slower and light on power, or at full speed. On a PC without an NPU it also asks whether to run the AI on the graphics card or the processor.
 
 The releases aren't code-signed yet, so the first run shows "Windows protected your PC": click **More info**, then **Run anyway**. On a PC with Smart App Control turned on, Windows blocks unsigned apps outright, so those PCs will need a signed release. `SHA256SUMS.txt` on the release lists each file's SHA-256, which PowerShell's `Get-FileHash` shows.
 

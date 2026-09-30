@@ -21,7 +21,14 @@ using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
 namespace HEI.Agent {
-	sealed record RecycleRequest(List<string> Paths);
+	/// <param name="Batch">Set when the page cleans a whole folder (<paramref name="Folder"/>) set by set: one History row for them all.</param>
+	sealed record RecycleRequest(List<string> Paths, string? Batch = null, string? Folder = null);
+	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
+	sealed record BatchRequest(string Batch);
+	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed);
+	/// <param name="Minutes">How long; null: until the user resumes.</param>
+	sealed record PauseRequest(int? Minutes);
+	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
 
@@ -86,8 +93,12 @@ namespace HEI.Agent {
 				return Results.Content(Asset("favicon.svg"), "image/svg+xml");
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
-			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward" }));
-			app.MapGet("/api/state", () => Results.Json(State(cfg), AgentConfig.Json));
+			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward", store = StorePackage.IsPackaged }));
+			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
+			app.MapGet("/api/state", (bool? seen) => {
+				if (seen == true) ScanPace.MarkPageSeen();
+				return Results.Json(State(cfg), AgentConfig.Json);
+			});
 			// Folder names only, and only below what the agent scans (a GET from another site can't read
 			// the answer: no CORS, and a foreign Host header is refused above).
 			app.MapGet("/api/tree", (string path, bool? all) => {
@@ -109,16 +120,80 @@ namespace HEI.Agent {
 			app.MapPost("/api/groups/{key}/recycle", (string key, RecycleRequest request) => {
 				ReportGroup? g = Report.Load()?.Groups.FirstOrDefault(x => x.Key == key);
 				if (g == null) return Results.NotFound(new { error = "That group is no longer in the report; scan again." });
-				return Guarded(() => Results.Json(actions.Recycle(g, request.Paths ?? new()), AgentConfig.Json));
+				if (!ValidBatch(request.Batch, request.Folder)) return Results.BadRequest(new { error = "Unknown batch." });
+				return Guarded(() => Results.Json(actions.Recycle(g, request.Paths ?? new(), request.Batch, request.Folder), AgentConfig.Json));
 			});
 			app.MapPost("/api/groups/{key}/keep", (string key) => Guarded(() => {
-				using (CleanLock.Acquire()) DecisionStore.Set(key, new Decision("kept", DateTime.UtcNow, new(), 0));
+				using (CleanLock.Acquire()) DecisionStore.Record(cfg, key, new Decision("kept", DateTime.UtcNow, new(), 0));
 				return Results.Ok();
 			}));
 			app.MapPost("/api/groups/{key}/reopen", (string key) => Guarded(() => {
 				using (CleanLock.Acquire()) DecisionStore.Set(key, null);
 				return Results.Ok();
 			}));
+			// "Skip all" on a folder's look-alikes: every set kept as it is, as one History row.
+			app.MapPost("/api/groups/skip", (SkipRequest request) => Guarded(() => {
+				if (!ValidBatch(request.Batch, request.Folder)) return Results.BadRequest(new { error = "Unknown batch." });
+				var inReport = (Report.Load()?.Groups ?? new()).Select(g => g.Key).ToHashSet();
+				var now = DateTime.UtcNow;
+				int skipped;
+				using (CleanLock.Acquire()) {
+					var open = DecisionStore.Load();
+					var keys = (request.Keys ?? new()).Distinct().Where(k => inReport.Contains(k) && !open.ContainsKey(k)).ToList();
+					DecisionStore.SetMany(cfg, keys.Select(k => (k, new Decision("kept", now, new(), 0, Batch: request.Batch, Folder: request.Folder))));
+					skipped = keys.Count;
+				}
+				AgentPaths.AppendLog($"skipped {skipped} look-alike set(s)");
+				return Results.Json(new { skipped });
+			}));
+			app.MapPost("/api/history/reopen", (BatchRequest request) => Guarded(() => {
+				if (!ValidBatch(request.Batch, null)) return Results.BadRequest(new { error = "Unknown batch." });
+				int reopened;
+				using (CleanLock.Acquire()) reopened = DecisionStore.RemoveBatch(request.Batch, "kept");
+				return Results.Json(new { reopened });
+			}));
+			app.MapPost("/api/history/clear", () => Guarded(() => {
+				int cleared;
+				using (CleanLock.Acquire()) cleared = DecisionStore.ClearHistory();
+				AgentPaths.AppendLog($"history cleared ({cleared} entries)");
+				return Results.Json(new { cleared });
+			}));
+			// The page's own settings: history on or off, and how hard scans work.
+			app.MapPost("/api/settings", (SettingsRequest request) => {
+				if (request.ScanSpeed != null && !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return Results.BadRequest(new { error = "Unknown scan speed." });
+				AgentConfig saved = AgentConfig.Load();
+				if (request.KeepHistory is bool keep) saved.KeepHistory = cfg.KeepHistory = keep;
+				if (request.ScanSpeed is string speed) saved.ScanSpeed = cfg.ScanSpeed = speed;
+				saved.Save();
+				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
+					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here"));
+				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed }, AgentConfig.Json);
+			});
+			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
+			app.MapPost("/api/setup", (SetupRequest request) => {
+				if (!StoreSetup.Needed) return Results.Conflict(new { error = "Heiward is set up already." });
+				// What the install writes to settings.json, which this page read before it ran.
+				void Reload() {
+					AgentConfig saved = AgentConfig.Load();
+					cfg.AiDevice = saved.AiDevice;
+					cfg.ScanEveryMinutes = saved.ScanEveryMinutes;
+					cfg.ScanOnBattery = saved.ScanOnBattery;
+					cfg.ScanSpeed = saved.ScanSpeed;
+				}
+				return StoreSetup.Start(request, Reload) is string error ? Results.BadRequest(new { error }) : Results.Accepted();
+			});
+			// Right-click "Include in scans" / "Leave out of scans", saved to folders / excludeFolders.
+			app.MapPost("/api/folders/override", (FolderOverrideRequest request) => {
+				AgentConfig saved = AgentConfig.Load();
+				OverrideResult result = request.Include ? FolderOverride.Include(saved, request.Path ?? "", request.RemoveRule) : FolderOverride.Exclude(saved, request.Path ?? "");
+				if (result.Error != null)
+					return result.Rule != null ? Results.Conflict(new { error = result.Error, rule = result.Rule }) : Results.BadRequest(new { error = result.Error });
+				saved.Save();
+				cfg.Folders = saved.Folders;
+				cfg.ExcludeFolders = saved.ExcludeFolders;
+				AgentPaths.AppendLog($"folder {(request.Include ? "included" : "left out")} on the page: {request.Path}");
+				return Results.Json(result, AgentConfig.Json);
+			});
 			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
 			app.MapGet("/api/dev", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
 			app.MapPost("/api/dev/projects", (List<DevProject> projects) => {
@@ -166,8 +241,32 @@ namespace HEI.Agent {
 				AutoCleanState.Update(s => { if (request.Allow) s.AllowedFolderPairs.Add(key); else s.AllowedFolderPairs.Remove(key); });
 				return Results.Ok();
 			}));
+			// The agent: stop the scan that's running, pause scheduled scans for a while (and stop the running
+			// one), resume them, or register the tasks again when they're gone or disabled.
+			app.MapPost("/api/scan/stop", () => {
+				if (!AgentScanner.IsRunning()) return Results.Conflict(new { error = "No scan is running." });
+				ScanStop.Request();
+				return Results.Accepted();
+			});
+			app.MapPost("/api/agent/pause", (PauseRequest request) => {
+				if (request.Minutes is < 1 or > AgentPause.MaxMinutes) return Results.BadRequest(new { error = "Pause for 1 minute to a week, or until you resume." });
+				AgentPause.Start(request.Minutes, DateTime.UtcNow);
+				if (AgentScanner.IsRunning()) ScanStop.Request();
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
+			});
+			app.MapPost("/api/agent/resume", () => {
+				AgentPause.Resume();
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
+			});
+			app.MapPost("/api/agent/schedule", () => {
+				if (Installer.RegisterTasks(AgentConfig.Load()) is string error) return Results.Conflict(new { error });
+				AgentPause.Resume();
+				AgentPaths.AppendLog("scheduled scans turned back on from the review page");
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
+			});
 			app.MapPost("/api/scan", () => {
 				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				StartDetached("scan");
 				return Results.Accepted();
 			});
@@ -176,7 +275,7 @@ namespace HEI.Agent {
 			_ = Task.Run(async () => {
 				while (!lifetime.ApplicationStopping.IsCancellationRequested) {
 					await Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None);
-					if (Environment.TickCount64 - Interlocked.Read(ref lastSeen) > cfg.ServerIdleMinutes * 60_000L && !AgentScanner.IsRunning()) {
+					if (Environment.TickCount64 - Interlocked.Read(ref lastSeen) > cfg.ServerIdleMinutes * 60_000L && !AgentScanner.IsRunning() && !StoreSetup.Running) {
 						AgentPaths.AppendLog("review page idle, stopping");
 						lifetime.StopApplication();
 					}
@@ -194,6 +293,12 @@ namespace HEI.Agent {
 		/// <summary>A set, developer item or repository automatic cleanup can be told to leave (see <see cref="AutoCleanState.Held"/>).</summary>
 		static readonly Regex AutoTarget = new("^[gdb]:[0-9a-f]{16}$", RegexOptions.CultureInvariant);
 
+		static readonly Regex BatchId = new("^[0-9a-f]{8,32}$", RegexOptions.CultureInvariant);
+
+		/// <summary>No batch, or the page's random id with the full path of the folder it was done in.</summary>
+		static bool ValidBatch(string? batch, string? folder) =>
+			batch == null ? folder == null : BatchId.IsMatch(batch) && (folder == null || folder.Length < 1024 && Path.IsPathFullyQualified(folder));
+
 		/// <summary>A cleanup endpoint: another cleanup holding the lock too long is a 409, not a crash.</summary>
 		static IResult Guarded(Func<IResult> action) {
 			try { return action(); }
@@ -208,18 +313,25 @@ namespace HEI.Agent {
 			DevReport? devReport = cfg.DeveloperModeOn ? DevReport.Load() : null;
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
+			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
+			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
-				.OrderByDescending(d => d.Value.AtUtc)
-				.Take(100)
-				.Select(d => {
-					ReportGroup? g = groups.FirstOrDefault(x => x.Key == d.Key);
+				.Where(d => !d.Value.Unlisted)
+				.GroupBy(d => d.Value.Batch != null ? "batch:" + d.Value.Batch + ":" + d.Value.Action : "key:" + d.Key)
+				.Select(rows => {
+					var d = rows.MaxBy(r => r.Value.AtUtc);
+					ReportGroup? g = rows.Count() == 1 ? byKey.GetValueOrDefault(d.Key) : null;
 					return new {
-						key = d.Key, action = d.Value.Action, atUtc = d.Value.AtUtc, recycled = d.Value.Recycled.Count, recycledBytes = d.Value.RecycledBytes,
-						kind = g?.Kind, keepName = g?.Items.FirstOrDefault(i => i.Keep)?.Name, inReport = g != null,
+						key = d.Key, batch = d.Value.Batch, folder = d.Value.Folder, sets = rows.Count(),
+						action = d.Value.Action, atUtc = d.Value.AtUtc, recycled = rows.Sum(r => r.Value.Recycled.Count), recycledBytes = rows.Sum(r => r.Value.RecycledBytes),
+						kind = g?.Kind, keepName = g?.Items.FirstOrDefault(i => i.Keep)?.Name, inReport = rows.Any(r => byKey.ContainsKey(r.Key)),
 						label = d.Value.Action is "dev-cleaned" or "branches-pruned" ? d.Value.Recycled.FirstOrDefault() : null,
 						auto = d.Value.Auto,
 					};
-				}).ToList();
+				})
+				.OrderByDescending(r => r.atUtc)
+				.Take(100)
+				.ToList();
 			return new {
 				report = report == null ? null : new {
 					report.ScannedAtUtc, report.DurationSec, report.Device, report.FilesScanned, report.Folders, report.ExcludedExtensions, report.Notes,
@@ -231,15 +343,37 @@ namespace HEI.Agent {
 					similar = pending.Count(g => g.Kind == "similar"),
 					reclaimableBytes = pending.Sum(g => g.ReclaimBytes),
 					recycledBytes = decisions.Values.Sum(d => d.RecycledBytes),
+					decisions = decisions.Count,
 				},
 				dev = DevSummary(cfg, devReport),
 				auto = AutoView(report, devReport, decisions),
 				drives = ExplorerView.Drives(cfg, index, pending),
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
+				setup = StoreSetup.View(),
+				agent = AgentView(cfg),
 				ai = AiStatus.Load(),
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
-				config = new { folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config },
+				config = new {
+					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
+					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true), backgroundCores = cfg.ParallelismFor(false),
+				},
+			};
+		}
+
+		/// <summary>
+		/// Whether Heiward scans on its own: paused (and until when), or with its scan task gone or disabled in
+		/// Task Scheduler although settings.json asks for scheduled scans.
+		/// </summary>
+		static object AgentView(AgentConfig cfg) {
+			DateTime now = DateTime.UtcNow;
+			AgentPause? pause = AgentPause.Load(now);
+			return new {
+				paused = pause != null,
+				pausedUntilUtc = pause?.UntilUtc,
+				pausedText = pause?.Describe(now),
+				scheduleMissing = cfg.ScanEveryMinutes > 0 && Scheduler.NextRun() == null,
+				stopping = AgentScanner.IsRunning() && ScanStop.Requested(AgentScanner.ReadStatus()?.StartedUtc ?? DateTime.MinValue),
 			};
 		}
 
@@ -284,11 +418,12 @@ namespace HEI.Agent {
 			return r.ReadToEnd();
 		}
 
-		public static async Task<bool> IsUpAsync(int port) {
+		/// <param name="fromStore">Only the Store version's page counts (a GitHub copy's says "store":false, or nothing).</param>
+		public static async Task<bool> IsUpAsync(int port, bool fromStore = false) {
 			try {
 				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
 				string body = await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping");
-				return body.Contains("\"heiward\"", StringComparison.Ordinal);
+				return body.Contains("\"heiward\"", StringComparison.Ordinal) && (!fromStore || body.Contains("\"store\":true", StringComparison.Ordinal));
 			}
 			catch { return false; }
 		}

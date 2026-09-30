@@ -22,6 +22,7 @@ namespace HEI.Agent.Tests;
 /// Automatic cleanup: what it takes, what it always leaves for the user, and when. Runs use stand-in
 /// actions, so nothing here moves or deletes a file.
 /// </summary>
+[Collection(AgentHomeCollection.Name)] // one test points HEIWARD_HOME at its own folder
 public sealed class AutoCleanTests : IDisposable {
 	static readonly DateTime Now = new(2026, 10, 1, 12, 0, 0, DateTimeKind.Utc);
 	static readonly Dictionary<string, Decision> NoDecisions = new();

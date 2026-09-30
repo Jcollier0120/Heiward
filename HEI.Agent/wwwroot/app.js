@@ -53,9 +53,15 @@ const ICONS = {
   db: [['path', 'M3 4c0-1.1 2.2-2 5-2s5 .9 5 2-2.2 2-5 2-5-.9-5-2zM3 4v8c0 1.1 2.2 2 5 2s5-.9 5-2V4M3 8c0 1.1 2.2 2 5 2s5-.9 5-2', 'stroke']],
   phone: [['rect', '4.5,1.5,7,13,1.6', 'stroke'], ['path', 'M7 12.2h2', 'stroke']],
   clock: [['circle', '8,8,6', 'stroke'], ['path', 'M8 4.8V8l2.3 1.4', 'stroke']],
+  gear: [['circle', '8,8,2', 'stroke'],
+    ['path', 'M6.9 1.8h2.2l.4 1.8 1.2.7 1.7-.6 1.1 1.9-1.3 1.2v1.4l1.3 1.2-1.1 1.9-1.7-.6-1.2.7-.4 1.8H6.9l-.4-1.8-1.2-.7-1.7.6-1.1-1.9 1.3-1.2V7.3L2.5 6.1l1.1-1.9 1.7.6 1.2-.7z', 'stroke']],
   stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
   merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
+  pause: [['path', 'M6 3.5v9M10 3.5v9', 'stroke']],
+  play: [['path', 'M5.5 3.2v9.6l7.5-4.8z', 'stroke']],
+  chip: [['rect', '4,4,8,8,1.5', 'stroke'], ['rect', '6.5,6.5,3,3,0.5', 'fill'],
+    ['path', 'M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5', 'stroke']],
   palette: [['path', 'M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.5-.6 1.5-1.4 0-.9-.8-1.3-.8-2.1 0-.8.6-1.3 1.4-1.3h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.2 11.5 1.8 8 1.8z', 'stroke'],
     ['circle', '5,7.2,1', 'fill'], ['circle', '7.4,4.6,1', 'fill'], ['circle', '10.6,5.3,1', 'fill'], ['circle', '5.3,10.5,1', 'fill']],
 };
@@ -209,13 +215,140 @@ async function post(url, body) {
   });
   let data = null;
   try { data = await res.json(); } catch { /* empty body */ }
-  if (!res.ok) throw new Error((data && data.error) || res.status + ' ' + res.statusText);
+  if (!res.ok) {
+    const err = new Error((data && data.error) || res.status + ' ' + res.statusText);
+    err.data = data;
+    throw err;
+  }
   return data;
 }
 
 function showError(msg) {
   $('error').textContent = msg;
   $('error').classList.toggle('hidden', !msg);
+}
+
+let noticeTimer = null;
+/** A short green line under the command bar after an action, with an optional button; it goes after a while. */
+function showNotice(msg, action) {
+  const n = $('notice');
+  clearTimeout(noticeTimer);
+  n.replaceChildren(el('span', null, msg));
+  if (action) {
+    const b = el('button', 'btn secondary', action.label);
+    b.addEventListener('click', () => { n.classList.add('hidden'); action.run(); });
+    n.append(b);
+  }
+  n.classList.remove('hidden');
+  noticeTimer = setTimeout(() => n.classList.add('hidden'), 12000);
+}
+
+/** One action on a whole folder: its sets share this id, so History lists them as one row. */
+function batchId() {
+  return [...crypto.getRandomValues(new Uint8Array(8))].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** The title bar's button: Scan now, or Stop scan while one runs. */
+async function scanNow() {
+  const running = state && state.scan.running;
+  try { await post(running ? '/api/scan/stop' : '/api/scan'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+// ---------------------------------------------------------------- the agent: pause, resume, start
+
+// Whether Heiward scans on its own. Paused (scheduled scans skip themselves for a while), its scan task
+// gone or disabled in Task Scheduler, or Heiward not running at all (this page then can't reach it): a
+// banner says so, with the button that fixes it.
+async function pauseScans(minutes) {
+  try { await post('/api/agent/pause', { minutes }); refresh(true); } catch (e) { showError(e.message); }
+}
+
+async function resumeScans() {
+  try { await post('/api/agent/resume'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+async function startSchedule() {
+  try { await post('/api/agent/schedule'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+/** One banner at a time; rebuilt only when it says something else, so a poll doesn't steal the focus. */
+function showAgentBanner(text, action, down) {
+  const banner = $('agent-banner');
+  banner.classList.toggle('hidden', !text);
+  banner.classList.toggle('down', !!down);
+  const key = text ? text + '|' + (action ? action[0] : '') : '';
+  if (banner.dataset.key === key) return;
+  banner.dataset.key = key;
+  if (!text) { banner.replaceChildren(); return; }
+  const parts = [el('span', null, text)];
+  if (action) {
+    const [label, run] = action;
+    const b = typeof run === 'string' ? el('a', 'btn', label) : el('button', 'btn', label);
+    if (typeof run === 'string') b.href = run;
+    else b.addEventListener('click', run);
+    parts.push(b);
+  }
+  banner.replaceChildren(...parts);
+}
+
+function renderAgent(s) {
+  const a = s.agent;
+  const btn = $('pause-btn');
+  const label = a.paused ? 'Resume scans' : 'Pause scans';
+  btn.replaceChildren(icon(a.paused ? 'play' : 'pause'));
+  btn.title = a.paused ? 'Resume scans (paused ' + a.pausedText + ')' : label;
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('aria-haspopup', a.paused ? 'false' : 'menu');
+  btn.setAttribute('aria-pressed', String(a.paused));
+  btn.disabled = s.setup.needed;
+  if (s.setup.needed) showAgentBanner(null);
+  else if (a.paused) {
+    showAgentBanner('Scans are paused ' + a.pausedText + ': scheduled scans skip themselves. Scan now still works.', ['Resume scans', resumeScans]);
+  } else if (a.scheduleMissing) {
+    showAgentBanner('Scheduled scans aren\'t running: Heiward\'s scan task is missing, or turned off in Task Scheduler.', ['Turn them back on', startSchedule]);
+  } else showAgentBanner(null);
+}
+
+/** The pause button's menu: how long to pause for. While paused, the button resumes at once. */
+function setupPauseMenu() {
+  const btn = $('pause-btn');
+  const menu = $('pause-menu');
+  const show = (open) => {
+    menu.classList.toggle('hidden', !open);
+    btn.setAttribute('aria-expanded', String(open));
+    if (open) menu.querySelector('.theme-item')?.focus();
+  };
+  const tomorrowMorning = () => {
+    const at = new Date();
+    at.setDate(at.getDate() + 1);
+    at.setHours(8, 0, 0, 0);
+    return Math.round((at - new Date()) / 60000);
+  };
+  menu.append(el('div', 'menu-label', 'Pause scans, and stop the one running'));
+  for (const [label, minutes] of [['For 1 hour', () => 60], ['For 4 hours', () => 240], ['Until tomorrow morning', tomorrowMorning], ['Until I resume', () => null]]) {
+    const item = el('button', 'theme-item');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitem');
+    item.append(el('span', 'ti-label', label));
+    item.addEventListener('click', () => { show(false); pauseScans(minutes()); });
+    menu.append(item);
+  }
+  btn.append(icon('pause'));
+  btn.addEventListener('click', () => { if (state && state.agent.paused) resumeScans(); else show(menu.classList.contains('hidden')); });
+  document.addEventListener('click', (e) => {
+    if (!menu.classList.contains('hidden') && !menu.contains(e.target) && !btn.contains(e.target)) show(false);
+  });
+  menu.addEventListener('keydown', (e) => {
+    const items = [...menu.querySelectorAll('.theme-item')];
+    const at = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length].focus();
+    } else if (e.key === 'Escape') {
+      show(false);
+      btn.focus();
+    } else if (e.key === 'Tab') show(false);
+  });
 }
 
 function ticked(g) {
@@ -227,6 +360,7 @@ function ticked(g) {
 
 function parseRoute() {
   const h = location.hash;
+  if (h === '#/settings') return { view: 'settings' };
   if (h === '#/dev') return { view: 'dev', cat: null };
   if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
   if (h.startsWith('#/dev/s/')) return { view: 'dev', cat: decodeURIComponent(h.slice(8)) };
@@ -300,23 +434,31 @@ function renderHeader(s) {
   } else {
     parts.push('No scan yet');
   }
-  if (s.schedule.next) parts.push('next ' + s.schedule.next);
+  if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
+  else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   $('subtitle').textContent = parts.join(' · ');
   renderAiBadge(s.ai);
 
   const running = s.scan.running;
-  $('scan-now').disabled = running;
-  $('scan-now').textContent = running ? 'Scanning…' : 'Scan now';
+  const scanBtn = $('scan-now');
+  scanBtn.disabled = s.setup.needed || s.agent.stopping;
+  scanBtn.textContent = running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
+  scanBtn.classList.toggle('secondary', running);
+  renderAgent(s);
   $('progress').classList.toggle('hidden', !running);
   const st = s.scan.status;
+  const pace = st ? (st.fullSpeed ? ' · full speed' : ' · in the background') : '';
   if (running && st && st.max > 0) {
     $('progress-bar').style.width = Math.min(100, (100 * st.position) / st.max) + '%';
-    $('progress-text').textContent = st.stage + ' ' + st.position.toLocaleString() + ' / ' + st.max.toLocaleString();
+    $('progress-text').textContent = st.stage + ' ' + st.position.toLocaleString() + ' / ' + st.max.toLocaleString() + pace;
   } else {
     $('progress-bar').style.width = running ? '5%' : '0';
-    $('progress-text').textContent = running ? (st ? st.stage : 'Starting') + '…' : '';
+    $('progress-text').textContent = running ? (st ? st.stage : 'Starting') + '…' + pace : '';
   }
+  $('progress-text').title = st ? (st.fullSpeed
+    ? 'Full speed: every core but one, at normal priority.'
+    : 'In the background: Windows\' efficiency mode, low priority, half the cores. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
   $('notes').replaceChildren(...((r && r.notes) || []).map((n) => el('li', null, n)));
 }
 
@@ -335,6 +477,15 @@ function renderCrumbs() {
     items.push(li);
   };
   crumb('This PC', pcIcon(), null);
+  if (route.view === 'settings') {
+    const li = el('li');
+    li.append(icon('sep', 'sep'));
+    const b = el('button', 'crumb');
+    b.append(icon('gear'), el('span', null, 'Settings'));
+    b.addEventListener('click', () => { location.hash = '#/settings'; });
+    li.append(b);
+    items.push(li);
+  }
   if (route.view === 'dev') {
     const li = el('li');
     li.append(icon('sep', 'sep'));
@@ -412,9 +563,248 @@ function renderHome(s) {
   }));
 
   renderDevCard(s.dev);
-  renderAutoCard(s);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- settings
+
+// Every switch in one place: how hard scans work, automatic cleanup, the history. The rest of
+// settings.json (folders, file types, the AI device) is listed with where to change it.
+function renderSettings(s) {
+  renderScanCard(s);
+  renderAutoCard(s);
+  renderHistoryCard(s);
+  renderMoreCard(s);
+}
+
+function renderHistoryCard(s) {
+  const card = el('div', 'auto-card');
+  card.append(historyBar(s, true));
+  $('history-card').replaceChildren(card);
+}
+
+/** What the page has no switch for: where it's set, and what it's set to now. */
+function renderMoreCard(s) {
+  const c = s.config;
+  const card = el('div', 'auto-card');
+  const extra = c.folders.filter((f) => trimSep(f).length > 3); // not a drive's root
+  const rows = [
+    ['What\'s scanned', c.allDrives
+      ? 'Every fixed drive, minus Windows, programs, games, app data and code.' + (extra.length ? ' Also: ' + extra.join('; ') : '')
+      : c.folders.join('; ') || 'Nothing: add folders in the settings file.',
+      'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
+    ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', 'excludeExtensions in the settings file.'],
+    ['Where AI matching runs', c.aiDevice === 'auto' ? 'On the NPU when there is one, otherwise as set up.' : 'On the ' + c.aiDevice.toUpperCase() + '.', 'aiDevice in the settings file: auto, npu, gpu or cpu.'],
+  ];
+  for (const [title, value, how] of rows) {
+    const r = el('div', 'auto-row');
+    const text = el('div', 'auto-text');
+    text.append(el('div', 'auto-title', title), el('div', null, value), el('div', 'muted small', how));
+    r.append(text);
+    card.append(r);
+  }
+  const foot = el('div', 'auto-foot');
+  const file = el('div', 'muted small', 'Settings file: ');
+  file.append(el('code', null, c.path));
+  foot.append(file, el('div', 'muted small', 'Changes to the file apply at the next scan. The page\'s own switches above save to it too.'));
+  card.append(foot);
+  $('more-card').replaceChildren(card);
+}
+
+// ---------------------------------------------------------------- scanning and history settings
+
+let settingsBusy = false;
+
+async function saveSettings(next) {
+  settingsBusy = true;
+  try { await post('/api/settings', next); } catch (e) { showError(e.message); }
+  settingsBusy = false;
+  refresh(true);
+}
+
+/**
+ * How hard scans work (ScanPace): always in the background, at full speed while someone waits for them,
+ * or always at full speed.
+ */
+function renderScanCard(s) {
+  const c = s.config;
+  const speed = c.scanSpeed === 'background' || c.scanSpeed === 'full' ? c.scanSpeed : 'auto';
+  const card = el('div', 'auto-card');
+  const row = el('div', 'auto-row');
+  const text = el('div', 'auto-text');
+  const head = el('div', 'auto-wait');
+  const label = el('label', 'auto-title', 'Scans run');
+  label.htmlFor = 'scan-speed';
+  const pick = el('select');
+  pick.id = 'scan-speed';
+  for (const [value, name] of [['background', 'in the background'], ['auto', 'at full speed when you\'re here'], ['full', 'always at full speed']]) {
+    const o = el('option', null, name);
+    o.value = value;
+    o.selected = value === speed;
+    pick.append(o);
+  }
+  pick.disabled = settingsBusy;
+  pick.addEventListener('change', () => saveSettings({ scanSpeed: pick.value }));
+  head.append(label, pick);
+  const background = 'Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores');
+  const fast = count(c.fullSpeedCores, 'core', 'cores') + ' at normal priority';
+  text.append(head, el('div', 'muted small', {
+    background: 'Every scan runs in the background: ' + background + '. Slower, and light on the battery and the fans.',
+    auto: 'Scan now, and a scheduled scan while this page is open, use ' + fast + '. With the page closed, scheduled scans run in the background: ' + background + '.',
+    full: 'Every scan, scheduled ones too, uses ' + fast + ', to finish as fast as it can.',
+  }[speed]));
+  row.append(text);
+  card.append(row);
+  const foot = el('div', 'auto-foot');
+  foot.append(el('div', 'muted small', s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
+    : s.schedule.everyMinutes === 0 ? 'No scheduled scans: scans run when you press Scan now.'
+      : 'Scheduled scans aren\'t set up on this PC: run "hei install".'));
+  card.append(foot);
+  $('scan-card').replaceChildren(card);
+}
+
+// ---------------------------------------------------------------- the Store version's first run
+
+// From the Store, Heiward starts without a console, so its first run asks here what the GitHub exe asks
+// in its window (StoreSetup): where the AI runs (the NPU it found, named, unless the user overrides it,
+// against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to
+// remove a copy installed from GitHub. The answers survive the page's polls; the install's output shows
+// while it runs.
+const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true };
+let setupRetry = false;
+let setupShown = null; // 'form' or 'progress': the form is only built once, so a poll doesn't reset it
+
+/** The NPU setup found, named as Windows lists it: the AI runs on it unless the user picks otherwise. */
+function npuFound(setup) {
+  const card = el('div', 'setup-found');
+  const text = el('div', 'setup-found-text');
+  text.append(el('span', 'setup-chip', 'NPU detected'), el('div', 'setup-found-name', setup.npuName));
+  if (setup.npuHardware) text.append(el('div', 'muted small', setup.npuHardware));
+  text.append(el('div', 'muted small', 'Heiward runs its AI matching on it: the NPU is built for this work, uses far less power than ' +
+    'the graphics card or the processor, and leaves them free for you.'));
+  card.append(icon('chip', 'setup-found-icon'), text);
+  return card;
+}
+
+function setupChoice(title, name, options, current, onPick) {
+  const box = el('fieldset', 'setup-question');
+  box.append(el('legend', 'auto-title', title));
+  for (const [value, label, detail] of options) {
+    const row = el('label', 'setup-option');
+    const radio = el('input');
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = String(value);
+    radio.checked = value === current;
+    radio.addEventListener('change', () => { if (radio.checked) onPick(value); });
+    const text = el('span');
+    text.append(el('span', 'setup-label', label), el('span', 'muted small', detail));
+    row.append(radio, text);
+    box.append(row);
+  }
+  return box;
+}
+
+async function startSetup(button) {
+  button.disabled = true;
+  try {
+    await post('/api/setup', {
+      device: setupAnswers.device,
+      onDemand: setupAnswers.device !== 'npu' && setupAnswers.onDemand,
+      scanSpeed: setupAnswers.scanSpeed,
+      removeGitHubCopy: !!state.setup.gitHubCopy && setupAnswers.removeGitHubCopy,
+    });
+    setupRetry = false;
+    refresh(true);
+  } catch (e) {
+    showError(e.message);
+    button.disabled = false;
+  }
+}
+
+function renderSetup(s) {
+  for (const id of ['home', 'settingsview', 'devview', 'folder']) $(id).classList.add('hidden');
+  $('setup').classList.remove('hidden');
+  const setup = s.setup;
+  const card = $('setup-card');
+  if (setup.running || (setup.failed && !setupRetry)) {
+    setupShown = 'progress';
+    const log = el('pre', 'setup-log');
+    log.textContent = setup.output.join('\n') || 'Starting…';
+    const parts = [el('h2', null, setup.failed ? 'Setup stopped' : 'Setting up Heiward…')];
+    parts.push(el('p', 'muted', setup.failed
+      ? 'Something went wrong; the last lines below say what. heiward.log has the rest.'
+      : 'Downloading what the AI needs and checking where it runs. The first scan starts right after.'));
+    parts.push(log);
+    if (setup.failed) {
+      const again = el('button', 'btn', 'Try again');
+      again.addEventListener('click', () => { setupRetry = true; setupShown = null; renderSetup(state); });
+      parts.push(again);
+    }
+    card.replaceChildren(...parts);
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+  if (setupShown === 'form') return;
+  setupShown = 'form';
+  if (!setupAnswers.device) setupAnswers.device = setup.npu ? 'npu' : 'gpu';
+  const parts = [el('h2', null, 'Set up Heiward')];
+  if (setup.npu) parts.push(npuFound(setup));
+  else parts.push(el('p', 'muted', (setup.unsupportedNpu
+    ? 'This version of Heiward can\'t use this PC\'s NPU yet (' + setup.unsupportedNpu + '), so'
+    : 'This PC has no NPU, so') + ' AI matching runs on the graphics card or the processor.'));
+
+  // Where the AI runs. With an NPU, the GPU and the CPU stay available, with advice against them.
+  const devices = [];
+  if (setup.npu) devices.push(['npu', 'On the NPU (recommended)', 'The ' + setup.npuName + '. Scans run every hour, and step aside on a low battery.']);
+  devices.push(['gpu', 'On the graphics card' + (setup.npu ? '' : ' (recommended)'), 'Any DirectX 12 GPU: fast, and lighter on power than the processor. It downloads about 215 MB more.']);
+  devices.push(['cpu', 'On the processor', 'Works on every PC, and uses the most power.']);
+  const advice = el('p', 'setup-advice', 'Not recommended on this PC. The ' + setup.npuName + ' does this work on far less power. ' +
+    'On the graphics card or the processor, scans draw more power and run warmer, so scheduled ones run only every 6 hours ' +
+    'on AC power, and the NPU sits idle.');
+  const when = setupChoice('When should it look for new duplicates?', 'setup-when', [
+    [false, 'Every 6 hours, on AC power (recommended)', 'Scans skip themselves on battery.'],
+    [true, 'Only when I press Scan now', 'Nothing runs on a schedule.'],
+  ], setupAnswers.onDemand, (v) => { setupAnswers.onDemand = v; });
+  const sync = () => {
+    advice.classList.toggle('hidden', !setup.npu || setupAnswers.device === 'npu');
+    when.classList.toggle('hidden', setupAnswers.device === 'npu');
+  };
+  const where = setupChoice('Where should the AI run?', 'setup-device', devices, setupAnswers.device, (v) => { setupAnswers.device = v; sync(); });
+  where.append(advice);
+  sync();
+  parts.push(where, when);
+
+  parts.push(setupChoice('How hard should scans work?', 'setup-speed', [
+    ['background', 'In the background (recommended)', 'Low power: Windows\' efficiency mode and low priority. Scans take longer.'],
+    ['full', 'At full speed', 'As many cores as it takes, at normal priority, to finish as fast as possible.'],
+  ], setupAnswers.scanSpeed, (v) => { setupAnswers.scanSpeed = v; }));
+
+  // A copy installed from GitHub: this one replaces it, and the Store keeps it up to date.
+  if (setup.gitHubCopy != null) {
+    const box = el('fieldset', 'setup-question');
+    box.append(el('legend', 'auto-title', 'Heiward from GitHub'));
+    const row = el('label', 'setup-option');
+    const tick = el('input');
+    tick.type = 'checkbox';
+    tick.checked = setupAnswers.removeGitHubCopy;
+    tick.addEventListener('change', () => { setupAnswers.removeGitHubCopy = tick.checked; });
+    const text = el('span');
+    text.append(el('span', 'setup-label', 'Remove the copy installed from GitHub' + (setup.gitHubCopy ? ' (' + setup.gitHubCopy + ')' : '') + ' (recommended)'),
+      el('span', 'muted small', 'The Microsoft Store keeps this version up to date by itself: new versions arrive automatically, with ' +
+        'nothing to download from GitHub. Removing the old copy takes away its shortcuts, its entry in Installed apps and its folder. ' +
+        'Your settings, the report and the history stay: this version uses them.'));
+    row.append(tick, text);
+    box.append(row);
+    parts.push(box);
+  }
+
+  const go = el('button', 'btn', 'Set up and scan');
+  go.addEventListener('click', () => startSetup(go));
+  parts.push(el('p', 'muted small', 'The Microsoft Store keeps Heiward up to date. How hard scans work can be changed on the Settings page later. ' +
+    'Your photos, videos and files are never deleted unless you choose them on this page.'), go);
+  card.replaceChildren(...parts);
 }
 
 // ---------------------------------------------------------------- automatic cleanup
@@ -469,13 +859,18 @@ function dueText(iso, dev) {
 }
 
 function autoSwitch(on, label, onChange) {
+  return toggleSwitch(on, label, autoBusy, onChange);
+}
+
+/** A Windows-style on/off switch. */
+function toggleSwitch(on, label, disabled, onChange) {
   const wrap = el('label', 'switch');
   const box = el('input');
   box.type = 'checkbox';
   box.setAttribute('role', 'switch');
   box.setAttribute('aria-label', label);
   box.checked = on;
-  box.disabled = autoBusy;
+  box.disabled = disabled;
   box.addEventListener('change', () => onChange(box.checked, box));
   wrap.append(box, el('span', 'slider'));
   return wrap;
@@ -1322,18 +1717,76 @@ function driveCard(d) {
   return card;
 }
 
+/**
+ * History's controls. In Settings (withSwitch): keep one or not, and clear it. Above the list on the
+ * home page: clear it, and a pointer to Settings while it's off.
+ */
+function historyBar(s, withSwitch) {
+  const bar = el('div', 'history-bar');
+  const keep = s.config.keepHistory;
+  const text = el('div', 'auto-text');
+  if (withSwitch) {
+    bar.style.borderBottom = '0';
+    bar.append(toggleSwitch(keep, 'Keep a history', settingsBusy, (on) => saveSettings({ keepHistory: on })));
+    text.append(el('div', 'auto-title', 'Keep a history'),
+      el('div', 'muted small', keep
+        ? 'What you and automatic cleanup clean up or keep is listed under History on the home page, with file names.'
+        : 'Off: nothing new is listed, and no file names are kept. Sets you kept still stay hidden.'));
+  } else if (!keep) {
+    const off = el('div', 'muted small', 'History is off: nothing new is listed. ');
+    const link = el('button', 'link small', 'Settings');
+    link.addEventListener('click', () => { location.hash = '#/settings'; });
+    off.append(link);
+    text.append(off);
+  }
+  bar.append(text);
+  const clear = el('button', 'btn secondary', 'Clear history');
+  clear.disabled = !s.done.length;
+  clear.addEventListener('click', async () => {
+    if (!confirm('Clear the history?\n\nThe list empties and the file names in it are forgotten. Nothing on disk changes: sets you kept stay hidden, and "freed so far" stays.')) return;
+    try {
+      await post('/api/history/clear');
+      showNotice('History cleared.');
+      refresh(true);
+    } catch (e) { showError(e.message); }
+  });
+  bar.append(clear);
+  return bar;
+}
+
 function renderDone(s) {
   const box = $('done');
   $('history').querySelector('summary').textContent = 'History' + (s.done.length ? ' (' + s.done.length + ')' : '');
   if (!s.done.length) {
-    box.replaceChildren(el('p', 'muted small', 'Nothing yet.'));
+    box.replaceChildren(historyBar(s), el('p', 'muted small', s.config.keepHistory ? 'Nothing yet.' : 'Nothing listed.'));
     return;
   }
-  box.replaceChildren(...s.done.map((d) => {
+  const where = (folder) => {
+    const w = el('span', 'where', nameOf(folder));
+    w.title = folder;
+    return w;
+  };
+  box.replaceChildren(historyBar(s), ...s.done.map((d) => {
     const row = el('div', 'done-row');
     row.append(el('span', 'muted small', new Date(d.atUtc).toLocaleString()));
     if (d.auto) row.append(el('span', 'tag auto', 'Automatic'));
-    if (d.action === 'branches-pruned') {
+    if (d.batch && d.action === 'kept') {
+      // "Skip all" on a folder's look-alikes.
+      row.append(el('span', null, 'Skipped ' + count(d.sets, 'look-alike set', 'look-alike sets') + (d.folder ? ' in' : '')));
+      if (d.folder) row.append(where(d.folder));
+      if (d.inReport) {
+        const undo = el('button', 'link', 'review again');
+        undo.addEventListener('click', async () => {
+          try { await post('/api/history/reopen', { batch: d.batch }); refresh(true); } catch (e) { showError(e.message); }
+        });
+        row.append(undo);
+      }
+    } else if (d.batch && d.action === 'recycled') {
+      // A folder's "Move to Recycle Bin", set by set.
+      row.append(el('span', null, 'Moved ' + count(d.recycled, 'file', 'files') + ', ' + bytes(d.recycledBytes) + ', from ' + count(d.sets, 'set', 'sets') +
+        ' to the Recycle Bin' + (d.folder ? ', in' : '')));
+      if (d.folder) row.append(where(d.folder));
+    } else if (d.action === 'branches-pruned') {
       row.append(el('span', null, 'Deleted ' + count(d.recycled - 1, 'merged branch', 'merged branches') + ' in ' + (d.label || 'a repository')));
     } else if (d.action === 'dev-cleaned') {
       row.append(el('span', null, 'Cleaned ' + (d.label || 'developer files') + ', freed ' + bytes(d.recycledBytes) + ' (deleted permanently)'));
@@ -1462,6 +1915,7 @@ async function treeItem(node, depth) {
   });
   row.addEventListener('click', () => go(node.path));
   row.addEventListener('keydown', (e) => treeKeys(e, node));
+  row.addEventListener('contextmenu', (e) => openFolderMenu(e, node));
   li.append(row);
 
   if (node.expandable && open) {
@@ -1525,6 +1979,101 @@ function treeKeys(e, node) {
   else if (e.key === 'ArrowLeft' && expanded.has(key(node.path))) { toggle(node.path); e.preventDefault(); }
 }
 
+// ---------------------------------------------------------------- folder menu (right-click)
+
+// Right-click a folder (or press the menu key on it) to include it in scans or leave it out, whichever it
+// isn't now. Saved to "folders" / "excludeFolders" in the settings; the next scan follows.
+let menuReturn = null;
+
+function closeFolderMenu(focusBack) {
+  const m = $('folder-menu');
+  if (m.classList.contains('hidden')) return;
+  m.classList.add('hidden');
+  if (focusBack && menuReturn && document.contains(menuReturn)) menuReturn.focus();
+  menuReturn = null;
+}
+
+/** node: { name, path, exempt, drive } as the tree and the folder table have them. */
+function openFolderMenu(e, node) {
+  e.preventDefault();
+  e.stopPropagation();
+  const m = $('folder-menu');
+  const items = [];
+  const item = (label, run, why) => {
+    const b = el('button', 'menu-item', label);
+    b.type = 'button';
+    b.setAttribute('role', 'menuitem');
+    if (why) { b.disabled = true; b.title = why; }
+    else b.addEventListener('click', () => { closeFolderMenu(false); run(); });
+    items.push(b);
+    return b;
+  };
+  item('Open', () => go(node.path));
+  const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
+  let hint = null;
+  if (node.exempt) {
+    item('Include in scans', () => overrideFolder(node.path, true));
+    hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
+  } else if (card && card.type !== 'folder') {
+    item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
+  } else {
+    item('Leave out of scans', () => overrideFolder(node.path, false));
+  }
+  m.replaceChildren(el('div', 'menu-label', node.name), ...items);
+  if (hint) m.append(el('div', 'menu-hint', hint));
+  m.classList.remove('hidden');
+  // At the pointer; from the keyboard, under the row.
+  const r = e.currentTarget.getBoundingClientRect();
+  const fromKeys = !e.clientX && !e.clientY;
+  const x = Math.max(8, Math.min(fromKeys ? r.left + 28 : e.clientX, window.innerWidth - m.offsetWidth - 8));
+  const y = Math.max(8, Math.min(fromKeys ? r.bottom : e.clientY, window.innerHeight - m.offsetHeight - 8));
+  m.style.left = x + 'px';
+  m.style.top = y + 'px';
+  menuReturn = e.currentTarget;
+  (items.find((b) => !b.disabled) || items[0]).focus();
+}
+
+function setupFolderMenu() {
+  const m = $('folder-menu');
+  document.addEventListener('mousedown', (e) => { if (!m.contains(e.target)) closeFolderMenu(false); });
+  window.addEventListener('blur', () => closeFolderMenu(false));
+  window.addEventListener('resize', () => closeFolderMenu(false));
+  window.addEventListener('hashchange', () => closeFolderMenu(false));
+  document.addEventListener('scroll', () => closeFolderMenu(false), true);
+  m.addEventListener('keydown', (e) => {
+    const list = [...m.querySelectorAll('.menu-item:not(:disabled)')];
+    const at = list.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (list.length) list[(at + (e.key === 'ArrowDown' ? 1 : list.length - 1)) % list.length].focus();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeFolderMenu(true);
+    } else if (e.key === 'Tab') {
+      closeFolderMenu(false);
+    }
+  });
+}
+
+/** Includes the folder in scans, or leaves it out; asks first when that means removing a wider rule of the user's. */
+async function overrideFolder(path, include, removeRule) {
+  try {
+    const r = await post('/api/folders/override', { path, include, removeRule: removeRule || null });
+    listings.clear();
+    await refresh(true);
+    showNotice(nameOf(path) + ': ' + (r.message || 'saved.'),
+      include && r.scanned && !state.scan.running ? { label: 'Scan now', run: scanNow } : null);
+  } catch (e) {
+    const rule = e.data && e.data.rule;
+    if (rule && !removeRule) {
+      if (confirm(e.message + '\n\nRemove the rule "' + rule + '" from the settings? Everything it leaves out is scanned again.'))
+        await overrideFolder(path, include, rule);
+      return;
+    }
+    showError(e.message);
+  }
+}
+
 // ---------------------------------------------------------------- folder content
 
 async function renderContent() {
@@ -1565,9 +2114,12 @@ async function renderContent() {
     const text = el('div');
     text.append(el('div', null, 'Not scanned: ' + data.exempt.toLowerCase() + '.'));
     text.append(el('div', 'muted small', data.exempt === 'Excluded in settings'
-      ? 'You left it out under "excludeFolders" in the settings. Take it out there to scan it.'
-      : 'Pictures and videos here belong to Windows, a program, a game or a project, which could break if a "duplicate" went. ' +
-        'To scan a folder anyway, add it to "folders" in the settings; to leave out more, add to "excludeFolders".'));
+      ? 'You left it out (excludeFolders in the settings).'
+      : 'Pictures and videos here usually belong to Windows, a program, a game or a project, which could break if a "duplicate" went. ' +
+        'Include it only if the pictures in it are yours.'));
+    const include = el('button', 'btn secondary', 'Include in scans');
+    include.addEventListener('click', () => overrideFolder(data.path, true));
+    text.append(include);
     panel.append(text);
     frag.append(panel);
     content.replaceChildren(frag);
@@ -1582,7 +2134,7 @@ async function renderContent() {
 function subfolderTable(path, data) {
   const box = el('div');
   const head = el('div', 'section-head');
-  head.append(el('h2', null, 'Folders'));
+  head.append(el('h2', null, 'Folders'), el('span', 'muted small', 'Right-click a folder to include it in scans or leave it out.'));
   box.append(head);
   const table = el('table', 'details');
   const thead = el('thead');
@@ -1633,6 +2185,7 @@ function subfolderTable(path, data) {
     const open = () => { expanded.add(key(path)); go(c.path); };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+    row.addEventListener('contextmenu', (e) => openFolderMenu(e, c));
     tbody.append(row);
   }
   if (folded) {
@@ -1690,8 +2243,11 @@ function duplicatesSection(path) {
     return box;
   }
   if (groupFilter === 'copies' && copies.length) box.append(cleanupBar(path, copies));
-  if (groupFilter === 'similar')
-    box.append(el('p', 'muted small', 'These look alike but may be edits or different shots (a burst, a retake). Nothing is ticked; pick what you don\'t need, set by set.'));
+  if (groupFilter === 'similar') {
+    box.append(el('p', 'muted small', 'These look alike but may be edits or different shots. Nothing is ticked; pick what you don\'t need, set by set. ' +
+      'Burst shots (photos numbered in a row, like IMG_1234 and IMG_1235) and pictures less than 75% alike aren\'t listed: they\'re different photos.'));
+    if (similar.length) box.append(skipBar(path, similar));
+  }
   if (groupFilter === 'copies' && !copies.length)
     box.append(el('div', 'empty-state', 'Nothing to clean up in this folder.'));
   for (const g of shownGroups.slice(0, groupsShown)) box.append(groupCard(g, path));
@@ -1711,6 +2267,33 @@ function duplicatesSection(path) {
     if (showKeptHere.has(k)) for (const g of keptHere) box.append(groupCard(g, path));
   }
   return box;
+}
+
+/** "Skip all": every look-alike set with a file in this folder is kept as it is, and leaves the list. */
+function skipBar(path, groups) {
+  const bar = el('div', 'cleanup');
+  const text = el('div');
+  text.append(el('div', null, count(groups.length, 'look-alike set', 'look-alike sets') + ' with a file in this folder.'));
+  text.append(el('div', 'muted small', 'Nothing worth a look? Skip them all: nothing is deleted, they leave the list, and a set only comes back if its files change.'));
+  bar.append(text);
+  const btn = el('button', 'btn secondary', 'Skip all ' + groups.length);
+  btn.addEventListener('click', async () => {
+    if (!confirm('Skip all ' + count(groups.length, 'look-alike set', 'look-alike sets') + ' in ' + nameOf(path) + '?\n\nNothing is deleted: they leave the list' +
+        (state.config.keepHistory ? ', and History can bring them back.' : '. History is off, so they won\'t be listed there.'))) return;
+    btn.disabled = true;
+    try {
+      const r = await post('/api/groups/skip', { keys: groups.map((g) => g.key), batch: batchId(), folder: trimSep(path) });
+      for (const g of groups) ticks.delete(g.key);
+      groupsShown = PAGE;
+      showNotice('Skipped ' + count(r.skipped, 'look-alike set', 'look-alike sets') + '.');
+      refresh(true);
+    } catch (e) {
+      showError(e.message);
+      btn.disabled = false;
+    }
+  });
+  bar.append(btn);
+  return bar;
 }
 
 /** One button for every ticked copy inside this folder, set by set, each keeping at least one copy. */
@@ -1745,10 +2328,11 @@ function cleanupBar(path, groups) {
     btn.disabled = true;
     let moved = 0, freed = 0;
     const failed = [];
+    const batch = batchId(); // one History row for the whole folder
     for (const [i, p] of plan.entries()) {
       result.textContent = 'Moving… set ' + (i + 1) + ' of ' + plan.length;
       try {
-        const r = await post('/api/groups/' + encodeURIComponent(p.g.key) + '/recycle', { paths: p.paths });
+        const r = await post('/api/groups/' + encodeURIComponent(p.g.key) + '/recycle', { paths: p.paths, batch, folder: trimSep(path) });
         moved += r.recycled.length;
         freed += r.recycledBytes;
         for (const f of r.failed) failed.push(f.path.split(SEP).pop() + ' (' + f.reason + ')');
@@ -1870,11 +2454,19 @@ function groupCard(g, folder) {
 
 async function renderRoute() {
   if (!state) return;
+  if (state.setup.needed) { renderSetup(state); return; }
   renderCrumbs();
   const folder = route.view === 'folder';
+  $('setup').classList.add('hidden');
   $('home').classList.toggle('hidden', route.view !== 'home');
+  $('settingsview').classList.toggle('hidden', route.view !== 'settings');
   $('devview').classList.toggle('hidden', route.view !== 'dev');
   $('folder').classList.toggle('hidden', !folder);
+  $('settings-btn').setAttribute('aria-pressed', String(route.view === 'settings'));
+  if (route.view === 'settings') {
+    renderSettings(state);
+    return;
+  }
   if (route.view === 'dev') {
     if (!devReport || (state.dev.scannedAtUtc && devReport.scannedAtUtc !== state.dev.scannedAtUtc)) await loadDevReport();
     renderCrumbs(); // a project's name comes with the report
@@ -1896,15 +2488,19 @@ async function renderRoute() {
 }
 
 let timer = null;
+let serverLost = false;
 async function refresh(force) {
   clearTimeout(timer);
   try {
-    const res = await fetch('/api/state');
+    // "seen": this page is showing, so a scan runs at full speed; a hidden tab doesn't say so.
+    const res = await fetch('/api/state' + (document.visibilityState === 'visible' ? '?seen=true' : ''));
     if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
     const s = await res.json();
-    const changed = force || !state ||
+    // Heiward is back, as a new process: its buttons need the token of a page it served.
+    if (serverLost) { location.reload(); return; }
+    const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
-      s.done.length !== state.done.length || s.scan.running !== state.scan.running ||
+      s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
@@ -1914,9 +2510,13 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    timer = setTimeout(refresh, s.scan.running || s.dev.running ? 2000 : 15000);
+    timer = setTimeout(refresh, s.setup.running ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
-    showError('Heiward is not responding (' + e.message + '). Run "hei open" to start it again.');
+    // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
+    serverLost = true;
+    showAgentBanner('Heiward isn\'t running, so this page can\'t update or clean up. Start it, and the page carries on.',
+      ['Start Heiward', 'heiward://start'], true);
+    $('scan-now').disabled = true;
     timer = setTimeout(refresh, 5000);
   }
 }
@@ -1997,12 +2597,15 @@ function setupThemeMenu() {
 }
 
 setupThemeMenu();
+setupPauseMenu();
 $('nav-back').append(icon('back'));
 $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
 $('nav-back').addEventListener('click', () => history.back());
 $('nav-fwd').addEventListener('click', () => history.forward());
-$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } });
+$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } else if (route.view === 'settings') go(null); });
+$('settings-btn').append(icon('gear'));
+$('settings-btn').addEventListener('click', () => { location.hash = route.view === 'settings' ? '#/' : '#/settings'; });
 $('dev-nav-toggle').addEventListener('click', () => {
   const open = $('dev-nav').classList.toggle('open');
   $('dev-nav-toggle').setAttribute('aria-expanded', String(open));
@@ -2011,8 +2614,9 @@ $('navpane-toggle').addEventListener('click', () => {
   const open = $('navpane').classList.toggle('open');
   $('navpane-toggle').setAttribute('aria-expanded', String(open));
 });
-$('scan-now').addEventListener('click', async () => {
-  try { await post('/api/scan'); refresh(true); } catch (e) { showError(e.message); }
-});
+$('scan-now').addEventListener('click', scanNow);
+// A tab coming back into view tells the agent at once, so a scan running in the background speeds up.
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
+setupFolderMenu();
 if (route.view === 'folder') expanded.add(key(route.path));
 refresh(true);

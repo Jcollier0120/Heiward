@@ -116,17 +116,25 @@ namespace HEI.Agent {
 		/// that may be pre-ticked. Calibrated on photos; videos should get their own value once measured.
 		/// </summary>
 		internal const float PlainCopyPercent = 99.5f;
+		/// <summary>
+		/// A file less alike than this to the kept one (the percentage the page shows) is a different
+		/// picture, not a look-alike: it leaves the set. VDF's groups chain (A is like B, B is like C), so
+		/// without this a set could hold a picture that looks nothing like the one kept.
+		/// </summary>
+		internal const float MinAlikePercent = 75f;
 
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints) {
 			var hashes = new ContentHashes();
+			var bursts = new BurstSeries();
 			List<List<DuplicateItem>> members = duplicates.GroupBy(d => d.GroupId)
 				.Select(g => g.Where(d => File.Exists(d.Path)).ToList())
 				.ToList();
 			GatherSplitCopies(members, hashes, fingerprints);
 			return members
-				.SelectMany(items => SplitByPicture(items, hashes, fingerprints))
+				.SelectMany(items => SplitByPicture(items, hashes, fingerprints, bursts))
+				.SelectMany(items => LeaveOutUnrelated(items, hashes, fingerprints, bursts))
 				.Where(items => items.Count >= 2)
-				.Select(items => BuildGroup(items, hashes, fingerprints))
+				.Select(items => BuildGroup(items, hashes, fingerprints, bursts))
 				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
 				.ThenByDescending(g => g.ReclaimBytes)
 				.ToList();
@@ -173,7 +181,7 @@ namespace HEI.Agent {
 		/// isn't ticked. Such a group becomes one group per picture, each with its own kept file; files
 		/// that copy none of the others (look-alikes) leave the report.
 		/// </summary>
-		static IEnumerable<List<DuplicateItem>> SplitByPicture(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints) {
+		static IEnumerable<List<DuplicateItem>> SplitByPicture(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			if (items.Count < 4) { // two sets of copies take four files
 				yield return items;
 				yield break;
@@ -181,8 +189,8 @@ namespace HEI.Agent {
 			var sets = new List<List<DuplicateItem>>();
 			var rest = new List<DuplicateItem>(items);
 			while (rest.Count > 0) {
-				DuplicateItem keep = rest.Count == 1 ? rest[0] : (items[0].IsImage ? PickPhotoKeeper(rest) : PickVideoKeeper(rest)).Item1;
-				var set = rest.Where(i => ReferenceEquals(i, keep) || IsPlainCopy(Relation(i, keep, hashes, fingerprints))).ToList();
+				DuplicateItem keep = rest.Count == 1 ? rest[0] : PickKeeper(rest).Item1;
+				var set = rest.Where(i => ReferenceEquals(i, keep) || IsPlainCopy(Relation(i, keep, hashes, fingerprints, bursts))).ToList();
 				sets.Add(set);
 				rest.RemoveAll(set.Contains);
 			}
@@ -195,23 +203,54 @@ namespace HEI.Agent {
 				yield return set;
 		}
 
+		/// <summary>
+		/// What stays with each kept file: its copies, edits and look-alikes at <see cref="MinAlikePercent"/>
+		/// or more. Burst shots of the kept file (<see cref="BurstSeries"/>) and less alike pictures leave;
+		/// what's left over is judged again around its own kept file, so a burst shot's copy in a backup
+		/// folder still finds its original. A set of one is no set.
+		/// </summary>
+		static IEnumerable<List<DuplicateItem>> LeaveOutUnrelated(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+			var rest = new List<DuplicateItem>(items);
+			while (rest.Count >= 2) {
+				DuplicateItem keep = PickKeeper(rest).Item1;
+				var set = rest.Where(i => ReferenceEquals(i, keep) || Belongs(i, keep, hashes, fingerprints, bursts)).ToList();
+				rest.RemoveAll(set.Contains);
+				if (set.Count >= 2)
+					yield return set;
+			}
+		}
+
+		static bool Belongs(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+			string relation = Relation(i, keep, hashes, fingerprints, bursts);
+			return relation != "burst" && Alike(i, keep, relation, fingerprints).Percent >= MinAlikePercent;
+		}
+
+		/// <summary>
+		/// How alike the file is to the kept one, as the page shows it: the AI's cosine where the pixels
+		/// differ (an edit or a variant), otherwise the grayscale match.
+		/// </summary>
+		static (float Percent, bool ByAi) Alike(DuplicateItem i, DuplicateItem keep, string relation, IFingerprints fingerprints) {
+			if (ReferenceEquals(i, keep)) return (100f, false);
+			float? ai = relation is "edited" or "variant" ? fingerprints.AiPercent(i.Path, keep.Path) : null;
+			return ai != null ? (ai.Value, true) : (fingerprints.GrayPercent(i.Path, keep.Path) ?? i.Similarity, false);
+		}
+
+		static (DuplicateItem, string) PickKeeper(List<DuplicateItem> items) => items[0].IsImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
+
 		/// <summary>The relations that are the same picture, pixel for pixel: the ones pre-ticked.</summary>
 		static bool IsPlainCopy(string relation) => relation is "identical" or "smaller" or "compressed" or "resaved";
 
-		static ReportGroup BuildGroup(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints) {
+		static ReportGroup BuildGroup(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			bool isImage = items[0].IsImage;
-			(DuplicateItem keep, string reason) = isImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
+			(DuplicateItem keep, string reason) = PickKeeper(items);
 
 			var reportItems = new List<ReportItem>(items.Count);
 			foreach (DuplicateItem i in items.OrderByDescending(i => ReferenceEquals(i, keep)).ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)) {
-				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes, fingerprints);
+				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes, fingerprints, bursts);
 				(int w, int h) = ParseFrameSize(i.FrameSize);
 				bool suggested = IsPlainCopy(relation);
 				// Shown similarity: to the kept file (the AI's cosine where the pixels differ).
-				float? toKeepGray = ReferenceEquals(i, keep) ? 100f : fingerprints.GrayPercent(i.Path, keep.Path);
-				float? toKeepAi = ReferenceEquals(i, keep) ? null : fingerprints.AiPercent(i.Path, keep.Path);
-				bool byAi = relation is "edited" or "variant" && toKeepAi != null;
-				float shown = byAi ? toKeepAi!.Value : toKeepGray ?? i.Similarity;
+				(float shown, bool byAi) = Alike(i, keep, relation, fingerprints);
 				reportItems.Add(new ReportItem(i.Path, Path.GetFileName(i.Path), Path.GetDirectoryName(i.Path) ?? "", i.SizeLong, w, h, i.Format,
 					i.Duration.TotalSeconds, i.BitRateKbs, i.Fps, i.DateModified.ToUniversalTime(), shown, byAi,
 					relation, relation == "keep", suggested, CloudFiles.IsSynced(i.Path)));
@@ -235,14 +274,19 @@ namespace HEI.Agent {
 		/// 99.91–99.98%, recompressed 99.79–99.97%, while crops scored 97.35–97.66%, colour edits
 		/// 97.12–97.99%, flips 96.16–97.32% and two different shots 94.3%. Below that, the AI's
 		/// cosine says "same picture, edited" (≥ <see cref="SamePictureAiPercent"/>) or "variant".
+		/// <c>burst</c>: another shot of the kept file's burst, which is no duplicate however alike.
 		/// </summary>
-		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints) {
+		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			if (i.SizeLong == keep.SizeLong && hashes.Same(i.Path, keep.Path))
 				return "identical";
 			// Named as a photo and its edit (Google Photos' "-edited", Samsung's and Picasa's
 			// "_Original"): however light the edit (one scored 99.68%), both stay; the user decides.
 			if (IsOriginalAndEdit(i.Path, keep.Path))
 				return "edited";
+			// IMG_1234 next to IMG_1235: a burst or a retake. Burst shots match 99% and more, which
+			// below would pass for a resaved copy and be ticked.
+			if (bursts.AreSiblings(i.Path, keep.Path))
+				return "burst";
 			// An animated picture is compared by its first frame only: two GIFs that start alike, or a
 			// still taken from one, are not copies of each other.
 			if (MayBeAnimated(i.Path) || MayBeAnimated(keep.Path))

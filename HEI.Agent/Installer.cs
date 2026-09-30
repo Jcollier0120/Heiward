@@ -30,10 +30,13 @@ namespace HEI.Agent {
 	/// <item>fetch FFmpeg, the AI runtime and model, and the pack for the PC's NPU; probe the NPU;</item>
 	/// <item>write settings.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
 	/// <item>register the scan task and the sign-in "open the review page" task;</item>
-	/// <item>add a Start menu entry, the name its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
+	/// <item>add Start menu and desktop shortcuts to the review page, the name and icon its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
 	/// <item>start the first scan and open the review page.</item>
 	/// </list>
 	/// <c>--dry-run</c> prints every step without changing anything.
+	/// The Store version (<see cref="StorePackage"/>) is installed already: it skips the copy, the shortcuts, the
+	/// notification name and Apps &amp; Features, which its package has, and its tasks run the "hei" alias. Its
+	/// review page asks the questions and runs this with the answers (<c>install --yes --device ...</c>).
 	/// </summary>
 	static class Installer {
 		const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward";
@@ -42,8 +45,13 @@ namespace HEI.Agent {
 		public static string InstallDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Heiward");
 		public static string InstalledExe => Path.Combine(InstallDir, "hei.exe");
 		static string StartMenuShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Heiward.lnk");
-		static string CurrentExe => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
-		public static bool RunningInstalled => string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
+		static string DesktopShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Heiward.lnk");
+		/// <summary>The mark as a picture, for notifications (Windows shows the exe's icon everywhere else).</summary>
+		static string IconPng => Path.Combine(InstallDir, "heiward.png");
+		static string CurrentExe => StorePackage.IsPackaged ? StorePackage.ConsoleExe : Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
+		public static bool RunningInstalled => StorePackage.IsPackaged || StorePackage.InPackageFolder || string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
+		/// <summary>What the scheduled tasks run: the installed exe, or the Store version's alias.</summary>
+		static string TaskExe => StorePackage.IsPackaged ? StorePackage.Alias : InstalledExe;
 
 		/// <summary>Scheduled scans without an NPU: every 6 hours, on AC power.</summary>
 		internal const int GpuCpuScanMinutes = 6 * 60;
@@ -51,10 +59,19 @@ namespace HEI.Agent {
 		/// <param name="device">Force the AI device (unattended installs); null = the NPU if there is one, else ask.</param>
 		/// <param name="onDemand">True: no scheduled scans, only "Scan now". Null: ask when there's no NPU.</param>
 		/// <param name="reuseFrom">Folders whose bin\ and ai\ may already hold the prerequisites (<see cref="ComponentReuse"/>).</param>
-		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null) {
+		/// <param name="scanSpeed">How hard scans work (<see cref="AgentConfig.ScanSpeed"/>); null: ask.</param>
+		/// <param name="openPage">Open the review page once the first scan starts (the page itself runs the Store version's setup).</param>
+		/// <param name="removeGitHubCopy">The Store version: remove a copy installed from GitHub (<see cref="RemoveGitHubCopy"/>).</param>
+		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null,
+			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
-			if (!WrongBuildConfirmed(assumeYes)) {
+			if (StorePackage.InPackageFolder && !StorePackage.IsPackaged) {
+				Console.WriteLine("This is the Microsoft Store version, started by its path: open Heiward from the Start menu, or run \"hei\".");
+				return 1;
+			}
+			// The Store installs the package built for the PC.
+			if (!StorePackage.IsPackaged && !WrongBuildConfirmed(assumeYes)) {
 				Console.WriteLine("Nothing installed.");
 				return 3;
 			}
@@ -81,12 +98,15 @@ namespace HEI.Agent {
 
 			// Prerequisites: copied from a copy that already has them, else downloaded. No admin rights needed.
 			bool arm64 = RuntimeInformation.OSArchitecture == Architecture.Arm64;
-			var sources = ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
+			// The Store version brings FFmpeg along, and can copy the rest from a GitHub copy's folder.
+			var sources = StorePackage.IsPackaged ? ComponentReuse.Sources((reuseFrom ?? Array.Empty<string>()).Append(InstallDir), CoreUtils.StateFolder)
+				: ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
 			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? $", {NpuComponents.NpuName} pack" : ""));
 			await EnsurePrerequisitesAsync(sources, dryRun, ct);
 
 			bool npu = device is null or AiDevice.Auto or AiDevice.Npu && (!dryRun ? NpuComponents.WillUseNpu(AiDevice.Auto) : NpuComponents.IsSupportedPlatform);
 			Step(npu ? $"NPU found: AI matching runs on the {NpuComponents.NpuName}."
+				: device is AiDevice.Gpu or AiDevice.Cpu && NpuComponents.IsSupportedPlatform ? $"AI matching set to the {device.Value.ToString().ToUpperInvariant()}, although this PC has a {NpuComponents.NpuName}."
 				: NpuHardware.Vendor == NpuVendor.None ? $"No NPU on this PC ({(arm64 ? "ARM64" : RuntimeInformation.OSArchitecture.ToString())})."
 				: NpuComponents.IsSupportedPlatform ? $"The {NpuComponents.NpuName} could not run the model here."
 				: $"This build does not support this PC's NPU yet ({NpuHardware.Name}).");
@@ -127,38 +147,54 @@ namespace HEI.Agent {
 			else if (onDemand == true) {
 				cfg.ScanEveryMinutes = 0;
 			}
-			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
+			cfg.ScanSpeed = scanSpeed ?? AskSpeed(assumeYes, cfg.ScanSpeed);
+			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}, {SpeedText(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
 			if (!dryRun) {
 				cfg.Save();
 				// What the install found, for the review page's badge until the first scan says otherwise.
 				AiStatus.Record(cfg, npu ? "NPU" : cfg.AiDevice == "gpu" ? "GPU" : "CPU", "install");
 			}
 
+			// After the prerequisites, which may have been copied from its folder; before the tasks, which have its tasks' names.
+			if (removeGitHubCopy && StorePackage.IsPackaged && Directory.Exists(InstallDir)) {
+				Step($"Remove the copy from GitHub: {InstallDir}, its shortcuts, its notification name and its Apps & Features entry");
+				if (!dryRun) RemoveGitHubCopy();
+			}
+
 			Step(cfg.ScanEveryMinutes > 0
 				? $"Task Scheduler: '{Scheduler.ScanTask}' {Scheduler.Describe(cfg)}, '{Scheduler.OpenTask}' at sign-in"
 				: $"Task Scheduler: no scan task (scans run when you press Scan now), '{Scheduler.OpenTask}' at sign-in");
+			bool fromStore = StorePackage.IsPackaged;
 			if (dryRun) {
-				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, InstalledExe));
-				Console.WriteLine(Scheduler.OpenXml(InstalledExe));
+				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, TaskExe, fromStore));
+				Console.WriteLine(Scheduler.OpenXml(TaskExe, fromStore));
+			}
+			else RegisterTasks(cfg);
+
+			if (fromStore) {
+				Step("Start menu, notifications and Apps & Features: the Store package's own");
+				if (!dryRun) AgentPaths.WriteAtomic(AgentPaths.StoreSetUp, DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
 			}
 			else {
-				if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, InstalledExe));
-				else Scheduler.Remove(Scheduler.ScanTask);
-				if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(InstalledExe));
+				Step($"Start menu and desktop: {StartMenuShortcut}, {DesktopShortcut} (open the review page)");
+				if (!dryRun) {
+					CreateShortcut(StartMenuShortcut);
+					CreateShortcut(DesktopShortcut);
+				}
+				Step($"Notifications: shown as {DisplayName}, with its icon (HKCU\\{Toast.AppIdKey})");
+				if (!dryRun) Toast.Register(DisplayName, WriteIconPng());
+				Step($"Apps & Features entry: HKCU\\{UninstallKey}");
+				if (!dryRun) RegisterUninstall();
+				Step($"heiward: links start the review page (its \"Start Heiward\" button): HKCU\\{ProtocolKey}");
+				if (!dryRun) RegisterProtocol();
 			}
-
-			Step($"Start menu: {StartMenuShortcut}");
-			if (!dryRun) CreateShortcut(StartMenuShortcut);
-			Step($"Notifications: shown as {DisplayName} (HKCU\\{Toast.AppIdKey})");
-			if (!dryRun) Toast.Register(DisplayName);
-			Step($"Apps & Features entry: HKCU\\{UninstallKey}");
-			if (!dryRun) RegisterUninstall();
 
 			if (dryRun) return 0;
 			Console.WriteLine();
-			Console.WriteLine("Installed. The first scan starts now; the review page opens in your browser and shows its progress.");
+			Console.WriteLine(openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
-			StartDetached("scan", "--open");
+			if (openPage) StartDetached("scan", "--open");
+			else StartDetached("scan");
 			return 0;
 		}
 
@@ -166,18 +202,28 @@ namespace HEI.Agent {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
 			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
-			Step($"Remove {StartMenuShortcut}, the notification name and the Apps & Features entry");
-			if (!dryRun) {
-				try { File.Delete(StartMenuShortcut); } catch { }
-				Toast.Unregister();
-				try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
-				StopRunningAgents();
+			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
+			if (!StorePackage.IsPackaged) {
+				Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
+				if (!dryRun) {
+					DeleteOwnShortcut(StartMenuShortcut);
+					DeleteOwnShortcut(DesktopShortcut);
+					Toast.Unregister();
+					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
+					try { Registry.CurrentUser.DeleteSubKeyTree(ProtocolKey, throwOnMissingSubKey: false); } catch { }
+					StopRunningAgents();
+				}
 			}
 			if (purge) {
 				Step($"Delete settings, report and caches: {AgentPaths.Home}");
 				if (!dryRun) try { Directory.Delete(AgentPaths.Home, recursive: true); } catch { }
 			}
 			else Console.WriteLine($"Kept settings and the report in {AgentPaths.Home} (add --purge to delete them).");
+			if (StorePackage.IsPackaged) {
+				if (!dryRun) try { File.Delete(AgentPaths.StoreSetUp); } catch { }
+				Console.WriteLine(dryRun ? "" : "Scans are off. To remove Heiward itself: Settings > Apps > Installed apps > Heiward > Uninstall.");
+				return 0;
+			}
 			if (Directory.Exists(InstallDir)) {
 				Step($"Delete {InstallDir}");
 				// The running exe can't delete itself: a detached cmd does it once this process exits.
@@ -187,6 +233,23 @@ namespace HEI.Agent {
 			}
 			Console.WriteLine(dryRun ? "" : "Uninstalled. Files you reviewed stay where they are; recycled ones are in the Recycle Bin.");
 			return 0;
+		}
+
+		/// <summary>
+		/// The scan task (when <see cref="AgentConfig.ScanEveryMinutes"/> asks for one) and the sign-in task, for
+		/// the installed copy or the Store version. Also the review page's "Turn scheduled scans back on", after
+		/// someone deleted or disabled them in Task Scheduler.
+		/// </summary>
+		/// <returns>Why they can't be registered, or null.</returns>
+		public static string? RegisterTasks(AgentConfig cfg) {
+			// A copy run from Downloads has nothing a task could run once it's gone: install it first.
+			if (!StorePackage.IsPackaged && !File.Exists(InstalledExe)) return "Heiward isn't installed on this PC: run the downloaded Heiward once to install it.";
+			bool fromStore = StorePackage.IsPackaged;
+			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
+			else Scheduler.Remove(Scheduler.ScanTask);
+			if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, fromStore));
+			Scheduler.Forget();
+			return null;
 		}
 
 		/// <summary>
@@ -224,6 +287,19 @@ namespace HEI.Agent {
 			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('d');
 		}
 
+		/// <summary>How hard scans work: in the background, or at full speed. --yes keeps what settings.json has.</summary>
+		static string AskSpeed(bool assumeYes, string current) {
+			Console.WriteLine("  How hard should scans work?");
+			Console.WriteLine("    [B] In the background: low power, in Windows' efficiency mode, and on the NPU where there is one. Slower (recommended)");
+			Console.WriteLine("    [F] At full speed: as many cores as it takes, at normal priority, to finish as fast as possible");
+			if (assumeYes || Console.IsInputRedirected) return current;
+			Console.Write("  Your choice [B/f]: ");
+			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('f') ? "full" : "background";
+		}
+
+		static string SpeedText(AgentConfig cfg) =>
+			cfg.AlwaysFullSpeed ? "at full speed" : cfg.AlwaysInBackground ? "in the background" : "at full speed when you're here";
+
 		/// <summary>
 		/// FFmpeg, ONNX Runtime and the model, and the pack for the PC's NPU, next to this exe: each copied
 		/// from one of <paramref name="sources"/> when a copy there passes the same check (see
@@ -232,7 +308,9 @@ namespace HEI.Agent {
 		/// </summary>
 		internal static async Task EnsurePrerequisitesAsync(IReadOnlyList<string> sources, bool dryRun, CancellationToken ct) {
 			if (dryRun) {
-				var parts = new List<ComponentReuse.Part> { ComponentReuse.Ffmpeg, ComponentReuse.AiRuntime };
+				var parts = new List<ComponentReuse.Part> { ComponentReuse.AiRuntime };
+				// The Store version brings FFmpeg along.
+				if (!File.Exists(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe"))) parts.Insert(0, ComponentReuse.Ffmpeg);
 				if (NpuComponents.IsSupportedPlatform) parts.Add(ComponentReuse.NpuPack);
 				foreach (var part in parts)
 					Console.WriteLine(ComponentReuse.Find(part, sources) is string from ? $"  {Capital(part.Name)}: would be copied from {from}" : $"  {Capital(part.Name)}: would be downloaded, unless already here");
@@ -298,6 +376,102 @@ namespace HEI.Agent {
 			return p.ExitCode == 0;
 		}
 
+		/// <summary>
+		/// The Store version, with a copy from GitHub installed too: removes that copy so there aren't two
+		/// Heiwards. Its tasks have the Store version's task names, which the install registers next. Settings,
+		/// the report and the history in %LOCALAPPDATA%\Heiward stay: the Store version uses them.
+		/// </summary>
+		static void RemoveGitHubCopy() {
+			StopGitHubCopy();
+			DeleteOwnShortcut(StartMenuShortcut);
+			DeleteOwnShortcut(DesktopShortcut);
+			// Through reg.exe: the package's own registry changes stay in the package (its view of HKCU
+			// shows them gone while the user's keys stay), a program outside the package reaches the real ones.
+			DeleteUserKey(Toast.AppIdKey);
+			DeleteUserKey(ProtocolKey); // the Store version's own heiward: links come with its package
+			bool entryLeft = !DeleteUserKey(UninstallKey);
+			// A process that just stopped can hold its exe for a moment.
+			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
+				try { Directory.Delete(InstallDir, recursive: true); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Thread.Sleep(1000); }
+			}
+			if (Directory.Exists(InstallDir) || entryLeft) {
+				Console.WriteLine("  Some of it is still there: uninstall the other Heiward in Settings > Apps > Installed apps.");
+				AgentPaths.AppendLog($"removing the copy from GitHub left {(entryLeft ? "its Apps & Features entry" : InstallDir)}");
+			}
+			else AgentPaths.AppendLog("removed the copy from GitHub");
+		}
+
+		/// <summary>
+		/// Deletes a Heiward.lnk only if it's the GitHub copy's: the Store version's desktop shortcut has the
+		/// same name and must survive the GitHub copy's removal or uninstall.
+		/// </summary>
+		static void DeleteOwnShortcut(string lnk) {
+			try {
+				if (File.Exists(lnk) && PointsAt(File.ReadAllBytes(lnk), InstallDir)) File.Delete(lnk);
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+		}
+
+		/// <summary>A .lnk file names <paramref name="folder"/> (its target and arguments are stored as UTF-16 or ANSI text).</summary>
+		internal static bool PointsAt(byte[] lnk, string folder) =>
+			System.Text.Encoding.Unicode.GetString(lnk).Contains(folder, StringComparison.OrdinalIgnoreCase) ||
+			lnk.Length > 1 && System.Text.Encoding.Unicode.GetString(lnk, 1, lnk.Length - 1).Contains(folder, StringComparison.OrdinalIgnoreCase) ||
+			System.Text.Encoding.Latin1.GetString(lnk).Contains(folder, StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>Deletes an HKCU key with reg.exe; true when the user's registry doesn't have it any more.</summary>
+		static bool DeleteUserKey(string key) {
+			string reg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
+			int Run(params string[] args) {
+				var psi = new ProcessStartInfo(reg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+				foreach (string a in args) psi.ArgumentList.Add(a);
+				using var p = Process.Start(psi)!;
+				p.StandardOutput.ReadToEnd();
+				p.StandardError.ReadToEnd();
+				p.WaitForExit(10_000);
+				return p.ExitCode;
+			}
+			try {
+				Run("delete", @"HKCU\" + key, "/f");
+				return Run("query", @"HKCU\" + key) != 0;
+			}
+			catch { return false; }
+		}
+
+		/// <summary>
+		/// Stops the GitHub copy's processes (its review page or a scan), found by their exe's path: the Store
+		/// version's own are hei.exe too.
+		/// </summary>
+		public static void StopGitHubCopy() {
+			foreach (var p in Process.GetProcessesByName("hei")) {
+				try {
+					if (string.Equals(ImagePath(p), InstalledExe, StringComparison.OrdinalIgnoreCase)) {
+						p.Kill(entireProcessTree: true);
+						p.WaitForExit(5000);
+					}
+				}
+				catch { /* gone already, or not ours to stop */ }
+				p.Dispose();
+			}
+		}
+
+		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+		static extern bool QueryFullProcessImageName(IntPtr process, int flags, System.Text.StringBuilder name, ref int size);
+
+		/// <summary>A process's exe: works for an emulated x64 process too, unlike its MainModule.</summary>
+		static string? ImagePath(Process p) {
+			var name = new System.Text.StringBuilder(1024);
+			int size = name.Capacity;
+			return QueryFullProcessImageName(p.Handle, 0, name, ref size) ? name.ToString() : null;
+		}
+
+		/// <summary>The GitHub copy's version ("1.2.2") when one is installed, else null.</summary>
+		public static string? GitHubCopyVersion() {
+			if (!File.Exists(InstalledExe)) return null;
+			try { return FileVersionInfo.GetVersionInfo(InstalledExe).ProductVersion?.Split('+')[0] ?? ""; }
+			catch { return ""; }
+		}
+
 		/// <summary>Stops other hei processes (a review page or a scan) so the exe can be replaced or removed.</summary>
 		static void StopRunningAgents() {
 			foreach (var p in Process.GetProcessesByName("hei").Where(p => p.Id != Environment.ProcessId)) {
@@ -306,7 +480,23 @@ namespace HEI.Agent {
 			}
 		}
 
-		/// <summary>A .lnk through WScript.Shell (always present): conhost --headless runs the console exe without a window.</summary>
+		/// <summary>Writes the mark's picture next to the installed exe (from the page's files, which are compiled in); null if it can't.</summary>
+		static string? WriteIconPng() {
+			try {
+				using Stream? png = Assembly.GetExecutingAssembly().GetManifestResourceStream("wwwroot/heiward.png");
+				if (png == null) return null;
+				using (var file = File.Create(IconPng)) png.CopyTo(file);
+				return IconPng;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// A .lnk through WScript.Shell (always present): conhost --headless runs the console exe without a
+		/// window, and "open" starts the review page if it isn't running. The icon is the exe's own.
+		/// </summary>
 		static void CreateShortcut(string lnk) {
 			string conhost = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
 			string ps = $"""
@@ -319,6 +509,20 @@ namespace HEI.Agent {
 				$s.Save()
 				""";
 			RunPowerShell(ps);
+		}
+
+		/// <summary>heiward: links, which the review page offers when it can't reach Heiward ("Start Heiward").</summary>
+		const string ProtocolKey = @"Software\Classes\heiward";
+
+		static void RegisterProtocol() {
+			string conhost = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
+			using RegistryKey key = Registry.CurrentUser.CreateSubKey(ProtocolKey);
+			key.SetValue("", "URL:Heiward");
+			key.SetValue("URL Protocol", "");
+			using (RegistryKey icon = key.CreateSubKey("DefaultIcon")) icon.SetValue("", $"\"{InstalledExe}\",0");
+			using RegistryKey command = key.CreateSubKey(@"shell\open\command");
+			// The link itself is the argument: heiward://start starts Heiward, any other opens the page (Program.cs).
+			command.SetValue("", $"\"{conhost}\" --headless \"{InstalledExe}\" \"%1\"");
 		}
 
 		static void RegisterUninstall() {
@@ -352,7 +556,8 @@ namespace HEI.Agent {
 		}
 
 		public static void StartDetached(params string[] args) {
-			string exe = File.Exists(InstalledExe) ? InstalledExe : CurrentExe;
+			// The Store version runs its own exe, even with a GitHub copy installed too.
+			string exe = !StorePackage.IsPackaged && File.Exists(InstalledExe) ? InstalledExe : CurrentExe;
 			var psi = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			Process.Start(psi);

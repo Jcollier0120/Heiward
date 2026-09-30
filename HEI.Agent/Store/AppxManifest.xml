@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Heiward's Microsoft Store package (MSIX). store.ps1 fills in $Version$ and $Arch$ and packs one
+  package per architecture into a bundle. The Store signs it after certification.
+
+  Identity Name, Identity Publisher and PublisherDisplayName are Partner Center's, under Heiward's
+  Product identity (Store ID 9NX5K0L4CW3D, package family TheNexus.Heiward_mcanr0hfqkj1g). The
+  Store refuses a package where they differ.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop7="http://schemas.microsoft.com/appx/manifest/desktop/windows10/7"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap3 uap10 desktop desktop7 rescap">
+
+  <Identity Name="TheNexus.Heiward" Publisher="CN=71D8D20A-F4D5-405B-9F54-12741B793F6D" Version="$Version$" ProcessorArchitecture="$Arch$" />
+
+  <Properties>
+    <DisplayName>Heiward</DisplayName>
+    <PublisherDisplayName>The Nexus</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <!-- 2004: the oldest Windows 10 that passes Parameters to a desktop app (uap10). -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.28000.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Applications>
+    <!-- The Start menu entry opens the review page. Heiward.exe is hei.exe without a console window (store.ps1 makes it). -->
+    <Application Id="Heiward" Executable="Heiward.exe" EntryPoint="Windows.FullTrustApplication" uap10:Parameters="open">
+      <uap:VisualElements
+        DisplayName="Heiward"
+        Description="Finds duplicate photos and videos, and stale developer files, for you to review."
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png" />
+      <Extensions>
+        <!-- A desktop shortcut to the review page, as the GitHub copy's installer makes. Windows adds it with the
+             package and removes it with the package (Windows 11; Windows 10 ignores it). -->
+        <desktop7:Extension Category="windows.shortcut">
+          <desktop7:Shortcut File="[{Desktop}]\Heiward.lnk" Icon="[{Package}]\Assets\heiward.ico" Description="Review duplicate photos and videos, and stale developer files" />
+        </desktop7:Extension>
+        <!-- heiward: links: the review page offers one ("Start Heiward") when it can't reach Heiward. -->
+        <uap:Extension Category="windows.protocol">
+          <uap:Protocol Name="heiward">
+            <uap:DisplayName>Heiward</uap:DisplayName>
+          </uap:Protocol>
+        </uap:Extension>
+        <!-- "hei" in a terminal. It's also the path the scheduled tasks run, %LOCALAPPDATA%\Microsoft\WindowsApps\hei.exe,
+             which stays the same across updates while the package's own folder changes with every version. -->
+        <uap3:Extension Category="windows.appExecutionAlias" Executable="hei.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="hei.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <Capability Name="internetClient" />
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

@@ -26,8 +26,20 @@ using HEI.Core.Utils;
 // nothing on its own unless the user turns on automatic cleanup; copies go to the Recycle Bin. Run
 // without arguments, it installs itself (or, once installed, opens the review page), so the one exe
 // is also the installer.
+// The Store version keeps the AI components in its package's storage: its own folder is read-only, and
+// Windows removes that storage with the app.
+if (StorePackage.IsPackaged) CoreUtils.UseStateFolder(Path.Combine(StorePackage.Storage, "components"));
+
+// A heiward: link arrives as an argument. heiward://start is the review page's "Start Heiward", when it
+// can't reach Heiward: start it in the background, the page reloads by itself. Any other opens the page.
+if (args.FirstOrDefault(a => a.StartsWith("heiward:", StringComparison.OrdinalIgnoreCase)) is string link)
+	args = link.TrimEnd('/').EndsWith("start", StringComparison.OrdinalIgnoreCase) ? new[] { "serve", "--no-browser" } : new[] { "open" };
+
 var root = new RootCommand("hei — Heiward finds duplicate photos and videos, and stale developer files, and lists them for review");
 root.SetAction(async (_, ct) => {
+	// From the Store package's folder but without its identity, as its desktop shortcut starts it: the packaged
+	// app takes over, as from the Start menu.
+	if (StorePackage.InPackageFolder && !StorePackage.IsPackaged && StorePackage.ActivateFromFolder()) return 0;
 	if (Installer.RunningInstalled) {
 		await OpenReviewPageAsync(AgentConfig.Load(), ct);
 		return 0;
@@ -42,25 +54,57 @@ root.SetAction(async (_, ct) => {
 
 var notify = new Option<bool>("--notify") { Description = "Show a Windows notification when the scan finds new duplicates." };
 var open = new Option<bool>("--open") { Description = "Open the review page (it shows the scan's progress)." };
-var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge." };
+var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge; run in the background unless the review page is open." };
 var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
+		if (AgentPause.Load() is { } pause) {
+			AgentPaths.AppendLog("scheduled scan skipped: scans are paused " + pause.Describe(DateTime.UtcNow));
+			return 0;
+		}
 		if (Power.ShouldSkip(cfg, out string why)) {
 			AgentPaths.AppendLog("scheduled scan skipped: " + why);
 			return 0;
 		}
-		// Background scans take their time: Windows runs them on efficient cores at low clocks.
-		AgentPaths.AppendLog(Power.EnterEfficiencyMode() ? "scheduled scan in efficiency mode" : "scheduled scan: efficiency mode unavailable");
 	}
 	if (r.GetValue(open)) {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
 		_ = OpenReviewPageAsync(cfg, ct);
 	}
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), ct);
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct);
 });
 root.Subcommands.Add(scan);
+
+var pauseMinutes = new Option<int?>("--minutes") { Description = $"How long, 1 to {AgentPause.MaxMinutes}. Without it: until 'hei resume'." };
+var pauseCmd = new Command("pause", "Pause scheduled scans and stop the one running: for --minutes, or until 'hei resume'. Scan now still works.") { pauseMinutes };
+pauseCmd.SetAction(r => {
+	var pause = AgentPause.Start(r.GetValue(pauseMinutes), DateTime.UtcNow);
+	if (AgentScanner.IsRunning()) ScanStop.Request();
+	Console.WriteLine($"Scheduled scans are paused {pause.Describe(DateTime.UtcNow)}.");
+	return 0;
+});
+root.Subcommands.Add(pauseCmd);
+
+var resumeCmd = new Command("resume", "Resume scheduled scans after 'hei pause'.");
+resumeCmd.SetAction(_ => {
+	AgentPause.Resume();
+	Console.WriteLine("Scheduled scans are back on.");
+	return 0;
+});
+root.Subcommands.Add(resumeCmd);
+
+var stopCmd = new Command("stop", "Stop the scan that's running (scheduled scans carry on; 'hei pause' stops those too).");
+stopCmd.SetAction(_ => {
+	if (!AgentScanner.IsRunning()) {
+		Console.WriteLine("No scan is running.");
+		return 0;
+	}
+	ScanStop.Request();
+	Console.WriteLine("The scan stops within a few seconds.");
+	return 0;
+});
+root.Subcommands.Add(stopCmd);
 
 var noBrowser = new Option<bool>("--no-browser") { Description = "Don't open a browser tab." };
 var serve = new Command("serve", "Serve the review page on 127.0.0.1 until it sits unused.") { noBrowser };
@@ -107,9 +151,14 @@ var dryRun = new Option<bool>("--dry-run") { Description = "Print every step wit
 var yes = new Option<bool>("--yes", "-y") { Description = "Answer yes to questions (unattended install)." };
 var deviceOpt = new Option<AiDevice?>("--device") { Description = "Where the AI runs: npu, gpu or cpu. Default: the NPU if there is one, otherwise ask (GPU or CPU)." };
 var onDemandOpt = new Option<bool>("--on-demand") { Description = "No scheduled scans: scan only when you press Scan now. Default without an NPU: ask (every 6 hours or on demand)." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, reuseFrom };
+var speedOpt = new Option<string?>("--scan-speed") { Description = "How hard scans work: background (efficiency mode, slower), full (as fast as possible), or auto (full speed while you're on the review page). Default: ask." };
+speedOpt.AcceptOnlyFromAmong(AgentConfig.ScanSpeeds);
+var installNoBrowser = new Option<bool>("--no-browser") { Description = "Don't open the review page when done." };
+var removeGitHubOpt = new Option<bool>("--remove-github-copy") { Description = "The Store version: remove Heiward installed from GitHub (its shortcuts, Apps & Features entry and folder). Settings and history stay." };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, removeGitHubOpt, reuseFrom };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
-	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom)));
+	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom), r.GetValue(speedOpt), openPage: !r.GetValue(installNoBrowser),
+	removeGitHubCopy: r.GetValue(removeGitHubOpt)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime).
@@ -134,7 +183,7 @@ root.Subcommands.Add(uninstall);
 var status = new Command("status", "Show the settings, the last report and the schedule.");
 status.SetAction(_ => {
 	var cfg = AgentConfig.Load();
-	Console.WriteLine($"Installed: {(File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
+	Console.WriteLine($"Installed: {(StorePackage.IsPackaged ? $"from the Microsoft Store ({StorePackage.FamilyName}){(File.Exists(AgentPaths.StoreSetUp) ? "" : ", not set up yet: open Heiward from the Start menu")}" : File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
@@ -150,6 +199,7 @@ status.SetAction(_ => {
 		foreach (string n in report.Notes) Console.WriteLine("  note: " + n);
 	}
 	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'hei install')"}");
+	if (AgentPause.Load() is { } paused) Console.WriteLine($"Paused: scheduled scans skip themselves {paused.Describe(DateTime.UtcNow)} ('hei resume').");
 	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
 	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");
 	PrintAutoClean(cfg, detail: false);
@@ -350,6 +400,12 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 
 /// <summary>Starts the review page in the background if needed, waits until it answers, opens it.</summary>
 static async Task OpenReviewPageAsync(AgentConfig cfg, CancellationToken ct) {
+	// Both versions use the same port: a GitHub copy's page there would stand in for the Store version's own
+	// (and its setup), so the Store version stops it first.
+	if (StorePackage.IsPackaged && await ReviewServer.IsUpAsync(cfg.Port) && !await ReviewServer.IsUpAsync(cfg.Port, fromStore: true)) {
+		Installer.StopGitHubCopy();
+		for (int i = 0; i < 20 && await ReviewServer.IsUpAsync(cfg.Port); i++) await Task.Delay(250, ct);
+	}
 	ReviewServer.EnsureRunningInBackground(cfg);
 	for (int i = 0; i < 40 && !await ReviewServer.IsUpAsync(cfg.Port); i++)
 		await Task.Delay(250, ct);
@@ -383,19 +439,20 @@ namespace HEI.Agent {
 		static extern bool SetPriorityClass(IntPtr process, uint priorityClass);
 
 		/// <summary>
-		/// EcoQoS, the power half of Task Manager's "Efficiency mode": Windows runs the process on
-		/// efficient cores at low clocks, so a background scan takes longer and costs little power.
+		/// In the background: EcoQoS, the power half of Task Manager's "Efficiency mode", so Windows runs
+		/// the process on efficient cores at low clocks and a scan takes longer and costs little power.
 		/// Priority stays below normal rather than idle: the scan holds the shared NPU lock for up to
 		/// two seconds at a time, and an idle-priority thread starved while holding it would make
-		/// other NPU tools wait.
+		/// other NPU tools wait. At full speed: normal priority, and throttling explicitly off, so
+		/// Windows doesn't guess that a windowless process may run slowly.
 		/// </summary>
-		public static bool EnterEfficiencyMode() {
+		public static bool SetPace(bool fullSpeed) {
 			const int ProcessPowerThrottling = 4;
-			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000;
-			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = ExecutionSpeed };
-			bool eco = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
-			bool low = SetPriorityClass(GetCurrentProcess(), BelowNormalPriorityClass);
-			return eco && low;
+			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000, NormalPriorityClass = 0x20;
+			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = fullSpeed ? 0 : ExecutionSpeed };
+			bool qos = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
+			bool priority = SetPriorityClass(GetCurrentProcess(), fullSpeed ? NormalPriorityClass : BelowNormalPriorityClass);
+			return qos && priority;
 		}
 
 		public static bool ShouldSkip(AgentConfig cfg, out string why) {

@@ -23,7 +23,7 @@ using HEI.Core.Utils;
 
 namespace HEI.Agent {
 	/// <summary>Live progress for the review page, rewritten about once a second while a scan runs.</summary>
-	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max);
+	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max, bool FullSpeed = false);
 
 	/// <summary>
 	/// One scan of the configured folders: VDF's engine (photos through WIC, embeddings on the NPU
@@ -31,7 +31,8 @@ namespace HEI.Agent {
 	/// scan runs at a time machine-wide for this user (scan.lock).
 	/// </summary>
 	static class AgentScanner {
-		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, CancellationToken ct) {
+		/// <param name="scheduled">Started by Task Scheduler: in the background unless the review page is open (<see cref="ScanPace"/>).</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			using FileStream? scanLock = TryLock();
 			if (scanLock == null) {
@@ -41,12 +42,20 @@ namespace HEI.Agent {
 			var started = DateTime.UtcNow;
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
-			var settings = BuildSettings(cfg, notes);
+			bool fullSpeed = ScanPace.FullSpeed(cfg, scheduled);
+			var settings = BuildSettings(cfg, notes, fullSpeed);
 			if (settings.IncludeList.Count == 0) {
 				Console.Error.WriteLine("None of the configured folders exist. Edit " + AgentPaths.Config);
 				return 2;
 			}
-			AgentPaths.AppendLog($"scan started: {string.Join("; ", settings.IncludeList)}");
+			bool paced = Power.SetPace(fullSpeed);
+			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : "in the background")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", priority unchanged")}): {string.Join("; ", settings.IncludeList)}");
+			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, stopPacing.Token);
+			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would.
+			ScanStop.Clear();
+			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			Task watching = ScanStop.WatchAsync(started, stopped, stopPacing.Token);
 
 			var engine = new ScanEngine { Settings = settings };
 			int files = 0;
@@ -57,12 +66,12 @@ namespace HEI.Agent {
 				long now = Stopwatch.GetTimestamp();
 				if (Stopwatch.GetElapsedTime(lastWrite, now) < TimeSpan.FromSeconds(1)) return;
 				lastWrite = now;
-				WriteStatus(new ScanStatus(Environment.ProcessId, started, string.IsNullOrEmpty(e.CurrentStage) ? stage : e.CurrentStage, e.CurrentPosition, e.MaxPosition));
+				WriteStatus(new ScanStatus(Environment.ProcessId, started, string.IsNullOrEmpty(e.CurrentStage) ? stage : e.CurrentStage, e.CurrentPosition, e.MaxPosition, fullSpeed));
 			};
 			engine.FilesEnumerated += (_, _) => stage = "Checking files";
-			WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, 0, 0));
+			WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, 0, 0, fullSpeed));
 			try {
-				await RunEngineAsync(engine, () => stage = "Comparing", ct);
+				await RunEngineAsync(engine, () => stage = "Comparing", stopped.Token);
 			}
 			catch (OperationCanceledException) {
 				AgentPaths.AppendLog("scan aborted");
@@ -70,6 +79,10 @@ namespace HEI.Agent {
 				return 130;
 			}
 			finally {
+				stopPacing.Cancel();
+				await pacing;
+				await watching;
+				ScanStop.Clear();
 				try { File.Delete(AgentPaths.ScanStatus); } catch { }
 			}
 
@@ -117,7 +130,7 @@ namespace HEI.Agent {
 			return 0;
 		}
 
-		internal static Settings BuildSettings(AgentConfig cfg, List<string> notes) {
+		internal static Settings BuildSettings(AgentConfig cfg, List<string> notes, bool fullSpeed = false) {
 			var s = new Settings {
 				IncludeImages = true,
 				IncludeSubDirectories = true,
@@ -125,7 +138,7 @@ namespace HEI.Agent {
 				AiDevice = Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto,
 				SkipCloudPlaceholders = true,
 				UseWindowsImageDecoder = true,
-				MaxDegreeOfParallelism = cfg.EffectiveParallelism,
+				MaxDegreeOfParallelism = cfg.ParallelismFor(fullSpeed),
 				CustomDatabaseFolder = AgentPaths.Database,
 			};
 			Directory.CreateDirectory(AgentPaths.Database);
@@ -164,6 +177,24 @@ namespace HEI.Agent {
 			}
 			catch {
 				return false;
+			}
+		}
+
+		/// <summary>
+		/// Follows the review page while the scan runs: open it and a background scan speeds up, close it
+		/// and a scheduled scan steps back (checked every 5 s; settings.json is read fresh, so the page's
+		/// switch applies at once). The number of files decoded at once stays as the scan started.
+		/// </summary>
+		static async Task FollowPageAsync(bool scheduled, bool current, Action<bool> changed, CancellationToken ct) {
+			while (true) {
+				try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
+				catch (OperationCanceledException) { return; }
+				bool wanted = ScanPace.FullSpeed(AgentConfig.Load(), scheduled);
+				if (wanted == current) continue;
+				current = wanted;
+				Power.SetPace(wanted);
+				changed(wanted);
+				AgentPaths.AppendLog(wanted ? "scan: full speed (the review page is open)" : "scan: back in the background");
 			}
 		}
 
@@ -225,6 +256,40 @@ namespace HEI.Agent {
 		static void WriteStatus(ScanStatus status) {
 			try { AgentPaths.WriteAtomic(AgentPaths.ScanStatus, JsonSerializer.Serialize(status, AgentConfig.Json)); }
 			catch { /* progress is cosmetic */ }
+		}
+	}
+
+	/// <summary>
+	/// How hard a scan works (<see cref="AgentConfig.ScanSpeed"/>). "auto": at full speed when someone
+	/// is waiting for it (they started it, or the review page is open and showing), in the background
+	/// otherwise. "background": always in the background, as scheduled scans always ran before. "full":
+	/// always at full speed.
+	/// </summary>
+	static class ScanPace {
+		/// <summary>The page polls every 2–15 s while it shows; hidden tabs don't report.</summary>
+		static readonly TimeSpan PageFresh = TimeSpan.FromSeconds(45);
+		static long lastMarked;
+
+		internal static bool FullSpeed(AgentConfig cfg, bool scheduled, bool pageOpen) =>
+			cfg.AlwaysFullSpeed || !cfg.AlwaysInBackground && (!scheduled || pageOpen);
+
+		public static bool FullSpeed(AgentConfig cfg, bool scheduled) => FullSpeed(cfg, scheduled, PageOpen());
+
+		public static bool PageOpen() {
+			try { return File.Exists(AgentPaths.PageSeen) && DateTime.UtcNow - File.GetLastWriteTimeUtc(AgentPaths.PageSeen) < PageFresh; }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+		}
+
+		/// <summary>The page is open and showing; the file is touched at most every 5 s.</summary>
+		public static void MarkPageSeen() {
+			long now = Environment.TickCount64;
+			long last = Interlocked.Read(ref lastMarked);
+			if (last != 0 && now - last < 5000 || Interlocked.CompareExchange(ref lastMarked, now, last) != last) return;
+			try {
+				Directory.CreateDirectory(AgentPaths.Home);
+				File.WriteAllText(AgentPaths.PageSeen, "");
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { /* then scans don't speed up */ }
 		}
 	}
 

@@ -167,7 +167,7 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>The user's exclusion that covers the folder or one above it, as the engine reads it (ScanEngine.IsBlackListed).</summary>
-		static string? UserExclusionOver(string folder, AgentConfig cfg) {
+		internal static string? UserExclusionOver(string folder, AgentConfig cfg) {
 			foreach (string pattern in cfg.ExcludeFolders) {
 				if (string.IsNullOrWhiteSpace(pattern)) continue;
 				string asRead = pattern;

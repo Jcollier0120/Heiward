@@ -25,6 +25,11 @@
       <span class="muted small" id="progress-text"></span>
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
       <div class="theme-picker">
+        <button class="icon-btn" id="pause-btn" title="Pause scans" aria-label="Pause scans" aria-haspopup="menu" aria-expanded="false" aria-controls="pause-menu"></button>
+        <div class="theme-menu pause-menu hidden" id="pause-menu" role="menu" aria-label="Pause scans"></div>
+      </div>
+      <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings"></button>
+      <div class="theme-picker">
         <button class="icon-btn" id="theme-btn" title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded="false" aria-controls="theme-menu"></button>
         <div class="theme-menu hidden" id="theme-menu" role="menu" aria-label="Theme"></div>
       </div>
@@ -43,9 +48,15 @@
   </nav>
 
   <div class="banners">
+    <div class="agent-banner hidden" id="agent-banner" role="status"></div>
     <p class="error hidden" id="error"></p>
+    <div class="notice hidden" id="notice" role="status"></div>
     <ul class="notes" id="notes"></ul>
   </div>
+
+  <main id="setup" class="view setup hidden">
+    <section class="setup-card" id="setup-card"></section>
+  </main>
 
   <main id="home" class="view home">
     <section class="tiles">
@@ -64,11 +75,6 @@
       <div id="dev-card"></div>
     </section>
 
-    <section id="auto-section">
-      <h2>Automatic cleanup</h2>
-      <div id="auto-card"></div>
-    </section>
-
     <section id="hotspots-section">
       <h2>Where the duplicates are</h2>
       <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
@@ -83,6 +89,28 @@
     </section>
 
     <footer class="muted small" id="footer"></footer>
+  </main>
+
+  <main id="settingsview" class="view home settings hidden">
+    <section>
+      <h2>Scanning</h2>
+      <div id="scan-card"></div>
+    </section>
+
+    <section>
+      <h2>Automatic cleanup</h2>
+      <div id="auto-card"></div>
+    </section>
+
+    <section>
+      <h2>History</h2>
+      <div id="history-card"></div>
+    </section>
+
+    <section>
+      <h2>Everything else</h2>
+      <div id="more-card"></div>
+    </section>
   </main>
 
   <main id="devview" class="view split hidden">
@@ -100,5 +128,7 @@
     </aside>
     <section class="content" id="content"></section>
   </main>
+
+  <div class="ctx-menu hidden" id="folder-menu" role="menu" aria-label="Folder"></div>
 </body>
 </html>

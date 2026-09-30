@@ -22,16 +22,19 @@ namespace HEI.Agent {
 	/// <summary>
 	/// A Windows notification through Windows PowerShell's WinRT projection: no extra package. The install
 	/// registers an AppUserModelID (a registry key, no shortcut needed) so notifications say "Heiward";
-	/// a copy that isn't installed sends them under PowerShell's own. Clicking one opens the review page.
+	/// a copy that isn't installed sends them under PowerShell's own. The Store version sends them under
+	/// its package's app ID, which already has the name and logo. Clicking one opens the review page.
 	/// </summary>
 	static class Toast {
 		const string PowerShellAumid = @"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe";
 		const string AppId = "Heiward";
 		public const string AppIdKey = @"Software\Classes\AppUserModelId\" + AppId;
 
-		public static void Register(string displayName) {
+		/// <param name="iconPng">A picture notifications show as the app's icon; null leaves Windows' default.</param>
+		public static void Register(string displayName, string? iconPng = null) {
 			using RegistryKey key = Registry.CurrentUser.CreateSubKey(AppIdKey);
 			key.SetValue("DisplayName", displayName);
+			if (iconPng != null) key.SetValue("IconUri", iconPng);
 		}
 
 		public static void Unregister() {
@@ -40,6 +43,7 @@ namespace HEI.Agent {
 
 		static string SenderId {
 			get {
+				if (StorePackage.IsPackaged) return StorePackage.AppUserModelId;
 				using RegistryKey? key = Registry.CurrentUser.OpenSubKey(AppIdKey);
 				return key != null ? AppId : PowerShellAumid;
 			}
