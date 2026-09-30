@@ -108,7 +108,8 @@ public sealed class ReportBuilderTests : IDisposable {
 
 	[Fact]
 	public void LookAlikeShots_AreYourPickWithNothingTicked() {
-		var g = Single(Photo("IMG_2.heic", 4032, 3024, Bytes(8000, 1), gray: 94.3f, ai: 94.3f), Photo("IMG_3.heic", 4032, 3024, Bytes(8100, 2), gray: 94.3f, ai: 94.3f));
+		// Not numbered in a row: IMG_2 and IMG_3 next to each other would be a burst, and no set at all.
+		var g = Single(Photo("Lake.heic", 4032, 3024, Bytes(8000, 1), gray: 94.3f, ai: 94.3f), Photo("Lake at dusk.heic", 4032, 3024, Bytes(8100, 2), gray: 94.3f, ai: 94.3f));
 		Assert.Equal("similar", g.Kind);
 		Assert.StartsWith("your pick", g.KeepReason);
 		Assert.Equal(0, g.ReclaimBytes);
@@ -189,10 +190,86 @@ public sealed class ReportBuilderTests : IDisposable {
 	[InlineData("IMG_3785.GIF", "IMG_3784.JPG")]
 	public void AnimatedPictures_MatchedByTheirFirstFrame_AreNotTicked(string a, string b) {
 		// Regression (a real library): two different GIFs that start with the same frame, and a still
-		// taken from a GIF, were pre-ticked as copies.
-		var g = Single(Photo(a, 720, 404, Bytes(9000, 1)), Photo(b, 588, 330, Bytes(2000, 2), gray: 99.87f));
-		Assert.DoesNotContain(g.Items, i => i.Suggested);
+		// taken from a GIF, were pre-ticked as copies. (IMG_3784 and IMG_3785 are also numbered in a
+		// row, so they're now no set at all.)
+		var groups = ReportBuilder.Build(new[] { Photo(a, 720, 404, Bytes(9000, 1)), Photo(b, 588, 330, Bytes(2000, 2), gray: 99.87f) }, fingerprints);
+		Assert.DoesNotContain(groups.SelectMany(g => g.Items), i => i.Suggested);
 	}
+
+	[Fact]
+	public void BurstShots_AreNoSet_ThoughTheyMatchLikeResavedCopies() {
+		// Regression: burst shots score 99.9%, above the plain-copy line, and were ticked as "compressed" copies.
+		DuplicateItem Shot(int n) => Photo($@"Camera\IMG_{n}.jpg", 4032, 3024, Bytes(8000 + n, (byte)n), gray: 99.9f);
+		Assert.Empty(ReportBuilder.Build(new[] { Shot(1001), Shot(1002), Shot(1003), Shot(1004) }, fingerprints));
+	}
+
+	[Fact]
+	public void ABurstShotsCopy_StaysWithItsOwnShot_NotWithTheBurst() {
+		// A backup of one shot of a burst, alone in its folder: a copy of that shot, not of the one kept from the burst.
+		byte[] shot2 = Bytes(8002, 2);
+		var burst = new[] {
+			Photo(@"Camera\IMG_1001.jpg", 4032, 3024, Bytes(8001, 1), gray: 99.9f),
+			Photo(@"Camera\IMG_1002.jpg", 4032, 3024, shot2),
+			Photo(@"Camera\IMG_1003.jpg", 4032, 3024, Bytes(8003, 3), gray: 99.9f),
+			Photo(@"Camera\IMG_1004.jpg", 4032, 3024, Bytes(9000, 4), gray: 99.9f), // the largest: kept first
+			Photo(@"Backup\IMG_1002.jpg", 4032, 3024, shot2),
+		};
+		ReportGroup g = Single(burst);
+		Assert.Equal("identical", g.Kind);
+		Assert.Equal(new[] { "IMG_1002.jpg", "IMG_1002.jpg" }, g.Items.Select(i => i.Name));
+	}
+
+	[Fact]
+	public void NumberedCopies_OfOneShot_AreStillCopies() {
+		// "(1)" and " - Copy" are the same shot, not the next one; IMG_1235 next to them makes a series.
+		byte[] content = Bytes(8000, 1);
+		Photo("IMG_1235.jpg", 4032, 3024, Bytes(8100, 2)); // on disk only: the neighbour
+		var g = Single(Photo("IMG_1234.jpg", 4032, 3024, content), Photo("IMG_1234 (1).jpg", 4032, 3024, content), Photo("IMG_1234 - Copy.jpg", 4032, 3024, content));
+		Assert.Equal("identical", g.Kind);
+		Assert.Equal(3, g.Items.Count);
+	}
+
+	[Fact]
+	public void NumberedAlikeFiles_WithoutASeriesAroundThem_AreJudgedAsUsual() {
+		// Photo 1 and Photo 7 in two folders, each alone: nothing says burst.
+		var g = Single(Photo(@"A\Photo 1.jpg", 4032, 3024, Bytes(9000, 1)), Photo(@"B\Photo 7.jpg", 4032, 3024, Bytes(8100, 2), gray: 95f, ai: 95f));
+		Assert.Equal("similar", g.Kind);
+	}
+
+	[Fact]
+	public void PicturesLessThan75PercentAlike_LeaveTheSet() {
+		// VDF chains: q is like r, r is like p, but q looks nothing like the kept p.
+		var g = Single(
+			Photo("p.jpg", 4032, 3024, Bytes(9000, 1)), // the largest: kept
+			Photo("r.jpg", 4032, 3024, Bytes(8100, 2), gray: 94f, ai: 95f),
+			Photo("q.jpg", 4032, 3024, Bytes(8200, 3), gray: 70f, ai: 74.9f));
+		Assert.Equal(new[] { "p.jpg", "r.jpg" }, g.Items.Select(i => i.Name));
+		Assert.All(g.Items, i => Assert.True(i.Similarity >= ReportBuilder.MinAlikePercent));
+	}
+
+	[Fact]
+	public void ASetOfOneLookAlikeUnder75Percent_IsNoSet() {
+		Assert.Empty(ReportBuilder.Build(new[] { Photo("p.jpg", 4032, 3024, Bytes(9000, 1)), Photo("q.jpg", 4032, 3024, Bytes(8100, 2), gray: 60f, ai: 70f) }, fingerprints));
+	}
+
+	[Theory]
+	[InlineData("IMG_1234", "img_#", 1234L)]
+	[InlineData("IMG_1234 (1)", "img_#", 1234L)]
+	[InlineData("IMG_1234 - Copy", "img_#", 1234L)]
+	[InlineData("IMG_1234_Original", "img_#", 1234L)]
+	[InlineData("IMG_1234-edited", "img_#", 1234L)]
+	[InlineData("20260101_120000_003", "20260101_120000_#", 3L)]
+	[InlineData("DSC01234", "dsc#", 1234L)]
+	[InlineData("PXL_20260101_120000123.MP", "pxl_20260101_#.mp", 120000123L)]
+	[InlineData("00001IMG_00001_BURST20260101120000123", "burst20260101120000123", 1L)]
+	[InlineData("00000IMG_00000_BURST20260101120000123_COVER", "burst20260101120000123", 0L)]
+	public void BurstSeries_ReadsTheSeriesAndTheNumber(string stem, string series, long number) =>
+		Assert.Equal(new BurstSeries.Shot(series, number), BurstSeries.Parse(stem));
+
+	[Theory]
+	[InlineData("Beach")]
+	[InlineData("Copy of holiday")]
+	public void BurstSeries_NamesWithoutANumber_AreNoSeries(string stem) => Assert.Null(BurstSeries.Parse(stem));
 
 	[Fact]
 	public void GroupKey_IgnoresOrderAndCase() {
