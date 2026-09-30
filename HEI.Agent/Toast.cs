@@ -29,9 +29,11 @@ namespace HEI.Agent {
 		const string AppId = "Heiward";
 		public const string AppIdKey = @"Software\Classes\AppUserModelId\" + AppId;
 
-		public static void Register(string displayName) {
+		/// <param name="iconPng">A picture notifications show as the app's icon; null leaves Windows' default.</param>
+		public static void Register(string displayName, string? iconPng = null) {
 			using RegistryKey key = Registry.CurrentUser.CreateSubKey(AppIdKey);
 			key.SetValue("DisplayName", displayName);
+			if (iconPng != null) key.SetValue("IconUri", iconPng);
 		}
 
 		public static void Unregister() {

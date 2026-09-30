@@ -30,7 +30,7 @@ namespace HEI.Agent {
 	/// <item>fetch FFmpeg, the AI runtime and model, and the pack for the PC's NPU; probe the NPU;</item>
 	/// <item>write settings.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
 	/// <item>register the scan task and the sign-in "open the review page" task;</item>
-	/// <item>add a Start menu entry, the name its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
+	/// <item>add Start menu and desktop shortcuts to the review page, the name and icon its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
 	/// <item>start the first scan and open the review page.</item>
 	/// </list>
 	/// <c>--dry-run</c> prints every step without changing anything.
@@ -42,6 +42,9 @@ namespace HEI.Agent {
 		public static string InstallDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Heiward");
 		public static string InstalledExe => Path.Combine(InstallDir, "hei.exe");
 		static string StartMenuShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Heiward.lnk");
+		static string DesktopShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Heiward.lnk");
+		/// <summary>The mark as a picture, for notifications (Windows shows the exe's icon everywhere else).</summary>
+		static string IconPng => Path.Combine(InstallDir, "heiward.png");
 		static string CurrentExe => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
 		public static bool RunningInstalled => string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
 
@@ -147,10 +150,13 @@ namespace HEI.Agent {
 				if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(InstalledExe));
 			}
 
-			Step($"Start menu: {StartMenuShortcut}");
-			if (!dryRun) CreateShortcut(StartMenuShortcut);
-			Step($"Notifications: shown as {DisplayName} (HKCU\\{Toast.AppIdKey})");
-			if (!dryRun) Toast.Register(DisplayName);
+			Step($"Start menu and desktop: {StartMenuShortcut}, {DesktopShortcut} (open the review page)");
+			if (!dryRun) {
+				CreateShortcut(StartMenuShortcut);
+				CreateShortcut(DesktopShortcut);
+			}
+			Step($"Notifications: shown as {DisplayName}, with its icon (HKCU\\{Toast.AppIdKey})");
+			if (!dryRun) Toast.Register(DisplayName, WriteIconPng());
 			Step($"Apps & Features entry: HKCU\\{UninstallKey}");
 			if (!dryRun) RegisterUninstall();
 
@@ -166,9 +172,10 @@ namespace HEI.Agent {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
 			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
-			Step($"Remove {StartMenuShortcut}, the notification name and the Apps & Features entry");
+			Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
 			if (!dryRun) {
 				try { File.Delete(StartMenuShortcut); } catch { }
+				try { File.Delete(DesktopShortcut); } catch { }
 				Toast.Unregister();
 				try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
 				StopRunningAgents();
@@ -306,7 +313,23 @@ namespace HEI.Agent {
 			}
 		}
 
-		/// <summary>A .lnk through WScript.Shell (always present): conhost --headless runs the console exe without a window.</summary>
+		/// <summary>Writes the mark's picture next to the installed exe (from the page's files, which are compiled in); null if it can't.</summary>
+		static string? WriteIconPng() {
+			try {
+				using Stream? png = Assembly.GetExecutingAssembly().GetManifestResourceStream("wwwroot/heiward.png");
+				if (png == null) return null;
+				using (var file = File.Create(IconPng)) png.CopyTo(file);
+				return IconPng;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// A .lnk through WScript.Shell (always present): conhost --headless runs the console exe without a
+		/// window, and "open" starts the review page if it isn't running. The icon is the exe's own.
+		/// </summary>
 		static void CreateShortcut(string lnk) {
 			string conhost = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
 			string ps = $"""
