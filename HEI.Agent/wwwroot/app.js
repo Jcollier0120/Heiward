@@ -337,7 +337,7 @@ function renderHeader(s) {
   renderAiBadge(s.ai);
 
   const running = s.scan.running;
-  $('scan-now').disabled = running;
+  $('scan-now').disabled = running || s.setup.needed;
   $('scan-now').textContent = running ? 'Scanning…' : 'Scan now';
   $('progress').classList.toggle('hidden', !running);
   const st = s.scan.status;
@@ -516,20 +516,37 @@ async function saveSettings(next) {
   refresh(true);
 }
 
-/** How hard scans work: full speed while someone waits for them, or always in the background (ScanPace). */
+/**
+ * How hard scans work (ScanPace): always in the background, at full speed while someone waits for them,
+ * or always at full speed.
+ */
 function renderScanCard(s) {
   const c = s.config;
-  const full = c.scanSpeed !== 'background';
+  const speed = c.scanSpeed === 'background' || c.scanSpeed === 'full' ? c.scanSpeed : 'auto';
   const card = el('div', 'auto-card');
   const row = el('div', 'auto-row');
-  row.append(toggleSwitch(full, 'Full speed when you\'re here', settingsBusy, (on) => saveSettings({ scanSpeed: on ? 'auto' : 'background' })));
   const text = el('div', 'auto-text');
-  text.append(el('div', 'auto-title', 'Full speed when you\'re here'));
-  text.append(el('div', 'muted small', full
-    ? 'Scan now, and a scheduled scan while this page is open, use ' + count(c.fullSpeedCores, 'core', 'cores') + ' at normal priority. ' +
-      'With the page closed, scheduled scans run in the background: Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores') + '.'
-    : 'Off: every scan runs in the background, as scheduled scans do: Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores') +
-      '. Slower, and light on the battery and the fans.'));
+  const head = el('div', 'auto-wait');
+  const label = el('label', 'auto-title', 'Scans run');
+  label.htmlFor = 'scan-speed';
+  const pick = el('select');
+  pick.id = 'scan-speed';
+  for (const [value, name] of [['background', 'in the background'], ['auto', 'at full speed when you\'re here'], ['full', 'always at full speed']]) {
+    const o = el('option', null, name);
+    o.value = value;
+    o.selected = value === speed;
+    pick.append(o);
+  }
+  pick.disabled = settingsBusy;
+  pick.addEventListener('change', () => saveSettings({ scanSpeed: pick.value }));
+  head.append(label, pick);
+  const background = 'Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores');
+  const fast = count(c.fullSpeedCores, 'core', 'cores') + ' at normal priority';
+  text.append(head, el('div', 'muted small', {
+    background: 'Every scan runs in the background: ' + background + '. Slower, and light on the battery and the fans.',
+    auto: 'Scan now, and a scheduled scan while this page is open, use ' + fast + '. With the page closed, scheduled scans run in the background: ' + background + '.',
+    full: 'Every scan, scheduled ones too, uses ' + fast + ', to finish as fast as it can.',
+  }[speed]));
   row.append(text);
   card.append(row);
   const foot = el('div', 'auto-foot');
@@ -538,6 +555,100 @@ function renderScanCard(s) {
       : 'Scheduled scans aren\'t set up on this PC: run "hei install".'));
   card.append(foot);
   $('scan-card').replaceChildren(card);
+}
+
+// ---------------------------------------------------------------- the Store version's first run
+
+// From the Store, Heiward starts without a console, so its first run asks here what the GitHub exe asks
+// in its window (StoreSetup): where the AI runs and when to scan (both only without an NPU), and how
+// hard scans work. The answers survive the page's polls; the install's output shows while it runs.
+const setupAnswers = { device: 'gpu', onDemand: false, scanSpeed: 'background' };
+let setupRetry = false;
+let setupShown = null; // 'form' or 'progress': the form is only built once, so a poll doesn't reset it
+
+function setupChoice(title, name, options, current, onPick) {
+  const box = el('fieldset', 'setup-question');
+  box.append(el('legend', 'auto-title', title));
+  for (const [value, label, detail] of options) {
+    const row = el('label', 'setup-option');
+    const radio = el('input');
+    radio.type = 'radio';
+    radio.name = name;
+    radio.value = String(value);
+    radio.checked = value === current;
+    radio.addEventListener('change', () => { if (radio.checked) onPick(value); });
+    const text = el('span');
+    text.append(el('span', 'setup-label', label), el('span', 'muted small', detail));
+    row.append(radio, text);
+    box.append(row);
+  }
+  return box;
+}
+
+async function startSetup(button) {
+  button.disabled = true;
+  const npu = state.setup.npu;
+  try {
+    await post('/api/setup', {
+      device: npu ? null : setupAnswers.device,
+      onDemand: !npu && setupAnswers.onDemand,
+      scanSpeed: setupAnswers.scanSpeed,
+    });
+    setupRetry = false;
+    refresh(true);
+  } catch (e) {
+    showError(e.message);
+    button.disabled = false;
+  }
+}
+
+function renderSetup(s) {
+  for (const id of ['home', 'settingsview', 'devview', 'folder']) $(id).classList.add('hidden');
+  $('setup').classList.remove('hidden');
+  const setup = s.setup;
+  const card = $('setup-card');
+  if (setup.running || (setup.failed && !setupRetry)) {
+    setupShown = 'progress';
+    const log = el('pre', 'setup-log');
+    log.textContent = setup.output.join('\n') || 'Starting…';
+    const parts = [el('h2', null, setup.failed ? 'Setup stopped' : 'Setting up Heiward…')];
+    parts.push(el('p', 'muted', setup.failed
+      ? 'Something went wrong; the last lines below say what. heiward.log has the rest.'
+      : 'Downloading what the AI needs and checking where it runs. The first scan starts right after.'));
+    parts.push(log);
+    if (setup.failed) {
+      const again = el('button', 'btn', 'Try again');
+      again.addEventListener('click', () => { setupRetry = true; setupShown = null; renderSetup(state); });
+      parts.push(again);
+    }
+    card.replaceChildren(...parts);
+    log.scrollTop = log.scrollHeight;
+    return;
+  }
+  if (setupShown === 'form') return;
+  setupShown = 'form';
+  const parts = [el('h2', null, 'Set up Heiward')];
+  parts.push(el('p', 'muted', setup.npu
+    ? 'AI matching will run on the ' + setup.npuName + ', with a scan every hour. One question before the first scan:'
+    : 'This PC has no NPU Heiward can use. A few questions before the first scan:'));
+  if (!setup.npu) {
+    parts.push(setupChoice('Where should the AI run?', 'setup-device', [
+      ['gpu', 'On the graphics card (recommended)', 'Any DirectX 12 GPU: fast and light on power. It downloads about 215 MB more.'],
+      ['cpu', 'On the processor', 'Works on every PC, and uses more power.'],
+    ], setupAnswers.device, (v) => { setupAnswers.device = v; }));
+    parts.push(setupChoice('When should it look for new duplicates?', 'setup-when', [
+      [false, 'Every 6 hours, on AC power (recommended)', 'Scans skip themselves on battery.'],
+      [true, 'Only when I press Scan now', 'Nothing runs on a schedule.'],
+    ], setupAnswers.onDemand, (v) => { setupAnswers.onDemand = v; }));
+  }
+  parts.push(setupChoice('How hard should scans work?', 'setup-speed', [
+    ['background', 'In the background (recommended)', 'Low power: Windows\' efficiency mode, low priority, and the NPU where there is one. Scans take longer.'],
+    ['full', 'At full speed', 'As many cores as it takes, at normal priority, to finish as fast as possible.'],
+  ], setupAnswers.scanSpeed, (v) => { setupAnswers.scanSpeed = v; }));
+  const go = el('button', 'btn', 'Set up and scan');
+  go.addEventListener('click', () => startSetup(go));
+  parts.push(el('p', 'muted small', 'How hard scans work can be changed on this page later. Nothing is ever deleted unless you choose it here.'), go);
+  card.replaceChildren(...parts);
 }
 
 // ---------------------------------------------------------------- automatic cleanup
@@ -2187,8 +2298,10 @@ function groupCard(g, folder) {
 
 async function renderRoute() {
   if (!state) return;
+  if (state.setup.needed) { renderSetup(state); return; }
   renderCrumbs();
   const folder = route.view === 'folder';
+  $('setup').classList.add('hidden');
   $('home').classList.toggle('hidden', route.view !== 'home');
   $('settingsview').classList.toggle('hidden', route.view !== 'settings');
   $('devview').classList.toggle('hidden', route.view !== 'dev');
@@ -2226,7 +2339,7 @@ async function refresh(force) {
     const res = await fetch('/api/state' + (document.visibilityState === 'visible' ? '?seen=true' : ''));
     if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
     const s = await res.json();
-    const changed = force || !state ||
+    const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc ||
@@ -2238,7 +2351,7 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    timer = setTimeout(refresh, s.scan.running || s.dev.running ? 2000 : 15000);
+    timer = setTimeout(refresh, s.setup.running ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
     showError('Heiward is not responding (' + e.message + '). Run "hei open" to start it again.');
     timer = setTimeout(refresh, 5000);

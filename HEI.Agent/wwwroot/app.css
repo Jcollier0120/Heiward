@@ -440,6 +440,21 @@ button { font: inherit; color: inherit; }
 
 /* Developer cleanup: project cards, a section per cleanup area, rows like the hotspot list, a selection bar */
 /* Automatic cleanup: a card of switches (Windows-style toggles), and a line under each set and item. */
+/* The Store version's first run: its questions, then the install's progress. */
+.setup { overflow-y: auto; padding: 8px 24px 32px; }
+.setup-card { max-width: 680px; }
+.setup-card h2 { font-size: 20px; font-weight: 600; margin: 14px 0 6px; }
+.setup-question { border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); margin: 14px 0; padding: 10px 16px 6px; }
+.setup-question legend { padding: 0 4px; }
+.setup-option { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; cursor: pointer; }
+.setup-option input { margin-top: 3px; accent-color: var(--accent); }
+.setup-option > span { display: grid; gap: 2px; }
+.setup-label { font-weight: 500; }
+.setup-log {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+  max-height: 320px; overflow: auto; font-size: 12px; white-space: pre-wrap; margin: 12px 0;
+}
+
 .auto-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 0 16px; max-width: 760px; }
 .auto-row { display: flex; gap: 14px; align-items: flex-start; padding: 14px 0; border-bottom: 1px solid var(--line); }
 .auto-text { min-width: 0; flex: 1; }

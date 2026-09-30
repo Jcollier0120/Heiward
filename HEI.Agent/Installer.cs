@@ -34,6 +34,9 @@ namespace HEI.Agent {
 	/// <item>start the first scan and open the review page.</item>
 	/// </list>
 	/// <c>--dry-run</c> prints every step without changing anything.
+	/// The Store version (<see cref="StorePackage"/>) is installed already: it skips the copy, the shortcuts, the
+	/// notification name and Apps &amp; Features, which its package has, and its tasks run the "hei" alias. Its
+	/// review page asks the questions and runs this with the answers (<c>install --yes --device ...</c>).
 	/// </summary>
 	static class Installer {
 		const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward";
@@ -45,8 +48,10 @@ namespace HEI.Agent {
 		static string DesktopShortcut => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Heiward.lnk");
 		/// <summary>The mark as a picture, for notifications (Windows shows the exe's icon everywhere else).</summary>
 		static string IconPng => Path.Combine(InstallDir, "heiward.png");
-		static string CurrentExe => Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
-		public static bool RunningInstalled => string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
+		static string CurrentExe => StorePackage.IsPackaged ? StorePackage.ConsoleExe : Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe");
+		public static bool RunningInstalled => StorePackage.IsPackaged || string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
+		/// <summary>What the scheduled tasks run: the installed exe, or the Store version's alias.</summary>
+		static string TaskExe => StorePackage.IsPackaged ? StorePackage.Alias : InstalledExe;
 
 		/// <summary>Scheduled scans without an NPU: every 6 hours, on AC power.</summary>
 		internal const int GpuCpuScanMinutes = 6 * 60;
@@ -54,10 +59,14 @@ namespace HEI.Agent {
 		/// <param name="device">Force the AI device (unattended installs); null = the NPU if there is one, else ask.</param>
 		/// <param name="onDemand">True: no scheduled scans, only "Scan now". Null: ask when there's no NPU.</param>
 		/// <param name="reuseFrom">Folders whose bin\ and ai\ may already hold the prerequisites (<see cref="ComponentReuse"/>).</param>
-		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null) {
+		/// <param name="scanSpeed">How hard scans work (<see cref="AgentConfig.ScanSpeed"/>); null: ask.</param>
+		/// <param name="openPage">Open the review page once the first scan starts (the page itself runs the Store version's setup).</param>
+		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null,
+			string? scanSpeed = null, bool openPage = true) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
-			if (!WrongBuildConfirmed(assumeYes)) {
+			// The Store installs the package built for the PC.
+			if (!StorePackage.IsPackaged && !WrongBuildConfirmed(assumeYes)) {
 				Console.WriteLine("Nothing installed.");
 				return 3;
 			}
@@ -84,7 +93,9 @@ namespace HEI.Agent {
 
 			// Prerequisites: copied from a copy that already has them, else downloaded. No admin rights needed.
 			bool arm64 = RuntimeInformation.OSArchitecture == Architecture.Arm64;
-			var sources = ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
+			// The Store version brings FFmpeg along, and can copy the rest from a GitHub copy's folder.
+			var sources = StorePackage.IsPackaged ? ComponentReuse.Sources((reuseFrom ?? Array.Empty<string>()).Append(InstallDir), CoreUtils.StateFolder)
+				: ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
 			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? $", {NpuComponents.NpuName} pack" : ""));
 			await EnsurePrerequisitesAsync(sources, dryRun, ct);
 
@@ -130,7 +141,8 @@ namespace HEI.Agent {
 			else if (onDemand == true) {
 				cfg.ScanEveryMinutes = 0;
 			}
-			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
+			cfg.ScanSpeed = scanSpeed ?? AskSpeed(assumeYes, cfg.ScanSpeed);
+			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}, {SpeedText(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
 			if (!dryRun) {
 				cfg.Save();
 				// What the install found, for the review page's badge until the first scan says otherwise.
@@ -140,31 +152,39 @@ namespace HEI.Agent {
 			Step(cfg.ScanEveryMinutes > 0
 				? $"Task Scheduler: '{Scheduler.ScanTask}' {Scheduler.Describe(cfg)}, '{Scheduler.OpenTask}' at sign-in"
 				: $"Task Scheduler: no scan task (scans run when you press Scan now), '{Scheduler.OpenTask}' at sign-in");
+			bool fromStore = StorePackage.IsPackaged;
 			if (dryRun) {
-				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, InstalledExe));
-				Console.WriteLine(Scheduler.OpenXml(InstalledExe));
+				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, TaskExe, fromStore));
+				Console.WriteLine(Scheduler.OpenXml(TaskExe, fromStore));
 			}
 			else {
-				if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, InstalledExe));
+				if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
 				else Scheduler.Remove(Scheduler.ScanTask);
-				if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(InstalledExe));
+				if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, fromStore));
 			}
 
-			Step($"Start menu and desktop: {StartMenuShortcut}, {DesktopShortcut} (open the review page)");
-			if (!dryRun) {
-				CreateShortcut(StartMenuShortcut);
-				CreateShortcut(DesktopShortcut);
+			if (fromStore) {
+				Step("Start menu, notifications and Apps & Features: the Store package's own");
+				if (!dryRun) AgentPaths.WriteAtomic(AgentPaths.StoreSetUp, DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
 			}
-			Step($"Notifications: shown as {DisplayName}, with its icon (HKCU\\{Toast.AppIdKey})");
-			if (!dryRun) Toast.Register(DisplayName, WriteIconPng());
-			Step($"Apps & Features entry: HKCU\\{UninstallKey}");
-			if (!dryRun) RegisterUninstall();
+			else {
+				Step($"Start menu and desktop: {StartMenuShortcut}, {DesktopShortcut} (open the review page)");
+				if (!dryRun) {
+					CreateShortcut(StartMenuShortcut);
+					CreateShortcut(DesktopShortcut);
+				}
+				Step($"Notifications: shown as {DisplayName}, with its icon (HKCU\\{Toast.AppIdKey})");
+				if (!dryRun) Toast.Register(DisplayName, WriteIconPng());
+				Step($"Apps & Features entry: HKCU\\{UninstallKey}");
+				if (!dryRun) RegisterUninstall();
+			}
 
 			if (dryRun) return 0;
 			Console.WriteLine();
-			Console.WriteLine("Installed. The first scan starts now; the review page opens in your browser and shows its progress.");
+			Console.WriteLine(openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
-			StartDetached("scan", "--open");
+			if (openPage) StartDetached("scan", "--open");
+			else StartDetached("scan");
 			return 0;
 		}
 
@@ -172,19 +192,27 @@ namespace HEI.Agent {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
 			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
-			Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
-			if (!dryRun) {
-				try { File.Delete(StartMenuShortcut); } catch { }
-				try { File.Delete(DesktopShortcut); } catch { }
-				Toast.Unregister();
-				try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
-				StopRunningAgents();
+			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
+			if (!StorePackage.IsPackaged) {
+				Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
+				if (!dryRun) {
+					try { File.Delete(StartMenuShortcut); } catch { }
+					try { File.Delete(DesktopShortcut); } catch { }
+					Toast.Unregister();
+					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
+					StopRunningAgents();
+				}
 			}
 			if (purge) {
 				Step($"Delete settings, report and caches: {AgentPaths.Home}");
 				if (!dryRun) try { Directory.Delete(AgentPaths.Home, recursive: true); } catch { }
 			}
 			else Console.WriteLine($"Kept settings and the report in {AgentPaths.Home} (add --purge to delete them).");
+			if (StorePackage.IsPackaged) {
+				if (!dryRun) try { File.Delete(AgentPaths.StoreSetUp); } catch { }
+				Console.WriteLine(dryRun ? "" : "Scans are off. To remove Heiward itself: Settings > Apps > Installed apps > Heiward > Uninstall.");
+				return 0;
+			}
 			if (Directory.Exists(InstallDir)) {
 				Step($"Delete {InstallDir}");
 				// The running exe can't delete itself: a detached cmd does it once this process exits.
@@ -230,6 +258,19 @@ namespace HEI.Agent {
 			Console.Write("  Your choice [S/d]: ");
 			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('d');
 		}
+
+		/// <summary>How hard scans work: in the background, or at full speed. --yes keeps what settings.json has.</summary>
+		static string AskSpeed(bool assumeYes, string current) {
+			Console.WriteLine("  How hard should scans work?");
+			Console.WriteLine("    [B] In the background: low power, in Windows' efficiency mode, and on the NPU where there is one. Slower (recommended)");
+			Console.WriteLine("    [F] At full speed: as many cores as it takes, at normal priority, to finish as fast as possible");
+			if (assumeYes || Console.IsInputRedirected) return current;
+			Console.Write("  Your choice [B/f]: ");
+			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('f') ? "full" : "background";
+		}
+
+		static string SpeedText(AgentConfig cfg) =>
+			cfg.AlwaysFullSpeed ? "at full speed" : cfg.AlwaysInBackground ? "in the background" : "at full speed when you're here";
 
 		/// <summary>
 		/// FFmpeg, ONNX Runtime and the model, and the pack for the PC's NPU, next to this exe: each copied
@@ -375,7 +416,8 @@ namespace HEI.Agent {
 		}
 
 		public static void StartDetached(params string[] args) {
-			string exe = File.Exists(InstalledExe) ? InstalledExe : CurrentExe;
+			// The Store version runs its own exe, even with a GitHub copy installed too.
+			string exe = !StorePackage.IsPackaged && File.Exists(InstalledExe) ? InstalledExe : CurrentExe;
 			var psi = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			Process.Start(psi);

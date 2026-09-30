@@ -26,6 +26,10 @@ using HEI.Core.Utils;
 // nothing on its own unless the user turns on automatic cleanup; copies go to the Recycle Bin. Run
 // without arguments, it installs itself (or, once installed, opens the review page), so the one exe
 // is also the installer.
+// The Store version keeps the AI components in its package's storage: its own folder is read-only, and
+// Windows removes that storage with the app.
+if (StorePackage.IsPackaged) CoreUtils.UseStateFolder(Path.Combine(StorePackage.Storage, "components"));
+
 var root = new RootCommand("hei — Heiward finds duplicate photos and videos, and stale developer files, and lists them for review");
 root.SetAction(async (_, ct) => {
 	if (Installer.RunningInstalled) {
@@ -105,9 +109,12 @@ var dryRun = new Option<bool>("--dry-run") { Description = "Print every step wit
 var yes = new Option<bool>("--yes", "-y") { Description = "Answer yes to questions (unattended install)." };
 var deviceOpt = new Option<AiDevice?>("--device") { Description = "Where the AI runs: npu, gpu or cpu. Default: the NPU if there is one, otherwise ask (GPU or CPU)." };
 var onDemandOpt = new Option<bool>("--on-demand") { Description = "No scheduled scans: scan only when you press Scan now. Default without an NPU: ask (every 6 hours or on demand)." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, reuseFrom };
+var speedOpt = new Option<string?>("--scan-speed") { Description = "How hard scans work: background (efficiency mode, slower), full (as fast as possible), or auto (full speed while you're on the review page). Default: ask." };
+speedOpt.AcceptOnlyFromAmong(AgentConfig.ScanSpeeds);
+var installNoBrowser = new Option<bool>("--no-browser") { Description = "Don't open the review page when done." };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, reuseFrom };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
-	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom)));
+	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom), r.GetValue(speedOpt), openPage: !r.GetValue(installNoBrowser)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime).
@@ -132,7 +139,7 @@ root.Subcommands.Add(uninstall);
 var status = new Command("status", "Show the settings, the last report and the schedule.");
 status.SetAction(_ => {
 	var cfg = AgentConfig.Load();
-	Console.WriteLine($"Installed: {(File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
+	Console.WriteLine($"Installed: {(StorePackage.IsPackaged ? $"from the Microsoft Store ({StorePackage.FamilyName}){(File.Exists(AgentPaths.StoreSetUp) ? "" : ", not set up yet: open Heiward from the Start menu")}" : File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");

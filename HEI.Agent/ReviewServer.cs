@@ -158,13 +158,27 @@ namespace HEI.Agent {
 			}));
 			// The page's own settings: history on or off, and how hard scans work.
 			app.MapPost("/api/settings", (SettingsRequest request) => {
-				if (request.ScanSpeed is not (null or "auto" or "background")) return Results.BadRequest(new { error = "Unknown scan speed." });
+				if (request.ScanSpeed != null && !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return Results.BadRequest(new { error = "Unknown scan speed." });
 				AgentConfig saved = AgentConfig.Load();
 				if (request.KeepHistory is bool keep) saved.KeepHistory = cfg.KeepHistory = keep;
 				if (request.ScanSpeed is string speed) saved.ScanSpeed = cfg.ScanSpeed = speed;
 				saved.Save();
-				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans {(saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here")}");
+				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
+					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here"));
 				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed }, AgentConfig.Json);
+			});
+			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
+			app.MapPost("/api/setup", (SetupRequest request) => {
+				if (!StoreSetup.Needed) return Results.Conflict(new { error = "Heiward is set up already." });
+				// What the install writes to settings.json, which this page read before it ran.
+				void Reload() {
+					AgentConfig saved = AgentConfig.Load();
+					cfg.AiDevice = saved.AiDevice;
+					cfg.ScanEveryMinutes = saved.ScanEveryMinutes;
+					cfg.ScanOnBattery = saved.ScanOnBattery;
+					cfg.ScanSpeed = saved.ScanSpeed;
+				}
+				return StoreSetup.Start(request, Reload) is string error ? Results.BadRequest(new { error }) : Results.Accepted();
 			});
 			// Right-click "Include in scans" / "Leave out of scans", saved to folders / excludeFolders.
 			app.MapPost("/api/folders/override", (FolderOverrideRequest request) => {
@@ -227,6 +241,7 @@ namespace HEI.Agent {
 			}));
 			app.MapPost("/api/scan", () => {
 				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				StartDetached("scan");
 				return Results.Accepted();
 			});
@@ -235,7 +250,7 @@ namespace HEI.Agent {
 			_ = Task.Run(async () => {
 				while (!lifetime.ApplicationStopping.IsCancellationRequested) {
 					await Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None);
-					if (Environment.TickCount64 - Interlocked.Read(ref lastSeen) > cfg.ServerIdleMinutes * 60_000L && !AgentScanner.IsRunning()) {
+					if (Environment.TickCount64 - Interlocked.Read(ref lastSeen) > cfg.ServerIdleMinutes * 60_000L && !AgentScanner.IsRunning() && !StoreSetup.Running) {
 						AgentPaths.AppendLog("review page idle, stopping");
 						lifetime.StopApplication();
 					}
@@ -310,6 +325,7 @@ namespace HEI.Agent {
 				drives = ExplorerView.Drives(cfg, index, pending),
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
+				setup = StoreSetup.View(),
 				ai = AiStatus.Load(),
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
 				config = new {

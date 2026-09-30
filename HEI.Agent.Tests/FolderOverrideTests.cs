@@ -97,6 +97,8 @@ public sealed class FolderOverrideTests : IDisposable {
 	[InlineData("auto", true, true, true)]        // scheduled, the page is open
 	[InlineData("background", false, true, false)]
 	[InlineData("background", true, true, false)]
+	[InlineData("full", true, false, true)]        // scheduled, nobody looking: full speed all the same
+	[InlineData("full", false, false, true)]
 	public void Scans_RunAtFullSpeed_OnlyWhenSomeoneWaits(string speed, bool scheduled, bool pageOpen, bool fullSpeed) =>
 		Assert.Equal(fullSpeed, ScanPace.FullSpeed(new AgentConfig { ScanSpeed = speed }, scheduled, pageOpen));
 

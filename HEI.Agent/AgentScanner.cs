@@ -256,14 +256,16 @@ namespace HEI.Agent {
 	/// <summary>
 	/// How hard a scan works (<see cref="AgentConfig.ScanSpeed"/>). "auto": at full speed when someone
 	/// is waiting for it (they started it, or the review page is open and showing), in the background
-	/// otherwise. "background": always in the background, as scheduled scans always ran before.
+	/// otherwise. "background": always in the background, as scheduled scans always ran before. "full":
+	/// always at full speed.
 	/// </summary>
 	static class ScanPace {
 		/// <summary>The page polls every 2–15 s while it shows; hidden tabs don't report.</summary>
 		static readonly TimeSpan PageFresh = TimeSpan.FromSeconds(45);
 		static long lastMarked;
 
-		internal static bool FullSpeed(AgentConfig cfg, bool scheduled, bool pageOpen) => !cfg.AlwaysInBackground && (!scheduled || pageOpen);
+		internal static bool FullSpeed(AgentConfig cfg, bool scheduled, bool pageOpen) =>
+			cfg.AlwaysFullSpeed || !cfg.AlwaysInBackground && (!scheduled || pageOpen);
 
 		public static bool FullSpeed(AgentConfig cfg, bool scheduled) => FullSpeed(cfg, scheduled, PageOpen());
 

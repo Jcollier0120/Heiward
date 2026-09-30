@@ -69,7 +69,21 @@ namespace HEI.Core.Utils {
 			return StateFolder;
 		}
 
+		static string? stateFolderOverride;
+
+		/// <summary>
+		/// Keeps downloads and state in <paramref name="folder"/> instead of next to the executable or in the
+		/// default folder: Heiward's Microsoft Store version uses its package's own storage, which Windows
+		/// removes with the app. Call it before anything reads <see cref="StateFolder"/>.
+		/// </summary>
+		public static void UseStateFolder(string folder) {
+			Directory.CreateDirectory(folder);
+			stateFolderOverride = folder;
+		}
+
 		static string ResolveStateFolder() {
+			if (stateFolderOverride != null)
+				return stateFolderOverride;
 			if (!IsRunningInContainer && IsCurrentFolderWritable)
 				return CurrentFolder;
 			return GetDefaultStateFolder();

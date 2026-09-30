@@ -37,10 +37,12 @@ namespace HEI.Agent {
 
 		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
 		static string Schtasks => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
+		static string Cmd => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
 
 		static string X(string s) => SecurityElement.Escape(s)!;
 
-		public static string ScanXml(AgentConfig cfg, string agentExe) {
+		/// <param name="removeWhenGone">The Store version: <paramref name="agentExe"/> is the "hei" alias (<see cref="StorePackage.Alias"/>).</param>
+		public static string ScanXml(AgentConfig cfg, string agentExe, bool removeWhenGone = false) {
 			int every = Math.Max(15, cfg.ScanEveryMinutes);
 			DateTime start = DateTime.Now.AddMinutes(10);
 			string battery = (!cfg.ScanOnBattery).ToString().ToLowerInvariant();
@@ -57,10 +59,10 @@ namespace HEI.Agent {
 				    <StopIfGoingOnBatteries>{battery}</StopIfGoingOnBatteries>
 				    <ExecutionTimeLimit>PT4H</ExecutionTimeLimit>
 				""",
-				agentExe, "scan --notify --scheduled");
+				Action(ScanTask, agentExe, "scan --notify --scheduled", removeWhenGone));
 		}
 
-		public static string OpenXml(string agentExe) => Task(
+		public static string OpenXml(string agentExe, bool removeWhenGone = false) => Task(
 			"Opens the duplicate review page once a day at sign-in when something waits for review.",
 			$"""
 			    <LogonTrigger>
@@ -73,9 +75,18 @@ namespace HEI.Agent {
 			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
 			    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
 			""",
-			agentExe, "open --if-pending --once-a-day");
+			Action(OpenTask, agentExe, "open --if-pending --once-a-day", removeWhenGone));
 
-		static string Task(string description, string trigger, string power, string agentExe, string args) => $"""
+		/// <summary>
+		/// What conhost --headless runs. Uninstalling the Store version removes the alias and runs none of
+		/// Heiward's code, so there the task checks for the alias first, and deletes itself once it's gone
+		/// rather than failing at every trigger.
+		/// </summary>
+		internal static string Action(string task, string agentExe, string args, bool removeWhenGone) => !removeWhenGone
+			? $"--headless \"{agentExe}\" {args}"
+			: $"--headless \"{Cmd}\" /d /c if exist \"{agentExe}\" (\"{agentExe}\" {args}) else \"{Schtasks}\" /Delete /TN \"{task}\" /F";
+
+		static string Task(string description, string trigger, string power, string action) => $"""
 			<?xml version="1.0" encoding="UTF-16"?>
 			<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
 			  <RegistrationInfo><Description>{X(description)}</Description></RegistrationInfo>
@@ -95,7 +106,7 @@ namespace HEI.Agent {
 			  <Actions Context="Author">
 			    <Exec>
 			      <Command>{X(Conhost)}</Command>
-			      <Arguments>--headless "{X(agentExe)}" {args}</Arguments>
+			      <Arguments>{X(action)}</Arguments>
 			    </Exec>
 			  </Actions>
 			</Task>

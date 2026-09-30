@@ -37,6 +37,11 @@ namespace HEI.Agent {
 		public static string Database => Path.Combine(Home, "db");
 		public static string Thumbnails => Path.Combine(Home, "thumbs");
 		public static string Log => Path.Combine(Home, "heiward.log");
+		/// <summary>
+		/// The Store version's setup is done. In the package's storage, which Windows removes with the app:
+		/// set up again after a reinstall, as its scheduled tasks deleted themselves.
+		/// </summary>
+		public static string StoreSetUp => Path.Combine(StorePackage.Storage, "setup.txt");
 		/// <summary>Touched while the review page is open and showing (it polls): scans run at full speed then.</summary>
 		public static string PageSeen => Path.Combine(Home, "page-seen");
 
@@ -111,6 +116,7 @@ namespace HEI.Agent {
 		/// page is open, runs at full speed: every core but one, normal priority, no efficiency mode. Other
 		/// scheduled scans run in the background. "background": every scan runs in the background, in
 		/// Windows' efficiency mode at below-normal priority on half the cores (<see cref="ScanPace"/>).
+		/// "full": every scan runs at full speed, scheduled ones too.
 		/// </summary>
 		public string ScanSpeed { get; set; } = "auto";
 		/// <summary>List what was cleaned up and kept on the review page's History. Off: nothing new is listed, and no file names are kept.</summary>
@@ -155,6 +161,12 @@ namespace HEI.Agent {
 
 		[JsonIgnore]
 		public bool AlwaysInBackground => string.Equals(ScanSpeed, "background", StringComparison.OrdinalIgnoreCase);
+
+		[JsonIgnore]
+		public bool AlwaysFullSpeed => string.Equals(ScanSpeed, "full", StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>The values <see cref="ScanSpeed"/> takes.</summary>
+		public static readonly string[] ScanSpeeds = { "auto", "background", "full" };
 
 		/// <summary>Files decoded at once: <see cref="Parallelism"/> when set; else every core but one at full speed, half of them in the background (at least 2).</summary>
 		public int ParallelismFor(bool fullSpeed) =>

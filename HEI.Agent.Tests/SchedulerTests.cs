@@ -32,4 +32,37 @@ public sealed class SchedulerTests {
 		Assert.Contains("<DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>", xml);
 		Assert.Contains("scan --notify --scheduled", xml);
 	}
+
+	[Fact]
+	public void Task_OfTheGitHubCopy_RunsTheExe() =>
+		Assert.Equal("--headless \"C:\\x\\hei.exe\" open", Scheduler.Action(Scheduler.OpenTask, @"C:\x\hei.exe", "open", removeWhenGone: false));
+
+	[Fact]
+	public void Task_OfTheStoreVersion_RunsTheAlias_AndDeletesItselfOnceTheAliasIsGone() {
+		string action = Scheduler.Action(Scheduler.ScanTask, @"C:\Users\me\AppData\Local\Microsoft\WindowsApps\hei.exe", "scan --notify --scheduled", removeWhenGone: true);
+		Assert.Matches(@"^--headless "".+\\cmd\.exe"" /d /c if exist ""C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\hei\.exe"" " +
+			@"\(""C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\hei\.exe"" scan --notify --scheduled\) " +
+			@"else "".+\\schtasks\.exe"" /Delete /TN ""Heiward\\Scan"" /F$", action);
+	}
+
+	[Fact]
+	public void TaskXml_OfTheStoreVersion_EscapesTheAction() {
+		string xml = Scheduler.OpenXml(@"C:\a&b\hei.exe", removeWhenGone: true);
+		Assert.Contains("if exist &quot;C:\\a&amp;b\\hei.exe&quot;", xml);
+		Assert.Contains("/TN &quot;Heiward\\Open review page&quot;", xml);
+	}
+
+	[Theory]
+	[InlineData("gpu", false, "background", "install --yes --no-browser --scan-speed background --device gpu")]
+	[InlineData("cpu", true, "full", "install --yes --no-browser --scan-speed full --device cpu --on-demand")]
+	[InlineData(null, false, "full", "install --yes --no-browser --scan-speed full")]
+	public void StoreSetup_RunsTheInstall_WithThePagesAnswers(string? device, bool onDemand, string speed, string expected) =>
+		Assert.Equal(expected, string.Join(' ', StoreSetup.Arguments(new SetupRequest(device, onDemand, speed))!));
+
+	[Theory]
+	[InlineData("npu", "full")]    // the page never offers the NPU: the installer picks it by itself
+	[InlineData("gpu", "fast")]
+	[InlineData("gpu", null)]
+	public void StoreSetup_RefusesAnswersThePageDoesntOffer(string? device, string? speed) =>
+		Assert.Null(StoreSetup.Arguments(new SetupRequest(device, false, speed)));
 }
