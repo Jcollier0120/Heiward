@@ -58,6 +58,8 @@ const ICONS = {
   stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
   merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
+  chip: [['rect', '4,4,8,8,1.5', 'stroke'], ['rect', '6.5,6.5,3,3,0.5', 'fill'],
+    ['path', 'M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5', 'stroke']],
   palette: [['path', 'M8 1.8a6.2 6.2 0 1 0 0 12.4c.9 0 1.5-.6 1.5-1.4 0-.9-.8-1.3-.8-2.1 0-.8.6-1.3 1.4-1.3h1.6a2.5 2.5 0 0 0 2.5-2.5C14.2 4.2 11.5 1.8 8 1.8z', 'stroke'],
     ['circle', '5,7.2,1', 'fill'], ['circle', '7.4,4.6,1', 'fill'], ['circle', '10.6,5.3,1', 'fill'], ['circle', '5.3,10.5,1', 'fill']],
 };
@@ -560,11 +562,25 @@ function renderScanCard(s) {
 // ---------------------------------------------------------------- the Store version's first run
 
 // From the Store, Heiward starts without a console, so its first run asks here what the GitHub exe asks
-// in its window (StoreSetup): where the AI runs and when to scan (both only without an NPU), and how
-// hard scans work. The answers survive the page's polls; the install's output shows while it runs.
-const setupAnswers = { device: 'gpu', onDemand: false, scanSpeed: 'background' };
+// in its window (StoreSetup): where the AI runs (the NPU it found, named, unless the user overrides it,
+// against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to
+// remove a copy installed from GitHub. The answers survive the page's polls; the install's output shows
+// while it runs.
+const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true };
 let setupRetry = false;
 let setupShown = null; // 'form' or 'progress': the form is only built once, so a poll doesn't reset it
+
+/** The NPU setup found, named as Windows lists it: the AI runs on it unless the user picks otherwise. */
+function npuFound(setup) {
+  const card = el('div', 'setup-found');
+  const text = el('div', 'setup-found-text');
+  text.append(el('span', 'setup-chip', 'NPU detected'), el('div', 'setup-found-name', setup.npuName));
+  if (setup.npuHardware) text.append(el('div', 'muted small', setup.npuHardware));
+  text.append(el('div', 'muted small', 'Heiward runs its AI matching on it: the NPU is built for this work, uses far less power than ' +
+    'the graphics card or the processor, and leaves them free for you.'));
+  card.append(icon('chip', 'setup-found-icon'), text);
+  return card;
+}
 
 function setupChoice(title, name, options, current, onPick) {
   const box = el('fieldset', 'setup-question');
@@ -587,12 +603,12 @@ function setupChoice(title, name, options, current, onPick) {
 
 async function startSetup(button) {
   button.disabled = true;
-  const npu = state.setup.npu;
   try {
     await post('/api/setup', {
-      device: npu ? null : setupAnswers.device,
-      onDemand: !npu && setupAnswers.onDemand,
+      device: setupAnswers.device,
+      onDemand: setupAnswers.device !== 'npu' && setupAnswers.onDemand,
       scanSpeed: setupAnswers.scanSpeed,
+      removeGitHubCopy: !!state.setup.gitHubCopy && setupAnswers.removeGitHubCopy,
     });
     setupRetry = false;
     refresh(true);
@@ -627,27 +643,62 @@ function renderSetup(s) {
   }
   if (setupShown === 'form') return;
   setupShown = 'form';
+  if (!setupAnswers.device) setupAnswers.device = setup.npu ? 'npu' : 'gpu';
   const parts = [el('h2', null, 'Set up Heiward')];
-  parts.push(el('p', 'muted', setup.npu
-    ? 'AI matching will run on the ' + setup.npuName + ', with a scan every hour. One question before the first scan:'
-    : 'This PC has no NPU Heiward can use. A few questions before the first scan:'));
-  if (!setup.npu) {
-    parts.push(setupChoice('Where should the AI run?', 'setup-device', [
-      ['gpu', 'On the graphics card (recommended)', 'Any DirectX 12 GPU: fast and light on power. It downloads about 215 MB more.'],
-      ['cpu', 'On the processor', 'Works on every PC, and uses more power.'],
-    ], setupAnswers.device, (v) => { setupAnswers.device = v; }));
-    parts.push(setupChoice('When should it look for new duplicates?', 'setup-when', [
-      [false, 'Every 6 hours, on AC power (recommended)', 'Scans skip themselves on battery.'],
-      [true, 'Only when I press Scan now', 'Nothing runs on a schedule.'],
-    ], setupAnswers.onDemand, (v) => { setupAnswers.onDemand = v; }));
-  }
+  if (setup.npu) parts.push(npuFound(setup));
+  else parts.push(el('p', 'muted', (setup.unsupportedNpu
+    ? 'This version of Heiward can\'t use this PC\'s NPU yet (' + setup.unsupportedNpu + '), so'
+    : 'This PC has no NPU, so') + ' AI matching runs on the graphics card or the processor.'));
+
+  // Where the AI runs. With an NPU, the GPU and the CPU stay available, with advice against them.
+  const devices = [];
+  if (setup.npu) devices.push(['npu', 'On the NPU (recommended)', 'The ' + setup.npuName + '. Scans run every hour, and step aside on a low battery.']);
+  devices.push(['gpu', 'On the graphics card' + (setup.npu ? '' : ' (recommended)'), 'Any DirectX 12 GPU: fast, and lighter on power than the processor. It downloads about 215 MB more.']);
+  devices.push(['cpu', 'On the processor', 'Works on every PC, and uses the most power.']);
+  const advice = el('p', 'setup-advice', 'Not recommended on this PC. The ' + setup.npuName + ' does this work on far less power. ' +
+    'On the graphics card or the processor, scans draw more power and run warmer, so scheduled ones run only every 6 hours ' +
+    'on AC power, and the NPU sits idle.');
+  const when = setupChoice('When should it look for new duplicates?', 'setup-when', [
+    [false, 'Every 6 hours, on AC power (recommended)', 'Scans skip themselves on battery.'],
+    [true, 'Only when I press Scan now', 'Nothing runs on a schedule.'],
+  ], setupAnswers.onDemand, (v) => { setupAnswers.onDemand = v; });
+  const sync = () => {
+    advice.classList.toggle('hidden', !setup.npu || setupAnswers.device === 'npu');
+    when.classList.toggle('hidden', setupAnswers.device === 'npu');
+  };
+  const where = setupChoice('Where should the AI run?', 'setup-device', devices, setupAnswers.device, (v) => { setupAnswers.device = v; sync(); });
+  where.append(advice);
+  sync();
+  parts.push(where, when);
+
   parts.push(setupChoice('How hard should scans work?', 'setup-speed', [
-    ['background', 'In the background (recommended)', 'Low power: Windows\' efficiency mode, low priority, and the NPU where there is one. Scans take longer.'],
+    ['background', 'In the background (recommended)', 'Low power: Windows\' efficiency mode and low priority. Scans take longer.'],
     ['full', 'At full speed', 'As many cores as it takes, at normal priority, to finish as fast as possible.'],
   ], setupAnswers.scanSpeed, (v) => { setupAnswers.scanSpeed = v; }));
+
+  // A copy installed from GitHub: this one replaces it, and the Store keeps it up to date.
+  if (setup.gitHubCopy != null) {
+    const box = el('fieldset', 'setup-question');
+    box.append(el('legend', 'auto-title', 'Heiward from GitHub'));
+    const row = el('label', 'setup-option');
+    const tick = el('input');
+    tick.type = 'checkbox';
+    tick.checked = setupAnswers.removeGitHubCopy;
+    tick.addEventListener('change', () => { setupAnswers.removeGitHubCopy = tick.checked; });
+    const text = el('span');
+    text.append(el('span', 'setup-label', 'Remove the copy installed from GitHub' + (setup.gitHubCopy ? ' (' + setup.gitHubCopy + ')' : '') + ' (recommended)'),
+      el('span', 'muted small', 'The Microsoft Store keeps this version up to date by itself: new versions arrive automatically, with ' +
+        'nothing to download from GitHub. Removing the old copy takes away its shortcuts, its entry in Installed apps and its folder. ' +
+        'Your settings, the report and the history stay: this version uses them.'));
+    row.append(tick, text);
+    box.append(row);
+    parts.push(box);
+  }
+
   const go = el('button', 'btn', 'Set up and scan');
   go.addEventListener('click', () => startSetup(go));
-  parts.push(el('p', 'muted small', 'How hard scans work can be changed on this page later. Nothing is ever deleted unless you choose it here.'), go);
+  parts.push(el('p', 'muted small', 'The Microsoft Store keeps Heiward up to date. How hard scans work can be changed on the Settings page later. ' +
+    'Your photos, videos and files are never deleted unless you choose them on this page.'), go);
   card.replaceChildren(...parts);
 }
 

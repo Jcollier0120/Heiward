@@ -53,16 +53,23 @@ public sealed class SchedulerTests {
 	}
 
 	[Theory]
-	[InlineData("gpu", false, "background", "install --yes --no-browser --scan-speed background --device gpu")]
-	[InlineData("cpu", true, "full", "install --yes --no-browser --scan-speed full --device cpu --on-demand")]
-	[InlineData(null, false, "full", "install --yes --no-browser --scan-speed full")]
-	public void StoreSetup_RunsTheInstall_WithThePagesAnswers(string? device, bool onDemand, string speed, string expected) =>
-		Assert.Equal(expected, string.Join(' ', StoreSetup.Arguments(new SetupRequest(device, onDemand, speed))!));
+	[InlineData("npu", false, false, "background", "install --yes --no-browser --scan-speed background --device npu")]
+	[InlineData("gpu", false, false, "background", "install --yes --no-browser --scan-speed background --device gpu")]
+	[InlineData("cpu", true, false, "full", "install --yes --no-browser --scan-speed full --device cpu --on-demand")]
+	[InlineData(null, false, true, "full", "install --yes --no-browser --scan-speed full --remove-github-copy")]
+	public void StoreSetup_RunsTheInstall_WithThePagesAnswers(string? device, bool onDemand, bool removeGitHub, string speed, string expected) =>
+		Assert.Equal(expected, string.Join(' ', StoreSetup.Arguments(new SetupRequest(device, onDemand, speed, removeGitHub))!));
 
 	[Theory]
-	[InlineData("npu", "full")]    // the page never offers the NPU: the installer picks it by itself
+	[InlineData("tpu", "full")]
 	[InlineData("gpu", "fast")]
 	[InlineData("gpu", null)]
 	public void StoreSetup_RefusesAnswersThePageDoesntOffer(string? device, string? speed) =>
 		Assert.Null(StoreSetup.Arguments(new SetupRequest(device, false, speed)));
+
+	[Theory]
+	[InlineData("Snapdragon(R) X2 Elite Extreme - X2E94100 - Qualcomm(R) Hexagon(TM) NPU", "Snapdragon X2 Elite Extreme - X2E94100 - Qualcomm Hexagon NPU")]
+	[InlineData("Intel® AI Boost", "Intel AI Boost")]
+	public void StoreSetup_NamesTheNpu_WithoutTrademarkMarks(string windows, string shown) =>
+		Assert.Equal(shown, StoreSetup.HardwareName(windows));
 }

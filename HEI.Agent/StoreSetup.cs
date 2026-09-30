@@ -18,10 +18,11 @@ using System.Diagnostics;
 using HEI.Core.AI;
 
 namespace HEI.Agent {
-	/// <param name="Device">gpu or cpu, asked only without an NPU; null lets the installer use the NPU.</param>
-	/// <param name="OnDemand">No scheduled scans (asked only without an NPU).</param>
+	/// <param name="Device">npu, gpu or cpu; null lets the installer pick (the NPU when there is one).</param>
+	/// <param name="OnDemand">No scheduled scans (asked when the AI runs on the GPU or CPU).</param>
 	/// <param name="ScanSpeed">background, full or auto (<see cref="AgentConfig.ScanSpeed"/>).</param>
-	sealed record SetupRequest(string? Device, bool OnDemand, string? ScanSpeed);
+	/// <param name="RemoveGitHubCopy">Remove Heiward installed from GitHub, when there is one.</param>
+	sealed record SetupRequest(string? Device, bool OnDemand, string? ScanSpeed, bool RemoveGitHubCopy = false);
 
 	/// <summary>
 	/// The Store version's first run, which has no console: the review page asks what the GitHub exe asks
@@ -37,20 +38,32 @@ namespace HEI.Agent {
 
 		public static bool Running { get { lock (gate) return running; } }
 
-		/// <summary>For the page's state poll: whether to show the questions, and the install's progress.</summary>
+		/// <summary>
+		/// For the page's state poll: whether to show the questions, the NPU it found (the page names it and
+		/// advises against the GPU or CPU next to it), a copy from GitHub it can remove, and the install's progress.
+		/// </summary>
 		public static object View() {
 			bool needed = Needed;
+			bool npu = needed && NpuComponents.IsSupportedPlatform;
 			lock (gate) {
 				return new {
 					needed,
 					running,
 					failed,
 					output = needed ? output.ToList() : new List<string>(),
-					npu = needed && NpuComponents.IsSupportedPlatform,
+					npu,
 					npuName = NpuComponents.NpuName,
+					npuHardware = npu ? HardwareName(NpuHardware.Name) : "",
+					// An NPU this version can't use yet, named so the page can say why the AI runs elsewhere.
+					unsupportedNpu = needed && !npu && NpuHardware.Vendor != NpuVendor.None ? HardwareName(NpuHardware.Name) : "",
+					gitHubCopy = needed && !running ? Installer.GitHubCopyVersion() : null,
 				};
 			}
 		}
+
+		/// <summary>"Snapdragon(R) X2 Elite Extreme - X2E94100 - Qualcomm(R) Hexagon(TM) NPU" without the trademark marks.</summary>
+		internal static string HardwareName(string name) =>
+			System.Text.RegularExpressions.Regex.Replace(name.Replace("(R)", "").Replace("(TM)", "").Replace("®", "").Replace("™", ""), @"\s{2,}", " ").Trim();
 
 		/// <summary>Starts the install; the reason when the answers don't add up or it's running already.</summary>
 		/// <param name="setUp">Runs once the install succeeded (the review page reloads the settings it wrote).</param>
@@ -88,10 +101,11 @@ namespace HEI.Agent {
 		/// <summary>The install's command line for the page's answers, or null when they aren't valid.</summary>
 		internal static List<string>? Arguments(SetupRequest request) {
 			if (request.ScanSpeed is null || !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return null;
-			if (request.Device is not (null or "gpu" or "cpu")) return null;
+			if (request.Device is not (null or "npu" or "gpu" or "cpu")) return null;
 			var args = new List<string> { "install", "--yes", "--no-browser", "--scan-speed", request.ScanSpeed };
 			if (request.Device != null) args.AddRange(new[] { "--device", request.Device });
 			if (request.OnDemand) args.Add("--on-demand");
+			if (request.RemoveGitHubCopy) args.Add("--remove-github-copy");
 			return args;
 		}
 	}

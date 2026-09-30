@@ -179,7 +179,7 @@ hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators,
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
 hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--after-days N]
 hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
-hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--reuse-from <folder>]
+hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
 ```
 

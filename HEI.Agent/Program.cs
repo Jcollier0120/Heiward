@@ -112,9 +112,11 @@ var onDemandOpt = new Option<bool>("--on-demand") { Description = "No scheduled 
 var speedOpt = new Option<string?>("--scan-speed") { Description = "How hard scans work: background (efficiency mode, slower), full (as fast as possible), or auto (full speed while you're on the review page). Default: ask." };
 speedOpt.AcceptOnlyFromAmong(AgentConfig.ScanSpeeds);
 var installNoBrowser = new Option<bool>("--no-browser") { Description = "Don't open the review page when done." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, reuseFrom };
+var removeGitHubOpt = new Option<bool>("--remove-github-copy") { Description = "The Store version: remove Heiward installed from GitHub (its shortcuts, Apps & Features entry and folder). Settings and history stay." };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, removeGitHubOpt, reuseFrom };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
-	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom), r.GetValue(speedOpt), openPage: !r.GetValue(installNoBrowser)));
+	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom), r.GetValue(speedOpt), openPage: !r.GetValue(installNoBrowser),
+	removeGitHubCopy: r.GetValue(removeGitHubOpt)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime).
@@ -355,6 +357,12 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 
 /// <summary>Starts the review page in the background if needed, waits until it answers, opens it.</summary>
 static async Task OpenReviewPageAsync(AgentConfig cfg, CancellationToken ct) {
+	// Both versions use the same port: a GitHub copy's page there would stand in for the Store version's own
+	// (and its setup), so the Store version stops it first.
+	if (StorePackage.IsPackaged && await ReviewServer.IsUpAsync(cfg.Port) && !await ReviewServer.IsUpAsync(cfg.Port, fromStore: true)) {
+		Installer.StopGitHubCopy();
+		for (int i = 0; i < 20 && await ReviewServer.IsUpAsync(cfg.Port); i++) await Task.Delay(250, ct);
+	}
 	ReviewServer.EnsureRunningInBackground(cfg);
 	for (int i = 0; i < 40 && !await ReviewServer.IsUpAsync(cfg.Port); i++)
 		await Task.Delay(250, ct);

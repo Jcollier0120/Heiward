@@ -91,7 +91,7 @@ namespace HEI.Agent {
 				return Results.Content(Asset("favicon.svg"), "image/svg+xml");
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
-			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward" }));
+			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward", store = StorePackage.IsPackaged }));
 			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
 			app.MapGet("/api/state", (bool? seen) => {
 				if (seen == true) ScanPace.MarkPageSeen();
@@ -376,11 +376,12 @@ namespace HEI.Agent {
 			return r.ReadToEnd();
 		}
 
-		public static async Task<bool> IsUpAsync(int port) {
+		/// <param name="fromStore">Only the Store version's page counts (a GitHub copy's says "store":false, or nothing).</param>
+		public static async Task<bool> IsUpAsync(int port, bool fromStore = false) {
 			try {
 				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
 				string body = await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping");
-				return body.Contains("\"heiward\"", StringComparison.Ordinal);
+				return body.Contains("\"heiward\"", StringComparison.Ordinal) && (!fromStore || body.Contains("\"store\":true", StringComparison.Ordinal));
 			}
 			catch { return false; }
 		}

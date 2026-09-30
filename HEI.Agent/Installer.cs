@@ -61,8 +61,9 @@ namespace HEI.Agent {
 		/// <param name="reuseFrom">Folders whose bin\ and ai\ may already hold the prerequisites (<see cref="ComponentReuse"/>).</param>
 		/// <param name="scanSpeed">How hard scans work (<see cref="AgentConfig.ScanSpeed"/>); null: ask.</param>
 		/// <param name="openPage">Open the review page once the first scan starts (the page itself runs the Store version's setup).</param>
+		/// <param name="removeGitHubCopy">The Store version: remove a copy installed from GitHub (<see cref="RemoveGitHubCopy"/>).</param>
 		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null,
-			string? scanSpeed = null, bool openPage = true) {
+			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
 			// The Store installs the package built for the PC.
@@ -101,6 +102,7 @@ namespace HEI.Agent {
 
 			bool npu = device is null or AiDevice.Auto or AiDevice.Npu && (!dryRun ? NpuComponents.WillUseNpu(AiDevice.Auto) : NpuComponents.IsSupportedPlatform);
 			Step(npu ? $"NPU found: AI matching runs on the {NpuComponents.NpuName}."
+				: device is AiDevice.Gpu or AiDevice.Cpu && NpuComponents.IsSupportedPlatform ? $"AI matching set to the {device.Value.ToString().ToUpperInvariant()}, although this PC has a {NpuComponents.NpuName}."
 				: NpuHardware.Vendor == NpuVendor.None ? $"No NPU on this PC ({(arm64 ? "ARM64" : RuntimeInformation.OSArchitecture.ToString())})."
 				: NpuComponents.IsSupportedPlatform ? $"The {NpuComponents.NpuName} could not run the model here."
 				: $"This build does not support this PC's NPU yet ({NpuHardware.Name}).");
@@ -147,6 +149,12 @@ namespace HEI.Agent {
 				cfg.Save();
 				// What the install found, for the review page's badge until the first scan says otherwise.
 				AiStatus.Record(cfg, npu ? "NPU" : cfg.AiDevice == "gpu" ? "GPU" : "CPU", "install");
+			}
+
+			// After the prerequisites, which may have been copied from its folder; before the tasks, which have its tasks' names.
+			if (removeGitHubCopy && StorePackage.IsPackaged && Directory.Exists(InstallDir)) {
+				Step($"Remove the copy from GitHub: {InstallDir}, its shortcuts, its notification name and its Apps & Features entry");
+				if (!dryRun) RemoveGitHubCopy();
 			}
 
 			Step(cfg.ScanEveryMinutes > 0
@@ -280,7 +288,9 @@ namespace HEI.Agent {
 		/// </summary>
 		internal static async Task EnsurePrerequisitesAsync(IReadOnlyList<string> sources, bool dryRun, CancellationToken ct) {
 			if (dryRun) {
-				var parts = new List<ComponentReuse.Part> { ComponentReuse.Ffmpeg, ComponentReuse.AiRuntime };
+				var parts = new List<ComponentReuse.Part> { ComponentReuse.AiRuntime };
+				// The Store version brings FFmpeg along.
+				if (!File.Exists(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe"))) parts.Insert(0, ComponentReuse.Ffmpeg);
 				if (NpuComponents.IsSupportedPlatform) parts.Add(ComponentReuse.NpuPack);
 				foreach (var part in parts)
 					Console.WriteLine(ComponentReuse.Find(part, sources) is string from ? $"  {Capital(part.Name)}: would be copied from {from}" : $"  {Capital(part.Name)}: would be downloaded, unless already here");
@@ -344,6 +354,65 @@ namespace HEI.Agent {
 			Console.WriteLine("  " + output.Trim());
 			if (p.ExitCode != 0) AgentPaths.AppendLog($"probe --device {device} failed: {(await errors).Trim()}");
 			return p.ExitCode == 0;
+		}
+
+		/// <summary>
+		/// The Store version, with a copy from GitHub installed too: removes that copy so there aren't two
+		/// Heiwards. Its tasks have the Store version's task names, which the install registers next. Settings,
+		/// the report and the history in %LOCALAPPDATA%\Heiward stay: the Store version uses them.
+		/// </summary>
+		static void RemoveGitHubCopy() {
+			StopGitHubCopy();
+			try { File.Delete(StartMenuShortcut); } catch { }
+			try { File.Delete(DesktopShortcut); } catch { }
+			Toast.Unregister();
+			try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
+			// A process that just stopped can hold its exe for a moment.
+			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
+				try { Directory.Delete(InstallDir, recursive: true); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Thread.Sleep(1000); }
+			}
+			bool entryLeft;
+			using (RegistryKey? key = Registry.CurrentUser.OpenSubKey(UninstallKey)) entryLeft = key != null;
+			if (Directory.Exists(InstallDir) || entryLeft) {
+				Console.WriteLine("  Some of it is still there: uninstall the other Heiward in Settings > Apps > Installed apps.");
+				AgentPaths.AppendLog($"removing the copy from GitHub left {(entryLeft ? "its Apps & Features entry" : InstallDir)}");
+			}
+			else AgentPaths.AppendLog("removed the copy from GitHub");
+		}
+
+		/// <summary>
+		/// Stops the GitHub copy's processes (its review page or a scan), found by their exe's path: the Store
+		/// version's own are hei.exe too.
+		/// </summary>
+		public static void StopGitHubCopy() {
+			foreach (var p in Process.GetProcessesByName("hei")) {
+				try {
+					if (string.Equals(ImagePath(p), InstalledExe, StringComparison.OrdinalIgnoreCase)) {
+						p.Kill(entireProcessTree: true);
+						p.WaitForExit(5000);
+					}
+				}
+				catch { /* gone already, or not ours to stop */ }
+				p.Dispose();
+			}
+		}
+
+		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+		static extern bool QueryFullProcessImageName(IntPtr process, int flags, System.Text.StringBuilder name, ref int size);
+
+		/// <summary>A process's exe: works for an emulated x64 process too, unlike its MainModule.</summary>
+		static string? ImagePath(Process p) {
+			var name = new System.Text.StringBuilder(1024);
+			int size = name.Capacity;
+			return QueryFullProcessImageName(p.Handle, 0, name, ref size) ? name.ToString() : null;
+		}
+
+		/// <summary>The GitHub copy's version ("1.2.2") when one is installed, else null.</summary>
+		public static string? GitHubCopyVersion() {
+			if (!File.Exists(InstalledExe)) return null;
+			try { return FileVersionInfo.GetVersionInfo(InstalledExe).ProductVersion?.Split('+')[0] ?? ""; }
+			catch { return ""; }
 		}
 
 		/// <summary>Stops other hei processes (a review page or a scan) so the exe can be replaced or removed.</summary>
