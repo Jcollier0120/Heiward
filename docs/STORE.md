@@ -41,25 +41,35 @@ Add-AppxPackage -Register artifacts\store\layout-x64\AppxManifest.xml
 
 Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`.
 
+## How the Store version runs
+
+`StorePackage.IsPackaged` tells Heiward it runs from the package: `GetCurrentPackageFamilyName` fails outside one.
+
+- **First run:** it happens on the review page, because a Store install has no console (`StoreSetup`).
+  - **Where the AI runs:** the graphics card or the processor. Asked only on a PC without an NPU.
+  - **When to scan:** every 6 hours on AC power, or only on Scan now. Asked only without an NPU.
+  - **How hard scans work:** asked on every PC.
+    - **In the background:** Windows' efficiency mode, low priority, and the NPU where there is one. Slower.
+    - **At full speed:** as many cores as it takes, at normal priority.
+
+  The page then runs `hei install --yes` with the answers, shows its output, and switches to the home page once the first scan starts. The GitHub installer asks the same speed question in its console.
+- **The installer:** the package is the install.
+  - There's no copy to `%LOCALAPPDATA%\Programs`, no shortcuts, no notification name and no Apps & Features entry: the package has all of those.
+  - The AI components are copied from a GitHub copy's folder when there is one, otherwise downloaded. FFmpeg is in the package already.
+  - `hei uninstall` stops the scheduled scans and points to **Settings > Apps**.
+- **Storage:** the package's folder is read-only.
+  - The AI components and the setup marker go in the package's own storage, `%LOCALAPPDATA%\Packages\TheNexus.Heiward_mcanr0hfqkj1g\LocalCache`, which Windows removes with the app.
+  - Settings, the report, the history and thumbnails stay in `%LOCALAPPDATA%\Heiward`, shared with a GitHub copy, and outlive an uninstall, as they do after `hei uninstall` without `--purge`.
+- **Scheduled tasks:**
+  - They run the `hei` alias, not the package's `hei.exe`.
+  - Uninstalling an MSIX runs none of Heiward's code. So each task first checks through cmd that the alias still exists, and deletes itself when it doesn't.
+- **Notifications:** sent under the package's own app ID, `<PackageFamilyName>!Heiward`, which already has the name and logo.
+
+With a GitHub copy installed as well, both use the same task names: whichever set up last runs the scheduled scans.
+
 ## Still to do before the first submission
 
-The package builds and Windows accepts it, but Heiward doesn't run as a packaged app yet: it still installs itself as it does from GitHub. What's left:
-
-- **Knowing it's packaged:** `GetCurrentPackageFullName` returns `APPMODEL_ERROR_NO_PACKAGE` when it isn't.
-- **The installer, packaged:**
-  - no copy to `%LOCALAPPDATA%\Programs`, no Apps & Features entry, no shortcuts and no `AppUserModelId` key, because the package provides those;
-  - `hei uninstall` points to **Settings > Apps**;
-  - the GitHub copy, when one is installed too, is offered for removal, so there aren't two Heiwards.
-- **Nothing written into the package folder:** it's read-only.
-  - FFmpeg is already in the package's `bin\`, so the installer must find it there and not download it again.
-  - Check that `CoreUtils.StateFolder` (the AI components) points under `%LOCALAPPDATA%`, not into the package.
-- **Scheduled tasks:**
-  - They run the alias, not the package's `hei.exe`.
-  - Uninstalling an MSIX runs none of Heiward's code, so each task first checks that the alias still exists, and deletes itself when it doesn't.
-- **Notifications:** sent as `<PackageFamilyName>!Heiward`, the package's own app ID.
-- **First run on the review page:** a Store install has no console, so the setup questions move to the review page, which opens on first run anyway:
-  - **Where the AI runs:** the graphics card or the processor. Only asked on a PC without an NPU.
-  - **When to scan:** every 6 hours on AC power, or only when asked. Only asked without an NPU.
-  - **How hard to work:** every PC gets this question.
-    - **Background:** low power and efficient, on the NPU as much as possible, a bit slower.
-    - **Full speed:** as many resources as it takes, to finish as fast as possible.
+- **Partner Center:** the listing, the privacy policy and the age rating (above).
+- **Two Heiwards:** when the GitHub copy is installed too, offer to remove it during setup.
+- **Where the Store version keeps settings and history:** keep sharing `%LOCALAPPDATA%\Heiward` with a GitHub copy (it outlives an uninstall), or move it into the package's storage (removed with the app, not shared).
+- **A real Store install:** a Partner Center flight to a private audience. That's the only way to try the package from `WindowsApps`, signed by the Store; a local `-Register` runs it from a writable folder.

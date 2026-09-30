@@ -25,7 +25,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 1. copies itself to `%LOCALAPPDATA%\Programs\Heiward`;
 2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack for the PC's NPU. Every download is SHA-256 pinned, and AMD's plugin comes from Windows ML;
-3. checks for an NPU. Without one, it asks whether the AI should run on the **GPU** or the **CPU**;
+3. checks for an NPU. Without one, it asks whether the AI should run on the **GPU** or the **CPU**. On every PC it asks how hard scans should work: **in the background** (efficiency mode, slower) or **at full speed**;
 4. schedules scans with Task Scheduler (per user):
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
@@ -36,7 +36,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 **Already downloaded?** If another copy of Heiward or Video Duplicate Finder already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from, and in Video Duplicate Finder's own per-user folder. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
 
-Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans). Preview every step without changing anything: `hei install --dry-run`.
+Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, and `--scan-speed background` or `full` for how hard scans work). Preview every step without changing anything: `hei install --dry-run`.
 
 Heiward does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
 
@@ -157,7 +157,7 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
-| `scanSpeed` | `auto` | `auto`: Scan now, and scheduled scans while the review page is open, at full speed; other scans in the background. `background`: every scan in the background |
+| `scanSpeed` | `auto` | `auto`: Scan now, and scheduled scans while the review page is open, at full speed; other scans in the background. `background`: every scan in the background. `full`: every scan at full speed, scheduled ones too |
 | `parallelism` | 0 | Files decoded at once; 0: every core but one at full speed, half of them in the background |
 | `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
@@ -179,7 +179,7 @@ hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators,
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
 hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--after-days N]
 hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
-hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--reuse-from <folder>]
+hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
 ```
 

@@ -37,7 +37,7 @@ A *heiward* (Middle English, "hedge warden") was the village officer who kept th
    Not sure which? **Settings > System > About** says "x64-based processor" or "ARM-based processor".
 2. Run it.
 
-There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan, and the review page opens in your browser to show its progress. On a PC without an NPU it asks one question: run the AI on the graphics card or the processor.
+There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan, and the review page opens in your browser to show its progress. It asks how hard scans should work: in the background, slower and light on power, or at full speed. On a PC without an NPU it also asks whether to run the AI on the graphics card or the processor.
 
 The releases aren't code-signed yet, so the first run shows "Windows protected your PC": click **More info**, then **Run anyway**. On a PC with Smart App Control turned on, Windows blocks unsigned apps outright, so those PCs will need a signed release. `SHA256SUMS.txt` on the release lists each file's SHA-256, which PowerShell's `Get-FileHash` shows.
 
