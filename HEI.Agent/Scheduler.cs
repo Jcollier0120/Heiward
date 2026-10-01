@@ -34,6 +34,8 @@ namespace HEI.Agent {
 		public const string Folder = @"Heiward";
 		public const string ScanTask = Folder + @"\Scan";
 		public const string OpenTask = Folder + @"\Open review page";
+		/// <summary>One run of the uninstall, which <see cref="Installer.Uninstall"/> hands over to Task Scheduler.</summary>
+		public const string UninstallTask = Folder + @"\Uninstall";
 
 		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
 		static string Schtasks => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
@@ -78,6 +80,21 @@ namespace HEI.Agent {
 			Action(OpenTask, agentExe, "open --if-pending --once-a-day", removeWhenGone));
 
 		/// <summary>
+		/// <c>hei uninstall</c> in a window, run once by <see cref="RunNow"/>: Task Scheduler starts it outside the
+		/// package environment of whatever started the uninstall.
+		/// </summary>
+		public static string UninstallXml(string agentExe, bool purge) => Task(
+			"Uninstalls Heiward, as Settings > Apps asked.",
+			"",
+			"""
+			    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+			    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
+			""",
+			purge ? "uninstall --purge" : "uninstall",
+			command: agentExe);
+
+		/// <summary>
 		/// What conhost --headless runs. Uninstalling the Store version removes the alias and runs none of
 		/// Heiward's code, so there the task checks for the alias first, and deletes itself once it's gone
 		/// rather than failing at every trigger.
@@ -86,7 +103,8 @@ namespace HEI.Agent {
 			? $"--headless \"{agentExe}\" {args}"
 			: $"--headless \"{Cmd}\" /d /c if exist \"{agentExe}\" (\"{agentExe}\" {args}) else \"{Schtasks}\" /Delete /TN \"{task}\" /F";
 
-		static string Task(string description, string trigger, string power, string action) => $"""
+		/// <param name="command">What the task runs: conhost --headless, unless it should have a window.</param>
+		static string Task(string description, string trigger, string power, string action, string? command = null) => $"""
 			<?xml version="1.0" encoding="UTF-16"?>
 			<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
 			  <RegistrationInfo><Description>{X(description)}</Description></RegistrationInfo>
@@ -105,7 +123,7 @@ namespace HEI.Agent {
 			  </Settings>
 			  <Actions Context="Author">
 			    <Exec>
-			      <Command>{X(Conhost)}</Command>
+			      <Command>{X(command ?? Conhost)}</Command>
 			      <Arguments>{X(action)}</Arguments>
 			    </Exec>
 			  </Actions>
@@ -123,6 +141,9 @@ namespace HEI.Agent {
 		}
 
 		public static void Remove(string name) => Run("/Delete", "/TN", name, "/F");
+
+		/// <summary>Starts a task now; false when Task Scheduler wouldn't.</summary>
+		public static bool RunNow(string name) => Run("/Run", "/TN", name).Item1 == 0;
 
 		/// <summary>"every hour", "every 6 hours on AC power", "only when you press Scan now".</summary>
 		public static string Describe(AgentConfig cfg) {

@@ -54,6 +54,15 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
+	public void UninstallTask_RunsTheExe_InAWindow_OnlyWhenStarted() {
+		string xml = Scheduler.UninstallXml(@"C:\x\hei.exe", purge: true);
+		Assert.Contains(@"<Command>C:\x\hei.exe</Command>", xml);
+		Assert.Contains("<Arguments>uninstall --purge</Arguments>", xml);
+		Assert.DoesNotContain("Trigger>", xml);
+		Assert.True(System.Xml.Linq.XDocument.Parse(xml).Root != null);
+	}
+
+	[Fact]
 	public void Task_OfTheGitHubCopy_RunsTheExe() =>
 		Assert.Equal("--headless \"C:\\x\\hei.exe\" open", Scheduler.Action(Scheduler.OpenTask, @"C:\x\hei.exe", "open", removeWhenGone: false));
 

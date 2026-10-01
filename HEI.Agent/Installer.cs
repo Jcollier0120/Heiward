@@ -209,6 +209,10 @@ namespace HEI.Agent {
 			uninstallLog = !dryRun;
 			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath}{(StorePackage.Identity is string id ? $", with the package identity {id}" : "")})");
 			try {
+				if (!dryRun && StorePackage.Identity != null && !StorePackage.IsPackaged && HandOver(purge)) {
+					Console.WriteLine("Uninstalling Heiward in a new window.");
+					return 0;
+				}
 				int code = UninstallSteps(purge, dryRun);
 				Log("uninstall done");
 				if (ownWindow && !dryRun) {
@@ -229,6 +233,26 @@ namespace HEI.Agent {
 				}
 				return 1;
 			}
+		}
+
+		/// <summary>
+		/// Settings > Apps starts the uninstall inside its own package's environment (<see cref="StorePackage.Identity"/>),
+		/// which keeps registry changes, and those of any program started from here, in that package's view of
+		/// HKCU: the Apps &amp; Features entry would look gone to the uninstall and stay in Settings. Task Scheduler
+		/// starts its tasks outside any, so a one-time task runs the uninstall again, in a window of its own.
+		/// </summary>
+		/// <returns>False when Task Scheduler wouldn't: then the uninstall goes ahead here.</returns>
+		static bool HandOver(bool purge) {
+			try {
+				Scheduler.Register(Scheduler.UninstallTask, Scheduler.UninstallXml(Environment.ProcessPath ?? InstalledExe, purge));
+				if (Scheduler.RunNow(Scheduler.UninstallTask)) {
+					Log("uninstall: handed over to Task Scheduler");
+					return true;
+				}
+				Log("uninstall: Task Scheduler didn't start the uninstall");
+			}
+			catch (Exception e) { Log("uninstall: couldn't hand over to Task Scheduler: " + e.Message); }
+			return false;
 		}
 
 		/// <summary>Uninstall's steps go to heiward.log; not in a dry run, nor once --purge has deleted its folder.</summary>
@@ -252,7 +276,11 @@ namespace HEI.Agent {
 				Log("uninstall: " + s);
 			}
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
-			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
+			if (!dryRun) {
+				Scheduler.Remove(Scheduler.ScanTask);
+				Scheduler.Remove(Scheduler.OpenTask);
+				Scheduler.Remove(Scheduler.UninstallTask); // what ran this uninstall, if anything did: it runs on regardless
+			}
 			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
 			if (!StorePackage.IsPackaged) {
 				Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
