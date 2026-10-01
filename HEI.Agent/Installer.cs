@@ -207,8 +207,12 @@ namespace HEI.Agent {
 		public static int Uninstall(bool purge, bool dryRun) {
 			bool ownWindow = !Console.IsInputRedirected && !Console.IsOutputRedirected;
 			uninstallLog = !dryRun;
-			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath})");
+			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath}{(StorePackage.Identity is string id ? $", with the package identity {id}" : "")})");
 			try {
+				if (!dryRun && StorePackage.Identity != null && !StorePackage.IsPackaged && HandOver(purge)) {
+					Console.WriteLine("Uninstalling Heiward in a new window.");
+					return 0;
+				}
 				int code = UninstallSteps(purge, dryRun);
 				Log("uninstall done");
 				if (ownWindow && !dryRun) {
@@ -229,6 +233,26 @@ namespace HEI.Agent {
 				}
 				return 1;
 			}
+		}
+
+		/// <summary>
+		/// Settings > Apps starts the uninstall inside its own package's environment (<see cref="StorePackage.Identity"/>),
+		/// which keeps registry changes, and those of any program started from here, in that package's view of
+		/// HKCU: the Apps &amp; Features entry would look gone to the uninstall and stay in Settings. Task Scheduler
+		/// starts its tasks outside any, so a one-time task runs the uninstall again, in a window of its own.
+		/// </summary>
+		/// <returns>False when Task Scheduler wouldn't: then the uninstall goes ahead here.</returns>
+		static bool HandOver(bool purge) {
+			try {
+				Scheduler.Register(Scheduler.UninstallTask, Scheduler.UninstallXml(Environment.ProcessPath ?? InstalledExe, purge));
+				if (Scheduler.RunNow(Scheduler.UninstallTask)) {
+					Log("uninstall: handed over to Task Scheduler");
+					return true;
+				}
+				Log("uninstall: Task Scheduler didn't start the uninstall");
+			}
+			catch (Exception e) { Log("uninstall: couldn't hand over to Task Scheduler: " + e.Message); }
+			return false;
 		}
 
 		/// <summary>Uninstall's steps go to heiward.log; not in a dry run, nor once --purge has deleted its folder.</summary>
@@ -252,7 +276,11 @@ namespace HEI.Agent {
 				Log("uninstall: " + s);
 			}
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
-			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
+			if (!dryRun) {
+				Scheduler.Remove(Scheduler.ScanTask);
+				Scheduler.Remove(Scheduler.OpenTask);
+				Scheduler.Remove(Scheduler.UninstallTask); // what ran this uninstall, if anything did: it runs on regardless
+			}
 			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
 			if (!StorePackage.IsPackaged) {
 				Step($"Remove {StartMenuShortcut}, {DesktopShortcut}, the notification name and the Apps & Features entry");
@@ -465,11 +493,8 @@ namespace HEI.Agent {
 			StopGitHubCopy();
 			DeleteOwnShortcut(StartMenuShortcut);
 			DeleteOwnShortcut(DesktopShortcut);
-			// Through reg.exe: the package's own registry changes stay in the package (its view of HKCU
-			// shows them gone while the user's keys stay), a program outside the package reaches the real ones.
-			DeleteUserKey(Toast.AppIdKey);
-			DeleteUserKey(ProtocolKey); // the Store version's own heiward: links come with its package
-			bool entryLeft = !DeleteUserKey(UninstallKey);
+			// The heiward: links' too: the Store version's own come with its package.
+			bool entryLeft = !DeleteUserKeysOutside(Toast.AppIdKey, ProtocolKey, UninstallKey);
 			// A process that just stopped can hold its exe for a moment.
 			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
 				try { Directory.Delete(InstallDir, recursive: true); }
@@ -499,23 +524,23 @@ namespace HEI.Agent {
 			lnk.Length > 1 && System.Text.Encoding.Unicode.GetString(lnk, 1, lnk.Length - 1).Contains(folder, StringComparison.OrdinalIgnoreCase) ||
 			System.Text.Encoding.Latin1.GetString(lnk).Contains(folder, StringComparison.OrdinalIgnoreCase);
 
-		/// <summary>Deletes an HKCU key with reg.exe; true when the user's registry doesn't have it any more.</summary>
-		static bool DeleteUserKey(string key) {
-			string reg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
-			int Run(params string[] args) {
-				var psi = new ProcessStartInfo(reg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-				foreach (string a in args) psi.ArgumentList.Add(a);
-				using var p = Process.Start(psi)!;
-				p.StandardOutput.ReadToEnd();
-				p.StandardError.ReadToEnd();
-				p.WaitForExit(10_000);
-				return p.ExitCode;
-			}
+		/// <summary>
+		/// Deletes HKCU keys from outside the package. Its registry changes stay in its own view of HKCU, which
+		/// shows them gone while the user's keys stay, and so do those of every program it starts, reg.exe
+		/// included. Task Scheduler starts its tasks outside any package: a one-time task deletes them.
+		/// </summary>
+		/// <returns>True once the task has run; this view can't tell whether the keys are gone.</returns>
+		static bool DeleteUserKeysOutside(params string[] keys) {
 			try {
-				Run("delete", @"HKCU\" + key, "/f");
-				return Run("query", @"HKCU\" + key) != 0;
+				Scheduler.Register(Scheduler.RemoveKeysTask, Scheduler.DeleteKeysXml(keys));
+				if (Scheduler.RunNow(Scheduler.RemoveKeysTask))
+					// The task deletes itself last.
+					for (var until = DateTime.UtcNow.AddSeconds(15); DateTime.UtcNow < until; Thread.Sleep(250))
+						if (!Scheduler.Exists(Scheduler.RemoveKeysTask)) return true;
+				Scheduler.Remove(Scheduler.RemoveKeysTask);
 			}
-			catch { return false; }
+			catch (Exception e) { AgentPaths.AppendLog("Task Scheduler couldn't remove the GitHub copy's registry keys: " + e.Message); }
+			return false;
 		}
 
 		/// <summary>

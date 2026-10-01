@@ -125,7 +125,12 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
 
 ## How the Store version runs
 
-`StorePackage.IsPackaged` tells Heiward it runs from the package: `GetCurrentPackageFamilyName` fails outside one.
+`StorePackage.IsPackaged` tells Heiward it runs from the package: `GetCurrentPackageFamilyName` names Heiward's package family, and the exe is in the package's folder.
+
+- **Another app's identity:** a process can get the identity of the packaged app that started it, and its environment. Settings > Apps starts the GitHub copy's uninstall that way.
+  - The uninstall would see Settings' package family (`windows.immersivecontrolpanel_cw5n1h2txyewy`) and take itself for the Store version. It then only turned the scans off, and sent you back to Settings.
+  - In that environment, registry changes stay in Settings' private view of HKCU. So do those of every program started from it, `reg.exe` included.
+  - So the uninstall hands over to a one-time task, `Heiward\Uninstall`. Task Scheduler starts it outside any package; that run removes Heiward and the task.
 
 - **First run:** it happens on the review page, because a Store install has no console (`StoreSetup`).
   - **The NPU:** when setup finds one this version supports, it shows an "NPU detected" card with the NPU's name, the chip's name as Windows lists it, and that the AI runs there.
@@ -136,7 +141,7 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
     - **At full speed:** as many cores as it takes, at normal priority.
   - **A copy from GitHub:** when one is installed, a ticked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
     - The removal takes the copy's processes, shortcuts, notification name, `heiward:` links, Apps & Features entry and folder.
-    - It deletes the registry keys with `reg.exe`. The package's own registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay.
+    - A one-time task, `Heiward\Remove GitHub copy`, deletes the registry keys with `reg.exe`, then itself. The package's registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay. So do the changes of every program it starts, so `reg.exe` started from the package wouldn't do. Task Scheduler starts its tasks outside it.
     - A `Heiward.lnk` is deleted only when it names the GitHub copy's folder: the Store version's desktop shortcut has the same name.
     - Settings, the report and the history stay: the Store version uses them.
     - It runs after the AI components were copied from that folder, and before the Store version's tasks take over the same names.

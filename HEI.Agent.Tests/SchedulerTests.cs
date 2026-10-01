@@ -54,6 +54,23 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
+	public void UninstallTask_RunsTheExe_InAWindow_OnlyWhenStarted() {
+		string xml = Scheduler.UninstallXml(@"C:\x\hei.exe", purge: true);
+		Assert.Contains(@"<Command>C:\x\hei.exe</Command>", xml);
+		Assert.Contains("<Arguments>uninstall --purge</Arguments>", xml);
+		Assert.DoesNotContain("Trigger>", xml);
+		Assert.True(System.Xml.Linq.XDocument.Parse(xml).Root != null);
+	}
+
+	[Fact]
+	public void RemoveKeysTask_DeletesEachKey_ThenItself_InOnePairOfOuterQuotes() {
+		string action = Scheduler.DeleteKeysAction(new[] { @"Software\Classes\heiward", @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward" });
+		Assert.Matches(@"^--headless "".+\\cmd\.exe"" /d /c """".+\\reg\.exe"" delete ""HKCU\\Software\\Classes\\heiward"" /f >nul 2>&1 & " +
+			@""".+\\reg\.exe"" delete ""HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Heiward"" /f >nul 2>&1 & " +
+			@""".+\\schtasks\.exe"" /Delete /TN ""Heiward\\Remove GitHub copy"" /F >nul""$", action);
+	}
+
+	[Fact]
 	public void Task_OfTheGitHubCopy_RunsTheExe() =>
 		Assert.Equal("--headless \"C:\\x\\hei.exe\" open", Scheduler.Action(Scheduler.OpenTask, @"C:\x\hei.exe", "open", removeWhenGone: false));
 
@@ -104,6 +121,17 @@ public sealed class SchedulerTests {
 	public void StorePackage_WorksOutThePackageFamily_FromThePublisher() =>
 		// Partner Center's package family for Heiward is TheNexus.Heiward_mcanr0hfqkj1g.
 		Assert.Equal("mcanr0hfqkj1g", StorePackage.PublisherId("CN=71D8D20A-F4D5-405B-9F54-12741B793F6D"));
+
+	[Theory]
+	// Settings > Apps starts the GitHub copy's uninstall with Settings' own package identity: that is no Store version.
+	[InlineData("windows.immersivecontrolpanel_cw5n1h2txyewy", false, null)]
+	[InlineData("windows.immersivecontrolpanel_cw5n1h2txyewy", true, null)]
+	// Heiward's identity, passed on to an exe outside the package's folder (the GitHub copy's).
+	[InlineData("TheNexus.Heiward_mcanr0hfqkj1g", false, null)]
+	[InlineData("TheNexus.Heiward_mcanr0hfqkj1g", true, "TheNexus.Heiward_mcanr0hfqkj1g")]
+	[InlineData(null, true, null)]
+	public void StorePackage_IsTheStoreVersion_OnlyWithHeiwardsIdentity_InItsPackagesFolder(string? identity, bool inPackageFolder, string? expected) =>
+		Assert.Equal(expected, StorePackage.Own(identity, inPackageFolder));
 
 	[Theory]
 	[InlineData("Snapdragon(R) X2 Elite Extreme - X2E94100 - Qualcomm(R) Hexagon(TM) NPU", "Snapdragon X2 Elite Extreme - X2E94100 - Qualcomm Hexagon NPU")]

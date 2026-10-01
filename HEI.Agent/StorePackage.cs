@@ -30,10 +30,25 @@ namespace HEI.Agent {
 
 		const int AppModelErrorNoPackage = 15700;
 
-		/// <summary>The package family name (TheNexus.Heiward_mcanr0hfqkj1g), or null when not running from the package.</summary>
-		public static readonly string? FamilyName = ReadFamilyName();
+		/// <summary>The manifest's identity name, which every Heiward package family starts with.</summary>
+		const string PackageName = "TheNexus.Heiward";
+
+		/// <summary>
+		/// The package identity this process runs with, which may be another app's: a process a packaged app
+		/// starts can run with that app's. Settings > Apps starts the GitHub copy's uninstall with its own
+		/// (windows.immersivecontrolpanel_cw5n1h2txyewy), and an uninstall that took that for the Store version
+		/// only turned scans off, then sent you back to Settings to uninstall.
+		/// </summary>
+		public static readonly string? Identity = ReadFamilyName();
+
+		/// <summary>The package family name (TheNexus.Heiward_mcanr0hfqkj1g), or null when not running from Heiward's package.</summary>
+		public static readonly string? FamilyName = Own(Identity, InPackageFolder);
 
 		public static bool IsPackaged => FamilyName != null;
+
+		/// <summary><paramref name="identity"/>, when it is Heiward's and this exe is in its package's folder.</summary>
+		internal static string? Own(string? identity, bool inPackageFolder) =>
+			inPackageFolder && identity != null && identity.StartsWith(PackageName + "_", StringComparison.OrdinalIgnoreCase) ? identity : null;
 
 		/// <summary>The Start menu entry's app ID: notifications sent under it show Heiward's name and logo.</summary>
 		public static string AppUserModelId => FamilyName + "!Heiward";
