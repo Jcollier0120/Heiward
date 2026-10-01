@@ -18,9 +18,10 @@ Scheduled scans run in the background:
 - Windows' efficiency mode (EcoQoS), on efficient cores at low clocks;
 - below-normal priority, on half the cores;
 - a hard cap on the processor: a quarter of it, and at most two cores' worth (`backgroundCpuPercent`). Windows holds the scan back once it has used its share, however idle the PC is. Efficiency mode and a low priority alone left an idle PC's processor to the scan;
-- very low disk priority, as the search indexer has, so anything else using the drive goes first.
+- very low disk priority, as the search indexer has, so anything else using the drive goes first;
+- on a Snapdragon, the NPU at its power-saving clocks: 3.2 ms per picture instead of 2.1, still several times faster than the pictures are read.
 
-A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, and normal disk priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
+A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, normal disk priority, and the NPU at full clocks. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
 
 What a rescan reads from the disk:
 - **Only what changed, as the drive's change journal says.** NTFS records every file created, changed, renamed or deleted, and Heiward reads that record as a normal user. That tells it which folders changed since the last scan.

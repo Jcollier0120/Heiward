@@ -481,9 +481,11 @@ namespace HEI.Agent {
 		/// the disk: Windows' own background mode would lower the CPU priority to idle as well.
 		/// And in the background, a cap on the processor (<see cref="CapCpu"/>): a low priority only gives
 		/// way to other work, so an idle PC's processor was the scan's, efficiency mode or not.
+		/// The NPU follows the same pace from its next run on (<see cref="NpuComponents.FullSpeed"/>).
 		/// </summary>
 		/// <param name="cpuCap">In the background, the most of the whole processor the scan uses, in percent (<see cref="AgentConfig.BackgroundCpuCap"/>).</param>
 		public static bool SetPace(bool fullSpeed, double cpuCap) {
+			NpuComponents.FullSpeed = fullSpeed;
 			const int ProcessPowerThrottling = 4, ProcessIoPriority = 33, IoPriorityVeryLow = 0, IoPriorityNormal = 2;
 			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000, NormalPriorityClass = 0x20;
 			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = fullSpeed ? 0 : ExecutionSpeed };

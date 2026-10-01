@@ -131,6 +131,27 @@ namespace HEI.Core {
 		public string? AiDeviceUsed { get; private set; }
 		/// <summary>The embedding sidecar that device's vectors went to (null = VDF's int8 model).</summary>
 		public string? AiCacheKeyUsed { get; private set; }
+		/// <summary>Where the last search's AI time went (<see cref="AI.EmbeddingPipeline.Describe"/>), or null without AI.</summary>
+		public string? AiSummary { get; private set; }
+		// What reading the files cost the last search: files decoded and the workers' time on them, photos and videos apart.
+		int photosRead, videosRead;
+		long photoTicks, videoTicks;
+		/// <summary>
+		/// What decoding cost the last search, e.g. "Read 4,800 photos in 412 worker-s (86 ms each) and 210
+		/// videos in 96 worker-s (457 ms each)"; null when nothing was decoded. Worker-seconds add up the
+		/// parallel workers' time, so they exceed the wall-clock time.
+		/// </summary>
+		public string? DecodeSummary {
+			get {
+				var parts = new List<string>();
+				if (photosRead > 0)
+					parts.Add($"{photosRead:N0} photos in {Seconds(photoTicks):N0} worker-s ({Seconds(photoTicks) * 1000 / photosRead:N0} ms each)");
+				if (videosRead > 0)
+					parts.Add($"{videosRead:N0} videos in {Seconds(videoTicks):N0} worker-s ({Seconds(videoTicks) * 1000 / videosRead:N0} ms each)");
+				return parts.Count == 0 ? null : "Read " + string.Join(" and ", parts);
+				static double Seconds(long ticks) => ticks / (double)Stopwatch.Frequency;
+			}
+		}
 		/// <summary>
 		/// Wall-clock time the last search spent analysing each drive's files (decoding, fingerprints),
 		/// keyed by the drive's root. Drives run concurrently, each at its own parallelism.
@@ -415,6 +436,8 @@ namespace HEI.Core {
 						await aiEmbeddingPipeline.CompleteAsync();
 						IncrementProgress(string.Empty);
 						Logger.Instance.Info($"AI embeddings computed for this scan: {aiEmbeddingPipeline.EmbeddedCount}");
+						AiSummary = aiEmbeddingPipeline.Describe();
+						Logger.Instance.Info(AiSummary);
 					}
 				}
 				finally {
@@ -425,6 +448,8 @@ namespace HEI.Core {
 					unionEmbeddingStore?.Save(AllDatabasePaths());
 				}
 				Logger.Instance.Info(T("Log.FinishedGatheringHashes", SearchTimer.StopGetElapsedAndRestart()));
+				if (DecodeSummary is { } decoding)
+					Logger.Instance.Info(decoding);
 				// Save before signaling completion: consumers (e.g. the CLI) may treat the
 				// event as "done" and exit the process, which previously killed this thread
 				// mid-write and left a torn ScannedFiles_new.db behind.
@@ -524,6 +549,9 @@ namespace HEI.Core {
 		void PrepareSearch() {
 			AiDeviceUsed = null;
 			AiCacheKeyUsed = null;
+			AiSummary = null;
+			photosRead = videosRead = 0;
+			photoTicks = videoTicks = 0;
 			ResetExcludedLogging();
 			//Using HEI.GUI we know fftools exist at this point but HEI.Core might be used in other projects as well
 			if (!Settings.UseNativeFfmpegBinding && !FFmpegExists)
@@ -1318,6 +1346,7 @@ namespace HEI.Core {
 						// legacy-sized cached frames so those positions get re-extracted (#881).
 						HealLegacyGrayBytes(entry);
 
+						long decodeStarted = Stopwatch.GetTimestamp();
 						if (entry.IsImage) {
 							ScanCrashJournal.Begin(ScanCrashJournal.PhaseImage, entry.Path);
 							try {
@@ -1336,6 +1365,8 @@ namespace HEI.Core {
 							}
 							finally {
 								ScanCrashJournal.End();
+								Interlocked.Add(ref photoTicks, Stopwatch.GetTimestamp() - decodeStarted);
+								Interlocked.Increment(ref photosRead);
 							}
 						}
 						else {
@@ -1352,6 +1383,8 @@ namespace HEI.Core {
 							}
 							finally {
 								ScanCrashJournal.End();
+								Interlocked.Add(ref videoTicks, Stopwatch.GetTimestamp() - decodeStarted);
+								Interlocked.Increment(ref videosRead);
 							}
 						}
 
