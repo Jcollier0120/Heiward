@@ -86,6 +86,9 @@ namespace HEI.Core.FFTools {
 				"error while decoding",
 				"partial file",
 				"truncat",
+				// MPEG-4 Part 2 (DivX, Xvid), MPEG-1/2 and H.263 report a damaged bitstream per macroblock.
+				"error at mb:",
+				"ac-tex damaged",
 			}),
 			(FfmpegErrorCategory.FileAccess, new[] {
 				"permission denied",

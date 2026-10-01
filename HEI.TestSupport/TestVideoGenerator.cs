@@ -46,6 +46,24 @@ public static class TestVideoGenerator {
 		}
 	}
 
+	static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> encoders = new(StringComparer.OrdinalIgnoreCase);
+
+	/// <summary>
+	/// The video encoder the "H.264" samples are made with: libx264 where this FFmpeg has it, else FFmpeg's
+	/// own MPEG-4 Part 2. Heiward ships the lean LGPL FFmpeg, which leaves the GPL x264 out, so with it every
+	/// sample failed to generate and the tests that need one skipped (or, making their own, failed). What
+	/// those tests check (decoding, seeking, corrupt packets, rotation, tags) doesn't depend on the codec;
+	/// the few that do ask <see cref="VideoCodec"/>.
+	/// </summary>
+	public static string VideoEncoder(string ffmpegPath) =>
+		encoders.GetOrAdd(ffmpegPath, p => HasEncoder(p, "libx264") ? "-c:v libx264 -preset ultrafast -crf 23" : "-c:v mpeg4 -q:v 3");
+
+	/// <summary><see cref="VideoEncoder"/>'s arguments one by one, for a test that starts FFmpeg itself.</summary>
+	public static string[] VideoEncoderArguments(string ffmpegPath) => VideoEncoder(ffmpegPath).Split(' ');
+
+	/// <summary>The codec ffprobe reports for <see cref="VideoEncoder"/>'s samples: "h264" or "mpeg4".</summary>
+	public static string VideoCodec(string ffmpegPath) => VideoEncoder(ffmpegPath).Contains("libx264") ? "h264" : "mpeg4";
+
 	public static bool HasEncoder(string ffmpegPath, string encoderName) {
 		var psi = new ProcessStartInfo {
 			FileName = ffmpegPath,
@@ -74,7 +92,7 @@ public static class TestVideoGenerator {
 	public static bool GenerateH264_8bit(string ffmpegPath, string outputPath) =>
 		RunFfmpeg(ffmpegPath,
 			$"-y -f lavfi -i testsrc2=duration=2:size=320x240:rate=25 " +
-			$"-c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \"{outputPath}\"");
+			$"{VideoEncoder(ffmpegPath)} -pix_fmt yuv420p \"{outputPath}\"");
 
 	/// <summary>
 	/// 2s anamorphic H.264: 320x240 coded raster with SAR 2:1, i.e. a 640x240
@@ -83,7 +101,7 @@ public static class TestVideoGenerator {
 	public static bool GenerateH264_Anamorphic(string ffmpegPath, string outputPath) =>
 		RunFfmpeg(ffmpegPath,
 			$"-y -f lavfi -i testsrc2=duration=2:size=320x240:rate=25 " +
-			$"-vf setsar=2/1 -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \"{outputPath}\"");
+			$"-vf setsar=2/1 {VideoEncoder(ffmpegPath)} -pix_fmt yuv420p \"{outputPath}\"");
 
 	/// <summary>
 	/// 2s 320x240 HEVC 10-bit yuv420p10le with a deterministic test pattern.
@@ -107,7 +125,7 @@ public static class TestVideoGenerator {
 	public static bool GenerateH264_Different(string ffmpegPath, string outputPath) =>
 		RunFfmpeg(ffmpegPath,
 			$"-y -f lavfi -i smptebars=duration=2:size=320x240:rate=25 " +
-			$"-c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \"{outputPath}\"");
+			$"{VideoEncoder(ffmpegPath)} -pix_fmt yuv420p \"{outputPath}\"");
 
 	/// <summary>
 	/// H.264 with the bitstream deliberately corrupted via the noise BSF, used to
@@ -135,9 +153,9 @@ public static class TestVideoGenerator {
 		RunFfmpeg(ffmpegPath,
 			string.Format(CultureInfo.InvariantCulture,
 				"-y -f lavfi -i testsrc2=duration=1:size=64x48:rate=5 " +
-				"-c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p " +
-				"-metadata creation_time=\"{0}\" \"{1}\"",
-				isoCreationTime, outputPath));
+				"{0} -pix_fmt yuv420p " +
+				"-metadata creation_time=\"{1}\" \"{2}\"",
+				VideoEncoder(ffmpegPath), isoCreationTime, outputPath));
 
 	/// <summary>
 	/// Generic H.264 generator for benchmarks. Lets callers vary duration and resolution
@@ -147,8 +165,8 @@ public static class TestVideoGenerator {
 		RunFfmpeg(ffmpegPath,
 			string.Format(CultureInfo.InvariantCulture,
 				"-y -f lavfi -i testsrc2=duration={0}:size={1}x{2}:rate={3} " +
-				"-c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \"{4}\"",
-				durationSeconds, width, height, fps, outputPath),
+				"{5} -pix_fmt yuv420p \"{4}\"",
+				durationSeconds, width, height, fps, outputPath, VideoEncoder(ffmpegPath)),
 			timeoutMs: Math.Max(30_000, durationSeconds * 2_000));
 
 	/// <summary>

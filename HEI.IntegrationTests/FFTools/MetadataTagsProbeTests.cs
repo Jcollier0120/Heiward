@@ -19,6 +19,7 @@ using HEI.Core;
 using HEI.Core.FFTools;
 using HEI.Core.Utils;
 using HEI.IntegrationTests.Fixtures;
+using HEI.TestSupport;
 
 namespace HEI.IntegrationTests.FFTools;
 
@@ -44,12 +45,13 @@ public sealed class MetadataTagsProbeTests : IDisposable {
 			"-hide_banner", "-loglevel", "error", "-y",
 			"-f", "lavfi", "-i", "testsrc=size=160x120:rate=10:duration=1",
 			"-f", "lavfi", "-i", "sine=frequency=440:duration=1",
-			"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac",
+		}.Concat(TestVideoGenerator.VideoEncoderArguments(FfmpegEngine.FFmpegPath)).Concat(new[] {
+			"-c:a", "aac",
 			"-movflags", "use_metadata_tags",
 			"-metadata", "creation_time=2023-08-15T12:34:56Z",
 			"-metadata", $"com.apple.quicktime.creationdate={creationDate}",
 			"-metadata:s:a:0", "language=ger",
-			output })
+			output }))
 			psi.ArgumentList.Add(a);
 		using var p = Process.Start(psi)!;
 		string err = p.StandardError.ReadToEnd();
