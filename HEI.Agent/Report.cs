@@ -185,8 +185,9 @@ namespace HEI.Agent {
 		/// </summary>
 		internal const float SameSoundtrackPercent = 90f;
 
-		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints) {
-			var hashes = new ContentHashes();
+		/// <param name="hashes">The content hashes the last scan kept (<see cref="ContentHashes.Load"/>); none kept when null.</param>
+		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null) {
+			hashes ??= new ContentHashes();
 			var bursts = new BurstSeries();
 			List<List<DuplicateItem>> members = duplicates.GroupBy(d => d.GroupId)
 				.Select(g => g.Where(d => File.Exists(d.Path)).ToList())
@@ -500,9 +501,38 @@ namespace HEI.Agent {
 				.ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)
 				.First();
 
-		/// <summary>Content hashes, computed once per file and only for files whose sizes match.</summary>
-		sealed class ContentHashes {
+		/// <summary>
+		/// Content hashes, computed once per file and only for files whose sizes match. Hashing reads a whole
+		/// file (up to 256 MB), so a scan's hashes are kept (<see cref="Load"/>, <see cref="Save"/>) and the
+		/// next scan reuses each one whose file has the same size and the same last-modified time: without
+		/// that, every hourly scan read every copy in the report again.
+		/// </summary>
+		internal sealed class ContentHashes {
+			/// <param name="ModifiedUtc">The file's last-modified time when it was hashed.</param>
+			internal sealed record Stored(long Size, DateTime ModifiedUtc, string Hash);
+
 			readonly Dictionary<string, string?> cache = new(StringComparer.OrdinalIgnoreCase);
+			readonly Dictionary<string, Stored> earlier, now = new(StringComparer.OrdinalIgnoreCase);
+
+			/// <summary>Hashes for this report alone, kept nowhere (tests).</summary>
+			public ContentHashes() : this(new Dictionary<string, Stored>(StringComparer.OrdinalIgnoreCase)) { }
+
+			ContentHashes(Dictionary<string, Stored> earlier) => this.earlier = earlier;
+
+			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
+
+			/// <summary>The hashes the last scan kept.</summary>
+			public static ContentHashes Load() {
+				try {
+					if (File.Exists(FilePath) && JsonSerializer.Deserialize<Dictionary<string, Stored>>(File.ReadAllText(FilePath), AgentConfig.Json) is { } stored)
+						return new ContentHashes(new Dictionary<string, Stored>(stored, StringComparer.OrdinalIgnoreCase));
+				}
+				catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
+				return new ContentHashes();
+			}
+
+			/// <summary>Keeps this scan's hashes, and only those: a file no report needs any more drops out.</summary>
+			public void Save() => AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
 
 			public bool Same(string a, string b) {
 				string? ha = Get(a), hb = Get(b);
@@ -511,8 +541,26 @@ namespace HEI.Agent {
 
 			public string? Get(string path) {
 				if (!cache.TryGetValue(path, out string? h))
-					cache[path] = h = Compute(path);
+					cache[path] = h = HashOf(path);
 				return h;
+			}
+
+			/// <summary>The hash kept for the file when it hasn't changed since, otherwise a new one; null when it can't be read.</summary>
+			string? HashOf(string path) {
+				try {
+					var file = new FileInfo(path);
+					if (!file.Exists) return null;
+					if (earlier.TryGetValue(path, out Stored? s) && s.Size == file.Length && s.ModifiedUtc == file.LastWriteTimeUtc) {
+						now[path] = s;
+						return s.Hash;
+					}
+					if (Compute(path) is not string hash) return null;
+					now[path] = new Stored(file.Length, file.LastWriteTimeUtc, hash);
+					return hash;
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+					return null;
+				}
 			}
 
 			/// <summary>SHA-256 of the file; beyond 256 MB, of its size plus nine 4 MB samples across it.</summary>

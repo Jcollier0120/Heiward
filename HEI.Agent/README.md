@@ -14,7 +14,17 @@ Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videodupli
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 
-Scheduled scans run in the background: Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority, on half the cores. A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`). A rescan only checks new and changed files.
+Scheduled scans run in the background:
+- Windows' efficiency mode (EcoQoS), on efficient cores at low clocks;
+- below-normal priority, on half the cores;
+- very low disk priority, as the search indexer has, so anything else using the drive goes first.
+
+A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, and normal disk priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
+
+What a rescan reads from the disk:
+- **Every folder's listing.** It walks each drive's folders again, one walk per physical disk, so a hard disk never serves two walks at once. The listing gives each file's size and dates without opening it, and Windows usually has it in memory from the last scan.
+- **Only new and changed files' contents.** A file whose size and dates match the scan database isn't opened. One whose dates changed but size didn't gets a 64 KB check, and a moved file is recognised without being read again.
+- **Hashes once.** The byte-for-byte check behind "Identical copy" reads a whole file (up to 256 MB). Its hash is kept, and reused while the file keeps its size and date.
 
 ## Install
 

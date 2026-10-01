@@ -92,7 +92,10 @@ namespace HEI.Agent {
 			string device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 			string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
 			var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, ct);
-			var groups = ReportBuilder.Build(engine.Duplicates, fingerprints);
+			var hashes = ReportBuilder.ContentHashes.Load();
+			var groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes);
+			try { hashes.Save(); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }
 			// The report fingerprints the sound of the videos in it, once: the next scan reuses them.
 			if (fingerprints.AudioAdded)
 				try { DatabaseUtils.SaveDatabase(); }

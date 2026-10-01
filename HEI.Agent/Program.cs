@@ -438,6 +438,9 @@ namespace HEI.Agent {
 		[DllImport("kernel32.dll", SetLastError = true)]
 		static extern bool SetPriorityClass(IntPtr process, uint priorityClass);
 
+		[DllImport("ntdll.dll")]
+		static extern int NtSetInformationProcess(IntPtr process, int infoClass, ref int info, int size);
+
 		/// <summary>
 		/// In the background: EcoQoS, the power half of Task Manager's "Efficiency mode", so Windows runs
 		/// the process on efficient cores at low clocks and a scan takes longer and costs little power.
@@ -445,15 +448,28 @@ namespace HEI.Agent {
 		/// two seconds at a time, and an idle-priority thread starved while holding it would make
 		/// other NPU tools wait. At full speed: normal priority, and throttling explicitly off, so
 		/// Windows doesn't guess that a windowless process may run slowly.
+		/// The disk, too: in the background the scan's reads (listing folders, reading new files,
+		/// hashing copies) go at very low I/O priority, as the search indexer's and defrag's do, so
+		/// whatever else is using the drive goes first and a hard disk isn't kept seeking for it. Only
+		/// the disk: Windows' own background mode would lower the CPU priority to idle as well.
 		/// </summary>
 		public static bool SetPace(bool fullSpeed) {
-			const int ProcessPowerThrottling = 4;
+			const int ProcessPowerThrottling = 4, ProcessIoPriority = 33, IoPriorityVeryLow = 0, IoPriorityNormal = 2;
 			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000, NormalPriorityClass = 0x20;
 			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = fullSpeed ? 0 : ExecutionSpeed };
 			bool qos = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
 			bool priority = SetPriorityClass(GetCurrentProcess(), fullSpeed ? NormalPriorityClass : BelowNormalPriorityClass);
-			return qos && priority;
+			int io = fullSpeed ? IoPriorityNormal : IoPriorityVeryLow;
+			bool disk = NtSetInformationProcess(GetCurrentProcess(), ProcessIoPriority, ref io, sizeof(int)) == 0;
+			return qos && priority && disk;
 		}
+
+		[DllImport("ntdll.dll")]
+		static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out int info, int size, out int returned);
+
+		/// <summary>The process's I/O priority (0 very low, 1 low, 2 normal), as <see cref="SetPace"/> set it; null if Windows won't say.</summary>
+		internal static int? IoPriority() =>
+			NtQueryInformationProcess(GetCurrentProcess(), 33, out int io, sizeof(int), out _) == 0 ? io : null;
 
 		public static bool ShouldSkip(AgentConfig cfg, out string why) {
 			why = "";
