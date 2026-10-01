@@ -1832,11 +1832,12 @@ function aboutLine() {
     a.rel = 'noopener noreferrer';
     return a;
   };
-  const d = el('div', 'about', 'Heiward is based on ');
-  d.append(link('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
-    ' (© 0x90d and contributors). It is free software: you can share and change it under the ',
-    link('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
-    '. It comes with no warranty.');
+  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
+  const d = el('div', 'about', 'Heiward is free software: you can share and change it under the ');
+  d.append(link('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
+    '. It comes with no warranty. It includes code from ',
+    link('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
+    ' (© 0x90d and contributors), under the same licence.');
   return d;
 }
 

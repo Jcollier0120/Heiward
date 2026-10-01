@@ -45,21 +45,12 @@ To remove it, uninstall **Heiward** in Settings > Apps.
 
 To build it yourself, see [Build](HEI.Agent/README.md#build). Settings, commands and how it decides what to tick are in [HEI.Agent/README.md](HEI.Agent/README.md).
 
-## Based on Video Duplicate Finder
-
-Heiward is built on [Video Duplicate Finder](https://github.com/0x90d/videoduplicatefinder), a cross-platform duplicate finder with a desktop app, a command line, a web UI and a Docker image. This repository is a fork of it, and those still build from here; their documentation is [upstream's README](https://github.com/0x90d/videoduplicatefinder#readme).
-
-What the fork adds to Video Duplicate Finder's engine:
-- AI matching on an **NPU** (Qualcomm QNN, Intel OpenVINO, or AMD Vitis AI through Windows ML) or a **DirectML GPU**, as well as the CPU, with a machine-wide NPU lock.
-- Photos decode in-process: through **WIC** on Windows, and iPhone HEIC photos through one in-process FFmpeg decoder instead of one `ffmpeg.exe` per photo.
-- One gray-frame rule for every decoder and platform, so a HEIC and its JPEG export are recognised as copies.
-- **Windows ARM64:** faster comparisons (NEON, SDOT), a passing test suite, and a pinned FFmpeg build that loads on Snapdragon X.
-- Scan-scope fixes: wildcard folder patterns on Windows paths, folder-name excludes at any depth, and skipping folder links and repositories.
-
 # License
-Video Duplicate Finder is licensed under AGPLv3.
+Heiward is free software under the GNU AGPL v3 ([LICENSE](LICENSE)).
 
-Heiward (`HEI.Agent`) is AGPLv3 too. When it installs, it downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU runtime for the PC's NPU (Qualcomm QNN, Intel OpenVINO, or AMD Vitis AI, which Windows ML supplies) or DirectML for a GPU. Each carries its own licence.
+It includes code from [Video Duplicate Finder](https://github.com/0x90d/videoduplicatefinder) (© 0x90d and contributors), also under the AGPL v3: the scan engine (`HEI.Core`), and the desktop app, command line and web UI this repository still builds (`HEI.GUI`, `HEI.CLI`, `HEI.Web`; their documentation is [Video Duplicate Finder's README](https://github.com/0x90d/videoduplicatefinder#readme)).
+
+When Heiward installs, it downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU runtime for the PC's NPU (Qualcomm QNN, Intel OpenVINO, or AMD Vitis AI, which Windows ML supplies) or DirectML for a GPU. Each carries its own licence.
 
 The optional AI components are downloaded separately on first use and carry their own licenses: ONNX Runtime (MIT) and the DINOv2-small embedding model (Apache-2.0). Neither is bundled with or linked into the release binaries.
 

@@ -130,7 +130,7 @@ openCmd.SetAction(async (r, ct) => {
 root.Subcommands.Add(openCmd);
 
 var reuseFrom = new Option<string[]>("--reuse-from") {
-	Description = "A folder where another Heiward or Video Duplicate Finder keeps its bin\\ and ai\\ folders: copy FFmpeg and the AI components from it instead of downloading them. Repeatable.",
+	Description = "A folder that already holds FFmpeg and the AI components in bin\\ and ai\\, such as another copy of Heiward's: copy them from it instead of downloading them. Repeatable.",
 };
 var setup = new Command("setup", "Get FFmpeg and the AI components (and the pack for the PC's NPU), copied from --reuse-from folders when they have them, then report what this PC will use.") { reuseFrom };
 setup.SetAction(async (r, ct) => {

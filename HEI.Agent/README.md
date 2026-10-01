@@ -4,7 +4,7 @@ Heiward tends your drives. It looks for likely duplicate photos and videos and, 
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound. The command is `hei`.
 
-Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videoduplicatefinder) and uses its engine. Like it, Heiward is free software under the GNU AGPL v3. The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
+Heiward is free software under the GNU AGPL v3 ([License](../README.md#license)). The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
 - the **NPU**: fast, and it barely uses power, so scans can run every hour. Heiward detects which NPU the PC has and downloads that vendor's runtime:
   - **Qualcomm Hexagon** (Snapdragon X, Windows on Arm): Qualcomm's QNN plugin;
   - **Intel AI Boost** (Core Ultra, Intel/AMD build): Intel's OpenVINO plugin, OpenVINO included;
@@ -58,7 +58,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 </details>
 
-**Already downloaded?** If another copy of Heiward or Video Duplicate Finder already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from, and in Video Duplicate Finder's own per-user folder. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
+**Already downloaded?** If another copy of Heiward already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
 
 **Updating:** run the new version's exe; it installs over the old one and scans again. Each report records the build that made it (its version and commit), because the sets are that build's rules. A report from another build is set aside, even under the same version number: the page shows none of its sets and nothing is cleaned up from them. When the page starts, it scans again with the new build unless scans are paused. The same goes for the developer report, and for the Microsoft Store version, which updates by itself. Sets the old report already listed aren't announced as new.
 

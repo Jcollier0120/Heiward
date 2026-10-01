@@ -15,7 +15,7 @@
     <!-- The shield and leaf (make-icon.ps1 renders it from wwwroot\favicon.svg): the exe, its shortcuts and Apps & Features show it. -->
     <ApplicationIcon>heiward.ico</ApplicationIcon>
     <AssemblyTitle>Heiward</AssemblyTitle>
-    <Description>Finds duplicate photos and videos, and stale developer files, for you to review. Based on Video Duplicate Finder.</Description>
+    <Description>Finds duplicate photos and videos, and stale developer files, for you to review.</Description>
     <RootNamespace>HEI.Agent</RootNamespace>
     <!-- The review page's files are compiled in: one exe, nothing to serve from disk. -->
     <EnableDefaultContentItems>false</EnableDefaultContentItems>

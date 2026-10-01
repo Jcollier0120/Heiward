@@ -70,7 +70,7 @@ Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4
 
   Private. No account, no ads, no telemetry: nothing about you or your files leaves your PC.
 
-  Heiward is free and open source (AGPL-3.0), built on Video Duplicate Finder. The source is at github.com/Jcollier0120/Heiward.
+  Heiward is free and open source (AGPL-3.0). The source is at github.com/Jcollier0120/Heiward.
   ```
 - **What's new in this version:** `The first release in the Microsoft Store.`
 - **Product features** (one per line in Partner Center):
@@ -92,7 +92,7 @@ Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4
   3. `developer.png`: `Developer cleanup, project by project (Carbon theme)`
   4. `themes.png`: `Match Windows, Light, Dark, or one of six colour themes (Quest here)`
 - **Search terms** (up to 7): `duplicate photos`, `duplicate videos`, `duplicate finder`, `disk cleanup`, `photo cleanup`, `NPU`, `developer cleanup`.
-- **Copyright and trademark info:** `© 2026 Jeremy Collier. Built on Video Duplicate Finder.`
+- **Copyright and trademark info** (a licence notice, so it names the code Heiward includes): `© 2026 Jeremy Collier. Includes code from Video Duplicate Finder (© 0x90d and contributors), under the AGPL v3.`
 - **Additional license terms:** `Heiward is free software under the GNU Affero General Public License v3: https://www.gnu.org/licenses/agpl-3.0.html. Its source code is at https://github.com/Jcollier0120/Heiward.`
 
 **Submission options:**
