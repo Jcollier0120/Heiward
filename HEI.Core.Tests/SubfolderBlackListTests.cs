@@ -20,8 +20,8 @@ namespace HEI.Core.Tests;
 
 /// <summary>
 /// Settings.SubfolderBlackList only applies below the IncludeList folders, so a folder the user
-/// chose is scanned even inside a built-in exclusion. Heiward's ".*" once dropped every file of
-/// ~\.npu-agent\...\camera after listing them: 600 added, 0 compared, no reason given. BlackList
+/// chose is scanned even inside a built-in exclusion. Heiward's ".*" once dropped every file of a
+/// camera folder under ~\.&lt;tool&gt; after listing them: 600 added, 0 compared, no reason given. BlackList
 /// keeps covering the whole path, as in upstream VDF.
 /// </summary>
 public class SubfolderBlackListTests {

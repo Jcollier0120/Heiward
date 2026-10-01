@@ -158,7 +158,7 @@ Tick items anywhere; a selection bar at the bottom cleans them all at once.
 | What | Recognised by | Ticked for you |
 |---|---|---|
 | Build outputs: `node_modules`, `bin`/`obj`, Gradle `build`/`.gradle`/`.cxx`, `target`, `.venv`, `.next` | the project file beside it (`package.json`, a `.csproj`, `build.gradle`, `Cargo.toml`, ...), so a folder that merely has the name is left alone | in projects untouched for 30 days (`staleProjectDays`), judged by git's own files and the project's top level |
-| Git worktrees | the repository's `.git\worktrees` | untouched for 30 days, no uncommitted changes, and every commit already on a remote. Git removes it (`git worktree remove`, which refuses a worktree with changes), and the branch stays. Worktrees in a tool's home (`~\.npu-agent\...`, app data) or used by a scheduled task are never offered |
+| Git worktrees | the repository's `.git\worktrees` | untouched for 30 days, no uncommitted changes, and every commit already on a remote. Git removes it (`git worktree remove`, which refuses a worktree with changes), and the branch stays. Worktrees in a tool's home (a dot-folder such as `~\.<tool>\...`, or app data) or used by a scheduled task are never offered |
 | Package caches: Gradle, NuGet, npm, Yarn, pnpm, pip, Maven, Cargo, Go | the tools' own cache folders | never. Blocked while the tool runs (Java for Gradle, dotnet or Visual Studio for NuGet) |
 | Android emulators and system images | the AVD folder and the SDK's `system-images` | system images no emulator uses. Emulators themselves aren't ticked, since they hold app data. Blocked while an emulator runs |
 | Temp files and crash dumps | `%TEMP%` entries untouched for 7 days (`tempOlderThanDays`), `%LOCALAPPDATA%\CrashDumps` | yes |
@@ -175,9 +175,9 @@ From a terminal: `hei dev --prune-branches <repo>`.
 
 ## Sharing the NPU
 
-Other NPU tools on the PC can use the NPU at the same time, for example Reeve (formerly npu-agent), which runs a local LLM on the NPU. Heiward takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists, and waits its turn in the NPU queue they share (`npu.queue` next to the lock):
+Other NPU tools on this PC can use the NPU at the same time. Heiward takes turns with the ones that use the same machine-wide lock, `%USERPROFILE%\.npu-agent\locks\npu`, whenever `%USERPROFILE%\.npu-agent` exists. (The folder name is historical, kept so every tool still finds the lock.) They wait their turn in the NPU queue they share (`npu.queue` next to the lock):
 - **First come, first served.** Each tool waits in line, and the NPU passes straight to the next in line when the holder lets go.
-- **A person first.** A request someone is waiting on (a Claude session asking Reeve, say) goes ahead of a scan. A scan that has waited two minutes is served in its turn regardless.
+- **A person first.** A request someone is waiting on goes ahead of a scan. A scan that has waited two minutes is served in its turn regardless.
 - **Short turns.** Heiward holds the lock for at most 2 seconds at a time, then joins the back of the line, so a long scan shares the NPU instead of blocking it.
 - A stuck holder is evicted after 10 minutes, and a waiter that crashed leaves the line within 15 seconds.
 

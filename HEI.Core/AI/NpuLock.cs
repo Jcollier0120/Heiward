@@ -23,23 +23,24 @@ using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
 	/// <summary>
-	/// A machine-wide NPU lock shared with other NPU tools on the PC, so their work takes turns on the
-	/// Hexagon instead of stacking up (an oversized concurrent load has bugchecked a Snapdragon driver).
-	/// Wire-compatible with Reeve's (src/npu-queue.ts, npu-embed/npu_lock.py): an atomic mkdir of
+	/// A machine-wide NPU lock shared with other NPU tools on this PC that use the same lock, so their
+	/// work takes turns on the Hexagon instead of stacking up (an oversized concurrent load has bugchecked
+	/// a Snapdragon driver). Every such tool follows one protocol: an atomic mkdir of
 	/// <c>%USERPROFILE%\.npu-agent\locks\npu</c> holding owner.json <c>{"pid", "since"}</c>; a holder that
-	/// died or held it over 10 minutes is evicted. Active only when that tool is present (its folder
-	/// exists) or NPU_AGENT_NPU_LOCK names a lock; otherwise every call is a no-op.
+	/// died or held it over 10 minutes is evicted. The folder name is historical; it and NPU_AGENT_NPU_LOCK
+	/// stay as they are, or the tools would stop taking turns. Active only while
+	/// <c>%USERPROFILE%\.npu-agent</c> exists or NPU_AGENT_NPU_LOCK names a lock; otherwise every call is a no-op.
 	/// <para>
-	/// Turns are first come, first served through the NPU queue (Reeve's docs/NPU-QUEUE.md): a waiter
+	/// Turns are first come, first served through the NPU queue those tools share: a waiter
 	/// drops a ticket into <c>&lt;lock&gt;.queue</c>, keeps it fresh, and tries the lock only when its
-	/// ticket heads the line. Heiward's work is background: a request a person is waiting on (a Claude
-	/// session asking Reeve) goes ahead of it, but never ahead of a scan that has waited two minutes.
+	/// ticket heads the line. Heiward's work is background: a request a person is waiting on goes
+	/// ahead of it, but never ahead of a scan that has waited two minutes.
 	/// </para>
 	/// </summary>
 	public static partial class NpuLock {
 		static readonly TimeSpan Stale = TimeSpan.FromMinutes(10);
 
-		// Shared with every implementation of the NPU queue (docs/NPU-QUEUE.md in Reeve).
+		// Shared with every implementation of the NPU queue.
 		internal static readonly TimeSpan Heartbeat = TimeSpan.FromSeconds(2);
 		internal static readonly TimeSpan Late = TimeSpan.FromSeconds(5);
 		internal static readonly TimeSpan Dead = TimeSpan.FromSeconds(15);

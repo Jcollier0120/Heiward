@@ -1,5 +1,5 @@
 {
-  "about": "Shared test data for the NPU queue (docs/NPU-QUEUE.md). Every implementation (Reeve's src/npu-queue.ts, npu-embed's npu_lock.py, Heiward's NpuLock.cs, Manor's agents) must order these tickets and judge these heartbeats exactly as listed. Copy this file into an implementation's tests unchanged.",
+  "about": "Shared test data for the NPU queue. Every implementation (Heiward's NpuLock.cs and the other NPU tools on this PC that use the same lock) must order these tickets and judge these heartbeats exactly as listed. Copy this file into an implementation's tests unchanged.",
   "nowUs": 1790000000000000,
   "order": [
     {

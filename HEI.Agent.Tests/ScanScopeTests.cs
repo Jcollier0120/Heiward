@@ -72,7 +72,7 @@ public sealed class ScanScopeTests : IDisposable {
 	}
 
 	/// <summary>
-	/// The bug: folders = [~\.npu-agent\npu-vision\testset\camera] listed 600 photos, then compared 0,
+	/// The bug: folders = [~\.&lt;tool&gt;\...\testset\camera] listed 600 photos, then compared 0,
 	/// because ".*" (and "?:\Users\*\AppData", for a temp folder) matched a folder above it.
 	/// </summary>
 	[Theory]

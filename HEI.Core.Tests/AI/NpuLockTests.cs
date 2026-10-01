@@ -20,7 +20,7 @@ using HEI.Core.AI;
 namespace HEI.Core.Tests.AI;
 
 /// <summary>
-/// The NPU lock must stay wire-compatible with npu-agent's (src/lock.ts, npu_lock.py): same
+/// The NPU lock must stay wire-compatible with the other NPU tools that use the same lock: same
 /// directory protocol, same owner.json fields, same stale rules. Windows only (NPU tools are).
 /// </summary>
 [Collection("NpuLock")] // the lock location is a process-wide environment variable
@@ -65,9 +65,9 @@ public sealed class NpuLockTests : IDisposable {
 		}
 	}
 
-	// ---------------------------------------------------------------- the NPU queue (Reeve's docs/NPU-QUEUE.md)
+	// ---------------------------------------------------------------- the NPU queue
 
-	/// <summary>The cases every implementation of the queue runs unchanged (a copy of Reeve's docs/npu-queue-vectors.json).</summary>
+	/// <summary>The cases every implementation of the queue runs unchanged (a copy of the shared npu-queue-vectors.json).</summary>
 	static readonly JsonElement Vectors = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TestAssets", "npu-queue-vectors.json"))).RootElement;
 
 	[Fact]
