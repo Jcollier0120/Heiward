@@ -15,6 +15,7 @@
 //
 
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using HEI.Core.Utils;
@@ -44,6 +45,16 @@ namespace HEI.Core.AI {
 		/// <summary>The graph's static batch size (the NPU's), or 0 when the batch dimension is dynamic.</summary>
 		readonly int fixedBatch;
 		/// <summary>
+		/// The int8 model on the CPU runs each frame on its own, this many at once, each on one thread.
+		/// It quantizes its activations with one scale for the whole batch, so a frame's embedding
+		/// depended on the frames queued with it: the same frame alone and in a batch of 16 scored a
+		/// cosine of 0.992, in two different batches 0.982, and the groups changed from scan to scan
+		/// with how the decoders kept up. Frames side by side are also the faster way: 6.7 ms a frame
+		/// against 8–10 ms for batches of 16 on 8 threads, and 10–11 ms for one frame on 8 threads,
+		/// which made a background scan of 1,200 photos take twice as long. 0 for the other devices.
+		/// </summary>
+		readonly int framesAtOnce;
+		/// <summary>
 		/// NPU only: the machine-wide NPU lock (<see cref="NpuLock"/>), held across back-to-back batches
 		/// for at most <see cref="LeaseLimit"/> so another NPU tool never waits longer than that.
 		/// </summary>
@@ -62,8 +73,9 @@ namespace HEI.Core.AI {
 			// without the using this native handle waited for its finalizer.
 			using var options = new SessionOptions();
 			// The embedder shares the machine with the decode workers during hashing;
-			// give inference a portion of the cores, not all of them.
-			options.IntraOpNumThreads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+			// give inference a portion of the cores, not all of them: that many frames at once.
+			options.IntraOpNumThreads = 1;
+			framesAtOnce = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
 			session = new InferenceSession(modelPath, options);
 			DeviceName = "CPU";
 			(inputName, outputName, clsFromHiddenState) = DescribeOutputs(session);
@@ -182,6 +194,18 @@ namespace HEI.Core.AI {
 			int total = rgbFrames.Count;
 			if (total == 0) return Array.Empty<float[]>();
 			var embeddings = new float[total][];
+			if (framesAtOnce > 0) {
+				// The CPU's int8 model: each frame on its own (see framesAtOnce). A session runs calls concurrently.
+				foreach (byte[] frame in rgbFrames)
+					CheckFrameSize(frame);
+				try {
+					Parallel.For(0, total, new ParallelOptions { MaxDegreeOfParallelism = framesAtOnce }, i => EmbedChunk(rgbFrames, i, 1, embeddings));
+				}
+				catch (AggregateException e) when (e.InnerExceptions.Count == 1) {
+					ExceptionDispatchInfo.Throw(e.InnerExceptions[0]); // as a batch would have thrown it
+				}
+				return embeddings;
+			}
 			// A static-batch graph (the NPU's) runs in chunks of its batch size, the last one zero-padded.
 			int step = fixedBatch > 0 ? fixedBatch : total;
 			for (int start = 0; start < total; start += step)
@@ -195,8 +219,7 @@ namespace HEI.Core.AI {
 			Span<float> buffer = tensor.Buffer.Span;
 			for (int k = 0; k < count; k++) {
 				byte[] img = rgbFrames[start + k];
-				if (img.Length != PixelsPerChannel * 3)
-					throw new ArgumentException($"Expected {PixelsPerChannel * 3} bytes of RGB24, got {img.Length}.");
+				CheckFrameSize(img);
 				int baseIdx = k * 3 * PixelsPerChannel;
 				for (int c = 0; c < 3; c++) {
 					float mean = Mean[c] * 255f;
@@ -224,6 +247,11 @@ namespace HEI.Core.AI {
 				Normalize(e);
 				embeddings[start + k] = e;
 			}
+		}
+
+		static void CheckFrameSize(byte[] img) {
+			if (img.Length != PixelsPerChannel * 3)
+				throw new ArgumentException($"Expected {PixelsPerChannel * 3} bytes of RGB24, got {img.Length}.");
 		}
 
 		/// <summary>Embeddings quantized for storage in the embedding sidecar caches.</summary>

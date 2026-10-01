@@ -217,8 +217,12 @@ namespace HEI.Agent {
 
 		static List<ReportGroup> BuildReadable(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes hashes) {
 			var bursts = new BurstSeries();
+			// Each group's files, and the groups, in path order: wherever the builder takes the first of
+			// equals (the kept one of equal videos, the group split copies join), it's the same file in
+			// every scan, not whichever the scan happened to hand over first.
 			List<List<DuplicateItem>> members = duplicates.GroupBy(d => d.GroupId)
-				.Select(g => g.Where(d => !CanRead(d.Path) || File.Exists(d.Path)).ToList())
+				.Select(g => g.Where(d => !CanRead(d.Path) || File.Exists(d.Path)).OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList())
+				.OrderBy(g => g.Count > 0 ? g[0].Path : "", StringComparer.OrdinalIgnoreCase)
 				.ToList();
 			GatherSplitCopies(members, hashes, fingerprints);
 			return members
@@ -228,6 +232,7 @@ namespace HEI.Agent {
 				.Select(items => BuildGroup(items, hashes, fingerprints, bursts))
 				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
 				.ThenByDescending(g => g.ReclaimBytes)
+				.ThenBy(g => g.Key, StringComparer.Ordinal)
 				.ToList();
 		}
 

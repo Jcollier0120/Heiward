@@ -78,6 +78,25 @@ public class OnnxEmbedderTests {
 		Assert.Equal(1f, EmbeddingMath.CosineSimilarity(quantized[0], quantized[1]), 0.02f);
 	}
 
+	// The int8 model quantizes its activations with one scale for the whole batch, so a frame's
+	// embedding depended on which frames the decoders happened to queue with it: two fresh scans
+	// of the same 1,200 photos agreed on none of the 1,200 embeddings, and grouped them differently.
+	[Fact]
+	public void CpuEmbedder_EmbedsAFrameAlikeAloneOrInABatch() {
+		string model = BatchCoupledModel.Write(Path.Combine(Path.GetTempPath(), $"hei-batch-coupled-{Guid.NewGuid():N}.onnx"));
+		try {
+			using var embedder = new OnnxEmbedder(model);
+			byte[] frame = SolidColorFrame(120, 124, 128);
+			frame[0] = 110; // a little range of its own, so its quantization scale differs from the batch's
+			float[] alone = embedder.EmbedBatch(new[] { frame })[0];
+			float[] inBatch = embedder.EmbedBatch(new[] { frame, SolidColorFrame(0, 0, 0), SolidColorFrame(255, 255, 255) })[0];
+			Assert.Equal(alone, inBatch);
+		}
+		finally {
+			File.Delete(model);
+		}
+	}
+
 	[Fact]
 	public void EmbedBatch_RejectsWrongFrameSize() {
 		using var embedder = new OnnxEmbedder(TestModels.TinyEmbedderPath);

@@ -61,6 +61,7 @@ namespace HEI.Core {
 						(e.mediaInfo?.Duration.TotalSeconds ?? 0) >= 3 &&
 						!alreadyGrouped.Contains(e.Path))
 				.OrderByDescending(e => e.mediaInfo!.Duration)
+				.ThenBy(e => e.Path, StringComparer.Ordinal) // equal durations in the same order every scan
 				.ToList();
 
 			if (videos.Count < 2) {
