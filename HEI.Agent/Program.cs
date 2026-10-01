@@ -181,9 +181,14 @@ var uninstall = new Command("uninstall", "Remove Heiward, its tasks and shortcut
 uninstall.SetAction(r => Installer.Uninstall(r.GetValue(purge), r.GetValue(dryRun)));
 root.Subcommands.Add(uninstall);
 
-var status = new Command("status", "Show the settings, the last report and the schedule.");
-status.SetAction(_ => {
+var statusJson = new Option<bool>("--json") { Description = "Print one JSON object instead, for scripts and other tools: running (not paused), stoppedSince, pausedUntil, scheduled, nextScan, scanning, lastScan, toReview, page {url, up}, summary." };
+var status = new Command("status", "Show the settings, the last report and the schedule.") { statusJson };
+status.SetAction(async (r, _) => {
 	var cfg = AgentConfig.Load();
+	if (r.GetValue(statusJson)) {
+		Console.WriteLine((await AgentStatus.NowAsync(cfg)).ToJson());
+		return 0;
+	}
 	Console.WriteLine($"Installed: {(StorePackage.IsPackaged ? $"from the Microsoft Store ({StorePackage.FamilyName}){(File.Exists(AgentPaths.StoreSetUp) ? "" : ", not set up yet: open Heiward from the Start menu")}" : File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");

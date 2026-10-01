@@ -212,6 +212,7 @@ hei pause           pause scheduled scans and stop the running one  [--minutes N
 hei resume          resume scheduled scans
 hei open            open the review page
 hei status          settings, where AI matching runs, last scan, schedule, NPU lock
+hei status --json   the same essentials as one JSON object, for scripts and other tools (below)
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
@@ -220,6 +221,22 @@ hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
 hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
 ```
+
+`hei status --json` prints one JSON object on one line and nothing else (exit code 0). Times are UTC (`2026-10-01T14:00:00Z`) or `null`:
+
+| Field | |
+|---|---|
+| `app` | `"heiward"` |
+| `running` | Scheduled scans are on duty: not paused with `hei pause` or the page's Pause. Whether a scan task exists is `scheduled` |
+| `stoppedSince` | When the pause began; `null` when not paused |
+| `pausedUntil` | When a timed pause ends; `null` when not paused, or paused until you resume |
+| `scheduled` | Settings ask for scheduled scans and the scan task is registered and turned on |
+| `nextScan` | The scan task's next run as Task Scheduler words it (local time, the PC's format), or `null` |
+| `scanning` | A scan is running now |
+| `lastScan` | When the last report was made; `null` before the first scan with this version |
+| `toReview` | Sets in that report you haven't decided on yet |
+| `page` | `url`: the review page's address; `up`: whether it answers now |
+| `summary` | One short sentence, e.g. "Scans every hour, next at 15:00. 3 sets to review." |
 
 ## The review page
 
