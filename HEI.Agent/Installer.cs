@@ -207,7 +207,7 @@ namespace HEI.Agent {
 		public static int Uninstall(bool purge, bool dryRun) {
 			bool ownWindow = !Console.IsInputRedirected && !Console.IsOutputRedirected;
 			uninstallLog = !dryRun;
-			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath})");
+			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath}{(StorePackage.Identity is string id ? $", with the package identity {id}" : "")})");
 			try {
 				int code = UninstallSteps(purge, dryRun);
 				Log("uninstall done");

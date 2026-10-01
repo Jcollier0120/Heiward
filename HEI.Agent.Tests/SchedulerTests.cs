@@ -106,6 +106,17 @@ public sealed class SchedulerTests {
 		Assert.Equal("mcanr0hfqkj1g", StorePackage.PublisherId("CN=71D8D20A-F4D5-405B-9F54-12741B793F6D"));
 
 	[Theory]
+	// Settings > Apps starts the GitHub copy's uninstall with Settings' own package identity: that is no Store version.
+	[InlineData("windows.immersivecontrolpanel_cw5n1h2txyewy", false, null)]
+	[InlineData("windows.immersivecontrolpanel_cw5n1h2txyewy", true, null)]
+	// Heiward's identity, passed on to an exe outside the package's folder (the GitHub copy's).
+	[InlineData("TheNexus.Heiward_mcanr0hfqkj1g", false, null)]
+	[InlineData("TheNexus.Heiward_mcanr0hfqkj1g", true, "TheNexus.Heiward_mcanr0hfqkj1g")]
+	[InlineData(null, true, null)]
+	public void StorePackage_IsTheStoreVersion_OnlyWithHeiwardsIdentity_InItsPackagesFolder(string? identity, bool inPackageFolder, string? expected) =>
+		Assert.Equal(expected, StorePackage.Own(identity, inPackageFolder));
+
+	[Theory]
 	[InlineData("Snapdragon(R) X2 Elite Extreme - X2E94100 - Qualcomm(R) Hexagon(TM) NPU", "Snapdragon X2 Elite Extreme - X2E94100 - Qualcomm Hexagon NPU")]
 	[InlineData("Intel® AI Boost", "Intel AI Boost")]
 	public void StoreSetup_NamesTheNpu_WithoutTrademarkMarks(string windows, string shown) =>
