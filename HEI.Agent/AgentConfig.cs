@@ -132,11 +132,13 @@ namespace HEI.Agent {
 		public string AiDevice { get; set; } = "auto";
 		/// <summary>Files decoded at once; 0 = automatic (<see cref="ParallelismFor"/>).</summary>
 		public int Parallelism { get; set; }
+		/// <summary>The most of the processor a background scan uses, in percent; 0 = automatic (<see cref="BackgroundCpuCap"/>).</summary>
+		public int BackgroundCpuPercent { get; set; }
 		/// <summary>
 		/// "auto": a scan the user starts (Scan now, <c>hei scan</c>), and a scheduled one while the review
 		/// page is open, runs at full speed: every core but one, normal priority, no efficiency mode. Other
 		/// scheduled scans run in the background. "background": every scan runs in the background, in
-		/// Windows' efficiency mode at below-normal priority on half the cores (<see cref="ScanPace"/>).
+		/// Windows' efficiency mode at below-normal priority, under a cap on the processor (<see cref="ScanPace"/>, <see cref="BackgroundCpuCap"/>).
 		/// "full": every scan runs at full speed, scheduled ones too.
 		/// </summary>
 		public string ScanSpeed { get; set; } = "auto";
@@ -192,6 +194,16 @@ namespace HEI.Agent {
 		/// <summary>Files decoded at once: <see cref="Parallelism"/> when set; else every core but one at full speed, half of them in the background (at least 2).</summary>
 		public int ParallelismFor(bool fullSpeed) =>
 			Parallelism > 0 ? Parallelism : Math.Max(2, fullSpeed ? Environment.ProcessorCount - 1 : Environment.ProcessorCount / 2);
+
+		/// <summary>
+		/// The most of the whole processor a background scan uses, in percent: <see cref="BackgroundCpuPercent"/> when
+		/// set; else a quarter of it, and at most two cores' worth, so a big processor isn't kept busy either.
+		/// Efficiency mode and a low priority alone left an idle PC's processor to the scan (80% of an older
+		/// desktop's): the priority only makes it give way to other work, and the efficiency cores and low
+		/// clocks of EcoQoS aren't there on every processor.
+		/// </summary>
+		public double BackgroundCpuCap(int processors) =>
+			BackgroundCpuPercent is > 0 and <= 100 ? BackgroundCpuPercent : Math.Min(25, 200.0 / Math.Max(1, processors));
 
 		internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 

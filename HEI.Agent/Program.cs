@@ -442,6 +442,27 @@ namespace HEI.Agent {
 		[DllImport("ntdll.dll")]
 		static extern int NtSetInformationProcess(IntPtr process, int infoClass, ref int info, int size);
 
+		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+		static extern IntPtr CreateJobObject(IntPtr attributes, string? name);
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern bool SetInformationJobObject(IntPtr job, int infoClass, ref CpuRateControl info, int size);
+
+		[DllImport("kernel32.dll")]
+		static extern bool CloseHandle(IntPtr handle);
+
+		/// <summary>JOBOBJECT_CPU_RATE_CONTROL_INFORMATION; the rate is in hundredths of a percent of the whole processor.</summary>
+		[StructLayout(LayoutKind.Sequential)]
+		struct CpuRateControl {
+			public uint ControlFlags, CpuRate;
+		}
+
+		/// <summary>The job this process joined for <see cref="CapCpu"/>; kept for the process's lifetime.</summary>
+		static IntPtr cpuJob;
+
 		/// <summary>
 		/// In the background: EcoQoS, the power half of Task Manager's "Efficiency mode", so Windows runs
 		/// the process on efficient cores at low clocks and a scan takes longer and costs little power.
@@ -453,8 +474,11 @@ namespace HEI.Agent {
 		/// hashing copies) go at very low I/O priority, as the search indexer's and defrag's do, so
 		/// whatever else is using the drive goes first and a hard disk isn't kept seeking for it. Only
 		/// the disk: Windows' own background mode would lower the CPU priority to idle as well.
+		/// And in the background, a cap on the processor (<see cref="CapCpu"/>): a low priority only gives
+		/// way to other work, so an idle PC's processor was the scan's, efficiency mode or not.
 		/// </summary>
-		public static bool SetPace(bool fullSpeed) {
+		/// <param name="cpuCap">In the background, the most of the whole processor the scan uses, in percent (<see cref="AgentConfig.BackgroundCpuCap"/>).</param>
+		public static bool SetPace(bool fullSpeed, double cpuCap) {
 			const int ProcessPowerThrottling = 4, ProcessIoPriority = 33, IoPriorityVeryLow = 0, IoPriorityNormal = 2;
 			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000, NormalPriorityClass = 0x20;
 			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = fullSpeed ? 0 : ExecutionSpeed };
@@ -462,8 +486,41 @@ namespace HEI.Agent {
 			bool priority = SetPriorityClass(GetCurrentProcess(), fullSpeed ? NormalPriorityClass : BelowNormalPriorityClass);
 			int io = fullSpeed ? IoPriorityNormal : IoPriorityVeryLow;
 			bool disk = NtSetInformationProcess(GetCurrentProcess(), ProcessIoPriority, ref io, sizeof(int)) == 0;
-			return qos && priority && disk;
+			bool cpu = CapCpu(fullSpeed ? 0 : cpuCap);
+			return qos && priority && disk && cpu;
 		}
+
+		/// <summary>
+		/// Caps the processor time of this process, and of the programs it starts (FFmpeg, FFprobe), at
+		/// <paramref name="percent"/> of the whole processor; 0 lifts the cap. The hard cap of a job object,
+		/// which the process joins the first time: Windows holds the scan's threads back once they have
+		/// used their share, however idle the PC. A program started while the cap is lifted is in the
+		/// job too, but nothing caps it unless the cap comes back: <see cref="LiftCpuCap"/> before
+		/// starting anything that outlives the scan.
+		/// </summary>
+		static bool CapCpu(double percent) {
+			const int JobObjectCpuRateControlInformation = 15;
+			const uint Enable = 0x1, HardCap = 0x4;
+			if (cpuJob == IntPtr.Zero) {
+				if (percent <= 0) return true; // never capped
+				IntPtr job = CreateJobObject(IntPtr.Zero, null);
+				if (job == IntPtr.Zero) return false;
+				// Inside Task Scheduler's own job too: since Windows 8 jobs nest.
+				if (!AssignProcessToJobObject(job, GetCurrentProcess())) {
+					AgentPaths.AppendLog($"no cap on the processor: joining a job failed ({Marshal.GetLastWin32Error()})");
+					CloseHandle(job);
+					return false;
+				}
+				cpuJob = job;
+			}
+			var rate = percent > 0
+				? new CpuRateControl { ControlFlags = Enable | HardCap, CpuRate = (uint)Math.Clamp(Math.Round(percent * 100), 1, 10_000) }
+				: new CpuRateControl();
+			return SetInformationJobObject(cpuJob, JobObjectCpuRateControlInformation, ref rate, Marshal.SizeOf<CpuRateControl>());
+		}
+
+		/// <summary>The scan's work is done: what it starts from here, the review page among them, must not stay capped.</summary>
+		public static void LiftCpuCap() => CapCpu(0);
 
 		[DllImport("ntdll.dll")]
 		static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out int info, int size, out int returned);

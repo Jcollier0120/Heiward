@@ -108,4 +108,14 @@ public sealed class FolderOverrideTests : IDisposable {
 		Assert.Equal(3, new AgentConfig { Parallelism = 3 }.ParallelismFor(false));
 		Assert.True(new AgentConfig().ParallelismFor(true) >= new AgentConfig().ParallelismFor(false));
 	}
+
+	[Theory]
+	[InlineData(0, 4, 25)]      // an older quad-core desktop: one core's worth
+	[InlineData(0, 8, 25)]      // two cores' worth
+	[InlineData(0, 16, 12.5)]   // two cores' worth, not four
+	[InlineData(0, 2, 25)]      // half a core
+	[InlineData(40, 16, 40)]    // the setting wins
+	[InlineData(250, 16, 12.5)] // a setting out of range doesn't
+	public void BackgroundScans_UseAQuarterOfTheProcessor_AtMostTwoCores(int setting, int processors, double percent) =>
+		Assert.Equal(percent, new AgentConfig { BackgroundCpuPercent = setting }.BackgroundCpuCap(processors));
 }

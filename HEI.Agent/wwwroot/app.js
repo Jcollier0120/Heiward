@@ -459,7 +459,7 @@ function renderHeader(s) {
   }
   $('progress-text').title = st ? (st.fullSpeed
     ? 'Full speed: every core but one, at normal priority.'
-    : 'In the background: Windows\' efficiency mode, low priority, half the cores. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
+    : 'In the background: Windows\' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
   $('notes').replaceChildren(...((r && r.notes) || []).map((n) => el('li', null, n)));
 }
 
@@ -648,7 +648,7 @@ function renderScanCard(s) {
   pick.disabled = settingsBusy;
   pick.addEventListener('change', () => saveSettings({ scanSpeed: pick.value }));
   head.append(label, pick);
-  const background = 'Windows\' efficiency mode, low priority, ' + count(c.backgroundCores, 'core', 'cores');
+  const background = 'Windows\' efficiency mode, low priority, and at most ' + c.backgroundCpuPercent + '% of the processor';
   const fast = count(c.fullSpeedCores, 'core', 'cores') + ' at normal priority';
   text.append(head, el('div', 'muted small', {
     background: 'Every scan runs in the background: ' + background + '. Slower, and light on the battery and the fans.',

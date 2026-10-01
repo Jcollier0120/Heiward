@@ -17,6 +17,7 @@ Heiward is free software under the GNU AGPL v3 ([License](../README.md#license))
 Scheduled scans run in the background:
 - Windows' efficiency mode (EcoQoS), on efficient cores at low clocks;
 - below-normal priority, on half the cores;
+- a hard cap on the processor: a quarter of it, and at most two cores' worth (`backgroundCpuPercent`). Windows holds the scan back once it has used its share, however idle the PC is. Efficiency mode and a low priority alone left an idle PC's processor to the scan;
 - very low disk priority, as the search indexer has, so anything else using the drive goes first.
 
 A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, and normal disk priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
@@ -194,6 +195,7 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
 | `scanSpeed` | `auto` | `auto`: Scan now, and scheduled scans while the review page is open, at full speed; other scans in the background. `background`: every scan in the background. `full`: every scan at full speed, scheduled ones too |
 | `parallelism` | 0 | Files decoded at once; 0: every core but one at full speed, half of them in the background |
+| `backgroundCpuPercent` | 0 | The most of the processor a background scan uses, in percent, the FFmpeg it starts included; 0: a quarter, and at most two cores' worth |
 | `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |

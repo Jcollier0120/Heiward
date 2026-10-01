@@ -49,7 +49,8 @@ namespace HEI.Agent {
 				Console.Error.WriteLine("None of the configured folders exist. Edit " + AgentPaths.Config);
 				return 2;
 			}
-			bool paced = Power.SetPace(fullSpeed);
+			double cpuCap = cfg.BackgroundCpuCap(Environment.ProcessorCount);
+			bool paced = Power.SetPace(fullSpeed, cpuCap);
 			// What changed on each drive since the last scan, from its change journal: a drive with nothing
 			// new isn't walked, and one with something new has only those folders listed again.
 			ListingPlan? plan = null;
@@ -68,7 +69,7 @@ namespace HEI.Agent {
 				await NotifyAsync(cfg, notify, Housekeeping(cfg, ct), new());
 				return 0;
 			}
-			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : "in the background")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", priority unchanged")}): " +
+			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : $"in the background, at most {cpuCap:0.#}% of the processor")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", pace not fully set")}): " +
 				(plan?.Describe() ?? string.Join("; ", settings.IncludeList)));
 			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, stopPacing.Token);
@@ -164,6 +165,8 @@ namespace HEI.Agent {
 
 		/// <summary>The notifications: what automatic cleanup did, and new sets to review. Nothing new, nothing shown.</summary>
 		static async Task NotifyAsync(AgentConfig cfg, bool notify, AutoRun? auto, List<ReportGroup> fresh) {
+			// The review page this may start outlives the scan.
+			Power.LiftCpuCap();
 			if (!notify || !cfg.Toast || (fresh.Count == 0 && auto is not { DidSomething: true })) return;
 			ReviewServer.EnsureRunningInBackground(cfg);
 			if (auto is { DidSomething: true })
@@ -237,10 +240,11 @@ namespace HEI.Agent {
 			while (true) {
 				try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
 				catch (OperationCanceledException) { return; }
-				bool wanted = ScanPace.FullSpeed(AgentConfig.Load(), scheduled);
+				var cfg = AgentConfig.Load();
+				bool wanted = ScanPace.FullSpeed(cfg, scheduled);
 				if (wanted == current) continue;
 				current = wanted;
-				Power.SetPace(wanted);
+				Power.SetPace(wanted, cfg.BackgroundCpuCap(Environment.ProcessorCount));
 				changed(wanted);
 				AgentPaths.AppendLog(wanted ? "scan: full speed (the review page is open)" : "scan: back in the background");
 			}
