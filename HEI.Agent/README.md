@@ -175,9 +175,13 @@ From a terminal: `hei dev --prune-branches <repo>`.
 
 ## Sharing the NPU
 
-Other NPU tools on the PC can use the NPU at the same time, for example npu-agent's maintenance jobs, which run a local LLM on the NPU. Heiward takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists:
-- it holds the lock for at most 2 seconds at a time, so the other tool never waits longer than that;
-- a stuck holder is evicted after 10 minutes.
+Other NPU tools on the PC can use the NPU at the same time, for example Reeve (formerly npu-agent), which runs a local LLM on the NPU. Heiward takes the same machine-wide lock they use (`%USERPROFILE%\.npu-agent\locks\npu`), when it exists, and waits its turn in the NPU queue they share (`npu.queue` next to the lock):
+- **First come, first served.** Each tool waits in line, and the NPU passes straight to the next in line when the holder lets go.
+- **A person first.** A request someone is waiting on (a Claude session asking Reeve, say) goes ahead of a scan. A scan that has waited two minutes is served in its turn regardless.
+- **Short turns.** Heiward holds the lock for at most 2 seconds at a time, then joins the back of the line, so a long scan shares the NPU instead of blocking it.
+- A stuck holder is evicted after 10 minutes, and a waiter that crashed leaves the line within 15 seconds.
+
+A tool that takes the lock without queueing, such as an older build, can still get in ahead of the line, but never at the same time as anyone else.
 
 ## Settings
 
