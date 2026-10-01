@@ -76,7 +76,14 @@ namespace HEI.Core.AI {
 			this.store = store;
 			this.token = token;
 			this.embedder = embedder;
-			worker = Task.Run(WorkerLoop, CancellationToken.None);
+			// A thread of its own, a step above the decoders: it needs little CPU but needs it at once, and
+			// under a background scan's cap on the processor it otherwise queued behind every decoder before
+			// it could hand the NPU the next frame (49 ms a frame for 3 ms of NPU work). The process's own
+			// below-normal priority still puts it behind the user's programs.
+			worker = Task.Factory.StartNew(() => {
+				Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
+				WorkerLoop();
+			}, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 		}
 
 		public string DeviceName => embedder.DeviceName;
