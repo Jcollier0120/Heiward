@@ -78,12 +78,32 @@ public class OnnxEmbedderTests {
 		Assert.Equal(1f, EmbeddingMath.CosineSimilarity(quantized[0], quantized[1]), 0.02f);
 	}
 
+	// The int8 model quantizes its activations with one scale for the whole batch, so a frame's
+	// embedding depended on which frames the decoders happened to queue with it: two fresh scans
+	// of the same 1,200 photos agreed on none of the 1,200 embeddings, and grouped them differently.
 	[Fact]
-	public void LargeBatches_RunInChunks_WithTheSameResults_AndAreCounted() {
+	public void CpuEmbedder_EmbedsAFrameAlikeAloneOrInABatch() {
+		string model = BatchCoupledModel.Write(Path.Combine(Path.GetTempPath(), $"hei-batch-coupled-{Guid.NewGuid():N}.onnx"));
+		try {
+			using var embedder = new OnnxEmbedder(model);
+			byte[] frame = SolidColorFrame(120, 124, 128);
+			frame[0] = 110; // a little range of its own, so its quantization scale differs from the batch's
+			float[] alone = embedder.EmbedBatch(new[] { frame })[0];
+			float[] inBatch = embedder.EmbedBatch(new[] { frame, SolidColorFrame(0, 0, 0), SolidColorFrame(255, 255, 255) })[0];
+			Assert.Equal(alone, inBatch);
+		}
+		finally {
+			File.Delete(model);
+		}
+	}
+
+	[Fact]
+	public void FramesSideBySide_ReuseTheirInputs_GiveTheSameResults_AndAreCounted() {
 		using var embedder = new OnnxEmbedder(TestModels.TinyEmbedderPath);
 		byte[][] frames = Enumerable.Range(0, OnnxEmbedder.MaxBatch + 3).Select(i => PatternFrame(200 + i)).ToArray();
 		float[][] together = embedder.EmbedBatch(frames);
-		Assert.Equal(2, embedder.Stats.Runs); // 16, then 3, in the one reused input buffer
+		// The CPU runs each frame on its own, several at once, each from a reused single-frame input.
+		Assert.Equal(frames.Length, embedder.Stats.Runs);
 		Assert.Equal(frames.Length, embedder.Stats.Images);
 		Assert.True(embedder.Stats.ModelTicks > 0);
 		for (int i = 0; i < frames.Length; i += 7)

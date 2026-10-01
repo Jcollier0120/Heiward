@@ -1878,6 +1878,9 @@ namespace HEI.Core {
 			return !float.IsNaN(difference);
 		}
 
+		/// <summary>A match found while comparing one entry against the later ones, merged after in entry order.</summary>
+		readonly record struct FoundPair(FileEntry Comp, float Difference, DuplicateFlags Flags);
+
 		internal void ScanForDuplicates() {
 			Dictionary<string, DuplicateItem>? duplicateDict = new();
 			// Maps GroupId -> representative FileEntry for that group.
@@ -1899,6 +1902,10 @@ namespace HEI.Core {
 					ScanList.Add(entry);
 				}
 			}
+			// In path order, not the database's: a first scan adds files as the workers finish them
+			// and a rescan loads them as saved, and the order decides which file represents a group
+			// (MergeDuplicate). In the database's order a rescan of unchanged files gave other groups.
+			ScanList.Sort((a, b) => string.CompareOrdinal(a.Path, b.Path));
 
 			// Materialize per-entry compare snapshots so the per-pair hot path works on
 			// plain arrays instead of probing Dictionary<double,...> with recomputed keys.
@@ -1970,67 +1977,68 @@ namespace HEI.Core {
 				bucket.Add(entry);
 			}
 
+			// Called on one thread, entry by entry in ScanList order (CompareAndMerge): which pair
+			// comes first decides each group's representative and so which later pairs may join,
+			// and merging straight from the parallel workers let their timing decide it.
 			void MergeDuplicate(FileEntry entry, FileEntry compItem, float difference, DuplicateFlags flags) {
-				lock (duplicateDict) {
-					bool foundBase = duplicateDict.TryGetValue(entry.Path, out DuplicateItem? existingBase);
-					bool foundComp = duplicateDict.TryGetValue(compItem.Path, out DuplicateItem? existingComp);
+				bool foundBase = duplicateDict.TryGetValue(entry.Path, out DuplicateItem? existingBase);
+				bool foundComp = duplicateDict.TryGetValue(compItem.Path, out DuplicateItem? existingComp);
 
-					if (foundBase && foundComp) {
-						//this happens with 4+ identical items:
-						//first, 2+ duplicate groups are found independently, they are merged in this branch
-						if (existingBase!.GroupId != existingComp!.GroupId) {
-							// Before merging two groups, verify that the representative
-							// of each group is similar to the other group's representative.
-							// This prevents daisy-chain merging where a single bridging
-							// pair pulls two unrelated groups together.
-							if (groupRepresentatives.TryGetValue(existingBase.GroupId, out var repBase) &&
-								groupRepresentatives.TryGetValue(existingComp.GroupId, out var repComp) &&
-								!CheckIfDuplicate(repBase, null, null, repComp, out _)) {
-								mergesBlocked++;
-								return; // Representatives aren't similar — don't merge.
-							}
-							Guid groupID = existingComp!.GroupId;
-							List<DuplicateItem> baseMembers = groupMembers[existingBase.GroupId];
-							foreach (DuplicateItem dup in groupMembers[groupID]) {
-								dup.GroupId = existingBase.GroupId;
-								baseMembers.Add(dup);
-							}
-							groupMembers.Remove(groupID);
-							// Keep the representative of the absorbing group; remove the merged one.
-							groupRepresentatives.Remove(groupID);
-						}
-					}
-					else if (foundBase) {
-						// New item joining an existing group — verify it matches the representative.
-						if (groupRepresentatives.TryGetValue(existingBase!.GroupId, out var rep) &&
-							!CheckIfDuplicate(rep, null, null, compItem, out _)) {
+				if (foundBase && foundComp) {
+					//this happens with 4+ identical items:
+					//first, 2+ duplicate groups are found independently, they are merged in this branch
+					if (existingBase!.GroupId != existingComp!.GroupId) {
+						// Before merging two groups, verify that the representative
+						// of each group is similar to the other group's representative.
+						// This prevents daisy-chain merging where a single bridging
+						// pair pulls two unrelated groups together.
+						if (groupRepresentatives.TryGetValue(existingBase.GroupId, out var repBase) &&
+							groupRepresentatives.TryGetValue(existingComp.GroupId, out var repComp) &&
+							!CheckIfDuplicate(repBase, null, null, repComp, out _)) {
 							mergesBlocked++;
-							return;
+							return; // Representatives aren't similar — don't merge.
 						}
-						var newItem = new DuplicateItem(compItem, difference, existingBase!.GroupId, flags);
-						if (duplicateDict.TryAdd(compItem.Path, newItem))
-							groupMembers[existingBase.GroupId].Add(newItem);
-					}
-					else if (foundComp) {
-						// New item joining an existing group — verify it matches the representative.
-						if (groupRepresentatives.TryGetValue(existingComp!.GroupId, out var rep) &&
-							!CheckIfDuplicate(rep, null, null, entry, out _)) {
-							mergesBlocked++;
-							return;
+						Guid groupID = existingComp!.GroupId;
+						List<DuplicateItem> baseMembers = groupMembers[existingBase.GroupId];
+						foreach (DuplicateItem dup in groupMembers[groupID]) {
+							dup.GroupId = existingBase.GroupId;
+							baseMembers.Add(dup);
 						}
-						var newItem = new DuplicateItem(entry, difference, existingComp!.GroupId, flags);
-						if (duplicateDict.TryAdd(entry.Path, newItem))
-							groupMembers[existingComp.GroupId].Add(newItem);
+						groupMembers.Remove(groupID);
+						// Keep the representative of the absorbing group; remove the merged one.
+						groupRepresentatives.Remove(groupID);
 					}
-					else {
-						var groupId = Guid.NewGuid();
-						var compDup = new DuplicateItem(compItem, difference, groupId, flags);
-						var entryDup = new DuplicateItem(entry, difference, groupId, DuplicateFlags.None);
-						duplicateDict.TryAdd(compItem.Path, compDup);
-						duplicateDict.TryAdd(entry.Path, entryDup);
-						groupMembers[groupId] = new List<DuplicateItem> { compDup, entryDup };
-						groupRepresentatives[groupId] = entry;
+				}
+				else if (foundBase) {
+					// New item joining an existing group — verify it matches the representative.
+					if (groupRepresentatives.TryGetValue(existingBase!.GroupId, out var rep) &&
+						!CheckIfDuplicate(rep, null, null, compItem, out _)) {
+						mergesBlocked++;
+						return;
 					}
+					var newItem = new DuplicateItem(compItem, difference, existingBase!.GroupId, flags);
+					if (duplicateDict.TryAdd(compItem.Path, newItem))
+						groupMembers[existingBase.GroupId].Add(newItem);
+				}
+				else if (foundComp) {
+					// New item joining an existing group — verify it matches the representative.
+					if (groupRepresentatives.TryGetValue(existingComp!.GroupId, out var rep) &&
+						!CheckIfDuplicate(rep, null, null, entry, out _)) {
+						mergesBlocked++;
+						return;
+					}
+					var newItem = new DuplicateItem(entry, difference, existingComp!.GroupId, flags);
+					if (duplicateDict.TryAdd(entry.Path, newItem))
+						groupMembers[existingComp.GroupId].Add(newItem);
+				}
+				else {
+					var groupId = Guid.NewGuid();
+					var compDup = new DuplicateItem(compItem, difference, groupId, flags);
+					var entryDup = new DuplicateItem(entry, difference, groupId, DuplicateFlags.None);
+					duplicateDict.TryAdd(compItem.Path, compDup);
+					duplicateDict.TryAdd(entry.Path, entryDup);
+					groupMembers[groupId] = new List<DuplicateItem> { compDup, entryDup };
+					groupRepresentatives[groupId] = entry;
 				}
 			}
 
@@ -2062,8 +2070,9 @@ namespace HEI.Core {
 			// Per-pair hot path. Roslyn emits this local function as a ~300-IL-byte method, above
 			// the JIT's inline budget, so without the hint every compare loop pays a call with
 			// spilled arguments per candidate pair (measurable in pHash-only mode).
+			// A match goes into the entry's row (found), merged later in order.
 			[MethodImpl(MethodImplOptions.AggressiveInlining)]
-			void ComparePair(FileEntry entry, FileEntry compItem, byte[]?[]? flippedGrayBytes, ulong[]? flippedPHashes, double entryDurationSeconds, double entryToleranceSeconds) {
+			void ComparePair(FileEntry entry, FileEntry compItem, byte[]?[]? flippedGrayBytes, ulong[]? flippedPHashes, double entryDurationSeconds, double entryToleranceSeconds, ref List<FoundPair>? found) {
 				if (!entry.IsImage) {
 					double compDurationSeconds = compItem.mediaInfo!.Duration.TotalSeconds;
 					double compToleranceSeconds = GetDurationToleranceSeconds(compDurationSeconds);
@@ -2091,14 +2100,12 @@ namespace HEI.Core {
 				}
 
 				if (isDuplicate)
-					MergeDuplicate(entry, compItem, difference, flags);
+					(found ??= new()).Add(new FoundPair(compItem, difference, flags));
 			}
 
 			// Compare one entry against candidate buckets (bucketed path).
-			void CompareEntry(FileEntry entry, int entryIndex, IEnumerable<int> candidateBucketKeys) {
-				if (!pauseTokenSource.TryWaitWhilePaused(cancelationTokenSource.Token))
-					return; // canceled while paused — the parallel loop's token ends the iteration
-
+			List<FoundPair>? CompareEntry(FileEntry entry, int entryIndex, IEnumerable<int> candidateBucketKeys) {
+				List<FoundPair>? found = null;
 				byte[]?[]? flippedGrayBytes = null;
 				ulong[]? flippedPHashes = null;
 				double entryDurationSeconds = entry.mediaInfo!.Duration.TotalSeconds;
@@ -2118,122 +2125,89 @@ namespace HEI.Core {
 						if (compIndex <= entryIndex)
 							continue;
 
-						ComparePair(entry, compItem, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds);
+						ComparePair(entry, compItem, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds, ref found);
 					}
 				}
-				IncrementProgress(entry.Path);
+				return found;
 			}
 
 			// Images are always compared linearly; bucketing is only applied to videos.
-			void CompareImages() {
-				Action<int> compareAction = i => {
-					var entry = imageEntries[i];
-					byte[]?[]? flippedGrayBytes = null;
-					if (Settings.CompareHorizontallyFlipped)
-						flippedGrayBytes = CreateFlippedGrayBytes(entry);
-					for (int n = i + 1; n < imageEntries.Count; n++) {
-						var compItem = imageEntries[n];
+			List<FoundPair>? CompareImage(int i) {
+				var entry = imageEntries[i];
+				List<FoundPair>? found = null;
+				byte[]?[]? flippedGrayBytes = null;
+				if (Settings.CompareHorizontallyFlipped)
+					flippedGrayBytes = CreateFlippedGrayBytes(entry);
+				for (int n = i + 1; n < imageEntries.Count; n++) {
+					var compItem = imageEntries[n];
 
-						// Images never take the pHash branch, so no flipped pHash is needed.
-						ComparePair(entry, compItem, flippedGrayBytes, null, 0d, 0d);
-					}
-					IncrementProgress(entry.Path);
-				};
-
-				try {
-					if (imageEntries.Count >= largeBucketThreshold) {
-						Parallel.For(0, imageEntries.Count, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = matchingParallelism }, compareAction);
-					}
-					else {
-						for (int i = 0; i < imageEntries.Count; i++)
-							compareAction(i);
-					}
+					// Images never take the pHash branch, so no flipped pHash is needed.
+					ComparePair(entry, compItem, flippedGrayBytes, null, 0d, 0d, ref found);
 				}
-				catch (OperationCanceledException) { }
+				return found;
 			}
 
 			// Linear compare path for small datasets to avoid bucket bookkeeping overhead.
-			void CompareVideosLinear() {
-				Action<int> compareAction = i => {
-					if (!pauseTokenSource.TryWaitWhilePaused(cancelationTokenSource.Token))
-						return; // canceled while paused — the loop guards below end the iteration
+			List<FoundPair>? CompareVideoLinear(int i) {
+				var entry = videoEntries[i];
+				List<FoundPair>? found = null;
+				byte[]?[]? flippedGrayBytes = null;
+				ulong[]? flippedPHashes = null;
+				double entryDurationSeconds = entry.mediaInfo!.Duration.TotalSeconds;
+				double entryToleranceSeconds = GetDurationToleranceSeconds(entryDurationSeconds);
 
-					var entry = videoEntries[i];
-					byte[]?[]? flippedGrayBytes = null;
-					ulong[]? flippedPHashes = null;
-					double entryDurationSeconds = entry.mediaInfo!.Duration.TotalSeconds;
-					double entryToleranceSeconds = GetDurationToleranceSeconds(entryDurationSeconds);
+				if (Settings.CompareHorizontallyFlipped) {
+					flippedGrayBytes = CreateFlippedGrayBytes(entry);
+					if (usePHashing)
+						flippedPHashes = ComputePHashesFromGray(flippedGrayBytes);
+				}
 
-					if (Settings.CompareHorizontallyFlipped) {
-						flippedGrayBytes = CreateFlippedGrayBytes(entry);
-						if (usePHashing)
-							flippedPHashes = ComputePHashesFromGray(flippedGrayBytes);
-					}
+				for (int n = i + 1; n < videoEntries.Count; n++) {
+					var compItem = videoEntries[n];
 
-					for (int n = i + 1; n < videoEntries.Count; n++) {
-						var compItem = videoEntries[n];
+					ComparePair(entry, compItem, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds, ref found);
+				}
+				return found;
+			}
 
-						ComparePair(entry, compItem, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds);
-					}
+			// Large dataset: buckets reduce the candidates to the videos of about the same duration.
+			List<FoundPair>? CompareVideoBucketed(int i) {
+				var entry = videoEntries[i];
+				double durationSeconds = entry.mediaInfo!.Duration.TotalSeconds;
+				double maxDiffSeconds = GetDurationToleranceSeconds(durationSeconds);
+				double minDuration = Math.Max(0d, durationSeconds - maxDiffSeconds);
+				double maxDuration = durationSeconds + maxDiffSeconds;
+				int minKey = (int)Math.Floor(minDuration / bucketSizeSeconds);
+				int maxKey = (int)Math.Floor(maxDuration / bucketSizeSeconds);
+				return CompareEntry(entry, entry.compareIndex, Enumerable.Range(minKey, maxKey - minKey + 1));
+			}
 
-					IncrementProgress(entry.Path);
-				};
-
+			// Each entry's matches are found in parallel (from largeBucketThreshold entries up) and
+			// merged here, entry by entry in ScanList order, so the groups are the same in every run.
+			void CompareAndMerge(List<FileEntry> entries, Func<int, List<FoundPair>?> compare) {
+				int parallelism = entries.Count >= largeBucketThreshold ? matchingParallelism : 1;
 				try {
-					if (videoEntries.Count >= largeBucketThreshold) {
-						Parallel.For(0, videoEntries.Count, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = matchingParallelism }, compareAction);
-					}
-					else {
-						// compareAction returns early on cancellation instead of throwing,
-						// so the sequential path must check the token itself.
-						for (int i = 0; i < videoEntries.Count && !cancelationTokenSource.IsCancellationRequested; i++)
-							compareAction(i);
-					}
+					OrderedParallel.For(entries.Count, parallelism, window: parallelism * 4,
+						i => {
+							if (!pauseTokenSource.TryWaitWhilePaused(cancelationTokenSource.Token))
+								return null; // canceled while paused — the loop's token ends the remaining rows
+							List<FoundPair>? found = compare(i);
+							IncrementProgress(entries[i].Path);
+							return found;
+						},
+						(i, found) => {
+							if (found == null) return;
+							foreach (FoundPair pair in found)
+								MergeDuplicate(entries[i], pair.Comp, pair.Difference, pair.Flags);
+						},
+						cancelationTokenSource.Token);
 				}
 				catch (OperationCanceledException) { }
 			}
 
-			try {
-				CompareImages();
-
-				if (videoEntries.Count < BucketActivationThreshold) {
-					// Small dataset: keep the simpler linear path.
-					CompareVideosLinear();
-				}
-				else {
-					// Large dataset: use buckets to reduce candidate comparisons.
-					var smallBuckets = videoBuckets.Where(kvp => kvp.Value.Count < largeBucketThreshold).ToList();
-					var largeBuckets = videoBuckets.Where(kvp => kvp.Value.Count >= largeBucketThreshold).ToList();
-
-					Parallel.ForEach(smallBuckets, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = matchingParallelism }, bucket => {
-						foreach (var entry in bucket.Value) {
-							int entryIndex = entry.compareIndex;
-							double durationSeconds = entry.mediaInfo!.Duration.TotalSeconds;
-							double maxDiffSeconds = GetDurationToleranceSeconds(durationSeconds);
-							double minDuration = Math.Max(0d, durationSeconds - maxDiffSeconds);
-							double maxDuration = durationSeconds + maxDiffSeconds;
-							int minKey = (int)Math.Floor(minDuration / bucketSizeSeconds);
-							int maxKey = (int)Math.Floor(maxDuration / bucketSizeSeconds);
-							CompareEntry(entry, entryIndex, Enumerable.Range(minKey, maxKey - minKey + 1));
-						}
-					});
-
-					foreach (var bucket in largeBuckets) {
-						Parallel.For(0, bucket.Value.Count, new ParallelOptions { CancellationToken = cancelationTokenSource.Token, MaxDegreeOfParallelism = matchingParallelism }, i => {
-							var entry = bucket.Value[i];
-							int entryIndex = entry.compareIndex;
-							double durationSeconds = entry.mediaInfo!.Duration.TotalSeconds;
-							double maxDiffSeconds = GetDurationToleranceSeconds(durationSeconds);
-							double minDuration = Math.Max(0d, durationSeconds - maxDiffSeconds);
-							double maxDuration = durationSeconds + maxDiffSeconds;
-							int minKey = (int)Math.Floor(minDuration / bucketSizeSeconds);
-							int maxKey = (int)Math.Floor(maxDuration / bucketSizeSeconds);
-							CompareEntry(entry, entryIndex, Enumerable.Range(minKey, maxKey - minKey + 1));
-						});
-					}
-				}
-			}
-			catch (OperationCanceledException) { }
+			CompareAndMerge(imageEntries, CompareImage);
+			// Small dataset: the simpler linear path; large: duration buckets.
+			CompareAndMerge(videoEntries, videoEntries.Count < BucketActivationThreshold ? CompareVideoLinear : CompareVideoBucketed);
 			if (mergesBlocked > 0)
 				Logger.Instance.Info($"Group merge validation: blocked {mergesBlocked} merge(s) where group representatives were not similar");
 			if (missingPHashFiles.Count > 0)
@@ -2287,6 +2261,7 @@ namespace HEI.Core {
 						!IsSilentFingerprint(e.AudioFingerprint) &&
 						!alreadyGrouped.Contains(e.Path))
 				.OrderByDescending(e => e.mediaInfo?.Duration ?? TimeSpan.Zero)
+				.ThenBy(e => e.Path, StringComparer.Ordinal) // equal durations in the same order every scan
 				.ToList();
 
 			if (videos.Count < 2) {
@@ -2752,10 +2727,11 @@ namespace HEI.Core {
 			foreach (FileEntry fe in DatabaseUtils.Database)
 				dbLookup[fe.Path] = fe;
 
-			// Group duplicates by GroupId; only process groups with 3+ members.
+			// Group duplicates by GroupId; only process groups with 3+ members. Members in path
+			// order: the pruning breaks ties by member order, which must not be the set's.
 			var groups = Duplicates
 				.GroupBy(d => d.GroupId)
-				.Select(g => g.ToList())
+				.Select(g => g.OrderBy(d => d.Path, StringComparer.Ordinal).ToList())
 				.Where(g => g.Count >= 3)
 				.ToList();
 

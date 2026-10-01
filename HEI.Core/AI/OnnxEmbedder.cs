@@ -16,6 +16,7 @@
 
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.ExceptionServices;
 using Microsoft.ML.OnnxRuntime;
 using HEI.Core.Utils;
 
@@ -53,6 +54,16 @@ namespace HEI.Core.AI {
 		float[]? inputBuffer;
 		OrtValue[]? staticInput;
 		/// <summary>
+		/// The int8 model on the CPU runs each frame on its own, this many at once, each on one thread.
+		/// It quantizes its activations with one scale for the whole batch, so a frame's embedding
+		/// depended on the frames queued with it: the same frame alone and in a batch of 16 scored a
+		/// cosine of 0.992, in two different batches 0.982, and the groups changed from scan to scan
+		/// with how the decoders kept up. Frames side by side are also the faster way: 6.7 ms a frame
+		/// against 8–10 ms for batches of 16 on 8 threads, and 10–11 ms for one frame on 8 threads,
+		/// which made a background scan of 1,200 photos take twice as long. 0 for the other devices.
+		/// </summary>
+		readonly int framesAtOnce;
+		/// <summary>
 		/// NPU only: the machine-wide NPU lock (<see cref="NpuLock"/>), held across back-to-back batches
 		/// for at most <see cref="LeaseLimit"/> so another NPU tool never waits longer than that.
 		/// </summary>
@@ -66,7 +77,7 @@ namespace HEI.Core.AI {
 		public string? CacheKey { get; }
 		/// <summary>The NPU's static batch size, or 0 when any batch size runs.</summary>
 		public int FixedBatch => fixedBatch;
-		/// <summary>Where the time went, for the scan's log. Only the worker thread writes it.</summary>
+		/// <summary>Where the time went, for the scan's log.</summary>
 		public EmbedderStats Stats { get; } = new();
 
 		public OnnxEmbedder(string modelPath) {
@@ -75,8 +86,9 @@ namespace HEI.Core.AI {
 			// without the using this native handle waited for its finalizer.
 			using var options = new SessionOptions();
 			// The embedder shares the machine with the decode workers during hashing;
-			// give inference a portion of the cores, not all of them.
-			options.IntraOpNumThreads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+			// give inference a portion of the cores, not all of them: that many frames at once.
+			options.IntraOpNumThreads = 1;
+			framesAtOnce = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
 			session = new InferenceSession(modelPath, options);
 			DeviceName = "CPU";
 			(inputNames, outputNames, clsFromHiddenState) = DescribeOutputs(session);
@@ -240,12 +252,35 @@ namespace HEI.Core.AI {
 
 		void Embed(IReadOnlyList<byte[]> rgbFrames, EmbeddingSink sink) {
 			foreach (byte[] frame in rgbFrames)
-				if (frame.Length != FrameBytes)
-					throw new ArgumentException($"Expected {FrameBytes} bytes of RGB24, got {frame.Length}.");
+				CheckFrameSize(frame);
+			if (framesAtOnce > 0) {
+				// The CPU's int8 model: each frame on its own (see framesAtOnce). A session runs calls concurrently.
+				try {
+					Parallel.For(0, rgbFrames.Count, new ParallelOptions { MaxDegreeOfParallelism = framesAtOnce }, i => EmbedOne(rgbFrames, i, sink));
+				}
+				catch (AggregateException e) when (e.InnerExceptions.Count == 1) {
+					ExceptionDispatchInfo.Throw(e.InnerExceptions[0]); // as a batch would have thrown it
+				}
+				return;
+			}
 			// A static-batch graph (the NPU's) runs in chunks of its batch size, the last one padded.
 			int step = fixedBatch > 0 ? fixedBatch : MaxBatch;
 			for (int start = 0; start < rgbFrames.Count; start += step)
 				EmbedChunk(rgbFrames, start, Math.Min(step, rgbFrames.Count - start), sink);
+		}
+
+		/// <summary>One frame on the CPU, in one of the single-frame inputs the frames side by side reuse.</summary>
+		void EmbedOne(IReadOnlyList<byte[]> rgbFrames, int index, EmbeddingSink sink) {
+			long began = Stopwatch.GetTimestamp();
+			SingleFrame slot = singleFrames.TryTake(out SingleFrame? idle) ? idle : new SingleFrame();
+			try {
+				Normalize(rgbFrames[index], slot.Buffer);
+				Interlocked.Add(ref Stats.InputTicks, Stopwatch.GetTimestamp() - began);
+				Run(slot.Input, index, 1, 1, sink);
+			}
+			finally {
+				singleFrames.Add(slot);
+			}
 		}
 
 		void EmbedChunk(IReadOnlyList<byte[]> rgbFrames, int start, int count, EmbeddingSink sink) {
@@ -253,34 +288,44 @@ namespace HEI.Core.AI {
 			long began = Stopwatch.GetTimestamp();
 			OrtValue[] input = Input(rgbFrames, start, count, batch);
 			try {
-				Stats.InputTicks += Stopwatch.GetTimestamp() - began;
+				Interlocked.Add(ref Stats.InputTicks, Stopwatch.GetTimestamp() - began);
 				if (fixedBatch > 0)
 					EnterNpu();
-				long run = Stopwatch.GetTimestamp();
-				using IDisposableReadOnlyCollection<OrtValue> results = session.Run(CurrentRunOptions, inputNames, input, outputNames);
-				Stats.ModelTicks += Stopwatch.GetTimestamp() - run;
-				Stats.Runs++;
-				Stats.Images += count;
-				Stats.Slots += batch;
-
-				OrtValue output = results.First();
-				long[] dims = output.GetTensorTypeAndShape().Shape;
-				int dim = (int)dims[^1];
-				// last_hidden_state is [batch, tokens, dim]; the CLS token (index 0) is the embedding.
-				int stride = clsFromHiddenState && dims.Length == 3 ? (int)dims[1] * dim : dim;
-				ReadOnlySpan<float> data = output.GetTensorDataAsSpan<float>();
-				Span<float> embedding = dim <= 4096 ? stackalloc float[dim] : new float[dim];
-				for (int k = 0; k < count; k++) {
-					data.Slice(k * stride, dim).CopyTo(embedding);
-					Normalize(embedding);
-					sink(start + k, embedding);
-				}
+				Run(input, start, count, batch, sink);
 			}
 			finally {
 				// A static batch keeps its tensor for the next run.
 				if (input != staticInput)
 					input[0].Dispose();
 			}
+		}
+
+		/// <summary>Runs the model on <paramref name="input"/> and hands the sink its first <paramref name="count"/> embeddings, frames <paramref name="start"/> on.</summary>
+		void Run(OrtValue[] input, int start, int count, int batch, EmbeddingSink sink) {
+			long run = Stopwatch.GetTimestamp();
+			using IDisposableReadOnlyCollection<OrtValue> results = session.Run(CurrentRunOptions, inputNames, input, outputNames);
+			Interlocked.Add(ref Stats.ModelTicks, Stopwatch.GetTimestamp() - run);
+			Interlocked.Increment(ref Stats.Runs);
+			Interlocked.Add(ref Stats.Images, count);
+			Interlocked.Add(ref Stats.Slots, batch);
+
+			OrtValue output = results.First();
+			long[] dims = output.GetTensorTypeAndShape().Shape;
+			int dim = (int)dims[^1];
+			// last_hidden_state is [batch, tokens, dim]; the CLS token (index 0) is the embedding.
+			int stride = clsFromHiddenState && dims.Length == 3 ? (int)dims[1] * dim : dim;
+			ReadOnlySpan<float> data = output.GetTensorDataAsSpan<float>();
+			Span<float> embedding = dim <= 4096 ? stackalloc float[dim] : new float[dim];
+			for (int k = 0; k < count; k++) {
+				data.Slice(k * stride, dim).CopyTo(embedding);
+				Normalize(embedding);
+				sink(start + k, embedding);
+			}
+		}
+
+		static void CheckFrameSize(byte[] img) {
+			if (img.Length != FrameBytes)
+				throw new ArgumentException($"Expected {FrameBytes} bytes of RGB24, got {img.Length}.");
 		}
 
 		/// <summary>
@@ -300,6 +345,18 @@ namespace HEI.Core.AI {
 				staticInput = input;
 			return input;
 		}
+
+		/// <summary>One frame's input for the CPU's frames side by side, kept for the next frame: the buffer and the tensor over it.</summary>
+		sealed class SingleFrame : IDisposable {
+			public readonly float[] Buffer = new float[FrameBytes];
+			public readonly OrtValue[] Input;
+
+			public SingleFrame() =>
+				Input = new[] { OrtValue.CreateTensorValueFromMemory(OrtMemoryInfo.DefaultInstance, Buffer.AsMemory(), new long[] { 1, 3, InputSide, InputSide }) };
+
+			public void Dispose() => Input[0].Dispose();
+		}
+		readonly System.Collections.Concurrent.ConcurrentBag<SingleFrame> singleFrames = new();
 
 		/// <summary>One RGB24 frame as ImageNet-normalized floats in CHW.</summary>
 		static void Normalize(byte[] img, Span<float> chw) {
@@ -342,13 +399,15 @@ namespace HEI.Core.AI {
 			YieldNpu();
 			if (staticInput != null)
 				staticInput[0].Dispose();
+			while (singleFrames.TryTake(out SingleFrame? frame))
+				frame.Dispose();
 			runOptions.Dispose();
 			backgroundRun?.Dispose();
 			session.Dispose();
 		}
 	}
 
-	/// <summary>Where an embedder's time went: written by its one worker thread, read once the work is done.</summary>
+	/// <summary>Where an embedder's time went: added to with Interlocked (the CPU's frames run side by side), read once the work is done.</summary>
 	internal sealed class EmbedderStats {
 		/// <summary>Model runs, the images they embedded, and the batch slots they ran (images plus padding).</summary>
 		public long Runs, Images, Slots;
