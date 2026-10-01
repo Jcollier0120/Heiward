@@ -235,7 +235,7 @@ hei uninstall       [--purge] [--dry-run]
 | `scanning` | A scan is running now |
 | `lastScan` | When the last report was made; `null` before the first scan with this version |
 | `toReview` | Sets in that report you haven't decided on yet |
-| `page` | `url`: the review page's address; `up`: whether it answers now |
+| `page` | `url`: the review page's address; `up`: whether it answers now. Asking (`/api/ping`) doesn't keep an unused page running |
 | `summary` | One short sentence, e.g. "Scans every hour, next at 15:00. 3 sets to review." |
 
 ## The review page
