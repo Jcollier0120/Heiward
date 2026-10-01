@@ -37,7 +37,7 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-wic")
 			return WicDecodeProbe.Run(args);
 
-		// The NPU embedder alone: opening, speed per batch size, raw pixels vs the CPU's conversion (see NpuEmbedProbe).
+		// The NPU embedder alone: opening, speed per batch size and pace (see NpuEmbedProbe).
 		if (args.Length > 0 && args[0] == "--probe-npu")
 			return NpuEmbedProbe.Run(args);
 
