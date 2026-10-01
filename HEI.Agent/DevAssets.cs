@@ -277,8 +277,8 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// The tool whose home holds <paramref name="path"/>: a dot-folder of the user profile
-		/// (~\.npu-agent\checkouts\...) or app data. A tool keeps a worktree there for its own use (npu-agent's
-		/// jobs read theirs), so removing it would break the tool. Worktrees under a project's own folder
+		/// (~\.&lt;tool&gt;\checkouts\...) or app data. A tool keeps a worktree there for its own use (its
+		/// scheduled jobs may read it), so removing it would break the tool. Worktrees under a project's own folder
 		/// (repo\.claude\worktrees) are the user's.
 		/// </summary>
 		internal static string? ToolHome(string path) {

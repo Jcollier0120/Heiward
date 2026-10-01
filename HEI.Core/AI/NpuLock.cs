@@ -21,12 +21,13 @@ using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
 	/// <summary>
-	/// A machine-wide NPU lock shared with other NPU tools on the PC, so their work takes turns on the
-	/// Hexagon instead of stacking up (an oversized concurrent load has bugchecked a Snapdragon driver).
-	/// Wire-compatible with npu-agent's lock (src/lock.ts, npu-embed/npu_lock.py): an atomic mkdir of
+	/// A machine-wide NPU lock shared with other NPU tools on this PC that use the same lock, so their
+	/// work takes turns on the Hexagon instead of stacking up (an oversized concurrent load has bugchecked
+	/// a Snapdragon driver). Every such tool follows one protocol: an atomic mkdir of
 	/// <c>%USERPROFILE%\.npu-agent\locks\npu</c> holding owner.json <c>{"pid", "since"}</c>; a holder that
-	/// died or held it over 10 minutes is evicted. Active only when that tool is present (its folder
-	/// exists) or NPU_AGENT_NPU_LOCK names a lock; otherwise every call is a no-op.
+	/// died or held it over 10 minutes is evicted. The folder name is historical; it and NPU_AGENT_NPU_LOCK
+	/// stay as they are, or the tools would stop taking turns. Active only while
+	/// <c>%USERPROFILE%\.npu-agent</c> exists or NPU_AGENT_NPU_LOCK names a lock; otherwise every call is a no-op.
 	/// </summary>
 	public static class NpuLock {
 		static readonly TimeSpan Stale = TimeSpan.FromMinutes(10);
