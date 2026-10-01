@@ -264,7 +264,23 @@ namespace HEI.Agent {
 			/// <summary>Each folder record's folder: where a folder deleted since was.</summary>
 			readonly Dictionary<FileId, FileId> parentOf = new();
 
-			public static Volume? Open(string drive) => VolumeJournal.Open(drive) is { } journal ? new Volume { Journal = journal } : null;
+			public required string Drive { get; init; }
+			bool readOn;
+
+			public static Volume? Open(string drive) => VolumeJournal.Open(drive) is { } journal ? new Volume { Journal = journal, Drive = drive } : null;
+
+			/// <summary>
+			/// Folders deleted or moved since this scan opened the journal: a folder emptied before then and
+			/// removed just after has its files' records in this scan's part, and its own in the next part.
+			/// </summary>
+			void ReadOn() {
+				if (readOn) return;
+				readOn = true;
+				using VolumeJournal? now = VolumeJournal.Open(Drive);
+				if (now == null || now.Id != Journal.Id) return;
+				foreach (JournalRecord r in now.Read(Journal.NextUsn) ?? new())
+					if (r.IsFolder) parentOf.TryAdd(r.File, r.Parent);
+			}
 
 			/// <summary>The changes since <paramref name="usn"/>, or null when the journal no longer has them all.</summary>
 			public List<JournalRecord>? RecordsFrom(long usn) {
@@ -272,6 +288,7 @@ namespace HEI.Agent {
 					records = Journal.Read(usn);
 					readFrom = usn;
 					parentOf.Clear();
+					readOn = false;
 					foreach (JournalRecord r in records ?? new())
 						if (r.IsFolder) parentOf[r.File] = r.Parent;
 				}
@@ -295,11 +312,14 @@ namespace HEI.Agent {
 				var (path, denied) = PathOf(folder);
 				if (path != null) return (path, true, false);
 				if (denied) return (null, false, true);
-				var seen = new HashSet<FileId>();
-				for (FileId id = folder; parentOf.TryGetValue(id, out FileId parent) && seen.Add(id); id = parent) {
-					(string? above, bool aboveDenied) = PathOf(parent);
-					if (above != null) return (above, false, false);
-					if (aboveDenied) return (null, false, true);
+				for (int attempt = 0; attempt < 2; attempt++) {
+					var seen = new HashSet<FileId>();
+					for (FileId id = folder; parentOf.TryGetValue(id, out FileId parent) && seen.Add(id); id = parent) {
+						(string? above, bool aboveDenied) = PathOf(parent);
+						if (above != null) return (above, false, false);
+						if (aboveDenied) return (null, false, true);
+					}
+					ReadOn(); // gone since the journal was opened: its own record comes after
 				}
 				return (null, false, false);
 			}
