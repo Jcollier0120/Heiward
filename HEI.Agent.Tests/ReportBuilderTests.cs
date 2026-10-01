@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Text.Json;
 using HEI.Core;
 using HEI.Core.ViewModels;
 
@@ -468,5 +469,23 @@ public sealed class ReportBuilderTests : IDisposable {
 		var b = Photo("b.jpg", 1280, 960, Bytes(2000, 2));
 		File.Delete(b.Path);
 		Assert.Empty(ReportBuilder.Build(new[] { a, b }, fingerprints)); // a group of one is no group
+	}
+
+	// A scan hands over its groups and their files in no particular order. The report must not
+	// follow it: two equal videos keep the same one, and sets that free the same space keep their places.
+	[Fact]
+	public void SameSets_InAnyOrder_GiveTheSameReport() {
+		byte[] video = Bytes(4000, 7), photo = Bytes(4000, 9);
+		DuplicateItem[] items = {
+			Video(@"Videos\clip.wmv", video), Video(@"Backup\clip.wmv", video),
+			Photo(@"Pictures\a.jpg", 800, 600, photo), Photo(@"Old\a.jpg", 800, 600, photo),
+		};
+		items[2].GroupId = items[3].GroupId = Guid.NewGuid();
+		string Report(params DuplicateItem[] order) => JsonSerializer.Serialize(ReportBuilder.Build(order, fingerprints));
+
+		string expected = Report(items);
+		Assert.Equal(2, ReportBuilder.Build(items, fingerprints).Count);
+		Assert.Equal(expected, Report(Enumerable.Reverse(items).ToArray()));
+		Assert.Equal(expected, Report(items[1], items[3], items[0], items[2]));
 	}
 }
