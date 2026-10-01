@@ -79,7 +79,7 @@ namespace HEI.Core {
 				if (item.IsImage)
 					continue;
 				var entry = findEntry(item.Path);
-				if (entry == null || !NeedsTrackLanguages(entry.mediaInfo) || !File.Exists(entry.Path))
+				if (entry == null || !NeedsTrackLanguages(entry.mediaInfo) || MayRead?.Invoke(entry.Path) == false || !File.Exists(entry.Path))
 					continue;
 				if (!itemsByEntry.TryGetValue(entry, out var items))
 					itemsByEntry[entry] = items = new List<DuplicateItem>();

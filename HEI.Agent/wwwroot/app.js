@@ -432,7 +432,8 @@ function renderHeader(s) {
     parts.push('Last scan ' + ago(r.scannedAtUtc));
     parts.push(r.device === 'off' ? 'AI matching off' : 'AI on the ' + r.device);
   } else {
-    parts.push('No scan yet');
+    // A new build set the last report aside: its sets were judged by the old rules.
+    parts.push(s.updated ? 'Heiward was updated: finding the sets again with this version' : 'No scan yet');
   }
   if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
@@ -1704,9 +1705,10 @@ function driveCard(d) {
     if (dup.reclaim) chips.append(el('span', 'chip good', bytes(dup.reclaim) + ' to free'));
     if (dup.lookalikes) chips.append(el('span', 'chip quiet', count(dup.lookalikes, 'look-alike set', 'look-alike sets')));
     if (!dup.copies && !dup.lookalikes) chips.append(el('span', 'chip good', 'No duplicates'));
+    if (d.onRequest) chips.append(el('span', 'chip quiet', 'Scanned when you ask'));
     scan.append(chips);
   } else if (d.scanned) {
-    scan.append(el('div', 'muted small', 'Scanned; details appear after the next scan.'));
+    scan.append(el('div', 'muted small', d.onRequest ? 'Scanned when you ask: open it to scan it.' : 'Scanned; details appear after the next scan.'));
   } else {
     scan.append(el('div', 'muted small', d.type === 'removable'
       ? 'Not scanned. USB drives come and go: add it under "folders" in the settings to include it.'
@@ -1714,6 +1716,8 @@ function driveCard(d) {
   }
   card.append(scan);
   card.addEventListener('click', () => go(d.root));
+  // Right-click: scan the drive only when asked, or automatically again.
+  if (d.scanned) card.addEventListener('contextmenu', (e) => openFolderMenu(e, { name: d.name, path: d.root, drive: d }));
   return card;
 }
 
@@ -1828,11 +1832,12 @@ function aboutLine() {
     a.rel = 'noopener noreferrer';
     return a;
   };
-  const d = el('div', 'about', 'Heiward is based on ');
-  d.append(link('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
-    ' (© 0x90d and contributors). It is free software: you can share and change it under the ',
-    link('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
-    '. It comes with no warranty.');
+  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
+  const d = el('div', 'about', 'Heiward is free software: you can share and change it under the ');
+  d.append(link('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
+    '. It comes with no warranty. It includes code from ',
+    link('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
+    ' (© 0x90d and contributors), under the same licence.');
   return d;
 }
 
@@ -2011,9 +2016,17 @@ function openFolderMenu(e, node) {
   item('Open', () => go(node.path));
   const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
   let hint = null;
+  const isDrive = card && sameFolder(card.root, node.path) && card.type !== 'folder';
   if (node.exempt) {
     item('Include in scans', () => overrideFolder(node.path, true));
     hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
+  } else if (isDrive && card.onRequest) {
+    item('Scan this drive now', () => scanDrive(card.root));
+    item('Scan automatically again', () => setOnRequest(card.root, false));
+    hint = 'Scanned only when you ask: scheduled scans and Scan now leave it alone.';
+  } else if (isDrive) {
+    item('Scan only when I ask', () => setOnRequest(card.root, true));
+    hint = 'Scheduled scans and Scan now would leave this drive alone, so a disk that sleeps stays asleep. Its sets stay listed; scan it from its page.';
   } else if (card && card.type !== 'folder') {
     item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
   } else {
@@ -2053,6 +2066,20 @@ function setupFolderMenu() {
       closeFolderMenu(false);
     }
   });
+}
+
+/** A drive scanned only when asked (onRequestDrives), or automatically again. */
+async function setOnRequest(root, onRequest) {
+  try {
+    const r = await post('/api/drives/on-request', { root, onRequest });
+    await refresh(true);
+    showNotice(nameOf(root) + ': ' + r.message, onRequest ? null : { label: 'Scan now', run: scanNow });
+  } catch (e) { showError(e.message); }
+}
+
+/** Scans a drive that's scanned only when asked, now (and everything else as usual). */
+async function scanDrive(root) {
+  try { await post('/api/scan/drive', { root }); refresh(true); } catch (e) { showError(e.message); }
 }
 
 /** Includes the folder in scans, or leaves it out; asks first when that means removing a wider rule of the user's. */
@@ -2107,6 +2134,19 @@ async function renderContent() {
   title.append(chips);
   head.append(title);
   frag.append(head);
+  // A drive scanned only when asked: its scan is here, on its own page.
+  if (d && d.onRequest) {
+    const strip = el('div', 'rest-strip');
+    strip.append(el('span', null, (d.type === 'folder' ? 'This folder\'s drive' : 'This drive') +
+      ' is scanned only when you ask: scheduled scans and Scan now leave it alone, and its sets are from its last scan.'));
+    const now = el('button', 'btn', state.scan.running ? 'Scanning…' : 'Scan this drive now');
+    now.disabled = state.scan.running;
+    now.addEventListener('click', () => scanDrive(d.root));
+    const auto = el('button', 'btn secondary', 'Scan automatically again');
+    auto.addEventListener('click', () => setOnRequest(d.root, false));
+    strip.append(now, auto);
+    frag.append(strip);
+  }
 
   if (data.exempt) {
     const panel = el('div', 'exempt-panel');
@@ -2239,7 +2279,9 @@ function duplicatesSection(path) {
   box.append(head);
 
   if (!here.length) {
-    box.append(el('div', 'empty-state', state.report ? 'No duplicates in this folder.' : 'No scan yet: press "Scan now".'));
+    box.append(el('div', 'empty-state', state.report ? 'No duplicates in this folder.'
+      : state.updated ? 'Heiward was updated. Its next scan finds the sets again with this version\'s rules' + (state.scan.running ? ': it\'s running now.' : ': press "Scan now".')
+      : 'No scan yet: press "Scan now".'));
     return box;
   }
   if (groupFilter === 'copies' && copies.length) box.append(cleanupBar(path, copies));
@@ -2501,7 +2543,7 @@ async function refresh(force) {
     const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
-      s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc ||
+      s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc || s.updated !== state.updated ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
     showError('');

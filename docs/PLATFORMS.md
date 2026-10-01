@@ -4,7 +4,7 @@ Heiward is Windows-only today. This is what a Linux and a macOS version take, in
 
 ## Already portable
 
-- **The engine** (`HEI.Core`) targets `net10.0`, and upstream Video Duplicate Finder ships it for Linux and macOS.
+- **The engine** (`HEI.Core`) targets `net10.0`, and already builds and runs on Linux and macOS.
 - **Downloads.** FFmpeg already downloads for Linux (x64, Arm64) and macOS (Intel, Apple Silicon), and ONNX Runtime for all four.
 - **Photos.** They decode through FFmpeg in-process, iPhone HEIC included. WIC is only a Windows speed-up.
 - **The review page** is ASP.NET Core plus plain HTML and JavaScript. Opening it uses `xdg-open` or `open`, which .NET already calls for a URL.

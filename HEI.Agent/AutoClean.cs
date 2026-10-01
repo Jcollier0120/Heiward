@@ -193,6 +193,9 @@ namespace HEI.Agent {
 				foreach (ReportGroup g in pending) {
 					string key = "g:" + g.Key;
 					var (targets, reason) = Targets(g);
+					// Cleaning up would wake a drive scanned only when asked: the set waits for you instead.
+					if (reason == null && g.Items.Any(i => cfg.IsOnRequest(i.Path)))
+						reason = "It's on a drive scanned only when you ask, so it waits for you";
 					string? pair = null;
 					if (reason == null) {
 						string keepFolder = Keeper(g).Folder;

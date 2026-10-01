@@ -29,6 +29,8 @@ namespace HEI.Agent {
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
+	/// <param name="OnRequest">Scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>), or automatically again.</param>
+	sealed record DriveRequest(string Root, bool OnRequest = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
 
@@ -194,6 +196,31 @@ namespace HEI.Agent {
 				AgentPaths.AppendLog($"folder {(request.Include ? "included" : "left out")} on the page: {request.Path}");
 				return Results.Json(result, AgentConfig.Json);
 			});
+			// Right-click a drive: "Scan only when I ask" / "Scan automatically again", saved to onRequestDrives.
+			app.MapPost("/api/drives/on-request", (DriveRequest request) => {
+				string? drive = AgentConfig.DriveOf(request.Root ?? "");
+				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
+				AgentConfig saved = AgentConfig.Load();
+				saved.OnRequestDrives.RemoveAll(d => string.Equals(AgentConfig.DriveOf(d), drive, StringComparison.OrdinalIgnoreCase));
+				if (request.OnRequest) saved.OnRequestDrives.Add(drive);
+				saved.Save();
+				cfg.OnRequestDrives = saved.OnRequestDrives;
+				AgentPaths.AppendLog($"{drive} {(request.OnRequest ? "scanned only on request" : "scanned automatically again")}, from the page");
+				return Results.Json(new {
+					message = request.OnRequest
+						? "scanned only when you ask, from its page. Scheduled scans leave it alone, and its sets stay listed."
+						: "scanned automatically again, from the next scan.",
+				});
+			});
+			// "Scan this drive now", on the page of a drive scanned only when asked.
+			app.MapPost("/api/scan/drive", (DriveRequest request) => {
+				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
+				string? drive = AgentConfig.DriveOf(request.Root ?? "");
+				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
+				StartDetached("scan", "--drive", drive);
+				return Results.Accepted();
+			});
 			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
 			app.MapGet("/api/dev", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
 			app.MapPost("/api/dev/projects", (List<DevProject> projects) => {
@@ -285,6 +312,7 @@ namespace HEI.Agent {
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
+			RescanAfterUpdate();
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
 			return 0;
@@ -303,6 +331,17 @@ namespace HEI.Agent {
 		static IResult Guarded(Func<IResult> action) {
 			try { return action(); }
 			catch (TimeoutException e) { return Results.Conflict(new { error = e.Message }); }
+		}
+
+		/// <summary>
+		/// A new build of Heiward (an update, from GitHub or the Store) sets the last report aside, since
+		/// its sets were judged by the old build's rules: a scan with this build finds them again. Not while
+		/// scans are paused, and not before the Store version's setup, which starts its own first scan.
+		/// </summary>
+		static void RescanAfterUpdate() {
+			if (!Report.IsStale() || AgentScanner.IsRunning() || StoreSetup.Needed || AgentPause.Load() != null) return;
+			AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {Report.LoadAny()?.Build ?? "an older build"}: scanning again");
+			StartDetached("scan");
 		}
 
 		/// <summary>Everything the page draws, in one poll.</summary>
@@ -336,6 +375,8 @@ namespace HEI.Agent {
 				report = report == null ? null : new {
 					report.ScannedAtUtc, report.DurationSec, report.Device, report.FilesScanned, report.Folders, report.ExcludedExtensions, report.Notes,
 				},
+				// The last report is another build's, set aside until a scan with this one (RescanAfterUpdate).
+				updated = report == null && Report.IsStale(),
 				pending,
 				done,
 				totals = new {

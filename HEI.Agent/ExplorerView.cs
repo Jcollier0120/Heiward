@@ -18,8 +18,9 @@ namespace HEI.Agent {
 	/// <summary>Duplicates that touch a folder: sets with copies to clean up, look-alike sets, and the ticked bytes inside it.</summary>
 	sealed record DupStats(int Copies, int Lookalikes, long Reclaim);
 
+	/// <param name="OnRequest">Scanned only when asked, from its page (<see cref="AgentConfig.OnRequestDrives"/>).</param>
 	sealed record DriveCard(string Root, string Name, string Type, long TotalBytes, long FreeBytes, bool Scanned,
-		DriveScan? Scan, DupStats Duplicates);
+		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false);
 
 	sealed record Hotspot(string Folder, int Copies, long Reclaim);
 
@@ -61,7 +62,7 @@ namespace HEI.Agent {
 				bool scanned = roots.Any(r => r.Equals(root, StringComparison.OrdinalIgnoreCase));
 				DriveScan? scan = null;
 				index?.Drives.TryGetValue(root, out scan);
-				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending)));
+				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), scanned && cfg.IsOnRequest(root)));
 			}
 			// Extra folders that aren't a whole drive (a folder on a USB drive, a network share).
 			foreach (string root in roots.Where(r => !cards.Any(c => c.Root.Equals(r, StringComparison.OrdinalIgnoreCase)))) {
@@ -69,7 +70,7 @@ namespace HEI.Agent {
 				index?.Drives.TryGetValue(ScanIndex.DriveOf(root), out scan);
 				var (files, bytes) = index?.Subtree(root) ?? (0, 0);
 				cards.Add(new DriveCard(root, Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } n ? n : root, "folder", 0, 0, true,
-					scan == null ? null : scan with { Files = files, Bytes = bytes }, Stats(root, pending)));
+					scan == null ? null : scan with { Files = files, Bytes = bytes }, Stats(root, pending), cfg.IsOnRequest(root)));
 			}
 			return cards;
 		}

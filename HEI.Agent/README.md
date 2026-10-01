@@ -4,7 +4,7 @@ Heiward tends your drives. It looks for likely duplicate photos and videos and, 
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound. The command is `hei`.
 
-Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videoduplicatefinder) and uses its engine. Like it, Heiward is free software under the GNU AGPL v3. The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
+Heiward is free software under the GNU AGPL v3 ([License](../README.md#license)). The AI matching finds resized, recompressed, cropped, mirrored and edited copies, and runs on:
 - the **NPU**: fast, and it barely uses power, so scans can run every hour. Heiward detects which NPU the PC has and downloads that vendor's runtime:
   - **Qualcomm Hexagon** (Snapdragon X, Windows on Arm): Qualcomm's QNN plugin;
   - **Intel AI Boost** (Core Ultra, Intel/AMD build): Intel's OpenVINO plugin, OpenVINO included;
@@ -14,7 +14,31 @@ Heiward is based on [Video Duplicate Finder](https://github.com/0x90d/videodupli
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 
-Scheduled scans run in the background: Windows' efficiency mode (EcoQoS), on efficient cores at low clocks, at below-normal priority, on half the cores. A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`). A rescan only checks new and changed files.
+Scheduled scans run in the background:
+- Windows' efficiency mode (EcoQoS), on efficient cores at low clocks;
+- below-normal priority, on half the cores;
+- very low disk priority, as the search indexer has, so anything else using the drive goes first.
+
+A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, and normal disk priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
+
+What a rescan reads from the disk:
+- **Only what changed, as the drive's change journal says.** NTFS records every file created, changed, renamed or deleted, and Heiward reads that record as a normal user. That tells it which folders changed since the last scan.
+  - **Changes Heiward ignores:** those in places scans don't look (Windows, programs, app data, code repositories, your exclusions).
+  - **Folders where photos and videos may have changed** are listed again, one by one, and compared with the last listing. A document saved in Documents changes nothing.
+  - **A drive with nothing new** isn't read at all. When no drive has anything new, a scheduled scan doesn't run: nothing is listed, compared or written, and a sleeping hard disk stays asleep. The log says `scan skipped, nothing new`.
+  - **The drive is walked** as before, folder by folder, when the journal can't vouch for the last listing:
+    - the first scan;
+    - drives without a journal (FAT, exFAT, network drives);
+    - a journal made again, or overwritten past the last scan (a PC off for a long time, or a very busy drive);
+    - changed settings or a new build of Heiward;
+    - folders added, moved or deleted where scans look;
+    - once a week regardless.
+  - **A walk** goes one disk at a time per physical disk, so a hard disk never serves two walks at once.
+- **No check per file.** The listing says which files exist; the scan doesn't ask the disk again about each one.
+- **Only new and changed files' contents.** A file whose size and dates match the scan database isn't opened. One whose dates changed but size didn't gets a 64 KB check, and a moved file is recognised without being read again.
+- **Hashes once.** The byte-for-byte check behind "Identical copy" reads a whole file (up to 256 MB). Its hash is kept, and reused while the file keeps its size and date.
+
+`hei scan` shows how each drive was listed in `heiward.log` (`unchanged`, `N folder(s) listed again`, or `walked:` and why). The listing and where the journal was read up to are in `%LOCALAPPDATA%\Heiward\listing`.
 
 ## Install
 
@@ -34,7 +58,9 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 </details>
 
-**Already downloaded?** If another copy of Heiward or Video Duplicate Finder already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from, and in Video Duplicate Finder's own per-user folder. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
+**Already downloaded?** If another copy of Heiward already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
+
+**Updating:** run the new version's exe; it installs over the old one and scans again. Each report records the build that made it (its version and commit), because the sets are that build's rules. A report from another build is set aside, even under the same version number: the page shows none of its sets and nothing is cleaned up from them. When the page starts, it scans again with the new build unless scans are paused. The same goes for the developer report, and for the Microsoft Store version, which updates by itself. Sets the old report already listed aren't announced as new.
 
 Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, and `--scan-speed background` or `full` for how hard scans work). Preview every step without changing anything: `hei install --dry-run`.
 
@@ -49,10 +75,18 @@ Code decides everything shown on the page. No model output is trusted to delete 
 | Identical copy | Byte-for-byte the same file (SHA-256) | yes |
 | Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed | yes |
 | Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`) | no |
-| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only | no |
+| Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only, and a video without sound next to the same video with it (the one with sound is kept) | no |
 
 **Not listed at all:**
-- **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. Heiward sorts the names in each folder and checks whether a photo sits in such a series; if it or the kept photo does, and their numbers are at most 20 apart, it leaves the set. A byte-identical copy of a burst shot, say in a backup folder, still shows up as a copy of that shot. `(1)`, ` - Copy`, `_Original` and `-edited` are the same shot, not the next one.
+- **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. So are photos named after the time they were taken a few seconds apart, like `20201105_205359` and `20201105_205401` (Samsung), `PXL_…` (Pixel) or `Screenshot_…`.
+  - Heiward sorts the names in each folder and checks whether a photo sits in such a series. Two photos are shots of one burst when one of them does, and their numbers are at most 20 apart, or their times at most 5 minutes.
+  - A set holds one shot of a burst at most: the kept photo, or else the shot most like it. The burst's other shots leave the set.
+  - An image sequence's frames (`0084.png`, `0085.png`) are a series too, even where a still stretch makes two frames the same bytes: each is a frame the sequence needs.
+  - A byte-identical copy of a burst shot, say in a backup folder, still shows up as a copy of that shot. `(1)`, ` - Copy`, `_Original` and `-edited` are the same shot, not the next one.
+- **A video in another language, or with another soundtrack.** Older games ship each cutscene once per language, with the same pictures, which match frame for frame. Each is the game's own file, not a copy. A video leaves the set when any of these tells it apart from the kept one:
+  - **The names** differ only by a language, in the file name or a folder above it: `intro_en.wmv` and `intro_de.wmv`, `intro.wmv` and `intro_fr.wmv`, `Movies\English\intro.bik` and `Movies\German\intro.bik`, `EN-US` and `EN-GB`. This holds even for the same bytes: a game without a German dub ships the English one twice, and opens both names.
+  - **The audio tracks' language tags** differ, when both files have them (`ENG` and `GER`).
+  - **The sound** differs: the two soundtracks' audio fingerprints match less than 90%, at the offset where they match best. Heiward makes a fingerprint only for the videos in the report, once, and keeps it with the scan's database. The same sound re-encoded, even to 24 kb/s WMA, scored 96% and more; another voice over the same music 79–85%. A copy whose sound is shifted by half a second (trimmed mid-second) scores like another soundtrack, so it isn't offered.
 - **Pictures less than 75% alike** to the kept one (the percentage the page shows). The engine's sets chain, so a picture like one that is like another could end up in a set it has nothing to do with.
 
 A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a file in that folder is kept as it is and leaves the list, as one line in History, where **review again** brings them back.
@@ -153,6 +187,7 @@ Other NPU tools on the PC can use the NPU at the same time, for example npu-agen
 | `scanAllDrives` | true | Every fixed drive, minus the folders above |
 | `folders` | none | More folders to scan, e.g. a USB drive or `\\nas\photos` (the only ones when `scanAllDrives` is false). Scanned even inside a folder left out by default |
 | `excludeFolders` | none | A path (`D:\Scans`), a folder name at any depth (`Backups`), or either with wildcards (`D:\Old\*`, `*.bak`). Wins over `folders` |
+| `onRequestDrives` | none | Drives scanned only when you ask (`D:\`): right-click a drive on the page, **Scan only when I ask**. Scheduled scans, the home page's Scan now, automatic cleanup and the developer check leave them alone, not reading them at all, so an archive disk can sleep. Their photos and videos as their last scan found them still count: their sets stay listed, and a copy of one elsewhere is still found. Scan one from its own page (**Scan this drive now**, or `hei scan --drive D:\`) |
 | `excludeExtensions` | none | e.g. `[".heic"]` |
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |

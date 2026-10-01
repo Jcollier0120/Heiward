@@ -139,6 +139,27 @@ namespace HEI.Core {
 		readonly List<(string Path, long Size)> foundFiles = new();
 		/// <summary>Every photo and video the last search listed in the included folders, with its size.</summary>
 		public IReadOnlyList<(string Path, long Size)> FoundFiles => foundFiles;
+		/// <summary>The paths of <see cref="FoundFiles"/>, for <see cref="Settings.ListingProvesExistence"/>.</summary>
+		HashSet<string>? listedPaths;
+
+		/// <summary>
+		/// Lists one of <see cref="Settings.IncludeList"/>'s folders without walking it, or returns null to
+		/// have it walked. A caller that knows what changed on the disk since the last search (Heiward reads
+		/// NTFS's change journal) hands over only the folders it listed again, and names the files it knows
+		/// are as the database has them: those aren't read at all, not even their sizes and dates.
+		/// </summary>
+		public Func<string, RootListing?>? ListRoot { get; set; }
+
+		/// <summary>
+		/// False for a file this search must not read, nor even ask the disk about: Heiward's drives that are
+		/// scanned only on request, which may be asleep. Such a file is compared as the database has it,
+		/// and one the database can't compare yet waits for its drive's own scan. Null: every file may be read.
+		/// </summary>
+		public Func<string, bool>? MayRead { get; set; }
+
+		/// <param name="Listed">Files listed now, as the walk would have (their sizes and dates came with the listing).</param>
+		/// <param name="Unchanged">Paths of files known to be exactly as the database has them.</param>
+		public sealed record RootListing(IReadOnlyList<FileInfo> Listed, IReadOnlyCollection<string> Unchanged);
 		// True between StartSearch beginning a log session and the chained StartCompare
 		// joining it; lets a standalone StartCompare open its own session instead.
 		bool compareIsChainedToSearch;
@@ -519,6 +540,7 @@ namespace HEI.Core {
 			listingTimes.Clear();
 			analysisTimes.Clear();
 			foundFiles.Clear();
+			listedPaths = null;
 
 			FfmpegEngine.HardwareAccelerationMode = Settings.HardwareAccelerationMode;
 			FfmpegEngine.CustomFFArguments = Settings.CustomFFArguments;
@@ -762,7 +784,8 @@ namespace HEI.Core {
 
 			var roots = new List<string>();
 			foreach (string path in Settings.IncludeList) {
-				if (Directory.Exists(path)) {
+				// A folder the caller lists itself isn't asked about either (its drive may be asleep).
+				if (ListRoot?.Invoke(path) != null || Directory.Exists(path)) {
 					roots.Add(path);
 					continue;
 				}
@@ -783,22 +806,48 @@ namespace HEI.Core {
 			if (disks.Count > 1)
 				Logger.Instance.Info($"Listing {disks.Count} disks at once, slowest first: {string.Join(" | ", disks.Select(d => string.Join(", ", d)))}");
 			// Not disposed: after a cancel this method returns while a walk may still be finishing its folder.
-			var listed = new BlockingCollection<(string Root, List<FileInfo> Files)>();
+			var listed = new BlockingCollection<(string Root, IReadOnlyList<FileInfo> Files, IReadOnlyCollection<string>? Unchanged)>();
 			Task walks = Task.WhenAll(disks.Select(diskRoots => Task.Run(() => {
 				foreach (string root in diskRoots) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
 					long listingStart = Stopwatch.GetTimestamp();
-					List<FileInfo> files = FileUtils.GetFilesRecursive(root, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
+					// The caller may know the folder's files already (ListRoot); otherwise it's walked.
+					RootListing? given = ListRoot?.Invoke(root);
+					IReadOnlyList<FileInfo> files = given?.Listed ?? FileUtils.GetFilesRecursive(root, Settings.IgnoreReadOnlyFolders, Settings.IgnoreReparsePoints,
 						Settings.IncludeSubDirectories, Settings.IncludeImages, excludedFolders, cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
 						Settings.SkipFoldersContaining, Settings.SkipFolderLinks);
 					listingTimes[root] = Stopwatch.GetElapsedTime(listingStart);
-					listed.Add((root, files));
+					listed.Add((root, files, given?.Unchanged));
 				}
 			})));
 			walks.ContinueWith(_ => listed.CompleteAdding(), TaskScheduler.Default);
 
-			foreach (var (_, files) in listed.GetConsumingEnumerable()) {
+			foreach (var (_, files, unchanged) in listed.GetConsumingEnumerable()) {
+				// Files the caller vouches for: found, and already as the database has them. One the
+				// database doesn't have after all is read like a listed file.
+				foreach (string path in unchanged ?? Array.Empty<string>()) {
+					if (cancellationToken.IsCancellationRequested)
+						return;
+					var probe = new FileEntry { _Path = path };
+					if (DatabaseUtils.Database.TryGetValue(probe, out var known)) {
+						foundFiles.Add((known.Path, known.FileSize));
+						continue;
+					}
+					try {
+						var file = new FileInfo(path);
+						if (!file.Exists) continue;
+						foundFiles.Add((file.FullName, file.Length));
+						var fEntry = new FileEntry(file);
+						if (!TryRelinkMovedFile(fEntry, relinkBySize))
+							DatabaseUtils.Database.Add(fEntry);
+						else
+							relinkedCount++;
+					}
+					catch (Exception e) {
+						Logger.Instance.Warn($"Skipped file '{path}' because of {e}");
+					}
+				}
 				foreach (FileInfo file in files) {
 					if (cancellationToken.IsCancellationRequested)
 						return;
@@ -827,6 +876,9 @@ namespace HEI.Core {
 			if (cancellationToken.IsCancellationRequested)
 				return;
 			walks.GetAwaiter().GetResult(); // a walk that failed fails the scan, as it did before
+			listedPaths = Settings.ListingProvesExistence
+				? foundFiles.Select(f => f.Path).ToHashSet(CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
+				: null;
 
 			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
 			if (relinkedCount > 0)
@@ -872,7 +924,7 @@ namespace HEI.Core {
 			// a copy, not a move — leave it and treat the new path as a new file.)
 			List<FileEntry>? missing = null;
 			foreach (var c in sameSize)
-				if (!File.Exists(c.Path))
+				if ((MayRead?.Invoke(c.Path) ?? true) && !File.Exists(c.Path)) // one that mustn't be read counts as still there
 					(missing ??= new List<FileEntry>()).Add(c);
 			if (missing == null)
 				return false;
@@ -937,7 +989,8 @@ namespace HEI.Core {
 				reason = "file is marked as too dark";
 				return true;
 			}
-			if (!Settings.IncludeMissingFiles && !File.Exists(entry.Path)) {
+			// The listing has just seen every file in scope; asking the disk again per file can wake a sleeping one.
+			if (!Settings.IncludeMissingFiles && !(listedPaths?.Contains(entry.Path) ?? File.Exists(entry.Path))) {
 				reason = "file does not exist";
 				return true;
 			}
@@ -1167,6 +1220,15 @@ namespace HEI.Core {
 							entry.invalid = true;
 							if (!wasInvalid && skipReason != null)
 								LogExcludedFile(entry, skipReason);
+							if (reportProgress)
+								CompleteEntry(entry, driveCounter);
+							return ValueTask.CompletedTask;
+						}
+
+						// A file this search mustn't read (MayRead): compared as the database has it, with
+						// nothing backfilled or sampled; one with too little data waits for its drive's scan
+						// (the compare leaves out entries without a usable snapshot).
+						if (MayRead?.Invoke(entry.Path) == false) {
 							if (reportProgress)
 								CompleteEntry(entry, driveCounter);
 							return ValueTask.CompletedTask;

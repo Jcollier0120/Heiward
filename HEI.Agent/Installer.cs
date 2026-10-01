@@ -530,7 +530,7 @@ namespace HEI.Agent {
 			string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
 			key.SetValue("DisplayName", DisplayName);
 			key.SetValue("DisplayVersion", version);
-			key.SetValue("Publisher", "Heiward (based on Video Duplicate Finder)");
+			key.SetValue("Publisher", "The Nexus"); // as the Microsoft Store lists it
 			key.SetValue("DisplayIcon", InstalledExe);
 			key.SetValue("InstallLocation", InstallDir);
 			key.SetValue("UninstallString", $"\"{InstalledExe}\" uninstall");

@@ -55,7 +55,8 @@ root.SetAction(async (_, ct) => {
 var notify = new Option<bool>("--notify") { Description = "Show a Windows notification when the scan finds new duplicates." };
 var open = new Option<bool>("--open") { Description = "Open the review page (it shows the scan's progress)." };
 var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge; run in the background unless the review page is open." };
-var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled };
+var drive = new Option<string[]>("--drive") { Description = "Also read these drives that are scanned only when you ask (onRequestDrives), e.g. --drive D:\\. Without it they're left alone." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
@@ -72,7 +73,7 @@ scan.SetAction(async (r, ct) => {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
 		_ = OpenReviewPageAsync(cfg, ct);
 	}
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct);
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive));
 });
 root.Subcommands.Add(scan);
 
@@ -129,7 +130,7 @@ openCmd.SetAction(async (r, ct) => {
 root.Subcommands.Add(openCmd);
 
 var reuseFrom = new Option<string[]>("--reuse-from") {
-	Description = "A folder where another Heiward or Video Duplicate Finder keeps its bin\\ and ai\\ folders: copy FFmpeg and the AI components from it instead of downloading them. Repeatable.",
+	Description = "A folder that already holds FFmpeg and the AI components in bin\\ and ai\\, such as another copy of Heiward's: copy them from it instead of downloading them. Repeatable.",
 };
 var setup = new Command("setup", "Get FFmpeg and the AI components (and the pack for the PC's NPU), copied from --reuse-from folders when they have them, then report what this PC will use.") { reuseFrom };
 setup.SetAction(async (r, ct) => {
@@ -190,7 +191,7 @@ status.SetAction(_ => {
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
 	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} (checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	var report = Report.Load();
-	if (report == null) Console.WriteLine("No scan yet: run 'hei scan'.");
+	if (report == null) Console.WriteLine(Report.IsStale() ? "Heiward was updated: the next scan finds the sets again with this version ('hei scan')." : "No scan yet: run 'hei scan'.");
 	else {
 		Console.WriteLine($"Last scan: {report.ScannedAtUtc.ToLocalTime():g}, {report.FilesScanned:N0} files in {report.DurationSec:N0} s, AI on {report.Device}");
 		var decisions = DecisionStore.Load();
@@ -438,6 +439,9 @@ namespace HEI.Agent {
 		[DllImport("kernel32.dll", SetLastError = true)]
 		static extern bool SetPriorityClass(IntPtr process, uint priorityClass);
 
+		[DllImport("ntdll.dll")]
+		static extern int NtSetInformationProcess(IntPtr process, int infoClass, ref int info, int size);
+
 		/// <summary>
 		/// In the background: EcoQoS, the power half of Task Manager's "Efficiency mode", so Windows runs
 		/// the process on efficient cores at low clocks and a scan takes longer and costs little power.
@@ -445,15 +449,28 @@ namespace HEI.Agent {
 		/// two seconds at a time, and an idle-priority thread starved while holding it would make
 		/// other NPU tools wait. At full speed: normal priority, and throttling explicitly off, so
 		/// Windows doesn't guess that a windowless process may run slowly.
+		/// The disk, too: in the background the scan's reads (listing folders, reading new files,
+		/// hashing copies) go at very low I/O priority, as the search indexer's and defrag's do, so
+		/// whatever else is using the drive goes first and a hard disk isn't kept seeking for it. Only
+		/// the disk: Windows' own background mode would lower the CPU priority to idle as well.
 		/// </summary>
 		public static bool SetPace(bool fullSpeed) {
-			const int ProcessPowerThrottling = 4;
+			const int ProcessPowerThrottling = 4, ProcessIoPriority = 33, IoPriorityVeryLow = 0, IoPriorityNormal = 2;
 			const uint ExecutionSpeed = 0x1, BelowNormalPriorityClass = 0x4000, NormalPriorityClass = 0x20;
 			var state = new ProcessPowerThrottlingState { Version = 1, ControlMask = ExecutionSpeed, StateMask = fullSpeed ? 0 : ExecutionSpeed };
 			bool qos = SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, ref state, Marshal.SizeOf<ProcessPowerThrottlingState>());
 			bool priority = SetPriorityClass(GetCurrentProcess(), fullSpeed ? NormalPriorityClass : BelowNormalPriorityClass);
-			return qos && priority;
+			int io = fullSpeed ? IoPriorityNormal : IoPriorityVeryLow;
+			bool disk = NtSetInformationProcess(GetCurrentProcess(), ProcessIoPriority, ref io, sizeof(int)) == 0;
+			return qos && priority && disk;
 		}
+
+		[DllImport("ntdll.dll")]
+		static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out int info, int size, out int returned);
+
+		/// <summary>The process's I/O priority (0 very low, 1 low, 2 normal), as <see cref="SetPace"/> set it; null if Windows won't say.</summary>
+		internal static int? IoPriority() =>
+			NtQueryInformationProcess(GetCurrentProcess(), 33, out int io, sizeof(int), out _) == 0 ? io : null;
 
 		public static bool ShouldSkip(AgentConfig cfg, out string why) {
 			why = "";

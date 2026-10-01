@@ -32,8 +32,12 @@ public sealed class ReportBuilderTests : IDisposable {
 	/// <summary>Each file's similarity to whichever file ends up kept (the builder asks "file vs keeper").</summary>
 	sealed class FakeFingerprints : IFingerprints {
 		public readonly Dictionary<string, (float Gray, float? Ai)> ToKeeper = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>A video's soundtrack against the kept one's (unset: no sound to compare).</summary>
+		public readonly Dictionary<string, float> AudioToKeeper = new(StringComparer.OrdinalIgnoreCase);
 		public float? GrayPercent(string a, string b) => ToKeeper.TryGetValue(a, out var v) ? v.Gray : null;
 		public float? AiPercent(string a, string b) => ToKeeper.TryGetValue(a, out var v) ? v.Ai : null;
+		public float? AudioPercent(string a, string b) =>
+			AudioToKeeper.TryGetValue(a, out float x) ? x : AudioToKeeper.TryGetValue(b, out float y) ? y : null;
 	}
 
 	public ReportBuilderTests() => Directory.CreateDirectory(dir);
@@ -51,6 +55,23 @@ public sealed class ReportBuilderTests : IDisposable {
 			Path = path, Folder = Path.GetDirectoryName(path)!, SizeLong = content.Length, IsImage = true,
 			FrameSize = $"{w}x{h}", FrameSizeInt = w + h, Similarity = gray, GroupId = group,
 			Flags = ai != null ? DuplicateFlags.AiMatched : DuplicateFlags.None, DateModified = when.ToLocalTime(),
+		};
+	}
+
+	/// <param name="audio">Its soundtrack against the kept one's (null: not compared); <paramref name="languages"/>: its audio tracks' tags.</param>
+	DuplicateItem Video(string relPath, byte[] content, float gray = 100f, float? audio = null, string languages = "", bool sound = true) {
+		string path = Path.Combine(dir, relPath);
+		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+		File.WriteAllBytes(path, content);
+		var when = new DateTime(2004, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+		File.SetLastWriteTimeUtc(path, when);
+		fingerprints.ToKeeper[path] = (gray, null);
+		if (audio != null) fingerprints.AudioToKeeper[path] = audio.Value;
+		return new DuplicateItem {
+			Path = path, Folder = Path.GetDirectoryName(path)!, SizeLong = content.Length, IsImage = false,
+			FrameSize = "640x480", FrameSizeInt = 1120, Duration = TimeSpan.FromSeconds(95), BitRateKbs = 1500, Fps = 25,
+			Similarity = gray, GroupId = group, DateModified = when.ToLocalTime(),
+			AudioFormat = sound ? "wmav2" : null, AudioLanguages = languages,
 		};
 	}
 
@@ -220,6 +241,150 @@ public sealed class ReportBuilderTests : IDisposable {
 	}
 
 	[Fact]
+	public void ShotsNamedAfterTheTimeTaken_SecondsApart_AreABurst() {
+		// Regression (a real library): Samsung names each shot after its time, and read as plain numbers
+		// 20:53:59 and 20:54:01 were 42 apart, too far for a burst: the three were a set of look-alikes.
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Photo(@"Camera\20201105_205359_HDR.jpg", 4032, 3024, Bytes(8000, 1)),
+			Photo(@"Camera\20201105_205401_HDR.jpg", 4032, 3024, Bytes(8100, 2), gray: 94.6f, ai: 95f),
+			Photo(@"Camera\20201105_205411_HDR.jpg", 4032, 3024, Bytes(8200, 3), gray: 95.5f, ai: 96f),
+		}, fingerprints));
+	}
+
+	[Fact]
+	public void FramesOfAnImageSequence_AreNoSet() {
+		// Regression (a real PC): an animation's frames, 0084.png to 0099.png, barely change from one to
+		// the next and were 16 "more compressed copies" of 0093.png, all ticked.
+		var frames = Enumerable.Range(84, 16)
+			.Select(n => Photo($@"Animator\Content\TestData\Color\{n:0000}.png", 480, 640, Bytes(n == 93 ? 9000 : 8000 + n, (byte)n), gray: 99.8f))
+			.ToArray();
+		Assert.Empty(ReportBuilder.Build(frames, fingerprints));
+	}
+
+	[Fact]
+	public void IdenticalFramesOfAnImageSequence_AreNoSet() {
+		// A still stretch of an animation: frames 0010 to 0012 are the same bytes, and each is still a frame.
+		byte[] still = Bytes(8000, 1);
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Photo(@"Frames\0010.png", 480, 640, still), Photo(@"Frames\0011.png", 480, 640, still), Photo(@"Frames\0012.png", 480, 640, still),
+		}, fingerprints));
+	}
+
+	[Fact]
+	public void TwoShotsOfOneBurst_AreNeverInOneSet_ThoughNeitherIsKept() {
+		// Regression (a real library): IMG_0569 and IMG_0570, taken a minute apart two weeks after
+		// IMG_0538, were both look-alikes of it. The one more like IMG_0538 stays; the other is no look-alike.
+		var g = Single(
+			Photo(@"Camera\IMG_0538.heic", 4032, 3024, Bytes(8000, 1), modified: new DateTime(2023, 1, 24, 0, 0, 0, DateTimeKind.Utc)),
+			Photo(@"Camera\IMG_0569.heic", 4032, 3024, Bytes(8100, 2), gray: 95.7f, ai: 95.7f, modified: new DateTime(2023, 2, 6, 12, 6, 0, DateTimeKind.Utc)),
+			Photo(@"Camera\IMG_0570.heic", 4032, 3024, Bytes(8200, 3), gray: 96f, ai: 96f, modified: new DateTime(2023, 2, 6, 12, 7, 0, DateTimeKind.Utc)));
+		Assert.Equal(new[] { "IMG_0538.heic", "IMG_0570.heic" }, g.Items.Select(i => i.Name));
+	}
+
+	[Fact]
+	public void ABurstShot_IsNoCopy_OfARenamedCopyOfItsNeighbour() {
+		// holiday.jpg is IMG_1002 copied and renamed. IMG_1003, the next shot, scores 99.9% against it,
+		// which passes for a resaved copy: it was ticked for the Recycle Bin.
+		byte[] shot = Bytes(8002, 2);
+		var g = Single(
+			Photo(@"Holiday\holiday.jpg", 4032, 3024, shot, modified: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
+			Photo(@"Camera\IMG_1002.jpg", 4032, 3024, shot, modified: new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc)),
+			Photo(@"Camera\IMG_1003.jpg", 4032, 3024, Bytes(8003, 3), gray: 99.9f, modified: new DateTime(2026, 2, 1, 0, 0, 5, DateTimeKind.Utc)));
+		Assert.Equal("identical", g.Kind);
+		Assert.Equal(new[] { "holiday.jpg", "IMG_1002.jpg" }, g.Items.Select(i => i.Name));
+	}
+
+	[Theory]
+	[InlineData(@"Game\Movies\intro_en.wmv", @"Game\Movies\intro_de.wmv")]
+	[InlineData(@"Game\Movies\intro.wmv", @"Game\Movies\intro_fr.wmv")]           // the default language unnamed
+	[InlineData(@"Game\Movies\English\intro.bik", @"Game\Movies\German\intro.bik")] // a folder per language
+	[InlineData(@"Game\Video\EN-US\intro.avi", @"Game\Video\EN-GB\intro.avi")]
+	[InlineData(@"Game\Movies\INTRO_ENG.wmv", @"Old\intro_ger.wmv")]               // elsewhere, still the German one
+	public void OneVideoInTwoLanguages_ByItsNames_IsNoSet(string a, string b) {
+		// Regression: an older game's cutscenes, one per language with the same pictures, matched
+		// frame for frame and were ticked as resaved copies of each other.
+		Assert.Empty(ReportBuilder.Build(new[] { Video(a, Bytes(9000, 1)), Video(b, Bytes(9000, 2), gray: 99.9f) }, fingerprints));
+	}
+
+	[Fact]
+	public void OneVideoInTwoLanguages_WithTheSameBytes_IsNoSet() {
+		// A game without a German dub ships the English cutscene twice; it opens both names.
+		byte[] same = Bytes(9000, 1);
+		Assert.Empty(ReportBuilder.Build(new[] { Video(@"Game\Movies\intro_en.wmv", same), Video(@"Game\Movies\intro_de.wmv", same) }, fingerprints));
+	}
+
+	[Fact]
+	public void OneVideoInTwoLanguages_ByItsAudioTags_IsNoSet() =>
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Video(@"Films\Heist.mkv", Bytes(9000, 1), languages: "ENG"),
+			Video(@"Films\Heist (1).mkv", Bytes(9000, 2), gray: 99.9f, languages: "GER"),
+		}, fingerprints));
+
+	[Fact]
+	public void AVideoWithAnotherSoundtrack_IsNoSet() =>
+		// Nothing in the names: the sound is another voice over the same score (79–85% measured).
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Video(@"Game\cine\c01.wmv", Bytes(9000, 1)),
+			Video(@"Backup\cine\c01 old.wmv", Bytes(9000, 2), gray: 99.9f, audio: 80f),
+		}, fingerprints));
+
+	[Fact]
+	public void AVideoReEncodedWithTheSameSoundtrack_IsStillACopy() {
+		// Same quality: the smaller file is kept (VDF's order), and the other is a plain copy of it.
+		var g = Single(Video(@"Videos\party.mp4", Bytes(9000, 1), gray: 99.8f, audio: 96f), Video(@"Downloads\party.wmv", Bytes(4000, 2)));
+		Assert.Equal("copies", g.Kind);
+		Assert.True(Named(g, "party.mp4").Suggested);
+	}
+
+	[Fact]
+	public void AVideoWithoutSound_IsNoPlainCopyOfOneWithSound() {
+		// The muted copy is smaller, which would make it the one kept; the one with sound is kept, and nothing is ticked.
+		var g = Single(Video(@"Videos\party.mp4", Bytes(9000, 1)), Video(@"Videos\party muted.mp4", Bytes(8000, 2), gray: 99.9f, sound: false));
+		Assert.Equal(Path.Combine(dir, @"Videos\party.mp4"), g.KeepPath);
+		Assert.Equal("variant", Named(g, "party muted.mp4").Relation);
+		Assert.DoesNotContain(g.Items, i => i.Suggested);
+	}
+
+	[Fact]
+	public void ALanguageVersionsOwnCopy_IsStillACopy() {
+		// The German cutscene backed up elsewhere: a copy of the German one, while the English one leaves.
+		byte[] german = Bytes(9000, 2);
+		var g = Single(
+			Video(@"Game\Movies\intro_en.wmv", Bytes(9000, 1)),
+			Video(@"Game\Movies\intro_de.wmv", german, gray: 99.9f),
+			Video(@"Backup\Movies\intro_de.wmv", german, gray: 99.9f));
+		Assert.Equal("identical", g.Kind);
+		Assert.All(g.Items, i => Assert.Equal("intro_de.wmv", i.Name));
+	}
+
+	[Theory]
+	[InlineData(@"C:\G\intro_en.wmv", @"C:\G\intro_de.wmv", true)]
+	[InlineData(@"C:\G\intro_en.wmv", @"C:\G\intro_english.wmv", false)] // one language, named two ways
+	[InlineData(@"C:\G\intro_en.wmv", @"D:\Backup\intro_en.wmv", false)] // a copy of the English one
+	[InlineData(@"C:\G\Movies\EN\intro.wmv", @"D:\Backup\Movies\EN\intro.wmv", false)]
+	[InlineData(@"C:\G\intro_en.wmv", @"C:\G\outro_de.wmv", false)]      // two videos
+	[InlineData(@"C:\G\Movies\intro.wmv", @"C:\Other\Films\intro.wmv", false)]
+	[InlineData(@"C:\G\Movies Deutsch\intro.wmv", @"C:\G\Movies\intro.wmv", true)]
+	[InlineData(@"C:\G\c01_pt-BR.webm", @"C:\G\c01_pt-PT.webm", true)]
+	public void LanguageVersions_ReadTheNames(string a, string b, bool versions) =>
+		Assert.Equal(versions, LanguageVersions.ByName(a, b));
+
+	[Fact]
+	public void AFileOnADriveScannedOnlyWhenAsked_IsJudgedWithoutTouchingIt() {
+		// The archive copy isn't on disk any more, but its drive isn't to be read: the scan's
+		// knowledge of it stands, so it isn't dropped for being missing, nor hashed, nor opened.
+		var keep = Photo(@"Pictures\IMG_2001.jpg", 4032, 3024, Bytes(9000, 1), modified: new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+		var archived = Photo(@"Archive\IMG_2001.jpg", 4032, 3024, Bytes(9000, 1), gray: 99.9f, modified: new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+		File.Delete(archived.Path);
+		bool Readable(string p) => !p.Contains(@"\Archive\", StringComparison.OrdinalIgnoreCase);
+
+		ReportGroup g = Assert.Single(ReportBuilder.Build(new[] { keep, archived }, fingerprints, mayRead: Readable, known: new[] { keep.Path, archived.Path }));
+		Assert.Equal(keep.Path, g.KeepPath);
+		Assert.Equal("resaved", g.Items.Single(i => i.Path == archived.Path).Relation); // not "identical": its bytes weren't read
+		Assert.Empty(ReportBuilder.Build(new[] { keep, archived }, fingerprints)); // read as usual, the missing copy leaves
+	}
+
+	[Fact]
 	public void NumberedCopies_OfOneShot_AreStillCopies() {
 		// "(1)" and " - Copy" are the same shot, not the next one; IMG_1235 next to them makes a series.
 		byte[] content = Bytes(8000, 1);
@@ -260,10 +425,30 @@ public sealed class ReportBuilderTests : IDisposable {
 	[InlineData("IMG_1234-edited", "img_#", 1234L)]
 	[InlineData("20260101_120000_003", "20260101_120000_#", 3L)]
 	[InlineData("DSC01234", "dsc#", 1234L)]
-	[InlineData("PXL_20260101_120000123.MP", "pxl_20260101_#.mp", 120000123L)]
+	[InlineData("IMG-20201105-WA0001", "img-20201105-wa#", 1L)]  // WhatsApp: a date and a counter
 	[InlineData("00001IMG_00001_BURST20260101120000123", "burst20260101120000123", 1L)]
 	[InlineData("00000IMG_00000_BURST20260101120000123_COVER", "burst20260101120000123", 0L)]
 	public void BurstSeries_ReadsTheSeriesAndTheNumber(string stem, string series, long number) =>
+		Assert.Equal(new BurstSeries.Shot(series, number), BurstSeries.Parse(stem));
+
+	[Theory]
+	[InlineData("20201105_205359_HDR", "@", "2020-11-05 20:53:59.000")]         // Samsung
+	[InlineData("20151008_204237(1)", "@", "2015-10-08 20:42:37.000")]
+	[InlineData("IMG_20140830_092242", "img_@", "2014-08-30 09:22:42.000")]      // Android
+	[InlineData("VID_20140830_092242", "vid_@", "2014-08-30 09:22:42.000")]
+	[InlineData("PXL_20260101_120000123.MP", "pxl_@", "2026-01-01 12:00:00.123")] // Pixel, a motion photo
+	[InlineData("Screenshot_20231105-205359_Chrome", "screenshot_@", "2023-11-05 20:53:59.000")]
+	[InlineData("Screenshot 2024-05-08 104604", "screenshot @", "2024-05-08 10:46:04.000")] // Windows
+	[InlineData("2020-11-05 20.53.59", "@", "2020-11-05 20:53:59.000")]         // Dropbox
+	public void BurstSeries_ReadsTheTimeTaken(string stem, string series, string taken) {
+		long ms = DateTime.ParseExact(taken, "yyyy-MM-dd HH:mm:ss.fff", System.Globalization.CultureInfo.InvariantCulture).Ticks / TimeSpan.TicksPerMillisecond;
+		Assert.Equal(new BurstSeries.Shot(series, ms, Timed: true), BurstSeries.Parse(stem));
+	}
+
+	[Theory]
+	[InlineData("20201345_205359", "20201345_#", 205359L)] // no 13th month: a number, not a time
+	[InlineData("IMG_20140830_0922", "img_20140830_#", 922L)]
+	public void BurstSeries_NumbersThatOnlyLookLikeATime_AreNumbers(string stem, string series, long number) =>
 		Assert.Equal(new BurstSeries.Shot(series, number), BurstSeries.Parse(stem));
 
 	[Theory]
