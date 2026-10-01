@@ -41,7 +41,7 @@ There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward d
 
 The releases aren't code-signed yet, so the first run shows "Windows protected your PC": click **More info**, then **Run anyway**. On a PC with Smart App Control turned on, Windows blocks unsigned apps outright, so those PCs will need a signed release. `SHA256SUMS.txt` on the release lists each file's SHA-256, which PowerShell's `Get-FileHash` shows.
 
-To remove it, uninstall **Heiward** in Settings > Apps.
+To remove it, uninstall **Heiward** in Settings > Apps. Its window says when it's done, or what stopped it; either way the steps are in `%LOCALAPPDATA%\Heiward\heiward.log`. Your settings and history stay there, for a later install (`hei uninstall --purge` deletes them too).
 
 To build it yourself, see [Build](HEI.Agent/README.md#build). Settings, commands and how it decides what to tick are in [HEI.Agent/README.md](HEI.Agent/README.md).
 

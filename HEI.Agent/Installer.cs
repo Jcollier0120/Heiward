@@ -198,8 +198,59 @@ namespace HEI.Agent {
 			return 0;
 		}
 
+		/// <summary>
+		/// From Settings > Apps (Apps &amp; Features runs <c>hei uninstall</c> in a console window of its own),
+		/// or the command line. Every step goes to heiward.log, which uninstalling keeps. Started in a window
+		/// of its own, it says how it went before the window closes: an error stays until Enter, so it can be
+		/// read (a first build's uninstall closed at once, and left no trace of why it did nothing).
+		/// </summary>
 		public static int Uninstall(bool purge, bool dryRun) {
-			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
+			bool ownWindow = !Console.IsInputRedirected && !Console.IsOutputRedirected;
+			uninstallLog = !dryRun;
+			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath})");
+			try {
+				int code = UninstallSteps(purge, dryRun);
+				Log("uninstall done");
+				if (ownWindow && !dryRun) {
+					Console.WriteLine();
+					Console.WriteLine("Heiward is uninstalled. This window closes in a few seconds.");
+					WaitForKey(TimeSpan.FromSeconds(8));
+				}
+				return code;
+			}
+			catch (Exception e) {
+				Log("uninstall failed: " + e);
+				Console.Error.WriteLine();
+				Console.Error.WriteLine("Heiward couldn't finish uninstalling: " + e.Message);
+				Console.Error.WriteLine("The details are in " + AgentPaths.Log + ". Running uninstall again picks up where it stopped.");
+				if (ownWindow) {
+					Console.Error.WriteLine("Press Enter to close.");
+					Console.ReadLine();
+				}
+				return 1;
+			}
+		}
+
+		/// <summary>Uninstall's steps go to heiward.log; not in a dry run, nor once --purge has deleted its folder.</summary>
+		static bool uninstallLog;
+		static void Log(string line) {
+			if (uninstallLog) AgentPaths.AppendLog(line);
+		}
+
+		/// <summary>Waits until a key is pressed or the time is up.</summary>
+		static void WaitForKey(TimeSpan most) {
+			var until = DateTime.UtcNow + most;
+			try {
+				while (DateTime.UtcNow < until && !Console.KeyAvailable) Thread.Sleep(100);
+			}
+			catch (InvalidOperationException) { } // no console to read keys from
+		}
+
+		static int UninstallSteps(bool purge, bool dryRun) {
+			void Step(string s) {
+				Console.WriteLine((dryRun ? "[dry run] " : "") + s);
+				Log("uninstall: " + s);
+			}
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
 			if (!dryRun) { Scheduler.Remove(Scheduler.ScanTask); Scheduler.Remove(Scheduler.OpenTask); }
 			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
@@ -209,14 +260,20 @@ namespace HEI.Agent {
 					DeleteOwnShortcut(StartMenuShortcut);
 					DeleteOwnShortcut(DesktopShortcut);
 					Toast.Unregister();
-					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); } catch { }
+					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); }
+					catch (Exception e) { Log("uninstall: the Apps & Features entry stays: " + e.Message); }
 					try { Registry.CurrentUser.DeleteSubKeyTree(ProtocolKey, throwOnMissingSubKey: false); } catch { }
 					StopRunningAgents();
+					// Anything else still running from the folder (an FFmpeg a scan started) would keep it from going.
+					StopProcessesIn(InstallDir);
 				}
 			}
 			if (purge) {
 				Step($"Delete settings, report and caches: {AgentPaths.Home}");
-				if (!dryRun) try { Directory.Delete(AgentPaths.Home, recursive: true); } catch { }
+				if (!dryRun) {
+					uninstallLog = false; // the log goes with the folder; writing to it would make the folder again
+					try { Directory.Delete(AgentPaths.Home, recursive: true); } catch { }
+				}
 			}
 			else Console.WriteLine($"Kept settings and the report in {AgentPaths.Home} (add --purge to delete them).");
 			if (StorePackage.IsPackaged) {
@@ -226,13 +283,36 @@ namespace HEI.Agent {
 			}
 			if (Directory.Exists(InstallDir)) {
 				Step($"Delete {InstallDir}");
-				// The running exe can't delete itself: a detached cmd does it once this process exits.
+				// The running exe can't delete itself: a detached cmd deletes the folder once this process has
+				// exited. It tries every two seconds for half a minute, while anything else (an antivirus scan,
+				// a file still closing) holds a file in it; whatever goes first, goes.
 				if (!dryRun)
 					Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
-						$"/d /c timeout /t 3 /nobreak >nul & rmdir /s /q \"{InstallDir}\"") { UseShellExecute = false, CreateNoWindow = true });
+						DeleteFolderLater(InstallDir)) { UseShellExecute = false, CreateNoWindow = true });
 			}
 			Console.WriteLine(dryRun ? "" : "Uninstalled. Files you reviewed stay where they are; recycled ones are in the Recycle Bin.");
 			return 0;
+		}
+
+		/// <summary>cmd's arguments that delete <paramref name="folder"/>, trying again every two seconds for half a minute.</summary>
+		internal static string DeleteFolderLater(string folder) =>
+			$"/d /c for /l %i in (1,1,15) do @(if exist \"{folder}\" (ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{folder}\" 2>nul))";
+
+		/// <summary>Stops every process whose program is in <paramref name="folder"/>, but this one.</summary>
+		static void StopProcessesIn(string folder) {
+			string inside = Path.TrimEndingDirectorySeparator(folder) + Path.DirectorySeparatorChar;
+			foreach (Process p in Process.GetProcesses()) {
+				using (p) {
+					try {
+						if (p.Id == Environment.ProcessId || p.MainModule?.FileName is not string exe ||
+							!exe.StartsWith(inside, StringComparison.OrdinalIgnoreCase)) continue;
+						Log($"uninstall: stopping {Path.GetFileName(exe)} ({p.Id})");
+						p.Kill(entireProcessTree: true);
+						p.WaitForExit(5000);
+					}
+					catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
+				}
+			}
 		}
 
 		/// <summary>
