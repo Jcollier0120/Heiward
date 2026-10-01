@@ -14,9 +14,29 @@
 // */
 //
 
+using System.Diagnostics;
+
 namespace HEI.Agent.Tests;
 
 public sealed class SchedulerTests {
+	[Fact]
+	public async Task Uninstall_DeletesTheFolder_OnceAFileInItIsLetGo() {
+		// Regression: uninstalling tried once, three seconds on, and a file still held then (an antivirus
+		// scan, an FFmpeg a scan started) left the folder behind. Now it tries every two seconds for half a minute.
+		string dir = Directory.CreateTempSubdirectory("hei-uninstall-test").FullName;
+		string held = Path.Combine(dir, "bin", "avcodec.dll");
+		Directory.CreateDirectory(Path.GetDirectoryName(held)!);
+		File.WriteAllBytes(held, new byte[64]);
+		Process cmd;
+		using (File.Open(held, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+			cmd = Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "cmd.exe"), Installer.DeleteFolderLater(dir)) { UseShellExecute = false, CreateNoWindow = true })!;
+			await Task.Delay(TimeSpan.FromSeconds(3)); // past its first try
+			Assert.True(Directory.Exists(dir));
+		}
+		await cmd.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(40));
+		Assert.False(Directory.Exists(dir));
+	}
+
 	[Theory]
 	[InlineData(60, true, "scans every hour")]
 	[InlineData(360, false, "scans every 6 hours on AC power")]
