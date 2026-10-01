@@ -22,9 +22,23 @@ Scheduled scans run in the background:
 A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, and normal disk priority. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
 
 What a rescan reads from the disk:
-- **Every folder's listing.** It walks each drive's folders again, one walk per physical disk, so a hard disk never serves two walks at once. The listing gives each file's size and dates without opening it, and Windows usually has it in memory from the last scan.
+- **Only what changed, as the drive's change journal says.** NTFS records every file created, changed, renamed or deleted, and Heiward reads that record as a normal user. That tells it which folders changed since the last scan.
+  - **Changes Heiward ignores:** those in places scans don't look (Windows, programs, app data, code repositories, your exclusions).
+  - **Folders where photos and videos may have changed** are listed again, one by one, and compared with the last listing. A document saved in Documents changes nothing.
+  - **A drive with nothing new** isn't read at all. When no drive has anything new, a scheduled scan doesn't run: nothing is listed, compared or written, and a sleeping hard disk stays asleep. The log says `scan skipped, nothing new`.
+  - **The drive is walked** as before, folder by folder, when the journal can't vouch for the last listing:
+    - the first scan;
+    - drives without a journal (FAT, exFAT, network drives);
+    - a journal made again, or overwritten past the last scan (a PC off for a long time, or a very busy drive);
+    - changed settings or a new build of Heiward;
+    - folders added, moved or deleted where scans look;
+    - once a week regardless.
+  - **A walk** goes one disk at a time per physical disk, so a hard disk never serves two walks at once.
+- **No check per file.** The listing says which files exist; the scan doesn't ask the disk again about each one.
 - **Only new and changed files' contents.** A file whose size and dates match the scan database isn't opened. One whose dates changed but size didn't gets a 64 KB check, and a moved file is recognised without being read again.
 - **Hashes once.** The byte-for-byte check behind "Identical copy" reads a whole file (up to 256 MB). Its hash is kept, and reused while the file keeps its size and date.
+
+`hei scan` shows how each drive was listed in `heiward.log` (`unchanged`, `N folder(s) listed again`, or `walked:` and why). The listing and where the journal was read up to are in `%LOCALAPPDATA%\Heiward\listing`.
 
 ## Install
 

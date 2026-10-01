@@ -116,6 +116,9 @@ namespace HEI.Agent {
 			this.ct = ct;
 		}
 
+		/// <summary>The file's last-modified time as the scan's database has it; null for a file it doesn't have.</summary>
+		public DateTime? ModifiedUtc(string path) => entries.TryGetValue(path, out FileEntry? e) ? e.DateModified : null;
+
 		public float? AudioPercent(string a, string b) {
 			if (Audio(a) is not { } fa || Audio(b) is not { } fb) return null;
 			var (shorter, longer) = fa.Length <= fb.Length ? (fa, fb) : (fb, fa);

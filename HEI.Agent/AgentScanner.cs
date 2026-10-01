@@ -49,7 +49,21 @@ namespace HEI.Agent {
 				return 2;
 			}
 			bool paced = Power.SetPace(fullSpeed);
-			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : "in the background")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", priority unchanged")}): {string.Join("; ", settings.IncludeList)}");
+			// What changed on each drive since the last scan, from its change journal: a drive with nothing
+			// new isn't walked, and one with something new has only those folders listed again.
+			ListingPlan? plan = null;
+			try { plan = ListingPlan.Make(settings, cfg, started, ct); }
+			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("change journal not read, walking every folder: " + e.Message); }
+			// Nothing a scan would see changed since the last one, which made this report with these
+			// settings: a scheduled scan has nothing to do, and no drive is read, nor anything compared.
+			if (scheduled && plan is { NothingChanged: true, SameScanAsLast: true } && Report.Load() != null) {
+				plan.SaveSkipped();
+				AgentPaths.AppendLog("scan skipped, nothing new: " + plan.Describe());
+				await NotifyAsync(cfg, notify, Housekeeping(cfg, ct), new());
+				return 0;
+			}
+			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : "in the background")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", priority unchanged")}): " +
+				(plan?.Describe() ?? string.Join("; ", settings.IncludeList)));
 			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, stopPacing.Token);
 			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would.
@@ -57,7 +71,7 @@ namespace HEI.Agent {
 			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			Task watching = ScanStop.WatchAsync(started, stopped, stopPacing.Token);
 
-			var engine = new ScanEngine { Settings = settings };
+			var engine = new ScanEngine { Settings = settings, ListRoot = plan == null ? null : plan.ListingFor };
 			int files = 0;
 			string stage = "Finding files";
 			long lastWrite = 0;
@@ -86,6 +100,8 @@ namespace HEI.Agent {
 				try { File.Delete(AgentPaths.ScanStatus); } catch { }
 			}
 
+			// The files the listing found (the progress counts the database's entries, a deleted file's too).
+			if (engine.FoundFiles.Count > 0) files = engine.FoundFiles.Count;
 			// Whichever build made it: after an update, the sets it already listed aren't new.
 			Report? previous = Report.LoadAny();
 			// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
@@ -105,14 +121,10 @@ namespace HEI.Agent {
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
 			report.Save();
 			ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
-			bool devChecked = false;
-			if (DevScan.Due(cfg)) {
-				try { devChecked = DevScan.RunAndSave(cfg, ct) != null; }
-				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("developer check failed: " + e.Message); }
-			}
-			AutoRun? auto = null;
-			try { auto = AutoCleaner.RunAndSave(cfg, devChecked, new CleanupActions(cfg, automatic: true)); }
-			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("automatic cleanup failed: " + e.Message); }
+			// This listing, and where the journal was read up to: the next scan starts from them.
+			try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
+			AutoRun? auto = Housekeeping(cfg, ct);
 
 			var decisions = DecisionStore.Load();
 			var known = new HashSet<string>(previous?.Groups.Select(g => g.Key) ?? Enumerable.Empty<string>());
@@ -124,19 +136,37 @@ namespace HEI.Agent {
 			Console.Error.WriteLine("Scan done: " + summary);
 			if (auto is { DidSomething: true }) Console.Error.WriteLine("Automatic cleanup: " + auto.Describe("; "));
 			foreach (string n in notes) Console.Error.WriteLine("  note: " + n);
-
-			if (notify && cfg.Toast && (fresh.Count > 0 || auto is { DidSomething: true })) {
-				ReviewServer.EnsureRunningInBackground(cfg);
-				if (auto is { DidSomething: true })
-					await Toast.ShowAsync("Cleaned up automatically", auto.Describe() + ".", ReviewServer.PageUrl(cfg.Port));
-				if (fresh.Count > 0) {
-					long bytes = fresh.Sum(g => g.ReclaimBytes);
-					await Toast.ShowAsync($"{fresh.Count} new set{(fresh.Count == 1 ? "" : "s")} of likely duplicates",
-						bytes > 0 ? $"Review them to free up to {Format.Bytes(bytes)}. Nothing is deleted until you choose." : "Review them when you have a minute.",
-						ReviewServer.PageUrl(cfg.Port));
-				}
-			}
+			await NotifyAsync(cfg, notify, auto, fresh);
 			return 0;
+		}
+
+		/// <summary>
+		/// What runs on its own clock after every scheduled scan, whether the scan had anything to do: the
+		/// developer check when it's due, and automatic cleanup of what has waited its days.
+		/// </summary>
+		static AutoRun? Housekeeping(AgentConfig cfg, CancellationToken ct) {
+			bool devChecked = false;
+			if (DevScan.Due(cfg)) {
+				try { devChecked = DevScan.RunAndSave(cfg, ct) != null; }
+				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("developer check failed: " + e.Message); }
+			}
+			try { return AutoCleaner.RunAndSave(cfg, devChecked, new CleanupActions(cfg, automatic: true)); }
+			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("automatic cleanup failed: " + e.Message); }
+			return null;
+		}
+
+		/// <summary>The notifications: what automatic cleanup did, and new sets to review. Nothing new, nothing shown.</summary>
+		static async Task NotifyAsync(AgentConfig cfg, bool notify, AutoRun? auto, List<ReportGroup> fresh) {
+			if (!notify || !cfg.Toast || (fresh.Count == 0 && auto is not { DidSomething: true })) return;
+			ReviewServer.EnsureRunningInBackground(cfg);
+			if (auto is { DidSomething: true })
+				await Toast.ShowAsync("Cleaned up automatically", auto.Describe() + ".", ReviewServer.PageUrl(cfg.Port));
+			if (fresh.Count > 0) {
+				long bytes = fresh.Sum(g => g.ReclaimBytes);
+				await Toast.ShowAsync($"{fresh.Count} new set{(fresh.Count == 1 ? "" : "s")} of likely duplicates",
+					bytes > 0 ? $"Review them to free up to {Format.Bytes(bytes)}. Nothing is deleted until you choose." : "Review them when you have a minute.",
+					ReviewServer.PageUrl(cfg.Port));
+			}
 		}
 
 		internal static Settings BuildSettings(AgentConfig cfg, List<string> notes, bool fullSpeed = false) {
@@ -146,6 +176,8 @@ namespace HEI.Agent {
 				UseAiMatching = true,
 				AiDevice = Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto,
 				SkipCloudPlaceholders = true,
+				// The listing just saw every file; asking the disk about each one again could wake a sleeping drive.
+				ListingProvesExistence = true,
 				UseWindowsImageDecoder = true,
 				MaxDegreeOfParallelism = cfg.ParallelismFor(fullSpeed),
 				CustomDatabaseFolder = AgentPaths.Database,

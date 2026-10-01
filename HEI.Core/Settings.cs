@@ -60,6 +60,13 @@ namespace HEI.Core {
 		/// must be compared even when the user never opted into listing non-existing files).
 		/// </summary>
 		internal bool IncludeMissingFiles => IncludeNonExistingFiles || RememberDeletedContent;
+		/// <summary>
+		/// A file in the included folders exists when this search's listing has it, without asking the
+		/// disk again. Off, every database entry in scope gets its own existence check each search, a
+		/// metadata read per file that can wake a sleeping hard disk; on, an entry the listing didn't
+		/// find (deleted, or in a folder the listing leaves out) is left out of the search.
+		/// </summary>
+		public bool ListingProvesExistence;
 		public bool ScanAgainstEntireDatabase;
 		public FolderMatchMode FolderMatchMode;
 		public int SameFolderDepth = 1;
