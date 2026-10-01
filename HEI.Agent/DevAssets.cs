@@ -100,7 +100,8 @@ namespace HEI.Agent {
 			var timer = Stopwatch.StartNew();
 			var report = new DevReport { ScannedAtUtc = DateTime.UtcNow, StaleDays = cfg.StaleProjectDays, Build = AppBuild.Current };
 			DateTime staleBefore = DateTime.UtcNow.AddDays(-cfg.StaleProjectDays);
-			List<string> repos = FindRepositories(ScanScope.Roots(cfg), ScanScope.ExclusionRules(cfg), ct);
+			// Not on a drive scanned only when asked: looking for projects would wake it.
+			List<string> repos = FindRepositories(ScanScope.Roots(cfg).Where(r => !cfg.IsOnRequest(r)).ToList(), ScanScope.ExclusionRules(cfg), ct);
 
 			report.Categories.Add(new DevCategory(Projects, "Build outputs and dependencies in your projects",
 				"node_modules, bin and obj, Gradle build folders, target, Python virtual environments. The next install or build recreates them. " +

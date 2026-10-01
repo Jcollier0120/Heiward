@@ -32,7 +32,8 @@ namespace HEI.Agent {
 	/// </summary>
 	static class AgentScanner {
 		/// <param name="scheduled">Started by Task Scheduler: in the background unless the review page is open (<see cref="ScanPace"/>).</param>
-		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct) {
+		/// <param name="drives">Drives scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) that this scan reads: from the drive's own page.</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			using FileStream? scanLock = TryLock();
 			if (scanLock == null) {
@@ -52,8 +53,13 @@ namespace HEI.Agent {
 			// What changed on each drive since the last scan, from its change journal: a drive with nothing
 			// new isn't walked, and one with something new has only those folders listed again.
 			ListingPlan? plan = null;
-			try { plan = ListingPlan.Make(settings, cfg, started, ct); }
-			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("change journal not read, walking every folder: " + e.Message); }
+			try { plan = ListingPlan.Make(settings, cfg, started, ct, drives); }
+			catch (Exception e) when (e is not OperationCanceledException) {
+				AgentPaths.AppendLog("change journal not read, walking every folder: " + e.Message);
+				// Drives scanned only when asked stay unread all the same: left out of this scan.
+				foreach (string root in settings.IncludeList.Where(r => cfg.IsOnRequest(r) && !(drives ?? Array.Empty<string>()).Any(d => AgentConfig.DriveOf(d) == AgentConfig.DriveOf(r))).ToList())
+					settings.IncludeList.Remove(root);
+			}
 			// Nothing a scan would see changed since the last one, which made this report with these
 			// settings: a scheduled scan has nothing to do, and no drive is read, nor anything compared.
 			if (scheduled && plan is { NothingChanged: true, SameScanAsLast: true } && Report.Load() != null) {
@@ -71,7 +77,8 @@ namespace HEI.Agent {
 			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			Task watching = ScanStop.WatchAsync(started, stopped, stopPacing.Token);
 
-			var engine = new ScanEngine { Settings = settings, ListRoot = plan == null ? null : plan.ListingFor };
+			Func<string, bool>? mayRead = plan?.MayRead;
+			var engine = new ScanEngine { Settings = settings, ListRoot = plan == null ? null : plan.ListingFor, MayRead = mayRead };
 			int files = 0;
 			string stage = "Finding files";
 			long lastWrite = 0;
@@ -107,9 +114,9 @@ namespace HEI.Agent {
 			// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
 			string device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 			string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
-			var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, ct);
+			var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, ct) { MayRead = mayRead };
 			var hashes = ReportBuilder.ContentHashes.Load();
-			var groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes);
+			var groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, mayRead, engine.FoundFiles.Select(f => f.Path));
 			try { hashes.Save(); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }
 			// The report fingerprints the sound of the videos in it, once: the next scan reuses them.

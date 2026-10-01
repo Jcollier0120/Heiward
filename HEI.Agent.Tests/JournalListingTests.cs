@@ -154,6 +154,37 @@ public sealed class JournalListingTests : IDisposable {
 		Assert.False(Plan(settings: other).SameScanAsLast);
 	}
 
+	[Fact]
+	public void ADriveScannedOnlyWhenAsked_IsLeftAlone_UnlessThisScanIsAsked() {
+		Photo("a.png");
+		Photo("b.jpg");
+		Scanned(Plan()); // its last scan, when it was scanned automatically (or asked)
+		string drive = AgentConfig.DriveOf(photos)!;
+		AgentConfig cfg = Config();
+		cfg.OnRequestDrives.Add(drive.ToLowerInvariant());
+		Photo("c.png"); // a change it doesn't look at
+
+		ListingPlan resting = ListingPlan.Make(Settings(), cfg, DateTime.UtcNow, CancellationToken.None);
+		RootPlan r = Assert.Single(resting.Roots);
+		Assert.Equal(ListingMode.Resting, r.Mode);
+		Assert.True(resting.NothingChanged);
+		Assert.Equal(2, r.Listing!.Unchanged.Count); // its files as its last scan found them still count
+		Assert.Empty(r.Listing.Listed);
+		Assert.False(resting.MayRead!(Path.Combine(photos, "a.png")));
+		Assert.True(resting.MayRead!(Path.Combine(dir, "elsewhere.png"))); // only its scanned folders rest
+
+		ListingPlan asked = ListingPlan.Make(Settings(), cfg, DateTime.UtcNow, CancellationToken.None, new[] { drive });
+		Assert.NotEqual(ListingMode.Resting, Assert.Single(asked.Roots).Mode);
+		Assert.Null(asked.MayRead);
+	}
+
+	[Theory]
+	[InlineData(@"D:\Archive\a.jpg", @"d:\", true)]
+	[InlineData(@"D:\", @"D:", true)]
+	[InlineData(@"C:\Pictures\a.jpg", @"D:\", false)]
+	public void OnRequestDrives_AreMatchedByDrive(string path, string drive, bool onRequest) =>
+		Assert.Equal(onRequest, new AgentConfig { OnRequestDrives = new() { drive } }.IsOnRequest(path));
+
 	[Theory]
 	[InlineData(@"C:\Photos\2019", @"C:\Photos", true)]
 	[InlineData(@"C:\Photos", @"C:\Photos\", true)]

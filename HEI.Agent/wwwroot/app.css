@@ -599,6 +599,10 @@ button { font: inherit; color: inherit; }
 .agent-banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--warn-bg); color: var(--warn); padding: 8px 12px; border-radius: 6px; margin: 8px 0 0; }
 .agent-banner.down { background: var(--alert-bg); color: var(--alert); }
 .agent-banner .btn { padding: 3px 12px; text-decoration: none; }
+/* A drive scanned only when asked: its scan button, on its own page. */
+.rest-strip { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); padding: 8px 12px; border-radius: 6px; margin: 12px 0 0; }
+.rest-strip > span { flex: 1 1 280px; }
+.rest-strip .btn { padding: 3px 12px; }
 .pause-menu { width: 250px; }
 
 /* Right-click menu on folders: the theme menu's look, at the pointer. */

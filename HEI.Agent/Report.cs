@@ -108,6 +108,8 @@ namespace HEI.Agent {
 
 		/// <summary>An audio fingerprint was made for a video in the report: the database is worth saving again.</summary>
 		public bool AudioAdded { get; private set; }
+		/// <summary>False for a video on a resting drive (<see cref="ScanEngine.MayRead"/>): it isn't decoded.</summary>
+		public Func<string, bool>? MayRead { get; init; }
 
 		public ScanFingerprints(string? embeddingCacheKey, bool withAi, CancellationToken ct = default) {
 			entries = new Dictionary<string, FileEntry>(StringComparer.OrdinalIgnoreCase);
@@ -132,7 +134,9 @@ namespace HEI.Agent {
 		uint[]? Audio(string path) {
 			if (!entries.TryGetValue(path, out FileEntry? e) || e.IsImage)
 				return null;
-			if (e.AudioFingerprint == null && !e.Flags.Any(EntryFlags.NoAudioTrack | EntryFlags.AudioFingerprintError | EntryFlags.SilentAudioTrack)) {
+			// A video on a resting drive keeps the fingerprint it has, if any: it isn't decoded now.
+			if (e.AudioFingerprint == null && MayRead?.Invoke(path) != false &&
+					!e.Flags.Any(EntryFlags.NoAudioTrack | EntryFlags.AudioFingerprintError | EntryFlags.SilentAudioTrack)) {
 				ScanEngine.ExtractAudioFingerprint(e, ct);
 				AudioAdded |= e.AudioFingerprint != null;
 			}
@@ -189,11 +193,32 @@ namespace HEI.Agent {
 		internal const float SameSoundtrackPercent = 90f;
 
 		/// <param name="hashes">The content hashes the last scan kept (<see cref="ContentHashes.Load"/>); none kept when null.</param>
-		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null) {
-			hashes ??= new ContentHashes();
+		/// <param name="mayRead">False for a file on a resting drive (<see cref="ScanEngine.MayRead"/>): judged from what the scan knows, never opened.</param>
+		/// <param name="known">The files the scan listed: a resting drive's folders are known from it, not listed again.</param>
+		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null,
+			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null) {
+			Func<string, bool>? before = readable;
+			ILookup<string, string>? knownBefore = knownByFolder;
+			readable = mayRead;
+			knownByFolder = mayRead == null ? null : (known ?? Array.Empty<string>()).Where(p => !mayRead(p))
+				.ToLookup(p => Path.GetDirectoryName(p) ?? "", StringComparer.OrdinalIgnoreCase);
+			try { return BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes()); }
+			finally { readable = before; knownByFolder = knownBefore; }
+		}
+
+		/// <summary>This report's <c>mayRead</c>: a file on a resting drive isn't checked, hashed or opened for its EXIF.</summary>
+		[ThreadStatic] static Func<string, bool>? readable;
+		[ThreadStatic] static ILookup<string, string>? knownByFolder;
+		internal static bool CanRead(string path) => readable?.Invoke(path) ?? true;
+		/// <summary>The files the scan knows in a resting drive's folder (it isn't listed).</summary>
+		internal static IEnumerable<string> KnownIn(string folder) => knownByFolder?[Path.TrimEndingDirectorySeparator(folder)] ?? Enumerable.Empty<string>();
+		/// <summary>In a cloud-synced folder; a file on a resting drive isn't asked.</summary>
+		static bool Synced(string path) => CanRead(path) && CloudFiles.IsSynced(path);
+
+		static List<ReportGroup> BuildReadable(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes hashes) {
 			var bursts = new BurstSeries();
 			List<List<DuplicateItem>> members = duplicates.GroupBy(d => d.GroupId)
-				.Select(g => g.Where(d => File.Exists(d.Path)).ToList())
+				.Select(g => g.Where(d => !CanRead(d.Path) || File.Exists(d.Path)).ToList())
 				.ToList();
 			GatherSplitCopies(members, hashes, fingerprints);
 			return members
@@ -354,7 +379,7 @@ namespace HEI.Agent {
 				(float shown, bool byAi) = Alike(i, keep, relation, fingerprints);
 				reportItems.Add(new ReportItem(i.Path, Path.GetFileName(i.Path), Path.GetDirectoryName(i.Path) ?? "", i.SizeLong, w, h, i.Format,
 					i.Duration.TotalSeconds, i.BitRateKbs, i.Fps, i.DateModified.ToUniversalTime(), shown, byAi,
-					relation, relation == "keep", suggested, CloudFiles.IsSynced(i.Path)));
+					relation, relation == "keep", suggested, Synced(i.Path)));
 			}
 			string kind = reportItems.All(i => i.Relation is "keep" or "identical") ? "identical"
 				: reportItems.Any(i => i.Suggested) ? "copies" : "similar";
@@ -447,7 +472,7 @@ namespace HEI.Agent {
 			var top = items.Where(i => i.FrameSizeInt == best).ToList();
 			if (top.Count == 1)
 				return (top[0], $"highest resolution ({top[0].FrameSize?.Replace("x", " × ")})");
-			var withExif = top.Where(i => ExifReader.TryGetDateTaken(i.Path, out _)).ToList();
+			var withExif = top.Where(i => CanRead(i.Path) && ExifReader.TryGetDateTaken(i.Path, out _)).ToList();
 			if (withExif.Count == 1)
 				return (withExif[0], "the camera original (the only copy with its capture date)");
 			if (withExif.Count > 1) top = withExif;
@@ -496,7 +521,7 @@ namespace HEI.Agent {
 		/// </summary>
 		static DuplicateItem PreferOriginalLooking(List<DuplicateItem> items) =>
 			items
-				.OrderBy(i => CloudFiles.IsSynced(i.Path) ? 0 : 1)
+				.OrderBy(i => Synced(i.Path) ? 0 : 1)
 				.ThenBy(i => TransientFolders.Any(f => (i.Path.ToLowerInvariant() + "\\").Contains(f)) ? 1 : 0)
 				.ThenBy(i => CopyMarkers.Any(m => Path.GetFileName(i.Path).Contains(m, StringComparison.OrdinalIgnoreCase)) ? 1 : 0)
 				.ThenBy(i => i.DateModified)
@@ -550,6 +575,12 @@ namespace HEI.Agent {
 
 			/// <summary>The hash kept for the file when it hasn't changed since, otherwise a new one; null when it can't be read.</summary>
 			string? HashOf(string path) {
+				// On a resting drive: the hash kept from its last scan, taken on trust; none, and it isn't hashed now.
+				if (!CanRead(path)) {
+					if (!earlier.TryGetValue(path, out Stored? kept)) return null;
+					now[path] = kept;
+					return kept.Hash;
+				}
 				try {
 					var file = new FileInfo(path);
 					if (!file.Exists) return null;

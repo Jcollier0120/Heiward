@@ -88,6 +88,18 @@ public sealed class AutoCleanTests : IDisposable {
 	// ------------------------------------------------------------------ duplicates
 
 	[Fact]
+	public void A_copy_on_a_drive_scanned_only_on_request_waits_for_you() {
+		// Cleaning it up would wake the drive the user asked Heiward to leave alone.
+		ReportGroup g = PlainCopy("a", keepFolder: @"C:\Pictures", copyFolder: @"D:\Archive");
+		AgentConfig cfg = Config();
+		cfg.OnRequestDrives.Add(@"d:\");
+		AutoPlan plan = AutoCleaner.Plan(cfg, ReportOf(g), null, NoDecisions, State(("g:a", Now.AddDays(-30))), Now);
+		Assert.Null(plan.Groups["a"].DueUtc);
+		Assert.Contains("only when you ask", plan.Groups["a"].Reason);
+		Assert.Empty(plan.GroupTargets);
+	}
+
+	[Fact]
 	public void A_plain_copy_goes_once_it_has_been_listed_long_enough() {
 		ReportGroup g = PlainCopy("a");
 		AutoPlan plan = AutoCleaner.Plan(Config(), ReportOf(g), null, NoDecisions, State(("g:a", Now.AddDays(-4))), Now);

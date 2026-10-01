@@ -109,6 +109,23 @@ namespace HEI.Agent {
 		/// <see cref="Folders"/>: a listed folder inside one is skipped, with a note.
 		/// </summary>
 		public List<string> ExcludeFolders { get; set; } = new();
+		/// <summary>
+		/// Drives scanned only when you ask, from the drive's own page ("D:\"): scheduled scans and the home
+		/// page's Scan now leave them alone, not reading them at all, so an archive disk can sleep. Their
+		/// photos and videos as their last scan found them still count: their sets stay listed, and a copy
+		/// of one elsewhere is still found.
+		/// </summary>
+		public List<string> OnRequestDrives { get; set; } = new();
+
+		/// <summary>The path is on one of <see cref="OnRequestDrives"/>.</summary>
+		public bool IsOnRequest(string path) => OnRequestDrives.Count > 0 && DriveOf(path) is { } drive &&
+			OnRequestDrives.Any(d => string.Equals(DriveOf(d), drive, StringComparison.OrdinalIgnoreCase));
+
+		/// <summary>A path's drive as these settings name it: "D:\".</summary>
+		public static string? DriveOf(string path) {
+			try { return Path.GetPathRoot(Path.GetFullPath(path))?.ToUpperInvariant(); }
+			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
+		}
 		/// <summary>File types to leave out, e.g. ".heic" (HEIC decodes through FFmpeg, which is ~5x faster than Windows' codec).</summary>
 		public List<string> ExcludeExtensions { get; set; } = new();
 		/// <summary>auto (the NPU when there is one), cpu, or npu.</summary>

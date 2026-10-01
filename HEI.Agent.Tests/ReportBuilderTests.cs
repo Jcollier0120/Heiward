@@ -370,6 +370,21 @@ public sealed class ReportBuilderTests : IDisposable {
 		Assert.Equal(versions, LanguageVersions.ByName(a, b));
 
 	[Fact]
+	public void AFileOnADriveScannedOnlyWhenAsked_IsJudgedWithoutTouchingIt() {
+		// The archive copy isn't on disk any more, but its drive isn't to be read: the scan's
+		// knowledge of it stands, so it isn't dropped for being missing, nor hashed, nor opened.
+		var keep = Photo(@"Pictures\IMG_2001.jpg", 4032, 3024, Bytes(9000, 1), modified: new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+		var archived = Photo(@"Archive\IMG_2001.jpg", 4032, 3024, Bytes(9000, 1), gray: 99.9f, modified: new DateTime(2021, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+		File.Delete(archived.Path);
+		bool Readable(string p) => !p.Contains(@"\Archive\", StringComparison.OrdinalIgnoreCase);
+
+		ReportGroup g = Assert.Single(ReportBuilder.Build(new[] { keep, archived }, fingerprints, mayRead: Readable, known: new[] { keep.Path, archived.Path }));
+		Assert.Equal(keep.Path, g.KeepPath);
+		Assert.Equal("resaved", g.Items.Single(i => i.Path == archived.Path).Relation); // not "identical": its bytes weren't read
+		Assert.Empty(ReportBuilder.Build(new[] { keep, archived }, fingerprints)); // read as usual, the missing copy leaves
+	}
+
+	[Fact]
 	public void NumberedCopies_OfOneShot_AreStillCopies() {
 		// "(1)" and " - Copy" are the same shot, not the next one; IMG_1235 next to them makes a series.
 		byte[] content = Bytes(8000, 1);

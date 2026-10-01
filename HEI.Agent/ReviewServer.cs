@@ -29,6 +29,8 @@ namespace HEI.Agent {
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
+	/// <param name="OnRequest">Scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>), or automatically again.</param>
+	sealed record DriveRequest(string Root, bool OnRequest = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
 
@@ -193,6 +195,31 @@ namespace HEI.Agent {
 				cfg.ExcludeFolders = saved.ExcludeFolders;
 				AgentPaths.AppendLog($"folder {(request.Include ? "included" : "left out")} on the page: {request.Path}");
 				return Results.Json(result, AgentConfig.Json);
+			});
+			// Right-click a drive: "Scan only when I ask" / "Scan automatically again", saved to onRequestDrives.
+			app.MapPost("/api/drives/on-request", (DriveRequest request) => {
+				string? drive = AgentConfig.DriveOf(request.Root ?? "");
+				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
+				AgentConfig saved = AgentConfig.Load();
+				saved.OnRequestDrives.RemoveAll(d => string.Equals(AgentConfig.DriveOf(d), drive, StringComparison.OrdinalIgnoreCase));
+				if (request.OnRequest) saved.OnRequestDrives.Add(drive);
+				saved.Save();
+				cfg.OnRequestDrives = saved.OnRequestDrives;
+				AgentPaths.AppendLog($"{drive} {(request.OnRequest ? "scanned only on request" : "scanned automatically again")}, from the page");
+				return Results.Json(new {
+					message = request.OnRequest
+						? "scanned only when you ask, from its page. Scheduled scans leave it alone, and its sets stay listed."
+						: "scanned automatically again, from the next scan.",
+				});
+			});
+			// "Scan this drive now", on the page of a drive scanned only when asked.
+			app.MapPost("/api/scan/drive", (DriveRequest request) => {
+				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
+				string? drive = AgentConfig.DriveOf(request.Root ?? "");
+				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
+				StartDetached("scan", "--drive", drive);
+				return Results.Accepted();
 			});
 			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
 			app.MapGet("/api/dev", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));

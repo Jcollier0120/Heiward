@@ -76,7 +76,9 @@ namespace HEI.Agent {
 		static Dictionary<string, List<long>>? List(string folder) {
 			try {
 				var series = new Dictionary<string, List<long>>(StringComparer.Ordinal);
-				foreach (string file in Directory.EnumerateFiles(folder)) {
+				// A resting drive's folder isn't listed: the files its last scan found stand for it.
+				IEnumerable<string> files = ReportBuilder.CanRead(folder) ? Directory.EnumerateFiles(folder) : ReportBuilder.KnownIn(folder);
+				foreach (string file in files) {
 					if (!FileUtils.IsMediaExtension(Path.GetExtension(file)) || Parse(Path.GetFileNameWithoutExtension(file)) is not { } shot)
 						continue;
 					if (!series.TryGetValue(shot.Series, out List<long>? numbers))

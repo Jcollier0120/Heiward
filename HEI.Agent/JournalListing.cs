@@ -29,6 +29,8 @@ namespace HEI.Agent {
 		Changed,
 		/// <summary>Nothing that a scan lists changed: the last listing stands, and the disk isn't read.</summary>
 		Unchanged,
+		/// <summary>A drive scanned only when you ask (<see cref="AgentConfig.OnRequestDrives"/>): not touched at all, not even its journal; its last listing stands.</summary>
+		Resting,
 	}
 
 	/// <summary>One scanned folder (usually a drive): how this scan lists it, and why.</summary>
@@ -70,8 +72,19 @@ namespace HEI.Agent {
 		public List<RootPlan> Roots { get; } = new();
 		string scanKey = "", listingKey = "";
 
-		/// <summary>Nothing a scan sees changed, on any drive.</summary>
-		public bool NothingChanged => Roots.Count > 0 && Roots.All(r => r.Mode == ListingMode.Unchanged);
+		/// <summary>Nothing a scan sees changed, on any drive (a resting one isn't looked at).</summary>
+		public bool NothingChanged => Roots.Count > 0 && Roots.All(r => r.Mode is ListingMode.Unchanged or ListingMode.Resting);
+
+		/// <summary>
+		/// For <see cref="ScanEngine.MayRead"/> and the report: false for a file on a resting drive, which this
+		/// scan mustn't read nor ask the disk about. Null when no drive rests.
+		/// </summary>
+		public Func<string, bool>? MayRead {
+			get {
+				var resting = Roots.Where(r => r.Mode == ListingMode.Resting).Select(r => r.Root).ToList();
+				return resting.Count == 0 ? null : path => !resting.Any(root => IsUnder(path, root));
+			}
+		}
 
 		/// <summary>The last scan had these same settings and this same build: its report stands as it is.</summary>
 		public bool SameScanAsLast => Stored.Load().ScanKey == scanKey;
@@ -84,11 +97,13 @@ namespace HEI.Agent {
 		public string Describe() => string.Join("; ", Roots.Select(r => $"{r.Root} {r.Mode switch {
 			ListingMode.Unchanged => r.Changes == 0 ? "unchanged" : $"unchanged ({r.Changes:N0} changes elsewhere)",
 			ListingMode.Changed => $"{r.ChangedFolders:N0} folder(s) listed again",
+			ListingMode.Resting => "left alone (scanned when you ask)",
 			_ => "walked: " + r.Why,
 		}}"));
 
 		/// <summary>Plans this scan's listing of <paramref name="settings"/>' folders.</summary>
-		public static ListingPlan Make(Settings settings, AgentConfig cfg, DateTime nowUtc, CancellationToken ct) {
+		/// <param name="scanNow">Drives scanned only when asked that this scan is asked to read ("D:\"); the others rest.</param>
+		public static ListingPlan Make(Settings settings, AgentConfig cfg, DateTime nowUtc, CancellationToken ct, IReadOnlyCollection<string>? scanNow = null) {
 			string key = ListingKey(settings);
 			var plan = new ListingPlan { scanKey = ScanKey(settings), listingKey = key };
 			Stored stored = Stored.Load();
@@ -99,6 +114,15 @@ namespace HEI.Agent {
 				foreach (string root in settings.IncludeList) {
 					var r = new RootPlan { Root = root, FullWalkUtc = nowUtc };
 					plan.Roots.Add(r);
+					stored.Roots.TryGetValue(root, out StoredRoot? last);
+					// Scanned only when asked, and not asked now: nothing on the drive is touched, not even its
+					// journal. Its photos and videos as its last scan listed them still count.
+					if (cfg.IsOnRequest(root) && !(scanNow ?? Array.Empty<string>()).Any(d => string.Equals(AgentConfig.DriveOf(d), AgentConfig.DriveOf(root), StringComparison.OrdinalIgnoreCase))) {
+						r.Mode = ListingMode.Resting;
+						List<string> known = last != null && StoredListing.Load(last.File) is { } kept ? kept.PathsOutside(new HashSet<string>()) : new();
+						r.Listing = new ScanEngine.RootListing(Array.Empty<FileInfo>(), known);
+						continue;
+					}
 					string drive = Path.GetPathRoot(root) ?? root;
 					if (!volumes.TryGetValue(drive, out Volume? volume))
 						volumes[drive] = volume = Volume.Open(drive);
@@ -109,7 +133,6 @@ namespace HEI.Agent {
 					}
 					r.JournalId = volume.Journal.Id;
 					r.Usn = volume.Journal.NextUsn;
-					stored.Roots.TryGetValue(root, out StoredRoot? last);
 					Decide(r, last, key, volume, settings, rules, scanned, nowUtc, ct);
 				}
 			}
@@ -213,13 +236,12 @@ namespace HEI.Agent {
 				if (owner != null) byRoot[owner].Add((path, size, modifiedUtc(path) ?? DateTime.MinValue));
 			}
 			foreach (RootPlan r in Roots) {
-				if (r.JournalId == null) {
-					stored.Roots.Remove(r.Root);
-					continue;
-				}
+				if (r.Mode == ListingMode.Resting) continue; // not read: its last listing stands as it was
+				// A drive without a journal keeps its listing too: should it be scanned only on request, a
+				// scheduled scan still counts its files. It's walked again whenever it's scanned.
 				string file = stored.Roots.TryGetValue(r.Root, out StoredRoot? last) ? last.File : StoredListing.NewFile();
 				StoredListing.Save(file, byRoot[r]);
-				stored.Roots[r.Root] = new StoredRoot(r.JournalId.Value, r.Usn, listingKey, r.Mode == ListingMode.Walk ? nowUtc : r.FullWalkUtc, file);
+				stored.Roots[r.Root] = new StoredRoot(r.JournalId, r.Usn, listingKey, r.Mode == ListingMode.Walk ? nowUtc : r.FullWalkUtc, file);
 			}
 			stored.ScanKey = scanKey;
 			stored.Save();
@@ -308,7 +330,8 @@ namespace HEI.Agent {
 		}
 
 		/// <param name="File">The listing's file in <see cref="StoredListing.Folder"/>.</param>
-		internal sealed record StoredRoot(ulong JournalId, long Usn, string Key, DateTime FullWalkUtc, string File);
+		/// <param name="JournalId">Null for a drive without a journal: its listing is kept, but it's walked every time it's scanned.</param>
+		internal sealed record StoredRoot(ulong? JournalId, long Usn, string Key, DateTime FullWalkUtc, string File);
 
 		/// <summary>Where each scanned folder's journal was read up to, and its listing's file (listing\index.json).</summary>
 		sealed class Stored {

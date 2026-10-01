@@ -150,6 +150,13 @@ namespace HEI.Core {
 		/// </summary>
 		public Func<string, RootListing?>? ListRoot { get; set; }
 
+		/// <summary>
+		/// False for a file this search must not read, nor even ask the disk about: Heiward's drives that are
+		/// scanned only on request, which may be asleep. Such a file is compared as the database has it,
+		/// and one the database can't compare yet waits for its drive's own scan. Null: every file may be read.
+		/// </summary>
+		public Func<string, bool>? MayRead { get; set; }
+
 		/// <param name="Listed">Files listed now, as the walk would have (their sizes and dates came with the listing).</param>
 		/// <param name="Unchanged">Paths of files known to be exactly as the database has them.</param>
 		public sealed record RootListing(IReadOnlyList<FileInfo> Listed, IReadOnlyCollection<string> Unchanged);
@@ -777,7 +784,8 @@ namespace HEI.Core {
 
 			var roots = new List<string>();
 			foreach (string path in Settings.IncludeList) {
-				if (Directory.Exists(path)) {
+				// A folder the caller lists itself isn't asked about either (its drive may be asleep).
+				if (ListRoot?.Invoke(path) != null || Directory.Exists(path)) {
 					roots.Add(path);
 					continue;
 				}
@@ -916,7 +924,7 @@ namespace HEI.Core {
 			// a copy, not a move — leave it and treat the new path as a new file.)
 			List<FileEntry>? missing = null;
 			foreach (var c in sameSize)
-				if (!File.Exists(c.Path))
+				if ((MayRead?.Invoke(c.Path) ?? true) && !File.Exists(c.Path)) // one that mustn't be read counts as still there
 					(missing ??= new List<FileEntry>()).Add(c);
 			if (missing == null)
 				return false;
@@ -1212,6 +1220,15 @@ namespace HEI.Core {
 							entry.invalid = true;
 							if (!wasInvalid && skipReason != null)
 								LogExcludedFile(entry, skipReason);
+							if (reportProgress)
+								CompleteEntry(entry, driveCounter);
+							return ValueTask.CompletedTask;
+						}
+
+						// A file this search mustn't read (MayRead): compared as the database has it, with
+						// nothing backfilled or sampled; one with too little data waits for its drive's scan
+						// (the compare leaves out entries without a usable snapshot).
+						if (MayRead?.Invoke(entry.Path) == false) {
 							if (reportProgress)
 								CompleteEntry(entry, driveCounter);
 							return ValueTask.CompletedTask;

@@ -1705,9 +1705,10 @@ function driveCard(d) {
     if (dup.reclaim) chips.append(el('span', 'chip good', bytes(dup.reclaim) + ' to free'));
     if (dup.lookalikes) chips.append(el('span', 'chip quiet', count(dup.lookalikes, 'look-alike set', 'look-alike sets')));
     if (!dup.copies && !dup.lookalikes) chips.append(el('span', 'chip good', 'No duplicates'));
+    if (d.onRequest) chips.append(el('span', 'chip quiet', 'Scanned when you ask'));
     scan.append(chips);
   } else if (d.scanned) {
-    scan.append(el('div', 'muted small', 'Scanned; details appear after the next scan.'));
+    scan.append(el('div', 'muted small', d.onRequest ? 'Scanned when you ask: open it to scan it.' : 'Scanned; details appear after the next scan.'));
   } else {
     scan.append(el('div', 'muted small', d.type === 'removable'
       ? 'Not scanned. USB drives come and go: add it under "folders" in the settings to include it.'
@@ -1715,6 +1716,8 @@ function driveCard(d) {
   }
   card.append(scan);
   card.addEventListener('click', () => go(d.root));
+  // Right-click: scan the drive only when asked, or automatically again.
+  if (d.scanned) card.addEventListener('contextmenu', (e) => openFolderMenu(e, { name: d.name, path: d.root, drive: d }));
   return card;
 }
 
@@ -2012,9 +2015,17 @@ function openFolderMenu(e, node) {
   item('Open', () => go(node.path));
   const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
   let hint = null;
+  const isDrive = card && sameFolder(card.root, node.path) && card.type !== 'folder';
   if (node.exempt) {
     item('Include in scans', () => overrideFolder(node.path, true));
     hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
+  } else if (isDrive && card.onRequest) {
+    item('Scan this drive now', () => scanDrive(card.root));
+    item('Scan automatically again', () => setOnRequest(card.root, false));
+    hint = 'Scanned only when you ask: scheduled scans and Scan now leave it alone.';
+  } else if (isDrive) {
+    item('Scan only when I ask', () => setOnRequest(card.root, true));
+    hint = 'Scheduled scans and Scan now would leave this drive alone, so a disk that sleeps stays asleep. Its sets stay listed; scan it from its page.';
   } else if (card && card.type !== 'folder') {
     item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
   } else {
@@ -2054,6 +2065,20 @@ function setupFolderMenu() {
       closeFolderMenu(false);
     }
   });
+}
+
+/** A drive scanned only when asked (onRequestDrives), or automatically again. */
+async function setOnRequest(root, onRequest) {
+  try {
+    const r = await post('/api/drives/on-request', { root, onRequest });
+    await refresh(true);
+    showNotice(nameOf(root) + ': ' + r.message, onRequest ? null : { label: 'Scan now', run: scanNow });
+  } catch (e) { showError(e.message); }
+}
+
+/** Scans a drive that's scanned only when asked, now (and everything else as usual). */
+async function scanDrive(root) {
+  try { await post('/api/scan/drive', { root }); refresh(true); } catch (e) { showError(e.message); }
 }
 
 /** Includes the folder in scans, or leaves it out; asks first when that means removing a wider rule of the user's. */
@@ -2108,6 +2133,19 @@ async function renderContent() {
   title.append(chips);
   head.append(title);
   frag.append(head);
+  // A drive scanned only when asked: its scan is here, on its own page.
+  if (d && d.onRequest) {
+    const strip = el('div', 'rest-strip');
+    strip.append(el('span', null, (d.type === 'folder' ? 'This folder\'s drive' : 'This drive') +
+      ' is scanned only when you ask: scheduled scans and Scan now leave it alone, and its sets are from its last scan.'));
+    const now = el('button', 'btn', state.scan.running ? 'Scanning…' : 'Scan this drive now');
+    now.disabled = state.scan.running;
+    now.addEventListener('click', () => scanDrive(d.root));
+    const auto = el('button', 'btn secondary', 'Scan automatically again');
+    auto.addEventListener('click', () => setOnRequest(d.root, false));
+    strip.append(now, auto);
+    frag.append(strip);
+  }
 
   if (data.exempt) {
     const panel = el('div', 'exempt-panel');
