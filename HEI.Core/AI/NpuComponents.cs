@@ -51,10 +51,23 @@ namespace HEI.Core.AI {
 		const string ModelSha256 = "83141175ec78b4ff9a2bb58a4c7c264ba0054d1c2e122e5a8114b79a8d4179ea";
 		const string ModelUrl = "https://huggingface.co/Xenova/dinov2-small/resolve/main/onnx/model.onnx";
 
-		/// <summary>The NPU graph's fixed batch size; <see cref="OnnxEmbedder"/> pads the last chunk.</summary>
-		public const int NpuBatch = 8;
+		/// <summary>
+		/// The NPU graph's fixed batch size (<see cref="NpuPack.Batch"/>); <see cref="OnnxEmbedder"/> pads the
+		/// last chunk. HEI_NPU_BATCH overrides it, to measure others.
+		/// </summary>
+		public static int NpuBatch =>
+			int.TryParse(Environment.GetEnvironmentVariable("HEI_NPU_BATCH"), out int batch) && batch is > 0 and <= 64 ? batch : Pack?.Batch ?? 8;
 
 		public static string ModelPath => Path.Combine(AiComponents.AiFolder, ModelFileName);
+
+		/// <summary>
+		/// The scan's pace, which the NPU follows from its next run on (<see cref="NpuPack.RunConfig"/>):
+		/// true for a scan someone waits for, false in the background. True unless the agent says otherwise.
+		/// </summary>
+		public static volatile bool FullSpeed = true;
+
+		/// <summary>Run options for the NPU at either pace, or null when the pack has none.</summary>
+		internal static Dictionary<string, string>? RunConfig(bool fullSpeed) => Pack?.RunConfig(fullSpeed);
 
 		/// <summary>
 		/// Developer test modes (environment variable HEI_NPU_TEST), which exercise a pack on a PC without
@@ -237,6 +250,13 @@ namespace HEI.Core.AI {
 		/// False: the plugin keeps its own cache in <see cref="CacheFolderName"/> (a provider option).
 		/// </summary>
 		public virtual bool UsesEpContextModel => false;
+		/// <summary>
+		/// Images per NPU run. NPUs only run the batch size their graph was compiled for, so a smaller last
+		/// chunk is padded. 8 where it hasn't been measured.
+		/// </summary>
+		public virtual int Batch => 8;
+		/// <summary>Per-run options that set how hard the NPU works at either pace; null to leave it to the plugin.</summary>
+		public virtual Dictionary<string, string>? RunConfig(bool fullSpeed) => null;
 		/// <summary>The pack's folders under {ai}, and one file there that shows the pack is complete.</summary>
 		public abstract IReadOnlyList<string> Folders { get; }
 		public abstract string KeyFile { get; }
@@ -283,12 +303,26 @@ namespace HEI.Core.AI {
 		public override string ModelKey => QnnModelKey;
 		public override string CacheFolderName => $"qnn-cache-{PackageVersion}";
 		public override bool UsesEpContextModel => true;
+		/// <summary>
+		/// One image per run: the HTP's per-run cost is small next to the model, and its compiler handles a
+		/// single image best. On a Snapdragon X2: 2.12 ms per image at batch 1, 4.91 at 2, 2.96 at 4, 2.52 at
+		/// 8, 2.64 at 16, 5.09 at 32, with identical embeddings. Batch 1 also never pads, and compiles in half the time.
+		/// </summary>
+		public override int Batch => 1;
 		public override IReadOnlyList<string> Folders => new[] { "qnn", CacheFolderName };
 		public override string KeyFile => Path.Combine("qnn", "onnxruntime_providers_qnn.dll");
 		public override bool IsInstalled => QnnFiles.All(f => File.Exists(Path.Combine(QnnFolder, f)));
 		public override string PluginLibraryPath() => Path.Combine(QnnFolder, "onnxruntime_providers_qnn.dll");
 
-		/// <summary>FP16 on the HTP, burst clocks while a scan runs.</summary>
+		/// <summary>
+		/// The HTP's clocks follow the scan's pace, run by run: burst when someone waits, power_saver in the
+		/// background. Measured on a Snapdragon X2 (batch 1): 2.12 ms per image in burst, 3.20 in power_saver,
+		/// which still embeds 300 images a second, several times what the decoders hand it.
+		/// </summary>
+		public override Dictionary<string, string> RunConfig(bool fullSpeed) =>
+			new() { ["qnn.htp_perf_mode"] = fullSpeed ? "burst" : "power_saver" };
+
+		/// <summary>FP16 on the HTP; burst clocks until the first run says otherwise (<see cref="RunConfig"/>).</summary>
 		public override Dictionary<string, string> ProviderOptions(string cacheFolder) => new() {
 			["backend_path"] = Path.Combine(QnnFolder, "QnnHtp.dll"),
 			["htp_performance_mode"] = "burst",

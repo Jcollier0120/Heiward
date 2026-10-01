@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Diagnostics;
 using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
@@ -44,11 +45,26 @@ namespace HEI.Core.AI {
 	/// the AI pass abstains for them.
 	/// </summary>
 	sealed class EmbeddingPipeline : IEmbeddingFrameSink, IDisposable {
+		/// <summary>
+		/// How long a static (NPU) batch that isn't full waits for frames to fill it. The NPU does a full
+		/// batch's work whatever it holds, and the decoders deliver a frame every few milliseconds while
+		/// they're busy, so a short wait saves NPU runs. Shorter than the decoders' gaps on a big file, so
+		/// a lone frame doesn't wait long.
+		/// </summary>
+		static readonly TimeSpan FillWait = TimeSpan.FromMilliseconds(100);
+		/// <summary>
+		/// How long the queue may stay empty before the NPU lock goes back to other NPU tools: shorter gaps are
+		/// the decoders between frames, and releasing and retaking the lock for each costs file operations.
+		/// The lease's own limit (2 s) still applies.
+		/// </summary>
+		static readonly TimeSpan IdleGrace = TimeSpan.FromMilliseconds(100);
+
 		readonly BlockingCollection<(FileEntry entry, double key, byte[] rgb)> queue = new(boundedCapacity: 256);
 		readonly OnnxEmbedder embedder;
 		readonly UnionEmbeddingStore store;
 		readonly CancellationToken token;
 		readonly Task worker;
+		readonly Stopwatch sinceFirstFrame = new();
 		volatile bool faulted;
 		int embeddedCount;
 
@@ -89,6 +105,25 @@ namespace HEI.Core.AI {
 			return worker;
 		}
 
+		/// <summary>
+		/// Where the AI time went, for the scan's log: e.g. "AI on the NPU: 4,812 frames in 4,812 runs of 1
+		/// (0% padding); model 10.2 s, input 0.3 s, NPU lock 0.4 s over 31 turns; busy 13% of 78 s".
+		/// </summary>
+		public string Describe() {
+			EmbedderStats s = embedder.Stats;
+			double wall = sinceFirstFrame.Elapsed.TotalSeconds, model = EmbedderStats.Seconds(s.ModelTicks);
+			string runs = embedder.FixedBatch > 0
+				? $"{s.Runs:N0} runs of {embedder.FixedBatch} ({(s.Slots == 0 ? 0 : 1 - (double)s.Images / s.Slots):P0} padding)"
+				: $"{s.Runs:N0} runs";
+			string text = $"AI on the {embedder.DeviceName}: {s.Images:N0} frames in {runs}; " +
+				$"model {model:N1} s, input {EmbedderStats.Seconds(s.InputTicks):N2} s";
+			if (s.LockTurns > 0)
+				text += $", NPU lock {EmbedderStats.Seconds(s.LockTicks):N1} s over {s.LockTurns:N0} turns";
+			if (wall > 0)
+				text += $"; busy {model / wall:P0} of {wall:N0} s";
+			return text;
+		}
+
 		void WorkerLoop() {
 			var batchEntries = new List<(FileEntry entry, double key)>(OnnxEmbedder.MaxBatch);
 			var batchFrames = new List<byte[]>(OnnxEmbedder.MaxBatch);
@@ -96,21 +131,13 @@ namespace HEI.Core.AI {
 				while (!queue.IsCompleted) {
 					batchEntries.Clear();
 					batchFrames.Clear();
-					(FileEntry entry, double key, byte[] rgb) item;
 					try {
-						if (!queue.TryTake(out item)) {
-							// Nothing queued: the decoders are busy. Let other NPU tools in meanwhile.
-							embedder.YieldNpu();
-							item = queue.Take(token);
-						}
+						if (!Gather(batchEntries, batchFrames))
+							break; // completed and empty
 					}
-					catch (OperationCanceledException) { break; }
-					catch (InvalidOperationException) { break; } // completed and empty
-					batchEntries.Add((item.entry, item.key));
-					batchFrames.Add(item.rgb);
-					while (batchFrames.Count < OnnxEmbedder.MaxBatch && queue.TryTake(out item)) {
-						batchEntries.Add((item.entry, item.key));
-						batchFrames.Add(item.rgb);
+					catch (OperationCanceledException) {
+						ReturnBatchFrames();
+						break;
 					}
 
 					if (faulted) {
@@ -144,6 +171,48 @@ namespace HEI.Core.AI {
 						FramePool.Shared.Return(dropped.rgb);
 				}
 				catch (InvalidOperationException) { /* completed and empty — done */ }
+			}
+			finally {
+				sinceFirstFrame.Stop();
+			}
+		}
+
+		/// <summary>
+		/// The next batch: waits for a first frame (holding the NPU lock for <see cref="IdleGrace"/>, then
+		/// letting other NPU tools in), takes what else is queued, and gives a static batch that isn't full
+		/// <see cref="FillWait"/> to fill up. False once the queue is completed and empty.
+		/// </summary>
+		bool Gather(List<(FileEntry entry, double key)> entries, List<byte[]> frames) {
+			(FileEntry entry, double key, byte[] rgb) item;
+			if (!queue.TryTake(out item, (int)IdleGrace.TotalMilliseconds, token)) {
+				// Nothing queued for a while: the decoders are busy. Let other NPU tools in meanwhile.
+				embedder.YieldNpu();
+				try {
+					item = queue.Take(token);
+				}
+				catch (InvalidOperationException) { return false; } // completed and empty
+			}
+			sinceFirstFrame.Start(); // no-op after the first frame
+			Add(item);
+			while (frames.Count < OnnxEmbedder.MaxBatch && queue.TryTake(out item))
+				Add(item);
+
+			int batch = embedder.FixedBatch;
+			if (batch > 0 && frames.Count % batch != 0) {
+				var waited = Stopwatch.StartNew();
+				while (frames.Count % batch != 0) {
+					int left = (int)(FillWait - waited.Elapsed).TotalMilliseconds;
+					// A completed queue answers at once: the scan's last frames don't wait.
+					if (left <= 0 || !queue.TryTake(out item, left, token))
+						break;
+					Add(item);
+				}
+			}
+			return true;
+
+			void Add((FileEntry entry, double key, byte[] rgb) i) {
+				entries.Add((i.entry, i.key));
+				frames.Add(i.rgb);
 			}
 		}
 

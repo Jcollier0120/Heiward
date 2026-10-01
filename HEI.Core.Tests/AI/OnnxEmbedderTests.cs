@@ -79,6 +79,32 @@ public class OnnxEmbedderTests {
 	}
 
 	[Fact]
+	public void LargeBatches_RunInChunks_WithTheSameResults_AndAreCounted() {
+		using var embedder = new OnnxEmbedder(TestModels.TinyEmbedderPath);
+		byte[][] frames = Enumerable.Range(0, OnnxEmbedder.MaxBatch + 3).Select(i => PatternFrame(200 + i)).ToArray();
+		float[][] together = embedder.EmbedBatch(frames);
+		Assert.Equal(2, embedder.Stats.Runs); // 16, then 3, in the one reused input buffer
+		Assert.Equal(frames.Length, embedder.Stats.Images);
+		Assert.True(embedder.Stats.ModelTicks > 0);
+		for (int i = 0; i < frames.Length; i += 7)
+			Assert.Equal(embedder.EmbedBatch(new[] { frames[i] })[0], together[i]);
+	}
+
+	[Fact]
+	public async Task EmbeddingPipeline_SaysWhereTheTimeWent() {
+		var entry = new FileEntry { Folder = @"D:\media" };
+		entry.Path = @"D:\media\timed.mp4";
+		using var pipeline = new EmbeddingPipeline(TestModels.TinyEmbedderPath, new UnionEmbeddingStore(), CancellationToken.None);
+		for (int i = 0; i < 5; i++)
+			pipeline.SubmitFrame(entry, i, PatternFrame(60 + i));
+		await pipeline.CompleteAsync();
+		string summary = pipeline.Describe();
+		Assert.StartsWith("AI on the CPU: 5 frames in ", summary);
+		Assert.Contains("model ", summary);
+		Assert.DoesNotContain("NPU lock", summary); // only an NPU takes it
+	}
+
+	[Fact]
 	public void EmbedBatch_RejectsWrongFrameSize() {
 		using var embedder = new OnnxEmbedder(TestModels.TinyEmbedderPath);
 		Assert.Throws<ArgumentException>(() => embedder.EmbedBatch(new[] { new byte[100] }));

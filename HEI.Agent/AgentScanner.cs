@@ -142,6 +142,9 @@ namespace HEI.Agent {
 			var waiting = AutoCleaner.WaitingForUser(cfg, report, decisions, AutoCleanState.Load(), DateTime.UtcNow).Select(g => g.Key).ToHashSet();
 			var fresh = groups.Where(g => !known.Contains(g.Key) && waiting.Contains(g.Key)).ToList();
 			string summary = $"{groups.Count} group(s), {fresh.Count} new to review; {files:N0} files in {timer.Elapsed.TotalSeconds:N0} s, AI on {device}";
+			// Where the time went, so a slow scan says which part was slow.
+			if (engine.DecodeSummary is { } decoding) AgentPaths.AppendLog("  " + decoding);
+			if (engine.AiSummary is { } ai) AgentPaths.AppendLog("  " + ai);
 			AgentPaths.AppendLog("scan done: " + summary);
 			Console.Error.WriteLine("Scan done: " + summary);
 			if (auto is { DidSomething: true }) Console.Error.WriteLine("Automatic cleanup: " + auto.Describe("; "));
