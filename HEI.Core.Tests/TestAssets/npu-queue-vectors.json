@@ -1,0 +1,78 @@
+{
+  "about": "Shared test data for the NPU queue. Every implementation (Heiward's NpuLock.cs and the other NPU tools on this PC that use the same lock) must order these tickets and judge these heartbeats exactly as listed. Copy this file into an implementation's tests unchanged.",
+  "nowUs": 1790000000000000,
+  "order": [
+    {
+      "case": "one lane is first come, first served",
+      "tickets": [
+        "1-01789999990000000-300-c3c3c3c3.ticket",
+        "1-01789999970000000-100-a1a1a1a1.ticket",
+        "1-01789999980000000-200-b2b2b2b2.ticket"
+      ],
+      "expected": [
+        "1-01789999970000000-100-a1a1a1a1.ticket",
+        "1-01789999980000000-200-b2b2b2b2.ticket",
+        "1-01789999990000000-300-c3c3c3c3.ticket"
+      ]
+    },
+    {
+      "case": "a person waiting goes ahead of background work that came first",
+      "tickets": [
+        "1-01789999900000000-100-a1a1a1a1.ticket",
+        "0-01789999995000000-200-b2b2b2b2.ticket"
+      ],
+      "expected": [
+        "0-01789999995000000-200-b2b2b2b2.ticket",
+        "1-01789999900000000-100-a1a1a1a1.ticket"
+      ]
+    },
+    {
+      "case": "background work waiting 120 s or more counts as interactive, so it is served by arrival",
+      "tickets": [
+        "0-01789999995000000-200-b2b2b2b2.ticket",
+        "1-01789999880000000-100-a1a1a1a1.ticket",
+        "1-01789999881000000-300-c3c3c3c3.ticket"
+      ],
+      "expected": [
+        "1-01789999880000000-100-a1a1a1a1.ticket",
+        "0-01789999995000000-200-b2b2b2b2.ticket",
+        "1-01789999881000000-300-c3c3c3c3.ticket"
+      ]
+    },
+    {
+      "case": "same lane and time: lower pid first, then the nonce",
+      "tickets": [
+        "1-01789999990000000-200-a1a1a1a1.ticket",
+        "1-01789999990000000-100-ffffffff.ticket",
+        "1-01789999990000000-100-0000000a.ticket"
+      ],
+      "expected": [
+        "1-01789999990000000-100-0000000a.ticket",
+        "1-01789999990000000-100-ffffffff.ticket",
+        "1-01789999990000000-200-a1a1a1a1.ticket"
+      ]
+    },
+    {
+      "case": "anything that isn't a ticket is ignored",
+      "tickets": [
+        "1-01789999990000000-100-a1a1a1a1.ticket",
+        "2-01789999980000000-100-a1a1a1a1.ticket",
+        "1-1789999980000000-100-a1a1a1a1.ticket",
+        "1-01789999980000000-100-A1A1A1A1.ticket",
+        "1-01789999980000000-100-a1a1a1a1.ticket.tmp",
+        "owner.json"
+      ],
+      "expected": [
+        "1-01789999990000000-100-a1a1a1a1.ticket"
+      ]
+    }
+  ],
+  "dead": [
+    { "case": "fresh heartbeat, process gone: not dead yet", "ageMs": 1000, "pidAlive": false, "dead": false },
+    { "case": "late heartbeat, process alive: still waiting", "ageMs": 6000, "pidAlive": true, "dead": false },
+    { "case": "exactly 5 s late is not late", "ageMs": 5000, "pidAlive": false, "dead": false },
+    { "case": "late heartbeat, process gone: dead", "ageMs": 6000, "pidAlive": false, "dead": true },
+    { "case": "no heartbeat for over 15 s: dead even if the pid is alive (pids get reused)", "ageMs": 16000, "pidAlive": true, "dead": true },
+    { "case": "exactly 15 s is not dead while the process is alive", "ageMs": 15000, "pidAlive": true, "dead": false }
+  ]
+}

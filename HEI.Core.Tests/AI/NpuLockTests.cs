@@ -65,6 +65,85 @@ public sealed class NpuLockTests : IDisposable {
 		}
 	}
 
+	// ---------------------------------------------------------------- the NPU queue
+
+	/// <summary>The cases every implementation of the queue runs unchanged (a copy of the shared npu-queue-vectors.json).</summary>
+	static readonly JsonElement Vectors = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TestAssets", "npu-queue-vectors.json"))).RootElement;
+
+	[Fact]
+	public void OrdersTheLineLikeEveryOtherImplementation() {
+		long nowUs = Vectors.GetProperty("nowUs").GetInt64();
+		foreach (JsonElement c in Vectors.GetProperty("order").EnumerateArray()) {
+			var tickets = c.GetProperty("tickets").EnumerateArray().Select(t => NpuLock.ParseTicket(t.GetString()!)).OfType<NpuLock.Ticket>().ToList();
+			tickets.Sort((a, b) => NpuLock.CompareTickets(a, b, nowUs));
+			Assert.Equal(c.GetProperty("expected").EnumerateArray().Select(e => e.GetString()), tickets.Select(t => t.Name));
+		}
+	}
+
+	[Fact]
+	public void JudgesHeartbeatsLikeEveryOtherImplementation() {
+		foreach (JsonElement d in Vectors.GetProperty("dead").EnumerateArray()) {
+			bool alive = d.GetProperty("pidAlive").GetBoolean();
+			Assert.True(d.GetProperty("dead").GetBoolean() == NpuLock.IsDeadTicket(TimeSpan.FromMilliseconds(d.GetProperty("ageMs").GetInt32()), () => alive), d.GetProperty("case").GetString());
+		}
+	}
+
+	string QueueDir => NpuLock.QueueDirectoryFor(dir);
+	string[] Tickets() => Directory.Exists(QueueDir) ? Directory.GetFiles(QueueDir, "*.ticket") : [];
+
+	void HoldAsAnotherTool() {
+		Directory.CreateDirectory(dir);
+		File.WriteAllText(Path.Combine(dir, "owner.json"), $$"""{"pid":{{Environment.ProcessId}},"since":{{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}""");
+	}
+
+	static void Until(Func<bool> check) {
+		var sw = System.Diagnostics.Stopwatch.StartNew();
+		while (!check()) {
+			Assert.True(sw.Elapsed < TimeSpan.FromSeconds(10), "timed out waiting for the test condition");
+			Thread.Sleep(20);
+		}
+	}
+
+	[Fact]
+	public void ServesWaitersInLineOrder_APersonFirst() {
+		if (!OperatingSystem.IsWindows()) return;
+		HoldAsAnotherTool();
+		var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+		var threads = new List<Thread>();
+		foreach (var (label, interactive) in new[] { ("a", false), ("b", false), ("c", true) }) {
+			var t = new Thread(() => { using (NpuLock.Acquire(TimeSpan.FromSeconds(20), interactive)) order.Enqueue(label); });
+			t.Start();
+			threads.Add(t);
+			int expected = threads.Count;
+			Until(() => Tickets().Length == expected);
+		}
+		Directory.Delete(dir, recursive: true);
+		foreach (var t in threads) Assert.True(t.Join(TimeSpan.FromSeconds(20)));
+		Assert.Equal(["c", "a", "b"], order);
+		Assert.Empty(Tickets());
+		Assert.False(Directory.Exists(dir));
+	}
+
+	[Fact]
+	public void ClearsADeadWaiterFromTheLine() {
+		if (!OperatingSystem.IsWindows()) return;
+		Directory.CreateDirectory(QueueDir);
+		long aMinuteAgoUs = DateTimeOffset.UtcNow.AddMinutes(-1).ToUnixTimeMilliseconds() * 1000;
+		string ghost = Path.Combine(QueueDir, $"1-{aMinuteAgoUs:D17}-{int.MaxValue - 2}-deadbeef.ticket");
+		File.WriteAllText(ghost, "{}");
+		File.SetLastWriteTimeUtc(ghost, DateTime.UtcNow.AddSeconds(-6));
+		using (NpuLock.Acquire(TimeSpan.FromSeconds(5))) { }
+		Assert.False(File.Exists(ghost));
+	}
+
+	[Fact]
+	public void LeavesTheLineWhenItGivesUp() {
+		if (!OperatingSystem.IsWindows()) return;
+		HoldAsAnotherTool();
+		Assert.Throws<TimeoutException>(() => NpuLock.Acquire(TimeSpan.FromMilliseconds(300)));
+		Assert.Empty(Tickets());
+	}
+
 	[Fact]
 	public void EvictsAHolderThatOverstayedTenMinutes() {
 		if (!OperatingSystem.IsWindows()) return;

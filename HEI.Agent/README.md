@@ -175,9 +175,13 @@ From a terminal: `hei dev --prune-branches <repo>`.
 
 ## Sharing the NPU
 
-Other NPU tools on this PC can use the NPU at the same time. Heiward takes turns with the ones that use the same machine-wide lock, `%USERPROFILE%\.npu-agent\locks\npu` (the folder name is historical, kept so every tool still finds the lock), whenever `%USERPROFILE%\.npu-agent` exists:
-- it holds the lock for at most 2 seconds at a time, so the other tool never waits longer than that;
-- a stuck holder is evicted after 10 minutes.
+Other NPU tools on this PC can use the NPU at the same time. Heiward takes turns with the ones that use the same machine-wide lock, `%USERPROFILE%\.npu-agent\locks\npu`, whenever `%USERPROFILE%\.npu-agent` exists. (The folder name is historical, kept so every tool still finds the lock.) They wait their turn in the NPU queue they share (`npu.queue` next to the lock):
+- **First come, first served.** Each tool waits in line, and the NPU passes straight to the next in line when the holder lets go.
+- **A person first.** A request someone is waiting on goes ahead of a scan. A scan that has waited two minutes is served in its turn regardless.
+- **Short turns.** Heiward holds the lock for at most 2 seconds at a time, then joins the back of the line, so a long scan shares the NPU instead of blocking it.
+- A stuck holder is evicted after 10 minutes, and a waiter that crashed leaves the line within 15 seconds.
+
+A tool that takes the lock without queueing, such as an older build, can still get in ahead of the line, but never at the same time as anyone else.
 
 ## Settings
 
@@ -214,6 +218,7 @@ hei pause           pause scheduled scans and stop the running one  [--minutes N
 hei resume          resume scheduled scans
 hei open            open the review page
 hei status          settings, where AI matching runs, last scan, schedule, NPU lock
+hei status --json   the same essentials as one JSON object, for scripts and other tools (below)
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
@@ -222,6 +227,22 @@ hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
 hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
 ```
+
+`hei status --json` prints one JSON object on one line and nothing else (exit code 0). Times are UTC (`2026-10-01T14:00:00Z`) or `null`:
+
+| Field | |
+|---|---|
+| `app` | `"heiward"` |
+| `running` | Scheduled scans are on duty: not paused with `hei pause` or the page's Pause. Whether a scan task exists is `scheduled` |
+| `stoppedSince` | When the pause began; `null` when not paused |
+| `pausedUntil` | When a timed pause ends; `null` when not paused, or paused until you resume |
+| `scheduled` | Settings ask for scheduled scans and the scan task is registered and turned on |
+| `nextScan` | The scan task's next run as Task Scheduler words it (local time, the PC's format), or `null` |
+| `scanning` | A scan is running now |
+| `lastScan` | When the last report was made; `null` before the first scan with this version |
+| `toReview` | Sets in that report you haven't decided on yet |
+| `page` | `url`: the review page's address; `up`: whether it answers now. Asking (`/api/ping`) doesn't keep an unused page running |
+| `summary` | One short sentence, e.g. "Scans every hour, next at 15:00. 3 sets to review." |
 
 ## The review page
 
