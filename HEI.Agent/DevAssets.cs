@@ -39,13 +39,17 @@ namespace HEI.Agent {
 		public List<DevCategory> Categories { get; set; } = new();
 		/// <summary>Repositories with a remote, and their local branches merged into its default branch.</summary>
 		public List<RepoBranches> Repositories { get; set; } = new();
+		/// <summary>The <see cref="AppBuild"/> that made it: another build's report is set aside, as the duplicates report is.</summary>
+		public string? Build { get; set; }
 
 		public static string FilePath => Path.Combine(AgentPaths.Home, "dev-report.json");
 		static readonly object gate = new();
 
+		/// <summary>The developer report, when this build made it (see <see cref="Report.Load"/>); otherwise the next check redoes it.</summary>
 		public static DevReport? Load() {
 			try {
-				return File.Exists(FilePath) ? JsonSerializer.Deserialize<DevReport>(File.ReadAllText(FilePath), AgentConfig.Json) : null;
+				return File.Exists(FilePath) && JsonSerializer.Deserialize<DevReport>(File.ReadAllText(FilePath), AgentConfig.Json) is { } report
+					&& report.Build == AppBuild.Current ? report : null;
 			}
 			catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) {
 				return null;
@@ -94,7 +98,7 @@ namespace HEI.Agent {
 
 		public static DevReport Run(AgentConfig cfg, CancellationToken ct = default) {
 			var timer = Stopwatch.StartNew();
-			var report = new DevReport { ScannedAtUtc = DateTime.UtcNow, StaleDays = cfg.StaleProjectDays };
+			var report = new DevReport { ScannedAtUtc = DateTime.UtcNow, StaleDays = cfg.StaleProjectDays, Build = AppBuild.Current };
 			DateTime staleBefore = DateTime.UtcNow.AddDays(-cfg.StaleProjectDays);
 			List<string> repos = FindRepositories(ScanScope.Roots(cfg), ScanScope.ExclusionRules(cfg), ct);
 

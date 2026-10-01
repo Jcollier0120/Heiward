@@ -36,6 +36,8 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 **Already downloaded?** If another copy of Heiward or Video Duplicate Finder already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from, and in Video Duplicate Finder's own per-user folder. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
 
+**Updating:** run the new version's exe; it installs over the old one and scans again. Each report records the build that made it (its version and commit), because the sets are that build's rules. A report from another build is set aside, even under the same version number: the page shows none of its sets and nothing is cleaned up from them. When the page starts, it scans again with the new build unless scans are paused. The same goes for the developer report, and for the Microsoft Store version, which updates by itself. Sets the old report already listed aren't announced as new.
+
 Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, and `--scan-speed background` or `full` for how hard scans work). Preview every step without changing anything: `hei install --dry-run`.
 
 Heiward does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.

@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -45,11 +46,33 @@ namespace HEI.Agent {
 	sealed record ReportGroup(string Key, string Kind, string Media, string KeepPath, string KeepReason,
 		long ReclaimBytes, float MinSimilarity, List<ReportItem> Items);
 
+	/// <summary>
+	/// This build of Heiward: its version and the commit it was built from ("1.3.0+87802c8…"). A report
+	/// is the rules of the build that made it, so a new build, even under the same version number,
+	/// sets the old report aside and finds the sets again.
+	/// </summary>
+	static class AppBuild {
+		public static readonly string Current =
+			typeof(AppBuild).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+	}
+
+	/// <param name="Build">The <see cref="AppBuild"/> that made the report; null in reports from before builds were recorded.</param>
 	sealed record Report(int Version, DateTime ScannedAtUtc, double DurationSec, string Device, int FilesScanned,
-		List<string> Folders, List<string> ExcludedExtensions, List<string> Notes, List<ReportGroup> Groups) {
+		List<string> Folders, List<string> ExcludedExtensions, List<string> Notes, List<ReportGroup> Groups, string? Build = null) {
 		public const int CurrentVersion = 1;
 
-		public static Report? Load() {
+		/// <summary>
+		/// The report, when this build made it. Another build's report is set aside (null): its sets
+		/// were judged by other rules, so the page doesn't show them and nothing is cleaned up from them
+		/// until a scan with this build replaces it.
+		/// </summary>
+		public static Report? Load() => LoadAny() is { } report && report.Build == AppBuild.Current ? report : null;
+
+		/// <summary>A report another build made, which a scan should replace (<see cref="Load"/> sets it aside).</summary>
+		public static bool IsStale() => LoadAny() is { } report && report.Build != AppBuild.Current;
+
+		/// <summary>The report, whichever build made it: only for telling which sets are new.</summary>
+		public static Report? LoadAny() {
 			try {
 				return File.Exists(AgentPaths.Report)
 					? JsonSerializer.Deserialize<Report>(File.ReadAllText(AgentPaths.Report), AgentConfig.Json)

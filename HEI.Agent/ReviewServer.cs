@@ -285,6 +285,7 @@ namespace HEI.Agent {
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
+			RescanAfterUpdate();
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
 			return 0;
@@ -303,6 +304,17 @@ namespace HEI.Agent {
 		static IResult Guarded(Func<IResult> action) {
 			try { return action(); }
 			catch (TimeoutException e) { return Results.Conflict(new { error = e.Message }); }
+		}
+
+		/// <summary>
+		/// A new build of Heiward (an update, from GitHub or the Store) sets the last report aside, since
+		/// its sets were judged by the old build's rules: a scan with this build finds them again. Not while
+		/// scans are paused, and not before the Store version's setup, which starts its own first scan.
+		/// </summary>
+		static void RescanAfterUpdate() {
+			if (!Report.IsStale() || AgentScanner.IsRunning() || StoreSetup.Needed || AgentPause.Load() != null) return;
+			AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {Report.LoadAny()?.Build ?? "an older build"}: scanning again");
+			StartDetached("scan");
 		}
 
 		/// <summary>Everything the page draws, in one poll.</summary>
@@ -336,6 +348,8 @@ namespace HEI.Agent {
 				report = report == null ? null : new {
 					report.ScannedAtUtc, report.DurationSec, report.Device, report.FilesScanned, report.Folders, report.ExcludedExtensions, report.Notes,
 				},
+				// The last report is another build's, set aside until a scan with this one (RescanAfterUpdate).
+				updated = report == null && Report.IsStale(),
 				pending,
 				done,
 				totals = new {

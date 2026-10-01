@@ -432,7 +432,8 @@ function renderHeader(s) {
     parts.push('Last scan ' + ago(r.scannedAtUtc));
     parts.push(r.device === 'off' ? 'AI matching off' : 'AI on the ' + r.device);
   } else {
-    parts.push('No scan yet');
+    // A new build set the last report aside: its sets were judged by the old rules.
+    parts.push(s.updated ? 'Heiward was updated: finding the sets again with this version' : 'No scan yet');
   }
   if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
@@ -2239,7 +2240,9 @@ function duplicatesSection(path) {
   box.append(head);
 
   if (!here.length) {
-    box.append(el('div', 'empty-state', state.report ? 'No duplicates in this folder.' : 'No scan yet: press "Scan now".'));
+    box.append(el('div', 'empty-state', state.report ? 'No duplicates in this folder.'
+      : state.updated ? 'Heiward was updated. Its next scan finds the sets again with this version\'s rules' + (state.scan.running ? ': it\'s running now.' : ': press "Scan now".')
+      : 'No scan yet: press "Scan now".'));
     return box;
   }
   if (groupFilter === 'copies' && copies.length) box.append(cleanupBar(path, copies));
@@ -2501,7 +2504,7 @@ async function refresh(force) {
     const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
-      s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc ||
+      s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc || s.updated !== state.updated ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
     showError('');

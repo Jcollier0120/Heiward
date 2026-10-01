@@ -86,7 +86,8 @@ namespace HEI.Agent {
 				try { File.Delete(AgentPaths.ScanStatus); } catch { }
 			}
 
-			Report? previous = Report.Load();
+			// Whichever build made it: after an update, the sets it already listed aren't new.
+			Report? previous = Report.LoadAny();
 			// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
 			string device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 			string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
@@ -98,7 +99,7 @@ namespace HEI.Agent {
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the audio fingerprints failed: " + e.Message); }
 			AiStatus.Record(cfg, device, "scan");
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
-				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups);
+				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
 			report.Save();
 			ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
 			bool devChecked = false;

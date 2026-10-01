@@ -190,7 +190,7 @@ status.SetAction(_ => {
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
 	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} (checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	var report = Report.Load();
-	if (report == null) Console.WriteLine("No scan yet: run 'hei scan'.");
+	if (report == null) Console.WriteLine(Report.IsStale() ? "Heiward was updated: the next scan finds the sets again with this version ('hei scan')." : "No scan yet: run 'hei scan'.");
 	else {
 		Console.WriteLine($"Last scan: {report.ScannedAtUtc.ToLocalTime():g}, {report.FilesScanned:N0} files in {report.DurationSec:N0} s, AI on {report.Device}");
 		var decisions = DecisionStore.Load();
