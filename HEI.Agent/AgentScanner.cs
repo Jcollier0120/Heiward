@@ -23,7 +23,8 @@ using HEI.Core.Utils;
 
 namespace HEI.Agent {
 	/// <summary>Live progress for the review page, rewritten about once a second while a scan runs.</summary>
-	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max, bool FullSpeed = false);
+	/// <param name="Roots">The drives and folders this scan reads, whose cards wait for its end: not those scanned only when asked.</param>
+	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max, bool FullSpeed = false, IReadOnlyList<string>? Roots = null);
 
 	/// <summary>
 	/// One scan of the configured folders: VDF's engine (photos through WIC, embeddings on the NPU
@@ -79,6 +80,7 @@ namespace HEI.Agent {
 			Task watching = ScanStop.WatchAsync(started, stopped, stopPacing.Token);
 
 			Func<string, bool>? mayRead = plan?.MayRead;
+			List<string> reading = plan?.Roots.Where(r => r.Mode != ListingMode.Resting).Select(r => r.Root).ToList() ?? settings.IncludeList.ToList();
 			var engine = new ScanEngine { Settings = settings, ListRoot = plan == null ? null : plan.ListingFor, MayRead = mayRead };
 			int files = 0;
 			string stage = "Finding files";
@@ -88,10 +90,10 @@ namespace HEI.Agent {
 				long now = Stopwatch.GetTimestamp();
 				if (Stopwatch.GetElapsedTime(lastWrite, now) < TimeSpan.FromSeconds(1)) return;
 				lastWrite = now;
-				WriteStatus(new ScanStatus(Environment.ProcessId, started, string.IsNullOrEmpty(e.CurrentStage) ? stage : e.CurrentStage, e.CurrentPosition, e.MaxPosition, fullSpeed));
+				WriteStatus(new ScanStatus(Environment.ProcessId, started, string.IsNullOrEmpty(e.CurrentStage) ? stage : e.CurrentStage, e.CurrentPosition, e.MaxPosition, fullSpeed, reading));
 			};
 			engine.FilesEnumerated += (_, _) => stage = "Checking files";
-			WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, 0, 0, fullSpeed));
+			WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, 0, 0, fullSpeed, reading));
 			try {
 				await RunEngineAsync(engine, () => stage = "Comparing", stopped.Token);
 			}

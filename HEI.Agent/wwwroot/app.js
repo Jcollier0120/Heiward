@@ -1669,6 +1669,19 @@ async function cleanDev(picked) {
   refresh(true);
 }
 
+/**
+ * The running scan reads this drive (or folder): its card waits for the scan's end. Until the scan says which
+ * it reads, every drive but those scanned only when asked.
+ */
+function scanReads(d) {
+  if (!state.scan.running) return false;
+  const roots = state.scan.status && state.scan.status.roots;
+  if (!roots) return !d.onRequest;
+  const norm = (p) => p.toLowerCase().replace(/\\+$/, '');
+  const card = norm(d.root);
+  return roots.map(norm).some((r) => r === card || r.startsWith(card + '\\') || card.startsWith(r + '\\'));
+}
+
 function driveCard(d) {
   const card = el('button', 'drive-card');
   card.disabled = !d.scanned;
@@ -1692,7 +1705,9 @@ function driveCard(d) {
   card.append(top);
 
   const scan = el('div', 'drive-scan');
-  if (d.scanned && d.scan) {
+  if (d.scanned && scanReads(d)) {
+    scan.append(el('div', 'muted small', 'Details appear once the scan is finished.'));
+  } else if (d.scanned && d.scan) {
     const line = el('div', 'scan-line small');
     line.append(icon('check'));
     line.append(el('span', null, count(d.scan.files, 'photo or video', 'photos and videos') + ' · last scan took ' + took(d.scan.listingSec + d.scan.analysisSec)));
@@ -1708,7 +1723,7 @@ function driveCard(d) {
     if (d.onRequest) chips.append(el('span', 'chip quiet', 'Scanned when you ask'));
     scan.append(chips);
   } else if (d.scanned) {
-    scan.append(el('div', 'muted small', d.onRequest ? 'Scanned when you ask: open it to scan it.' : 'Scanned; details appear after the next scan.'));
+    scan.append(el('div', 'muted small', d.onRequest ? 'Scanned when you ask: open it to scan it.' : 'Details appear after the next scan.'));
   } else {
     scan.append(el('div', 'muted small', d.type === 'removable'
       ? 'Not scanned. USB drives come and go: add it under "folders" in the settings to include it.'
@@ -2543,6 +2558,7 @@ async function refresh(force) {
     const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
+      JSON.stringify(s.scan.status && s.scan.status.roots) !== JSON.stringify(state.scan.status && state.scan.status.roots) ||
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc || s.updated !== state.updated ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
