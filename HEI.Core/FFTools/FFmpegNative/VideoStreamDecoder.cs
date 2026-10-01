@@ -28,8 +28,14 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		readonly AVIOInterruptCB_callback _interruptCbDelegate;
 		readonly long _timeoutTicks;
 		long _deadlineTicks;
+		/// <summary>The video holds a slot of <see cref="HardwareVideoDecode"/>, given back on dispose.</summary>
+		string? _gpuSlotFor;
 
-		public VideoStreamDecoder(string url, AVHWDeviceType HWDeviceType = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE, int timeoutMs = 15_000) {
+		/// <param name="gpuLane">
+		/// Decode on the GPU when <see cref="HardwareVideoDecode"/> has a slot free and a hardware path for the
+		/// codec (only when <paramref name="HWDeviceType"/> is none); else on the CPU.
+		/// </param>
+		public VideoStreamDecoder(string url, AVHWDeviceType HWDeviceType = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE, int timeoutMs = 15_000, bool gpuLane = false) {
 			_pFormatContext = ffmpeg.avformat_alloc_context();
 			if (_pFormatContext == null)
 				throw new FFInvalidExitCodeException("Failed to allocate AVFormatContext.");
@@ -65,8 +71,37 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			_pCodecContext = ffmpeg.avcodec_alloc_context3(codec);
 			if (_pCodecContext == null)
 				throw new FFInvalidExitCodeException("Failed to allocate AVCodecContext.");
+			bool onGpu = false;
 			if (HWDeviceType != AVHWDeviceType.AV_HWDEVICE_TYPE_NONE)
 				ffmpeg.av_hwdevice_ctx_create(&_pCodecContext->hw_device_ctx, HWDeviceType, null, null, 0).ThrowExceptionIfError();
+			else if (gpuLane && HardwareVideoDecode.TryEnter(codec, url)) {
+				_gpuSlotFor = url;
+				onGpu = true;
+				// The process's one device, shared: libavcodec picks its hardware format, or software
+				// for a profile the GPU doesn't decode (frames then simply arrive in system memory).
+				_pCodecContext->hw_device_ctx = HardwareVideoDecode.NewDeviceReference();
+			}
+			try {
+				OpenCodec(codec, HWDeviceType != AVHWDeviceType.AV_HWDEVICE_TYPE_NONE || onGpu);
+			}
+			catch {
+				// A constructor that throws is never disposed: give the slot back here.
+				ReleaseGpuSlot();
+				throw;
+			}
+		}
+
+		/// <summary>Whether this video decodes on <see cref="HardwareVideoDecode"/>'s GPU lane.</summary>
+		public bool OnGpuLane => _gpuSlotFor != null;
+
+		void ReleaseGpuSlot() {
+			if (_gpuSlotFor is { } url) {
+				_gpuSlotFor = null;
+				HardwareVideoDecode.Exit(url);
+			}
+		}
+
+		void OpenCodec(AVCodec* codec, bool hardware) {
 			ffmpeg.avcodec_parameters_to_context(_pCodecContext, _pFormatContext->streams[_streamIndex]->codecpar).ThrowExceptionIfError();
 			ffmpeg.avcodec_open2(_pCodecContext, codec, null).ThrowExceptionIfError();
 
@@ -85,10 +120,8 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			// first frame has been downloaded with av_hwframe_transfer_data — only then
 			// do we know the real sw_format (e.g. P010LE for 10-bit HEVC vs NV12 for
 			// 8-bit). Guessing before decode breaks 10-bit content.
-			PixelFormat = HWDeviceType == AVHWDeviceType.AV_HWDEVICE_TYPE_NONE
-				? _pCodecContext->pix_fmt
-				: AVPixelFormat.AV_PIX_FMT_NONE;
-			IsHardwareDecode = HWDeviceType != AVHWDeviceType.AV_HWDEVICE_TYPE_NONE;
+			PixelFormat = hardware ? AVPixelFormat.AV_PIX_FMT_NONE : _pCodecContext->pix_fmt;
+			IsHardwareDecode = hardware;
 
 			_pPacket = ffmpeg.av_packet_alloc();
 			if (_pPacket == null)
@@ -98,9 +131,9 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				throw new FFInvalidExitCodeException("Failed to allocate AVFrame.");
 		}
 
-		public string CodecName { get; }
+		public string CodecName { get; private set; } = "";
 		/// <summary>The stream's display matrix, as far as it says how to turn the picture (#910).</summary>
-		public FrameOrientation StreamOrientation { get; }
+		public FrameOrientation StreamOrientation { get; private set; }
 
 		/// <summary>
 		/// How to turn <paramref name="frame"/> upright: its own display matrix when the decoder
@@ -112,10 +145,10 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				return FrameOrientation.FromDisplayMatrix(new ReadOnlySpan<int>(sideData->data, 9));
 			return StreamOrientation;
 		}
-		public Size FrameSize { get; }
-		public AVPixelFormat PixelFormat { get; }
-		public bool IsHardwareDecode { get; }
-		public AVRational StreamSampleAspectRatio { get; }
+		public Size FrameSize { get; private set; }
+		public AVPixelFormat PixelFormat { get; private set; }
+		public bool IsHardwareDecode { get; private set; }
+		public AVRational StreamSampleAspectRatio { get; private set; }
 		/// <summary>
 		/// True when the container carries stream groups (e.g. the HEIF tile grid of an Apple
 		/// photo). av_find_best_stream can only pick a single coded stream — for a tiled photo
@@ -138,6 +171,7 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		}
 
 		public void ReleaseUnmanaged() {
+			ReleaseGpuSlot();
 			// Null each field after freeing so a partially-constructed object's finalizer
 			// or a double-Dispose can't pass dangling pointers back to FFmpeg.
 			if (_pFrame != null) {

@@ -41,6 +41,10 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-npu")
 			return NpuEmbedProbe.Run(args);
 
+		// Video frames as a scan reads them, on the CPU and on the GPU's decoder (see VideoDecodeProbe).
+		if (args.Length > 0 && args[0] == "--probe-video-decode")
+			return VideoDecodeProbe.Run(args);
+
 		// Synthetic compare-phase probe (ScanForDuplicates + HighlightBestMatches).
 		if (args.Length > 0 && args[0] == "--probe-compare")
 			return ComparePhaseProbe.Run(args);

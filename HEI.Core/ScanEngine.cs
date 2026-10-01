@@ -145,9 +145,9 @@ namespace HEI.Core {
 			get {
 				var parts = new List<string>();
 				if (photosRead > 0)
-					parts.Add($"{photosRead:N0} photos in {Seconds(photoTicks):N0} worker-s ({Seconds(photoTicks) * 1000 / photosRead:N0} ms each)");
+					parts.Add($"{photosRead:N0} photos in {Seconds(photoTicks):N0} worker-s ({Seconds(photoTicks) * 1000 / photosRead:N0} ms each{FFTools.FFmpegNative.HeifHardwareLane.Describe()})");
 				if (videosRead > 0)
-					parts.Add($"{videosRead:N0} videos in {Seconds(videoTicks):N0} worker-s ({Seconds(videoTicks) * 1000 / videosRead:N0} ms each)");
+					parts.Add($"{videosRead:N0} videos in {Seconds(videoTicks):N0} worker-s ({Seconds(videoTicks) * 1000 / videosRead:N0} ms each{FFTools.FFmpegNative.HardwareVideoDecode.Describe()})");
 				return parts.Count == 0 ? null : "Read " + string.Join(" and ", parts);
 				static double Seconds(long ticks) => ticks / (double)Stopwatch.Frequency;
 			}
@@ -552,6 +552,8 @@ namespace HEI.Core {
 			AiSummary = null;
 			photosRead = videosRead = 0;
 			photoTicks = videoTicks = 0;
+			FFTools.FFmpegNative.HardwareVideoDecode.ResetForScan();
+			FFTools.FFmpegNative.HeifHardwareLane.ResetForScan();
 			ResetExcludedLogging();
 			//Using HEI.GUI we know fftools exist at this point but HEI.Core might be used in other projects as well
 			if (!Settings.UseNativeFfmpegBinding && !FFmpegExists)
@@ -720,6 +722,11 @@ namespace HEI.Core {
 		/// </summary>
 		void QuarantineCrashSuspects() {
 			List<ScanCrashJournal.Suspect> suspects = ScanCrashJournal.CollectLeftovers();
+			// A crash while the GPU decoded a video is the graphics driver's: the video stays in the
+			// scan, and GPU video decoding is turned off on this PC instead.
+			ScanCrashJournal.Suspect? gpuCrash = suspects.Where(s => s.Phase == ScanCrashJournal.PhaseGpuDecode).Cast<ScanCrashJournal.Suspect?>().FirstOrDefault();
+			FFTools.FFmpegNative.HardwareVideoDecode.TurnOffAfterCrash(DatabaseUtils.GetDatabaseFolderPath(), gpuCrash?.Path);
+			suspects.RemoveAll(s => s.Phase == ScanCrashJournal.PhaseGpuDecode);
 			int flagged = ApplyCrashQuarantine(DatabaseUtils.Database, suspects,
 				entry => Logger.Instance.Warn(T("Log.CrashQuarantine", entry.Path)));
 			// The breadcrumbs are deleted on collection, so the flags they produced must hit

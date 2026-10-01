@@ -19,6 +19,7 @@ using HEI.Core;
 using HEI.Core.FFTools;
 using HEI.Core.Utils;
 using HEI.IntegrationTests.Fixtures;
+using HEI.TestSupport;
 
 namespace HEI.IntegrationTests.FFTools;
 
@@ -59,7 +60,7 @@ public sealed class RotationMetadataTests : IDisposable {
 		string tagged = Path.Combine(dir, $"tagged{degrees}.mp4");
 		string upright = Path.Combine(dir, $"upright{degrees}.mp4");
 		RunFfmpeg("-display_rotation", degrees.ToString(), "-i", _fixture.H264_8bit!, "-c", "copy", tagged);
-		RunFfmpeg("-i", tagged, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "18", "-pix_fmt", "yuv420p", upright);
+		RunFfmpeg(new[] { "-i", tagged }.Concat(TestVideoGenerator.VideoEncoderArguments(FfmpegEngine.FFmpegPath)).Concat(new[] { "-pix_fmt", "yuv420p", upright }).ToArray());
 		return (tagged, upright);
 	}
 

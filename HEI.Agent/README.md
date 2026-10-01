@@ -19,9 +19,15 @@ Scheduled scans run in the background:
 - below-normal priority, on half the cores;
 - a hard cap on the processor: a quarter of it, and at most two cores' worth (`backgroundCpuPercent`). Windows holds the scan back once it has used its share, however idle the PC is. Efficiency mode and a low priority alone left an idle PC's processor to the scan;
 - very low disk priority, as the search indexer has, so anything else using the drive goes first;
-- on a Snapdragon, the NPU at its power-saving clocks: 3.2 ms per picture instead of 2.1, still several times faster than the pictures are read.
+- on a Snapdragon, the NPU at its power-saving clocks: 3.2 ms per picture instead of 2.1, still several times faster than the pictures are read;
+- as much as it can on the graphics chip's video decoder, which costs the capped processor a fraction: videos (H.264, HEVC, VP9, AV1) and iPhone photos decode there, several at once.
 
 A scan you start with **Scan now**, and a scheduled one while the review page is open, runs at full speed instead: every core but one, at normal priority, normal disk priority, and the NPU at full clocks. Open the page during a background scan and it speeds up; close it and a scheduled scan steps back. To keep every scan in the background, turn off **Full speed when you're here** in the page's Settings (`"scanSpeed": "background"`).
+
+**The graphics chip's video decoder** reads videos beside the processor at any pace. On a Snapdragon X2 a video costs the processor 15-25 ms there instead of 230-500 ms, and the frames are byte for byte the ones the processor decodes. Under a background scan's cap, 290 phone videos took 22 s instead of 56. At full speed each PC learns as the scan goes how many videos its GPU keeps up with, so a desktop's graphics card takes more than a laptop's.
+- **Memory.** Each video on the GPU holds up to half a gigabyte for a 4K one. With **Use more memory to scan faster** on (`moreMemory`, the default), a background scan decodes one video per 4 GB of memory at once, up to 8; off, two.
+- **Games.** While a game or another 3D program keeps the graphics chip busy, or anything runs full screen, a scan makes way: it runs in the background with less memory until that's closed, whatever the settings say. `heiward.log` says when.
+- **Driver crashes.** If a scan ever stops while the GPU decodes, the next one decodes on the processor from then on and says so in the log; delete `gpu-decoding-off.txt` in the database folder to try the GPU again.
 
 What a rescan reads from the disk:
 - **Only what changed, as the drive's change journal says.** NTFS records every file created, changed, renamed or deleted, and Heiward reads that record as a normal user. That tells it which folders changed since the last scan.
@@ -201,6 +207,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 | `scanSpeed` | `auto` | `auto`: Scan now, and scheduled scans while the review page is open, at full speed; other scans in the background. `background`: every scan in the background. `full`: every scan at full speed, scheduled ones too |
 | `parallelism` | 0 | Files decoded at once; 0: every core but one at full speed, half of them in the background |
 | `backgroundCpuPercent` | 0 | The most of the processor a background scan uses, in percent, the FFmpeg it starts included; 0: a quarter, and at most two cores' worth |
+| `moreMemory` | true | The page's **Use more memory to scan faster**: in the background, the graphics chip decodes one video per 4 GB of memory at once (up to 8, about half a gigabyte each); `false`: two. Scans use less while a game or another 3D program runs either way |
 | `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |

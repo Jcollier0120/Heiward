@@ -142,6 +142,12 @@ namespace HEI.Agent {
 		/// "full": every scan runs at full speed, scheduled ones too.
 		/// </summary>
 		public string ScanSpeed { get; set; } = "auto";
+		/// <summary>
+		/// Use more memory to scan faster: in the background the GPU's video decoder takes up to one video
+		/// per 4 GB of RAM at once (8 at most), about half a gigabyte each for a 4K phone video. Off: 2 at
+		/// once. While a game or another 3D program runs, scans use less whatever this says (<see cref="ThreeDWatch"/>).
+		/// </summary>
+		public bool MoreMemory { get; set; } = true;
 		/// <summary>List what was cleaned up and kept on the review page's History. Off: nothing new is listed, and no file names are kept.</summary>
 		public bool KeepHistory { get; set; } = true;
 		/// <summary>

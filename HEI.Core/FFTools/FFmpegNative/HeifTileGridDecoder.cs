@@ -82,25 +82,34 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		/// missing tiles); callers then fall back to the FFmpeg process.
 		/// </summary>
 		internal static bool TryDecode(string path, bool wantRgb, out Result result, int timeoutMs = 15_000) {
-			if (HeifHardwareLane.TryEnter()) {
+			long started = System.Diagnostics.Stopwatch.GetTimestamp();
+			if (HeifHardwareLane.TryEnter(path)) {
+				Exception failure;
 				try {
 					bool decoded = TryDecode(path, wantRgb, hardware: true, out result, timeoutMs);
 					HeifHardwareLane.RecordSuccess();
+					if (decoded)
+						HeifHardwareLane.RecordFile(onGpu: true, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds);
 					return decoded;
 				}
 				catch (Exception e) {
-					// Decode this photo on the CPU instead; the lane turns itself off if the GPU
-					// keeps failing on photos the CPU can read.
-					if (!TryDecodeOnCpu(path, wantRgb, out result, timeoutMs))
-						return false;
-					HeifHardwareLane.RecordFailure(e);
-					return true;
+					failure = e;
 				}
 				finally {
-					HeifHardwareLane.Exit();
+					HeifHardwareLane.Exit(path);
 				}
+				// Decode this photo on the CPU instead, off the lane (a crash now would be the photo's);
+				// the lane turns itself off if the GPU keeps failing on photos the CPU can read.
+				if (!TryDecodeOnCpu(path, wantRgb, out result, timeoutMs))
+					return false;
+				HeifHardwareLane.RecordFailure(failure);
+				return true;
 			}
-			return TryDecodeOnCpu(path, wantRgb, out result, timeoutMs);
+			bool onCpu = TryDecodeOnCpu(path, wantRgb, out result, timeoutMs);
+			// How long each side takes for a photo, so the GPU takes photos only while it keeps up (LaneTuner).
+			if (onCpu)
+				HeifHardwareLane.RecordFile(onGpu: false, System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds);
+			return onCpu;
 		}
 
 		static bool TryDecodeOnCpu(string path, bool wantRgb, out Result result, int timeoutMs) {

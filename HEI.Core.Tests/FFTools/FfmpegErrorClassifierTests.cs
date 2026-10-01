@@ -41,6 +41,9 @@ public class FfmpegErrorClassifierTests {
 	[InlineData("[h264 @ 0x0] Invalid NAL unit size (-1)")]
 	[InlineData("Could not find codec parameters for stream 0")]
 	[InlineData("[hevc @ 0x0] Error while decoding")]
+	// A damaged MPEG-4 Part 2 stream (DivX, Xvid), as FFmpeg 8 reports it.
+	[InlineData("[mpeg4 @ 0x0] ac-tex damaged at 7 3 | [mpeg4 @ 0x0] Error at MB: 1251")]
+	[InlineData("[mpeg2video @ 0x0] Error at MB: 88")]
 	// The exact combined diagnostics of the truncated file from issue #867 (captured FFmpeg
 	// log + native batch exception message), as fed to Categorize by the fast-fail decision.
 	[InlineData("Invalid NAL unit size (0 > 4182). | missing picture in access unit with size 4186 | " +

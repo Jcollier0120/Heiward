@@ -138,6 +138,9 @@ namespace HEI.Core.FFTools {
 		const int DefaultJpegQuality = 90;
 
 
+		/// <summary>Why this thread's last video failed on the GPU, for the log when the CPU then decodes it.</summary>
+		[ThreadStatic] static string? gpuFailureReason;
+
 		// Vulkan hardware decoding through the native FFmpeg binding segfaults the whole
 		// process on at least some NVIDIA setups (#799) — a native crash we cannot catch.
 		// The CLI path runs FFmpeg out-of-process, so a crash there is isolated and merely
@@ -306,16 +309,18 @@ namespace HEI.Core.FFTools {
 			ref int tooDarkCounter,
 			Action<int>? onSampleComplete,
 			out FfmpegErrorCategory failureCategory,
-			AI.IEmbeddingFrameSink? embeddingSink = null) {
+			AI.IEmbeddingFrameSink? embeddingSink = null,
+			bool gpuLane = false) {
 			const int N = 32;
 			failureCategory = FfmpegErrorCategory.Unknown;
 			try {
 				FfmpegLogCapture.Reset();
-				using var vsd = new VideoStreamDecoder(videoFile.Path, GetConfiguredHardwareDeviceType());
+				using var vsd = new VideoStreamDecoder(videoFile.Path, GetConfiguredHardwareDeviceType(), gpuLane: gpuLane);
 				VideoFrameConverter? converter = null;
 				VideoFrameConverter? aiConverter = null;
 				Size converterSourceSize = default;
 				AVPixelFormat converterSrcFmt = AVPixelFormat.AV_PIX_FMT_NONE;
+				bool converterFullRange = false;
 				try {
 					for (int i = 0; i < positions.Count; i++) {
 						double position = videoFile.GetGrayBytesIndex(positions[i], maxSamplingDurationSeconds);
@@ -342,14 +347,18 @@ namespace HEI.Core.FFTools {
 						// In practice this is the common case for the same file; the rebuild branch
 						// fires when a later frame reports a different resolution or pixel format
 						// (mid-stream change, HW sw_format switch, corrupt file).
-						if (converter == null || sourceSize != converterSourceSize || srcPixFmt != converterSrcFmt) {
+						// The GPU's decoder hands over NV12 tagged full range where the CPU's says yuvj420p:
+						// the same picture, as long as the converter knows the range.
+						bool fullRange = VideoFrameConverter.NeedsFullRange(srcFrame, srcPixFmt);
+						if (converter == null || sourceSize != converterSourceSize || srcPixFmt != converterSrcFmt || fullRange != converterFullRange) {
 							converter?.Dispose();
 							converter = new VideoFrameConverter(
 								sourceSize, srcPixFmt,
 								new Size(N, N), AVPixelFormat.AV_PIX_FMT_GRAY8,
-								VideoFrameConverter.ScaleQuality.Bicubic, bitExact: false);
+								VideoFrameConverter.ScaleQuality.Bicubic, bitExact: false, sourceFullRange: fullRange);
 							converterSourceSize = sourceSize;
 							converterSrcFmt = srcPixFmt;
+							converterFullRange = fullRange;
 							// The AI converter shares the source-layout cache; rebuild in lockstep.
 							aiConverter?.Dispose();
 							aiConverter = null;
@@ -372,7 +381,7 @@ namespace HEI.Core.FFTools {
 							aiConverter ??= new VideoFrameConverter(
 								converterSourceSize, converterSrcFmt,
 								new Size(AI.OnnxEmbedder.InputSide, AI.OnnxEmbedder.InputSide), AVPixelFormat.AV_PIX_FMT_RGB24,
-								VideoFrameConverter.ScaleQuality.Bicubic, bitExact: false);
+								VideoFrameConverter.ScaleQuality.Bicubic, bitExact: false, sourceFullRange: converterFullRange);
 							embeddingSink!.SubmitFrame(videoFile, position, orientation.Apply(
 								ExtractRgb224FromFrame(aiConverter.Convert(srcFrame)), AI.OnnxEmbedder.InputSide, AI.OnnxEmbedder.InputSide, 3));
 						}
@@ -396,7 +405,11 @@ namespace HEI.Core.FFTools {
 				// One failure recorded per video file (not per position) so the session
 				// circuit breaker reflects per-file native health (issues #793/#795). The
 				// per-sample fallback below still re-attempts native but does not record.
-				RecordNativeFailure(videoFile.Path, e);
+				// A failure on the GPU isn't the native binding's: the CPU tries next (GetGrayBytesFromVideo).
+				if (!HardwareVideoDecode.EnteredHere)
+					RecordNativeFailure(videoFile.Path, e);
+				else
+					gpuFailureReason = e.Message;
 				return false;
 			}
 		}
@@ -1033,7 +1046,27 @@ namespace HEI.Core.FFTools {
 			// The for-loop fallback below recreates them per position, so on a 4-position scan
 			// this avoids ~3x of the per-file FFmpeg setup cost.
 			if (ShouldUseNativeBinding) {
-				if (TryGetGrayBytesFromVideoNativeBatch(videoFile, positions, maxSamplingDurationSeconds, ref tooDarkCounter, onSampleComplete, out FfmpegErrorCategory nativeFailureCategory, embeddingSink)) {
+				// The GPU's video decoder first, when it has a slot free and decodes this codec (HardwareVideoDecode).
+				gpuFailureReason = null;
+				long started = Stopwatch.GetTimestamp();
+				bool extracted = TryGetGrayBytesFromVideoNativeBatch(videoFile, positions, maxSamplingDurationSeconds, ref tooDarkCounter, onSampleComplete, out FfmpegErrorCategory nativeFailureCategory, embeddingSink, gpuLane: true);
+				double seconds = Stopwatch.GetElapsedTime(started).TotalSeconds;
+				bool wasOnGpu = HardwareVideoDecode.TakeEntered();
+				// How long each side takes for a video, so the GPU takes no more than it keeps up with (LaneTuner).
+				if (extracted)
+					HardwareVideoDecode.RecordFile(wasOnGpu, seconds);
+				if (wasOnGpu) {
+					HardwareVideoDecode.LeftGpu(videoFile.Path);
+					if (extracted)
+						HardwareVideoDecode.RecordSuccess();
+					else {
+						// The GPU couldn't: the CPU tries before anything slower. It only fills the positions still missing.
+						extracted = TryGetGrayBytesFromVideoNativeBatch(videoFile, positions, maxSamplingDurationSeconds, ref tooDarkCounter, onSampleComplete, out nativeFailureCategory, embeddingSink);
+						if (extracted)
+							HardwareVideoDecode.RecordFailure(videoFile.Path, gpuFailureReason ?? "no frame");
+					}
+				}
+				if (extracted) {
 					if (missingPositions > 0 && tooDarkCounter == missingPositions) {
 						videoFile.Flags.Set(EntryFlags.TooDark);
 						Logger.Instance.Warn($"Graybytes too dark of: {videoFile.Path}");

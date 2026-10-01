@@ -25,7 +25,7 @@ namespace HEI.Agent {
 	sealed record RecycleRequest(List<string> Paths, string? Batch = null, string? Folder = null);
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
-	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed);
+	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null);
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
@@ -167,10 +167,12 @@ namespace HEI.Agent {
 				AgentConfig saved = AgentConfig.Load();
 				if (request.KeepHistory is bool keep) saved.KeepHistory = cfg.KeepHistory = keep;
 				if (request.ScanSpeed is string speed) saved.ScanSpeed = cfg.ScanSpeed = speed;
+				if (request.MoreMemory is bool more) saved.MoreMemory = cfg.MoreMemory = more;
 				saved.Save();
 				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
-					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here"));
-				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed }, AgentConfig.Json);
+					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here") +
+					(saved.MoreMemory ? ", with more memory" : ", with less memory"));
+				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
 			app.MapPost("/api/setup", (SetupRequest request) => {
@@ -407,6 +409,7 @@ namespace HEI.Agent {
 					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
 					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true),
 						backgroundCpuPercent = Math.Round(cfg.BackgroundCpuCap(Environment.ProcessorCount)),
+						cfg.MoreMemory, moreMemoryBytes = HEI.Core.FFTools.FFmpegNative.HardwareVideoDecode.MoreMemoryBytes,
 				},
 			};
 		}

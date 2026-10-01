@@ -41,6 +41,21 @@ public class ScanCrashJournalTests : IDisposable {
 	string[] BreadcrumbFiles() => Directory.GetFiles(tempDir, "scan-inflight-*.txt");
 
 	[Fact]
+	public void Rephase_ChangesAnOpenBreadcrumb_AndLeavesNoneOutsideOne() {
+		// Outside a scan's breadcrumb (a thumbnail reload, say), the GPU lanes must not leave one behind.
+		ScanCrashJournal.Rephase(ScanCrashJournal.PhaseGpuDecode, @"C:\videos\a.mp4");
+		Assert.Empty(BreadcrumbFiles());
+
+		ScanCrashJournal.Begin(ScanCrashJournal.PhaseSampling, @"C:\videos\a.mp4");
+		ScanCrashJournal.Rephase(ScanCrashJournal.PhaseGpuDecode, @"C:\videos\a.mp4");
+		Assert.Equal(@"gpudecode|C:\videos\a.mp4", File.ReadAllText(Assert.Single(BreadcrumbFiles())));
+
+		ScanCrashJournal.End();
+		ScanCrashJournal.Rephase(ScanCrashJournal.PhaseSampling, @"C:\videos\a.mp4");
+		Assert.Equal(string.Empty, File.ReadAllText(Assert.Single(BreadcrumbFiles())));
+	}
+
+	[Fact]
 	public void Begin_WritesBreadcrumb_End_BlanksIt() {
 		ScanCrashJournal.Begin(ScanCrashJournal.PhaseAudio, @"C:\videos\a.mp4");
 

@@ -19,6 +19,7 @@ using HEI.Core;
 using HEI.Core.FFTools;
 using HEI.Core.ViewModels;
 using HEI.IntegrationTests.Fixtures;
+using HEI.TestSupport;
 
 namespace HEI.IntegrationTests.FFTools;
 
@@ -61,8 +62,9 @@ public sealed class TrackLanguageProbeTests : IDisposable {
 			"-f", "lavfi", "-i", "sine=frequency=880:duration=2",
 			"-i", srt, "-i", srt,
 			"-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:s", "-map", "4:s",
-			"-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-c:s", subtitleCodec,
+			"-c:a", "aac", "-c:s", subtitleCodec,
 		};
+		args.AddRange(TestVideoGenerator.VideoEncoderArguments(FfmpegEngine.FFmpegPath));
 		void Tag(string stream, string? language) {
 			if (language != null) { args.Add($"-metadata:s:{stream}"); args.Add($"language={language}"); }
 		}

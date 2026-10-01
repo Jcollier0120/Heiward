@@ -60,13 +60,7 @@ namespace HEI.Core.AI {
 
 		public static string ModelPath => Path.Combine(AiComponents.AiFolder, ModelFileName);
 
-		/// <summary>
-		/// The scan's pace, which the NPU follows from its next run on (<see cref="NpuPack.RunConfig"/>):
-		/// true for a scan someone waits for, false in the background. True unless the agent says otherwise.
-		/// </summary>
-		public static volatile bool FullSpeed = true;
-
-		/// <summary>Run options for the NPU at either pace, or null when the pack has none.</summary>
+		/// <summary>Run options for the NPU at either pace (<see cref="Pace"/>), or null when the pack has none.</summary>
 		internal static Dictionary<string, string>? RunConfig(bool fullSpeed) => Pack?.RunConfig(fullSpeed);
 
 		/// <summary>
