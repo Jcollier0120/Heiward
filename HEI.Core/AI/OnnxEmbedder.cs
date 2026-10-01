@@ -110,8 +110,8 @@ namespace HEI.Core.AI {
 			}
 		}
 
-		/// <summary>The run options for the scan's pace now (<see cref="NpuComponents.FullSpeed"/>).</summary>
-		RunOptions CurrentRunOptions => backgroundRun != null && !NpuComponents.FullSpeed ? backgroundRun : runOptions;
+		/// <summary>The run options for the scan's pace now (<see cref="Pace.FullSpeed"/>).</summary>
+		RunOptions CurrentRunOptions => backgroundRun != null && !Pace.FullSpeed ? backgroundRun : runOptions;
 
 		/// <summary>
 		/// The embedder for <paramref name="device"/>: the NPU when it is requested (or Auto) and

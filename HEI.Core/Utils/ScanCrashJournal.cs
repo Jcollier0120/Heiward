@@ -35,6 +35,8 @@ namespace HEI.Core.Utils {
 	/// </summary>
 	internal static class ScanCrashJournal {
 		internal const string PhaseSampling = "sampling";
+		/// <summary>Decoding on the GPU's video decoder (a video, or an iPhone photo's tiles): a crash then is the driver's, not the file's (<see cref="FFTools.FFmpegNative.HardwareVideoDecode"/>).</summary>
+		internal const string PhaseGpuDecode = "gpudecode";
 		internal const string PhaseAudio = "audio";
 		internal const string PhaseImage = "image";
 		internal const string PhasePartialVerify = "partialverify";
@@ -44,6 +46,8 @@ namespace HEI.Core.Utils {
 		static volatile bool shutdownCleared;
 		static int processExitHookRegistered;
 		[ThreadStatic] static string? threadFile;
+		/// <summary>This thread's breadcrumb names a file in flight (Begin without End yet).</summary>
+		[ThreadStatic] static bool threadOpen;
 
 		internal readonly record struct Suspect(string Phase, string Path);
 
@@ -88,14 +92,26 @@ namespace HEI.Core.Utils {
 				// Not cached across calls: the database folder can change between scans.
 				threadFile = FileUtils.SafePathCombine(folder, $"{FilePrefix}{Environment.CurrentManagedThreadId}.txt");
 				File.WriteAllText(threadFile, FormatLine(phase, mediaFile));
+				threadOpen = true;
 			}
 			catch (Exception) {
 				threadFile = null;
 			}
 		}
 
+		/// <summary>
+		/// Changes what this thread's breadcrumb says it is doing, while it has one open (between
+		/// <see cref="Begin"/> and <see cref="End"/>); outside a scan's breadcrumb it does nothing, so
+		/// decoding for anything else never leaves one behind.
+		/// </summary>
+		internal static void Rephase(string phase, string mediaFile) {
+			if (threadOpen)
+				Begin(phase, mediaFile);
+		}
+
 		/// <summary>Marks this thread's current file as completed (crash-innocent).</summary>
 		internal static void End() {
+			threadOpen = false;
 			string? file = threadFile;
 			if (file == null)
 				return;

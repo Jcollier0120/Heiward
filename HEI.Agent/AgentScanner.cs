@@ -52,6 +52,7 @@ namespace HEI.Agent {
 			}
 			double cpuCap = cfg.BackgroundCpuCap(Environment.ProcessorCount);
 			bool paced = Power.SetPace(fullSpeed, cpuCap);
+			Pace.MoreMemory = cfg.MoreMemory;
 			// What changed on each drive since the last scan, from its change journal: a drive with nothing
 			// new isn't walked, and one with something new has only those folders listed again.
 			ListingPlan? plan = null;
@@ -239,19 +240,41 @@ namespace HEI.Agent {
 		/// <summary>
 		/// Follows the review page while the scan runs: open it and a background scan speeds up, close it
 		/// and a scheduled scan steps back (checked every 5 s; settings.json is read fresh, so the page's
-		/// switch applies at once). The number of files decoded at once stays as the scan started.
+		/// switches apply at once). The number of files decoded at once stays as the scan started.
+		/// And it makes way for games and 3D programs (<see cref="ThreeDWatch"/>): while one runs, the scan
+		/// runs in the background and with less memory (<see cref="Pace.MoreMemory"/>), whatever the
+		/// settings say, until it's gone. Two checks in a row either way, so a moment's 3D work doesn't flip it.
 		/// </summary>
 		static async Task FollowPageAsync(bool scheduled, bool current, Action<bool> changed, CancellationToken ct) {
+			using var watch = new ThreeDWatch();
+			string? makingWayFor = null;
+			int busyChecks = 0, freeChecks = 0;
 			while (true) {
 				try { await Task.Delay(TimeSpan.FromSeconds(5), ct); }
 				catch (OperationCanceledException) { return; }
 				var cfg = AgentConfig.Load();
-				bool wanted = ScanPace.FullSpeed(cfg, scheduled);
+				if (watch.Busy() is { } busy) {
+					freeChecks = 0;
+					if (++busyChecks >= 2 && makingWayFor == null) {
+						makingWayFor = busy;
+						AgentPaths.AppendLog($"scan: making way for {busy}, in the background with less memory until it's gone");
+					}
+				}
+				else {
+					busyChecks = 0;
+					if (makingWayFor != null && ++freeChecks >= 2) {
+						AgentPaths.AppendLog($"scan: {makingWayFor} is gone, back to the usual pace");
+						makingWayFor = null;
+					}
+				}
+				Pace.MoreMemory = cfg.MoreMemory && makingWayFor == null;
+				bool wanted = ScanPace.FullSpeed(cfg, scheduled) && makingWayFor == null;
 				if (wanted == current) continue;
 				current = wanted;
 				Power.SetPace(wanted, cfg.BackgroundCpuCap(Environment.ProcessorCount));
 				changed(wanted);
-				AgentPaths.AppendLog(wanted ? "scan: full speed (the review page is open)" : "scan: back in the background");
+				if (makingWayFor == null)
+					AgentPaths.AppendLog(wanted ? "scan: full speed (the review page is open)" : "scan: back in the background");
 			}
 		}
 

@@ -35,7 +35,7 @@ static class NpuEmbedProbe {
 		if (Arg("--state") is { } state)
 			CoreUtils.UseStateFolder(state);
 		// The scan's pace, which sets how hard the NPU works (NpuPack.RunConfig).
-		NpuComponents.FullSpeed = Arg("--pace") != "background";
+		Pace.FullSpeed = Arg("--pace") != "background";
 		int count = int.Parse(Arg("--frames") ?? "1024");
 		byte[][] frames = Enumerable.Range(0, count).Select(Frame).ToArray();
 

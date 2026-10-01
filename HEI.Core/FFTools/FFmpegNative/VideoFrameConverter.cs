@@ -37,7 +37,8 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			Size destinationSize,
 			AVPixelFormat destinationPixelFormat,
 			ScaleQuality quality = ScaleQuality.Bicubic,
-			bool bitExact = false) {
+			bool bitExact = false,
+			bool sourceFullRange = false) {
 
 			int flags = quality switch {
 				ScaleQuality.FastBilinear => (int)SwsFlags.SWS_FAST_BILINEAR,
@@ -65,6 +66,10 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				null);
 			if (_pConvertContext == null)
 				throw new FFInvalidExitCodeException("Could not initialize the conversion context.");
+			// A full-range picture in a format swscale takes for TV range (NV12 from the GPU's decoder,
+			// tagged "pc"): say so, or its values come out stretched (yuvj formats say it themselves).
+			if (sourceFullRange)
+				SetSourceFullRange(_pConvertContext);
 
 			_pConvertedFrame = ffmpeg.av_frame_alloc();
 			if (_pConvertedFrame == null)
@@ -77,6 +82,25 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			// Give swscale a real padded destination frame instead of a tightly packed align=1 buffer.
 			// Passing 0 lets FFmpeg pick the alignment that fits the current CPU (recommended by libavutil).
 			ffmpeg.av_frame_get_buffer(_pConvertedFrame, 0).ThrowExceptionIfError();
+		}
+
+		/// <summary>Whether a frame is full range in a format that doesn't say so: then the converter needs <c>sourceFullRange</c>.</summary>
+		public static bool NeedsFullRange(in AVFrame frame, AVPixelFormat format) =>
+			frame.color_range == AVColorRange.AVCOL_RANGE_JPEG &&
+			format is not (AVPixelFormat.AV_PIX_FMT_YUVJ420P or AVPixelFormat.AV_PIX_FMT_YUVJ422P or AVPixelFormat.AV_PIX_FMT_YUVJ444P or AVPixelFormat.AV_PIX_FMT_YUVJ440P or AVPixelFormat.AV_PIX_FMT_YUVJ411P);
+
+		static void SetSourceFullRange(SwsContext* context) {
+			int* inverse, table;
+			int sourceRange, destinationRange, brightness, contrast, saturation;
+			if (ffmpeg.sws_getColorspaceDetails(context, &inverse, &sourceRange, &table, &destinationRange, &brightness, &contrast, &saturation) < 0)
+				return;
+			var inverseTable = new int_array4();
+			var forwardTable = new int_array4();
+			for (uint i = 0; i < 4; i++) {
+				inverseTable[i] = inverse[i];
+				forwardTable[i] = table[i];
+			}
+			ffmpeg.sws_setColorspaceDetails(context, inverseTable, 1, forwardTable, destinationRange, brightness, contrast, saturation);
 		}
 
 		public void Dispose() {

@@ -657,6 +657,16 @@ function renderScanCard(s) {
   }[speed]));
   row.append(text);
   card.append(row);
+  // More memory, faster scans (HardwareVideoDecode): how many videos the graphics chip decodes at once.
+  const memory = el('div', 'auto-row');
+  memory.append(toggleSwitch(c.moreMemory, 'Use more memory to scan faster', settingsBusy, (on) => saveSettings({ moreMemory: on })));
+  const memoryText = el('div', 'auto-text');
+  memoryText.append(el('div', 'auto-title', 'Use more memory to scan faster'), el('div', 'muted small', c.moreMemory
+    ? 'In the background, the graphics chip decodes more videos at once, taking up to ' + bytes(c.moreMemoryBytes) + ' of memory while a scan runs, so it finishes sooner on less of the processor.'
+    : 'The graphics chip decodes two videos at once, up to about 1 GB of memory. Scans take longer.'),
+    el('div', 'muted small', 'While a game or another 3D program runs, or anything full screen, scans make way: they run in the background with less memory until it\'s closed.'));
+  memory.append(memoryText);
+  card.append(memory);
   const foot = el('div', 'auto-foot');
   foot.append(el('div', 'muted small', s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
     : s.schedule.everyMinutes === 0 ? 'No scheduled scans: scans run when you press Scan now.'
