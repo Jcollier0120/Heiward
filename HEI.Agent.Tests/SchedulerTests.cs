@@ -63,6 +63,14 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
+	public void RemoveKeysTask_DeletesEachKey_ThenItself_InOnePairOfOuterQuotes() {
+		string action = Scheduler.DeleteKeysAction(new[] { @"Software\Classes\heiward", @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward" });
+		Assert.Matches(@"^--headless "".+\\cmd\.exe"" /d /c """".+\\reg\.exe"" delete ""HKCU\\Software\\Classes\\heiward"" /f >nul 2>&1 & " +
+			@""".+\\reg\.exe"" delete ""HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Heiward"" /f >nul 2>&1 & " +
+			@""".+\\schtasks\.exe"" /Delete /TN ""Heiward\\Remove GitHub copy"" /F >nul""$", action);
+	}
+
+	[Fact]
 	public void Task_OfTheGitHubCopy_RunsTheExe() =>
 		Assert.Equal("--headless \"C:\\x\\hei.exe\" open", Scheduler.Action(Scheduler.OpenTask, @"C:\x\hei.exe", "open", removeWhenGone: false));
 

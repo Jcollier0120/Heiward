@@ -493,11 +493,8 @@ namespace HEI.Agent {
 			StopGitHubCopy();
 			DeleteOwnShortcut(StartMenuShortcut);
 			DeleteOwnShortcut(DesktopShortcut);
-			// Through reg.exe: the package's own registry changes stay in the package (its view of HKCU
-			// shows them gone while the user's keys stay), a program outside the package reaches the real ones.
-			DeleteUserKey(Toast.AppIdKey);
-			DeleteUserKey(ProtocolKey); // the Store version's own heiward: links come with its package
-			bool entryLeft = !DeleteUserKey(UninstallKey);
+			// The heiward: links' too: the Store version's own come with its package.
+			bool entryLeft = !DeleteUserKeysOutside(Toast.AppIdKey, ProtocolKey, UninstallKey);
 			// A process that just stopped can hold its exe for a moment.
 			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
 				try { Directory.Delete(InstallDir, recursive: true); }
@@ -527,23 +524,23 @@ namespace HEI.Agent {
 			lnk.Length > 1 && System.Text.Encoding.Unicode.GetString(lnk, 1, lnk.Length - 1).Contains(folder, StringComparison.OrdinalIgnoreCase) ||
 			System.Text.Encoding.Latin1.GetString(lnk).Contains(folder, StringComparison.OrdinalIgnoreCase);
 
-		/// <summary>Deletes an HKCU key with reg.exe; true when the user's registry doesn't have it any more.</summary>
-		static bool DeleteUserKey(string key) {
-			string reg = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
-			int Run(params string[] args) {
-				var psi = new ProcessStartInfo(reg) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-				foreach (string a in args) psi.ArgumentList.Add(a);
-				using var p = Process.Start(psi)!;
-				p.StandardOutput.ReadToEnd();
-				p.StandardError.ReadToEnd();
-				p.WaitForExit(10_000);
-				return p.ExitCode;
-			}
+		/// <summary>
+		/// Deletes HKCU keys from outside the package. Its registry changes stay in its own view of HKCU, which
+		/// shows them gone while the user's keys stay, and so do those of every program it starts, reg.exe
+		/// included. Task Scheduler starts its tasks outside any package: a one-time task deletes them.
+		/// </summary>
+		/// <returns>True once the task has run; this view can't tell whether the keys are gone.</returns>
+		static bool DeleteUserKeysOutside(params string[] keys) {
 			try {
-				Run("delete", @"HKCU\" + key, "/f");
-				return Run("query", @"HKCU\" + key) != 0;
+				Scheduler.Register(Scheduler.RemoveKeysTask, Scheduler.DeleteKeysXml(keys));
+				if (Scheduler.RunNow(Scheduler.RemoveKeysTask))
+					// The task deletes itself last.
+					for (var until = DateTime.UtcNow.AddSeconds(15); DateTime.UtcNow < until; Thread.Sleep(250))
+						if (!Scheduler.Exists(Scheduler.RemoveKeysTask)) return true;
+				Scheduler.Remove(Scheduler.RemoveKeysTask);
 			}
-			catch { return false; }
+			catch (Exception e) { AgentPaths.AppendLog("Task Scheduler couldn't remove the GitHub copy's registry keys: " + e.Message); }
+			return false;
 		}
 
 		/// <summary>

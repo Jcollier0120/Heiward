@@ -36,8 +36,11 @@ namespace HEI.Agent {
 		public const string OpenTask = Folder + @"\Open review page";
 		/// <summary>One run of the uninstall, which <see cref="Installer.Uninstall"/> hands over to Task Scheduler.</summary>
 		public const string UninstallTask = Folder + @"\Uninstall";
+		/// <summary>One run of reg.exe for the Store version, which removes a GitHub copy (<see cref="Installer.RemoveGitHubCopy"/>).</summary>
+		public const string RemoveKeysTask = Folder + @"\Remove GitHub copy";
 
 		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
+		static string Reg => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
 		static string Schtasks => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe");
 		static string Cmd => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
 
@@ -95,6 +98,24 @@ namespace HEI.Agent {
 			command: agentExe);
 
 		/// <summary>
+		/// Deletes the HKCU <paramref name="keys"/> with reg.exe, then the task itself, run once by <see cref="RunNow"/>:
+		/// Task Scheduler starts it outside the package, where the user's keys are.
+		/// </summary>
+		public static string DeleteKeysXml(IEnumerable<string> keys) => Task(
+			"Removes the registry entries of the copy of Heiward from GitHub, which the Microsoft Store version replaces.",
+			"",
+			"""
+			    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+			    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
+			""",
+			DeleteKeysAction(keys));
+
+		/// <summary>cmd's quotes around it all: a command that starts with a quote loses its first and last one.</summary>
+		internal static string DeleteKeysAction(IEnumerable<string> keys) =>
+			$"--headless \"{Cmd}\" /d /c \"{string.Concat(keys.Select(k => $"\"{Reg}\" delete \"HKCU\\{k}\" /f >nul 2>&1 & "))}\"{Schtasks}\" /Delete /TN \"{RemoveKeysTask}\" /F >nul\"";
+
+		/// <summary>
 		/// What conhost --headless runs. Uninstalling the Store version removes the alias and runs none of
 		/// Heiward's code, so there the task checks for the alias first, and deletes itself once it's gone
 		/// rather than failing at every trigger.
@@ -144,6 +165,8 @@ namespace HEI.Agent {
 
 		/// <summary>Starts a task now; false when Task Scheduler wouldn't.</summary>
 		public static bool RunNow(string name) => Run("/Run", "/TN", name).Item1 == 0;
+
+		public static bool Exists(string name) => Run("/Query", "/TN", name).Item1 == 0;
 
 		/// <summary>"every hour", "every 6 hours on AC power", "only when you press Scan now".</summary>
 		public static string Describe(AgentConfig cfg) {

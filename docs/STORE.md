@@ -141,7 +141,7 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
     - **At full speed:** as many cores as it takes, at normal priority.
   - **A copy from GitHub:** when one is installed, a ticked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
     - The removal takes the copy's processes, shortcuts, notification name, `heiward:` links, Apps & Features entry and folder.
-    - It deletes the registry keys with `reg.exe`. The package's own registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay.
+    - A one-time task, `Heiward\Remove GitHub copy`, deletes the registry keys with `reg.exe`, then itself. The package's registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay. So do the changes of every program it starts, so `reg.exe` started from the package wouldn't do. Task Scheduler starts its tasks outside it.
     - A `Heiward.lnk` is deleted only when it names the GitHub copy's folder: the Store version's desktop shortcut has the same name.
     - Settings, the report and the history stay: the Store version uses them.
     - It runs after the AI components were copied from that folder, and before the Store version's tasks take over the same names.
