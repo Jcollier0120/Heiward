@@ -272,7 +272,7 @@ namespace HEI.Agent {
 						set.Add(i);
 						continue;
 					}
-					if (IsOtherVersion(relation) || set.Skip(1).Any(s => Versions(s, i, bursts) && !(s.SizeLong == i.SizeLong && hashes.Same(s.Path, i.Path)))) {
+					if (IsOtherVersion(relation) || set.Skip(1).Any(s => Versions(s, i, bursts))) {
 						otherVersions.Add(i);
 						continue;
 					}
@@ -353,21 +353,25 @@ namespace HEI.Agent {
 		/// soundtrack (<see cref="LanguageVersions"/>, <see cref="SameSoundtrackPercent"/>).
 		/// </summary>
 		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+			// IMG_1234 next to IMG_1235, or 0084.png next to 0085.png: a burst, a retake, or an image
+			// sequence's frames. Burst shots match 99% and more, which below would pass for a resaved
+			// copy and be ticked. A still stretch of an animation is even the same bytes, and each frame
+			// is still one the sequence needs, so this comes before "identical".
+			if (bursts.AreSiblings(i.Path, keep.Path))
+				return "burst";
+			// One video in two languages, as the names or the audio tracks' tags say (an older game's
+			// intro_en.wmv and intro_de.wmv): each is the game's own file, even where it ships the same bytes twice.
+			if (!i.IsImage && !keep.IsImage && (LanguageVersions.ByName(i.Path, keep.Path) || LanguageVersions.ByTags(i, keep)))
+				return "language";
 			if (i.SizeLong == keep.SizeLong && hashes.Same(i.Path, keep.Path))
 				return "identical";
 			// Named as a photo and its edit (Google Photos' "-edited", Samsung's and Picasa's
 			// "_Original"): however light the edit (one scored 99.68%), both stay; the user decides.
 			if (IsOriginalAndEdit(i.Path, keep.Path))
 				return "edited";
-			// IMG_1234 next to IMG_1235: a burst or a retake. Burst shots match 99% and more, which
-			// below would pass for a resaved copy and be ticked.
-			if (bursts.AreSiblings(i.Path, keep.Path))
-				return "burst";
 			if (!i.IsImage && !keep.IsImage) {
-				// One video in two languages (an older game's intro_en.wmv and intro_de.wmv), or with
-				// another soundtrack: the pictures match frame for frame, and each is its own file.
-				if (LanguageVersions.ByName(i.Path, keep.Path) || LanguageVersions.ByTags(i, keep))
-					return "language";
+				// Another soundtrack (another language nothing names, other music): the pictures match
+				// frame for frame, and each is its own file.
 				if (fingerprints.AudioPercent(i.Path, keep.Path) < SameSoundtrackPercent)
 					return "soundtrack";
 				// One has sound and the other none: the same pictures, but not a plain copy.

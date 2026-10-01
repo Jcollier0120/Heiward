@@ -252,6 +252,25 @@ public sealed class ReportBuilderTests : IDisposable {
 	}
 
 	[Fact]
+	public void FramesOfAnImageSequence_AreNoSet() {
+		// Regression (a real PC): an animation's frames, 0084.png to 0099.png, barely change from one to
+		// the next and were 16 "more compressed copies" of 0093.png, all ticked.
+		var frames = Enumerable.Range(84, 16)
+			.Select(n => Photo($@"Animator\Content\TestData\Color\{n:0000}.png", 480, 640, Bytes(n == 93 ? 9000 : 8000 + n, (byte)n), gray: 99.8f))
+			.ToArray();
+		Assert.Empty(ReportBuilder.Build(frames, fingerprints));
+	}
+
+	[Fact]
+	public void IdenticalFramesOfAnImageSequence_AreNoSet() {
+		// A still stretch of an animation: frames 0010 to 0012 are the same bytes, and each is still a frame.
+		byte[] still = Bytes(8000, 1);
+		Assert.Empty(ReportBuilder.Build(new[] {
+			Photo(@"Frames\0010.png", 480, 640, still), Photo(@"Frames\0011.png", 480, 640, still), Photo(@"Frames\0012.png", 480, 640, still),
+		}, fingerprints));
+	}
+
+	[Fact]
 	public void TwoShotsOfOneBurst_AreNeverInOneSet_ThoughNeitherIsKept() {
 		// Regression (a real library): IMG_0569 and IMG_0570, taken a minute apart two weeks after
 		// IMG_0538, were both look-alikes of it. The one more like IMG_0538 stays; the other is no look-alike.
@@ -285,6 +304,13 @@ public sealed class ReportBuilderTests : IDisposable {
 		// Regression: an older game's cutscenes, one per language with the same pictures, matched
 		// frame for frame and were ticked as resaved copies of each other.
 		Assert.Empty(ReportBuilder.Build(new[] { Video(a, Bytes(9000, 1)), Video(b, Bytes(9000, 2), gray: 99.9f) }, fingerprints));
+	}
+
+	[Fact]
+	public void OneVideoInTwoLanguages_WithTheSameBytes_IsNoSet() {
+		// A game without a German dub ships the English cutscene twice; it opens both names.
+		byte[] same = Bytes(9000, 1);
+		Assert.Empty(ReportBuilder.Build(new[] { Video(@"Game\Movies\intro_en.wmv", same), Video(@"Game\Movies\intro_de.wmv", same) }, fingerprints));
 	}
 
 	[Fact]
