@@ -397,7 +397,8 @@ namespace HEI.Agent {
 				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
 				config = new {
 					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
-					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true), backgroundCores = cfg.ParallelismFor(false),
+					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true),
+						backgroundCpuPercent = Math.Round(cfg.BackgroundCpuCap(Environment.ProcessorCount)),
 				},
 			};
 		}

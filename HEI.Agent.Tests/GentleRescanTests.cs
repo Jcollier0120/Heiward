@@ -77,14 +77,15 @@ public sealed class GentleRescanTests : IDisposable {
 
 	[Fact]
 	public void ABackgroundScan_ReadsTheDiskAtVeryLowPriority_AndFullSpeedPutsItBack() {
+		// No cap on the processor (0): it would hold back every test running alongside in this process.
 		try {
-			Assert.True(Power.SetPace(fullSpeed: false));
+			Assert.True(Power.SetPace(fullSpeed: false, cpuCap: 0));
 			Assert.Equal(0, Power.IoPriority());
-			Assert.True(Power.SetPace(fullSpeed: true));
+			Assert.True(Power.SetPace(fullSpeed: true, cpuCap: 0));
 			Assert.Equal(2, Power.IoPriority());
 		}
 		finally {
-			Power.SetPace(fullSpeed: true);
+			Power.SetPace(fullSpeed: true, cpuCap: 0);
 		}
 	}
 }
