@@ -120,6 +120,15 @@ public static class TestVideoGenerator {
 			$"-c:v libvpx-vp9 -crf 30 -b:v 0 -pix_fmt yuv420p \"{outputPath}\"");
 
 	/// <summary>
+	/// 4s 320x240 H.264 with one keyframe, at the start: a position near the end decodes about
+	/// 100 packets forward from it, reading the file many times over.
+	/// </summary>
+	public static bool GenerateH264_OneKeyframe(string ffmpegPath, string outputPath) =>
+		RunFfmpeg(ffmpegPath,
+			$"-y -f lavfi -i testsrc2=duration=4:size=320x240:rate=25 " +
+			$"{VideoEncoder(ffmpegPath)} -g 250 -sc_threshold 0 -pix_fmt yuv420p \"{outputPath}\"");
+
+	/// <summary>
 	/// 2s 320x240 H.264 with a visually different pattern (color bars).
 	/// </summary>
 	public static bool GenerateH264_Different(string ffmpegPath, string outputPath) =>

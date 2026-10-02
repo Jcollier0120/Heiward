@@ -92,6 +92,17 @@ public class FfmpegErrorClassifierTests {
 	}
 
 	[Fact]
+	public void Categorize_StallBeatsEarlierCorruptionLines() {
+		// IMG_2122.MOV (a 4K Dolby Vision iPhone clip) in a background scan, 2026-10-01: the interrupt
+		// ended a slow decode after the decoder had skipped one damaged packet. Called corrupt, the
+		// file skipped the FFmpeg process retry and lost its AI vector for that scan.
+		const string text = "Multiple Dolby Vision RPUs found in one AU. Skipping previous. | Packet corrupt (stream = 0, dts = 4620). | " +
+			"Invalid NAL unit size (23034 > 12037). | Error splitting the input into NAL units. Immediate exit requested";
+		Assert.Equal(FfmpegErrorCategory.Stalled, FfmpegErrorClassifier.Categorize(text));
+		Assert.NotNull(FfmpegErrorClassifier.HintFor(FfmpegErrorCategory.Stalled));
+	}
+
+	[Fact]
 	public void Classify_ReturnsHintForKnownCategory() {
 		string? hint = FfmpegErrorClassifier.Classify("Hardware is lacking required capabilities");
 		Assert.NotNull(hint);
