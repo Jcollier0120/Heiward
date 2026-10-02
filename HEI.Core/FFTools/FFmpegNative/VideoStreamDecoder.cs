@@ -62,6 +62,9 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			int openRet = ffmpeg.avformat_open_input(&pFormatContext, url, null, null);
 			_pFormatContext = pFormatContext;
 			openRet.ThrowExceptionIfError();
+			// The probe decodes a frame or so with no step of ours in between, so its time does count
+			// against the timeout. In the background scans of 4K iPhone clips that ran out of time,
+			// it never was the probe: every interrupt came in TryDecodeFrame.
 			ffmpeg.avformat_find_stream_info(_pFormatContext, null).ThrowExceptionIfError();
 			AVCodec* codec = null;
 
