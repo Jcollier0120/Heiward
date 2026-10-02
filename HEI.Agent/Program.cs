@@ -132,10 +132,12 @@ root.Subcommands.Add(openCmd);
 var reuseFrom = new Option<string[]>("--reuse-from") {
 	Description = "A folder that already holds FFmpeg and the AI components in bin\\ and ai\\, such as another copy of Heiward's: copy them from it instead of downloading them. Repeatable.",
 };
-var setup = new Command("setup", "Get FFmpeg and the AI components (and the pack for the PC's NPU), copied from --reuse-from folders when they have them, then report what this PC will use.") { reuseFrom };
+var setup = new Command("setup", "Get FFmpeg and the AI components (and the pack for the PC's NPU), copied from --reuse-from folders or the installed copy when they have them, then report what this PC will use.") { reuseFrom };
 setup.SetAction(async (r, ct) => {
 	try {
-		await Installer.EnsurePrerequisitesAsync(ComponentReuse.Sources(r.GetValue(reuseFrom), CoreUtils.StateFolder), dryRun: false, ct);
+		// The installed copy's folder too: a development build starts empty, and the installed Heiward has them.
+		var sources = ComponentReuse.Sources((r.GetValue(reuseFrom) ?? Array.Empty<string>()).Append(Installer.InstallDir), CoreUtils.StateFolder);
+		await Installer.EnsurePrerequisitesAsync(sources, dryRun: false, ct);
 		using var embedder = OnnxEmbedder.Create(AiDevice.Auto);
 		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}.");
 		AiStatus.Record(AgentConfig.Load(), embedder.DeviceName, "setup");
@@ -190,6 +192,9 @@ status.SetAction(async (r, _) => {
 		return 0;
 	}
 	Console.WriteLine($"Installed: {(StorePackage.IsPackaged ? $"from the Microsoft Store ({StorePackage.FamilyName}){(File.Exists(AgentPaths.StoreSetUp) ? "" : ", not set up yet: open Heiward from the Start menu")}" : File.Exists(Installer.InstalledExe) ? Installer.InstallDir : "no")}");
+	if (DevBuild.Current)
+		Console.WriteLine("This copy: a development build, with no scheduled tasks" +
+			(AgentPaths.Separate ? $", its own data and its own page ({ReviewServer.PageUrl(cfg.Port)}), apart from the installed copy's" : ""));
 	Console.WriteLine($"Settings: {AgentPaths.Config}{(File.Exists(AgentPaths.Config) ? "" : " (defaults; not saved yet)")}");
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
@@ -204,7 +209,7 @@ status.SetAction(async (r, _) => {
 		Console.WriteLine($"To review: {pending.Count} set(s), up to {Format.Bytes(pending.Sum(g => g.ReclaimBytes))} to free");
 		foreach (string n in report.Notes) Console.WriteLine("  note: " + n);
 	}
-	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? "not scheduled (run 'hei install')"}");
+	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? (DevBuild.Current ? "none in a development build" : "not scheduled (run 'hei install')")}");
 	if (AgentPause.Load() is { } paused) Console.WriteLine($"Paused: scheduled scans skip themselves {paused.Describe(DateTime.UtcNow)} ('hei resume').");
 	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
 	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");

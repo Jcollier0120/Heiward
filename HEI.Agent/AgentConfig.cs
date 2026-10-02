@@ -18,17 +18,72 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace HEI.Agent {
+	/// <summary>
+	/// A development build: a hei.exe built in a checkout, which a folder above it marks with .git (a folder, or
+	/// the file a git worktree has). It keeps its own data folder and port (<see cref="AgentPaths.Separate"/>), so it
+	/// runs beside the installed Heiward without touching it, and it has no scheduled tasks. The installed copy,
+	/// the Store version and a download are never one.
+	/// </summary>
+	static class DevBuild {
+		/// <summary>Folders looked at above the exe's own: a published build is bin\Release\net10.0-windows\win-arm64\publish, five deep.</summary>
+		const int Levels = 8;
+
+		/// <summary>Set by tests; null: what <see cref="IsCheckout"/> says of this exe's folder.</summary>
+		internal static bool? Override;
+
+		static readonly Lazy<bool> current = new(() => !Installer.RunningInstalled && IsCheckout(AppContext.BaseDirectory));
+
+		public static bool Current => Override ?? current.Value;
+
+		/// <summary><paramref name="folder"/>, or one of the <see cref="Levels"/> folders above it, holds .git.</summary>
+		internal static bool IsCheckout(string folder) {
+			try {
+				var dir = new DirectoryInfo(Path.GetFullPath(folder));
+				for (int i = 0; dir != null && i <= Levels; i++, dir = dir.Parent) {
+					string git = Path.Combine(dir.FullName, ".git");
+					if (Directory.Exists(git) || File.Exists(git)) return true;
+				}
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException or System.Security.SecurityException) { }
+			return false;
+		}
+	}
+
 	/// <summary>Where the agent keeps its state: one folder, nothing inside the scanned libraries.</summary>
 	static class AgentPaths {
-		/// <summary>%LOCALAPPDATA%\Heiward, or HEIWARD_HOME.</summary>
-		public static string Home {
+		/// <summary>The installed copy's review page port; a development build's is 10000 more.</summary>
+		public const int InstalledPort = 18484, DevPort = InstalledPort + 10000;
+
+		static string LocalAppData => Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+
+		static string? HomeOverride {
 			get {
 				string? overridden = Environment.GetEnvironmentVariable("HEIWARD_HOME");
-				return !string.IsNullOrWhiteSpace(overridden)
-					? overridden
-					: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Heiward");
+				return string.IsNullOrWhiteSpace(overridden) ? null : overridden;
 			}
 		}
+
+		/// <summary>Install and uninstall act on the installed copy, whichever exe runs them (<see cref="ActAsInstalled"/>).</summary>
+		internal static bool ActingAsInstalled { get; set; }
+
+		/// <summary>From here on this process uses the installed copy's data folder and port, even in a development build.</summary>
+		public static void ActAsInstalled() => ActingAsInstalled = true;
+
+		/// <summary>
+		/// A development build on its own data folder (%LOCALAPPDATA%\Heiward-dev) and port (<see cref="DevPort"/>).
+		/// Not with HEIWARD_HOME set, which overrides it as before, nor while it installs or uninstalls.
+		/// </summary>
+		public static bool Separate => DevBuild.Current && !ActingAsInstalled && HomeOverride == null;
+
+		/// <summary>The installed copy's: %LOCALAPPDATA%\Heiward, or HEIWARD_HOME.</summary>
+		public static string InstalledHome => HomeOverride ?? Path.Combine(LocalAppData, "Heiward");
+
+		/// <summary><see cref="InstalledHome"/>, or a development build's %LOCALAPPDATA%\Heiward-dev (<see cref="Separate"/>).</summary>
+		public static string Home => Separate ? Path.Combine(LocalAppData, "Heiward-dev") : InstalledHome;
+
+		/// <summary>The review page's port when settings.json sets none.</summary>
+		public static int DefaultPort => Separate ? DevPort : InstalledPort;
+
 		public static string Config => Path.Combine(Home, "settings.json");
 		public static string Report => Path.Combine(Home, "report.json");
 		public static string Decisions => Path.Combine(Home, "decisions.json");
@@ -163,8 +218,8 @@ namespace HEI.Agent {
 		public int MinBatteryPercent { get; set; } = 30;
 		/// <summary>Open the review page in the default browser once a day at sign-in, when something waits for review.</summary>
 		public bool OpenPageAtSignIn { get; set; } = true;
-		/// <summary>The review page's port on 127.0.0.1.</summary>
-		public int Port { get; set; } = 18484;
+		/// <summary>The review page's port on 127.0.0.1: 18484, a development build's 28484 (<see cref="AgentPaths.DefaultPort"/>).</summary>
+		public int Port { get; set; } = AgentPaths.DefaultPort;
 		/// <summary>Minutes the review page stays up with nobody using it.</summary>
 		public int ServerIdleMinutes { get; set; } = 60;
 		/// <summary>A Windows notification when a scan finds something new.</summary>
@@ -234,6 +289,9 @@ namespace HEI.Agent {
 			// cleans them up by itself; elsewhere it's off until it's turned on.
 			if (string.Equals(cfg.DeveloperMode, "auto", StringComparison.OrdinalIgnoreCase))
 				cfg.DeveloperMode = cfg.AutoClean.Developer ? "on" : "off";
+			// A development build never takes the installed copy's port, as from a settings.json copied over
+			// from it: any other port it sets stands.
+			if (AgentPaths.Separate && cfg.Port == AgentPaths.InstalledPort) cfg.Port = AgentPaths.DevPort;
 			return cfg;
 		}
 
