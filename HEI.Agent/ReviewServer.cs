@@ -464,6 +464,8 @@ namespace HEI.Agent {
 				scan = ScanView(),
 				setup = StoreSetup.View(),
 				agent = AgentView(cfg),
+				// Settings' About: this build ("1.5.0+<commit>") and where it came from.
+				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current },
 				ai = AiStatus.Load(),
 				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
 				schedule = new {

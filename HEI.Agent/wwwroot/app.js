@@ -710,6 +710,42 @@ function renderSettings(s) {
   renderHistoryCard(s);
   renderDevModeCard(s);
   renderMoreCard(s);
+  renderAboutCard(s);
+}
+
+const outLink = (text, href) => {
+  const a = el('a', null, text);
+  a.href = href;
+  a.target = '_blank';
+  a.rel = 'noopener noreferrer';
+  return a;
+};
+
+/** This build of Heiward and where it came from, and the licence's "appropriate legal notices". */
+function renderAboutCard(s) {
+  const [version, commit] = s.about.build.split('+');
+  const card = el('div', 'auto-card about');
+  const row = el('div', 'auto-row');
+  const text = el('div', 'auto-text');
+  const built = el('div', 'muted small', commit ? 'Built from commit ' : 'Built from an unknown commit.');
+  if (commit) built.append(outLink(commit.slice(0, 7), 'https://github.com/Jcollier0120/Heiward/commit/' + commit), '.');
+  const from = el('div', 'muted small');
+  if (s.about.store) from.append('From the Microsoft Store, which keeps it up to date.');
+  else if (s.about.dev) from.append('A development build, kept apart from the installed Heiward.');
+  else from.append('From GitHub: new versions are on its ', outLink('releases page', 'https://github.com/Jcollier0120/Heiward/releases'), '.');
+  text.append(el('div', 'auto-title', 'Version ' + version), built, from);
+  row.append(text);
+  card.append(row);
+  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
+  const foot = el('div', 'auto-foot');
+  const licence = el('div', 'muted small', 'Heiward is free software: you can share and change it under the ');
+  licence.append(outLink('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
+    '. It comes with no warranty. Its ', outLink('source code', 'https://github.com/Jcollier0120/Heiward'), ' is on GitHub. It includes code from ',
+    outLink('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
+    ' (© 0x90d and contributors), under the same licence.');
+  foot.append(licence);
+  card.append(foot);
+  $('about-card').replaceChildren(card);
 }
 
 /** Developer mode: the daily developer check, Developer cleanup on the home page, and its automatic cleanup, or none of it. */
@@ -2220,25 +2256,6 @@ function renderFooter(s) {
   const p = el('div', null, 'Settings: ');
   p.append(el('code', null, s.config.path));
   f.append(p);
-  f.append(aboutLine());
-}
-
-// The licence's "appropriate legal notices": whose work this is, that it's free to share, no warranty.
-function aboutLine() {
-  const link = (text, href) => {
-    const a = el('a', null, text);
-    a.href = href;
-    a.target = '_blank';
-    a.rel = 'noopener noreferrer';
-    return a;
-  };
-  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
-  const d = el('div', 'about', 'Heiward is free software: you can share and change it under the ');
-  d.append(link('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
-    '. It comes with no warranty. It includes code from ',
-    link('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
-    ' (© 0x90d and contributors), under the same licence.');
-  return d;
 }
 
 // ---------------------------------------------------------------- folder tree
