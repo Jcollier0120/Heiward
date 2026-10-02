@@ -367,6 +367,11 @@ namespace HEI.Agent {
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
+			var drives = ExplorerView.Drives(cfg, index, pending);
+			// This PC's drives at a glance, from what's here already (DiskGlance).
+			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
+			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
+				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives));
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
 				.Where(d => !d.Value.Unlisted)
@@ -402,7 +407,8 @@ namespace HEI.Agent {
 				},
 				dev = DevSummary(cfg, devReport),
 				auto = AutoView(report, devReport, decisions),
-				drives = ExplorerView.Drives(cfg, index, pending),
+				drives,
+				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
 				setup = StoreSetup.View(),

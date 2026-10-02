@@ -35,6 +35,8 @@ namespace HEI.Agent {
 		public List<string> Roots { get; set; } = new();
 		public Dictionary<string, DriveScan> Drives { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 		public Dictionary<string, FolderFiles> Folders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>Per drive root, the photos and videos of each file type ("jpg", "mp4"): the home page's disk summary. Empty in an index from before.</summary>
+		public Dictionary<string, Dictionary<string, FolderFiles>> Types { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
 		string[]? sorted;
 
@@ -55,6 +57,10 @@ namespace HEI.Agent {
 				string drive = DriveOf(path);
 				perDrive.TryGetValue(drive, out var d);
 				perDrive[drive] = (d.Files + 1, d.Bytes + size);
+				if (!index.Types.TryGetValue(drive, out var types)) index.Types[drive] = types = new(StringComparer.OrdinalIgnoreCase);
+				string ext = TypeOf(path);
+				types.TryGetValue(ext, out FolderFiles? t);
+				types[ext] = new FolderFiles((t?.Files ?? 0) + 1, (t?.Bytes ?? 0) + size);
 			}
 			var driveRoots = index.Roots.Select(DriveOf).Concat(perDrive.Keys).Concat(analysis.Keys.Select(DriveOf))
 				.Distinct(StringComparer.OrdinalIgnoreCase);
@@ -66,6 +72,9 @@ namespace HEI.Agent {
 			}
 			return index;
 		}
+
+		/// <summary>"jpg" for C:\Photos\a.JPG; "" for a file with no extension.</summary>
+		public static string TypeOf(string path) => Path.GetExtension(path).TrimStart('.').ToLowerInvariant();
 
 		/// <summary>C:\ for C:\Photos\a.jpg, \\nas\share\ for a share.</summary>
 		public static string DriveOf(string path) {
