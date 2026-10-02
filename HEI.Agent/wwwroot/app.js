@@ -1426,7 +1426,8 @@ const DEV_META = {
 };
 const SHARED = ['caches', 'android', 'temp'];
 let devProjects = [];         // [{ name, repos: [path] }] from settings.json
-let devResult = null;         // [ok, message] after the last clean, shown until the next
+let devResult = null;         // [ok, message, what wasn't cleaned] after the last clean, shown until the next
+let devProgress = '';         // while cleaning: what, and how far along (the page re-renders meanwhile)
 let groupMode = false;        // picking repositories to bundle into a project
 const groupPick = new Set();  // repository keys picked
 
@@ -1563,8 +1564,14 @@ function renderDevContent() {
     frag.append(...devOverview(dev));
   }
   if (devResult) {
-    const [ok, msg] = devResult;
-    frag.append(el('div', 'dev-banner ' + (ok ? 'ok' : 'bad'), msg));
+    const [ok, msg, failed] = devResult;
+    const banner = el('div', 'dev-banner ' + (ok ? 'ok' : 'bad'), msg);
+    if (failed && failed.length) {
+      const list = el('ul');
+      for (const f of failed) list.append(el('li', null, f));
+      banner.append(list);
+    }
+    frag.append(banner);
   }
   frag.append(groupMode && !route.group && !route.cat ? groupBar() : selectionBar());
   content.replaceChildren(frag);
@@ -2051,10 +2058,7 @@ function branchRow(r, overview, multi) {
   if (r.checkedOut.length) main.append(el('div', 'muted small', 'Kept, checked out in a worktree: ' + r.checkedOut.join(', ')));
   const auto = state.auto.repos[r.id];
   if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'b:' + r.id, 'Merged branches are deleted automatically, the first ' + dueText(auto.dueUtc, true) + '.'));
-  if (pruneResults.has(r.id)) {
-    const [ok, msg] = pruneResults.get(r.id);
-    main.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
-  }
+  if (pruneResults.has(r.id)) main.append(pruneResult(pruneResults.get(r.id)));
   row.append(main);
   const side = el('div', 'dev-item-side');
   const btn = el('button', r.merged.length ? 'btn' : 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'Nothing to prune');
@@ -2117,7 +2121,26 @@ function devRow(i, showRepo, compact) {
   return row;
 }
 
-const pruneResults = new Map(); // repository id -> [ok, message] after pruning
+const pruneResults = new Map(); // repository id -> the prune's answer ({ deleted, kept, fetched } or { error })
+
+/** What a Prune did, one branch per line: those deleted, then any kept and why. */
+function pruneResult(res) {
+  const box = el('div', 'result small ' + (res.error ? 'bad' : 'ok'));
+  if (res.error) {
+    box.textContent = res.error;
+    return box;
+  }
+  const list = (title, lines) => {
+    const ul = el('ul');
+    for (const line of lines) ul.append(el('li', null, line));
+    box.append(el('div', null, title), ul);
+  };
+  if (res.deleted.length) list('Deleted ' + count(res.deleted.length, 'branch', 'branches') + ':', res.deleted);
+  else box.append(el('div', null, 'No merged branches to delete.'));
+  if (res.kept.length) list('Kept ' + count(res.kept.length, 'branch', 'branches') + ':', res.kept.map((k) => k.branch + ' (' + k.reason + ')'));
+  if (!res.fetched) box.append(el('div', null, 'Couldn\'t fetch, so the last fetched state was used.'));
+  return box;
+}
 
 /** The Prune button with a tooltip (hover or keyboard focus) saying what it does and why nothing is lost. */
 function pruneTip(r, btn) {
@@ -2156,21 +2179,19 @@ function pruneTip(r, btn) {
 }
 
 async function pruneRepo(r) {
-  if (!confirm('Delete the local branches in ' + r.name + ' that are merged into ' + r.default + '?\n\n' +
-      'It fetches first, so the list can change: ' + r.merged.slice(0, 12).join(', ') + (r.merged.length > 12 ? ', …' : '') +
-      '\n\nThe commits stay in ' + r.default + '; branches on the remote are not touched.')) return;
+  // The branches are on the page beside the button: the count is enough here.
+  if (!confirm('Delete ' + count(r.merged.length, 'local branch', 'local branches') + ' in ' + r.name + ', merged into ' + r.default + '?\n\n' +
+      'It fetches first, so the count can change. The commits stay in ' + r.default + '; branches on the remote are not touched.')) return;
   devBusy = true;
+  devProgress = 'Merged branches in ' + r.name;
   renderDev();
   try {
-    const res = await post('/api/dev/repos/' + encodeURIComponent(r.id) + '/prune');
-    const parts = [res.deleted.length ? 'Deleted ' + count(res.deleted.length, 'branch', 'branches') + ': ' + res.deleted.join(', ') + '.' : 'No merged branches to delete.'];
-    if (res.kept.length) parts.push('Kept ' + res.kept.map((k) => k.branch + ' (' + k.reason + ')').join(', ') + '.');
-    if (!res.fetched) parts.push('Couldn\'t fetch, so the last fetched state was used.');
-    pruneResults.set(r.id, [!res.error, res.error || parts.join(' ')]);
+    pruneResults.set(r.id, await post('/api/dev/repos/' + encodeURIComponent(r.id) + '/prune'));
   } catch (e) {
-    pruneResults.set(r.id, [false, e.message]);
+    pruneResults.set(r.id, { error: e.message });
   }
   devBusy = false;
+  devProgress = '';
   await loadDevReport();
   renderDev();
   refresh(true);
@@ -2191,7 +2212,7 @@ function selectionBar() {
   text.append(el('div', 'sel-count', devBusy ? 'Cleaning…' : count(picked.length, 'item', 'items') + ' selected · ' + bytes(devSize(picked))));
   const status = el('div', 'muted small');
   status.id = 'dev-status';
-  status.textContent = devBusy ? '' : 'in ' + where.slice(0, 4).join(', ') + (where.length > 4 ? ' and ' + (where.length - 4) + ' more' : '');
+  status.textContent = devBusy ? devProgress : 'in ' + where.slice(0, 4).join(', ') + (where.length > 4 ? ' and ' + (where.length - 4) + ' more' : '');
   text.append(status);
   bar.append(text);
   const clear = el('button', 'btn secondary', 'Clear');
@@ -2218,8 +2239,9 @@ async function cleanDev(picked) {
   let freed = 0, left = 0;
   const failed = [];
   for (const [n, i] of picked.entries()) {
+    devProgress = i.name + ' (' + (n + 1) + ' of ' + picked.length + ')';
     const status = $('dev-status');
-    if (status) status.textContent = i.name + ' (' + (n + 1) + ' of ' + picked.length + ')';
+    if (status) status.textContent = devProgress;
     try {
       const r = await post('/api/dev/items/' + encodeURIComponent(i.id) + '/clean');
       freed += r.freedBytes;
@@ -2231,8 +2253,9 @@ async function cleanDev(picked) {
     }
   }
   devBusy = false;
+  devProgress = '';
   devResult = [!failed.length, 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file was', 'files were') + ' in use and left alone.' : '') +
-    (failed.length ? ' Not cleaned: ' + failed.join('; ') : '')];
+    (failed.length ? ' Not cleaned:' : ''), failed];
   await loadDevReport();
   renderDev();
   refresh(true);

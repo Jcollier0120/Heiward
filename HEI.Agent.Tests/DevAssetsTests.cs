@@ -236,6 +236,89 @@ public sealed class DevAssetsTests : IDisposable {
 		G(repo, "worktree", "remove", Path.Combine(root, "wt"));
 	}
 
+	/// <summary>A clone whose main is pushed, node_modules ignored, and a worktree of it where Claude Code keeps them.</summary>
+	(string Repo, string Worktree, DevItem Item) AgentWorktree(string name) {
+		string remote = Dir("remote.git");
+		G(remote, "init", "--bare");
+		string seed = Dir("seed");
+		G(seed, "init");
+		File.WriteAllText(Path.Combine(seed, ".gitignore"), "node_modules/\n");
+		G(seed, "add", ".");
+		G(seed, "commit", "-m", "one");
+		G(seed, "remote", "add", "origin", remote);
+		G(seed, "push", "-u", "origin", "main");
+		string repo = Path.Combine(root, "repo");
+		G(root, "clone", remote, repo);
+		string wt = Path.Combine(repo, ".claude", "worktrees", name);
+		G(repo, "worktree", "add", "-b", name, wt, "origin/main");
+		return (repo, wt, new DevItem("id", DevScanner.Worktrees, name, wt, new() { wt }, 0, null, true, null, "", repo));
+	}
+
+	[Fact]
+	public void Clean_RemovesAWorktreeDeeperThanWindowsPathLimit() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, item) = AgentWorktree("deep");
+		// node_modules nests deep: git alone stops here with "Filename too long", halfway through.
+		string deep = Path.Combine(wt, "node_modules", new string('a', 100), new string('b', 100), "index.js");
+		Touch(deep, 20);
+		Assert.True(deep.Length > 260);
+
+		CleanResult result = DevCleaner.Clean(item, new AgentConfig());
+		Assert.Null(result.Error);
+		Assert.Equal(0, result.LeftInUse);
+		Assert.False(Directory.Exists(wt));
+		Assert.DoesNotContain("/" + Path.GetFileName(wt), G(repo, "worktree", "list"));
+	}
+
+	[Fact]
+	public void Clean_FinishesARemovalThatGitStoppedPartway() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, item) = AgentWorktree("busy");
+		string open = Path.Combine(wt, "node_modules", "open.log");
+		Touch(open, 10);
+		Touch(Path.Combine(wt, "node_modules", "z-free.log"), 30);
+		using (new FileStream(open, FileMode.Open, FileAccess.Read, FileShare.None)) {
+			// Git checks there's nothing uncommitted, lets go of the worktree and stops at the file in use.
+			CleanResult result = DevCleaner.Clean(item, new AgentConfig());
+			Assert.Null(result.Error);
+			Assert.Equal(1, result.LeftInUse);
+			Assert.True(result.FreedBytes >= 30);
+		}
+		Assert.DoesNotContain("/" + Path.GetFileName(wt), G(repo, "worktree", "list"));
+		Assert.Equal(new[] { open }, Directory.EnumerateFiles(wt, "*", SearchOption.AllDirectories));
+	}
+
+	[Fact]
+	public void LeftoversOfAnUnfinishedRemoval_AreListedAsWorktrees_AndCleaned() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, item) = AgentWorktree("half");
+		Touch(Path.Combine(wt, "node_modules", "pkg", "x.js"), 40);
+		Touch(Path.Combine(wt, "package.json"));
+		string live = Path.Combine(repo, ".claude", "worktrees", "live");
+		G(repo, "worktree", "add", "-b", "live", live, "origin/main");
+		string notes = Dir("repo", ".claude", "notes"); // not where worktrees go
+		// What a removal stopped partway leaves: git let go of the worktree, and its .git went first.
+		File.Delete(Path.Combine(wt, ".git"));
+		G(repo, "worktree", "prune");
+
+		Assert.True(DevScanner.IsLeftoverWorktree(repo, wt));
+		Assert.False(DevScanner.IsLeftoverWorktree(repo, live));
+		Assert.False(DevScanner.IsLeftoverWorktree(repo, notes));
+		DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(-30), default), i => i.Location == wt);
+		Assert.True(listed.Suggested);
+		Assert.Null(listed.Blocked);
+		Assert.StartsWith("left over", listed.Detail);
+		// Its node_modules is the leftover's, not a build output of the repository too.
+		Assert.Empty(DevScanner.FindBuildOutputs(repo));
+
+		CleanResult result = DevCleaner.Clean(item, new AgentConfig());
+		Assert.Null(result.Error);
+		Assert.True(result.FreedBytes >= 40);
+		Assert.False(Directory.Exists(wt));
+		Assert.True(Directory.Exists(live));
+		G(repo, "worktree", "remove", live);
+	}
+
 	[Fact]
 	public void DevProjects_AreMadeConsistent() {
 		var saved = DevProject.Normalize(new[] {
