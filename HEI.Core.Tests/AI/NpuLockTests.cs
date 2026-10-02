@@ -104,24 +104,66 @@ public sealed class NpuLockTests : IDisposable {
 		}
 	}
 
+	/// <summary>The other tool lets go. A waiter may be reading its owner.json just then: try again, as a holder does.</summary>
+	void ReleaseAsAnotherTool() {
+		for (int attempt = 0; ; attempt++) {
+			try {
+				Directory.Delete(dir, recursive: true);
+				return;
+			}
+			catch (IOException) when (attempt < 40) { Thread.Sleep(25); }
+			catch (UnauthorizedAccessException) when (attempt < 40) { Thread.Sleep(25); }
+		}
+	}
+
 	[Fact]
 	public void ServesWaitersInLineOrder_APersonFirst() {
 		if (!OperatingSystem.IsWindows()) return;
 		HoldAsAnotherTool();
 		var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
+		var errors = new System.Collections.Concurrent.ConcurrentQueue<Exception>();
 		var threads = new List<Thread>();
-		foreach (var (label, interactive) in new[] { ("a", false), ("b", false), ("c", true) }) {
-			var t = new Thread(() => { using (NpuLock.Acquire(TimeSpan.FromSeconds(20), interactive)) order.Enqueue(label); });
-			t.Start();
-			threads.Add(t);
-			int expected = threads.Count;
-			Until(() => Tickets().Length == expected);
+		bool released = false;
+		try {
+			foreach (var (label, interactive) in new[] { ("a", false), ("b", false), ("c", true) }) {
+				// A waiter's exception is the test's failure, not the test host's crash.
+				var t = new Thread(() => {
+					try { using (NpuLock.Acquire(TimeSpan.FromSeconds(20), interactive)) order.Enqueue(label); }
+					catch (Exception e) { errors.Enqueue(e); }
+				});
+				t.Start();
+				threads.Add(t);
+				int expected = threads.Count;
+				Until(() => Tickets().Length == expected);
+			}
+			// Every waiter reads the line again (it polls every 100 ms) before the lock is let go, so none
+			// acts on a line it read before the person joined.
+			Thread.Sleep(400);
+			ReleaseAsAnotherTool();
+			released = true;
 		}
-		Directory.Delete(dir, recursive: true);
-		foreach (var t in threads) Assert.True(t.Join(TimeSpan.FromSeconds(20)));
+		finally {
+			// Never leave waiters running into Dispose, which deletes their folder.
+			if (!released) ReleaseAsAnotherTool();
+			foreach (var t in threads) Assert.True(t.Join(TimeSpan.FromSeconds(20)));
+		}
+		Assert.Empty(errors);
 		Assert.Equal(["c", "a", "b"], order);
 		Assert.Empty(Tickets());
 		Assert.False(Directory.Exists(dir));
+	}
+
+	[Fact]
+	public void LetsGo_EvenWhileAnotherToolIsReadingTheOwnerFile() {
+		if (!OperatingSystem.IsWindows()) return;
+		IDisposable held = NpuLock.Acquire();
+		// A reader that doesn't share delete (as File.ReadAllText, or Python's open, opens it) for a moment.
+		var reader = new FileStream(Path.Combine(dir, "owner.json"), FileMode.Open, FileAccess.Read, FileShare.Read);
+		var closer = new Thread(() => { Thread.Sleep(200); reader.Dispose(); });
+		closer.Start();
+		held.Dispose();
+		closer.Join();
+		Assert.False(Directory.Exists(dir), "the release waits out the reader instead of leaving the lock taken");
 	}
 
 	[Fact]
