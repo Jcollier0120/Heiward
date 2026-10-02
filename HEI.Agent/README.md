@@ -159,10 +159,24 @@ Developer mode is off until you turn it on with the **Developer mode** switch in
 
 On, once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there, or turn on [automatic cleanup](#automatic-cleanup). Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
 
-The page is organised by project:
-- **Each repository** has its own page, with a section per cleanup area: build outputs, worktrees and merged branches.
+The page is organised by repository:
+- **Each repository** has its own page: its open pull requests first, then a section per cleanup area (build outputs, worktrees and merged branches). Repositories with pull requests ready to merge or waiting for a review come first, with their count beside them.
+- **Any version control:** Git, Mercurial, Subversion, TFVC (a local workspace), Unity Version Control (Plastic SCM), Bazaar, Fossil, Jujutsu, Darcs, Pijul and Perforce (a `.p4config` file) are recognised, and each repository says which it uses. Worktrees and merged branches are git's; build outputs are found in all of them.
 - **Projects:** "Group repositories into a project" bundles repositories that belong together, such as an app and its backend, under one name. The bundles are saved in `settings.json` (`devProjects`), and a project's page can take a repository out or ungroup it.
 - **Shared by all projects:** package caches, emulators and temp files, since they belong to no single repository.
+
+**Pull requests** are read from where each git repository's `origin` (or its only remote) is hosted:
+
+| Host | Recognised by | Signed in with |
+|---|---|---|
+| GitHub, GitHub Enterprise | github.com, or a server named after it | the GitHub CLI (`gh auth login`), or git's sign-in |
+| Azure DevOps | dev.azure.com, *.visualstudio.com, over https or ssh | git's sign-in, or the Azure CLI (`az login`) |
+| Azure DevOps Server, TFS | a `/_git/` URL on any other server | Windows' sign-in for a server on this network, or git's sign-in |
+| GitLab | gitlab.com, or a server named after it | git's sign-in; public projects need none |
+| Bitbucket Cloud, Server and Data Center | bitbucket.org, a `/scm/` URL, or a server named after it | git's sign-in; public repositories need none |
+| Gitea, Forgejo | codeberg.org, or a server named after them | git's sign-in; public repositories need none |
+
+"Git's sign-in" is the one Git Credential Manager already keeps for the host. Heiward never asks for one: with none kept, the page says how to sign in. A sign-in goes only to the host it belongs to, and Windows' own only to a server whose address is on this network. Each pull request says what it waits for (ready to merge, a review, changes, failing checks, conflicts, a draft…) and opens on its host, where it's merged or reviewed. The page asks while it's open, keeps the answer two minutes, and **Refresh** asks again. TFVC, Subversion and the others have no pull requests to show.
 
 Tick items anywhere; a selection bar at the bottom cleans them all at once.
 

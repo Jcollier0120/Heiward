@@ -247,6 +247,9 @@ namespace HEI.Agent {
 				saved.Save();
 				return Results.Json(saved.DevProjects, AgentConfig.Json);
 			});
+			// The repositories' open pull requests, asked of their hosts while the developer page is open (?again: Refresh).
+			devApi.MapGet("/pulls", async (bool? again, CancellationToken requestAborted) =>
+				Results.Json(await PullRequests.GetAsync(DevReport.Load()?.Sources ?? new(), again == true, requestAborted), AgentConfig.Json));
 			devApi.MapPost("/scan", () => {
 				if (DevBusy()) return Results.Conflict(new { error = "A developer check is already running." });
 				DevLaunch.Started(StartDetached("dev", "--scan"), DateTime.UtcNow);

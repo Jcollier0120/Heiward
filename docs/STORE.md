@@ -64,11 +64,11 @@ Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4
 
   Laid out like File Explorer. A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you. Burst shots and pictures less than 75% alike aren't offered as look-alikes.
 
-  Developer cleanup, project by project. Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main.
+  Developer mode, repository by repository. Each repository's open pull requests, from GitHub, Azure DevOps and TFS, GitLab, Bitbucket, Gitea or Forgejo, with those ready to merge or waiting for a review first. Then its build outputs, finished worktrees, and a button that prunes local branches already merged into main, plus package caches, unused emulator images and old temp files.
 
   Automatic cleanup, when you're ready. Two switches let it clean plain copies and developer leftovers by itself, a few days after listing them, with a "Leave it" button on each. Edits, look-alikes, cloud-synced copies and anything that looks like a backup always wait for you.
 
-  Private. No account, no ads, no telemetry: nothing about you or your files leaves your PC.
+  Private. No account, no ads, no telemetry: nothing about you or your files leaves your PC. Only developer mode, if you turn it on, asks the services that host your code for their open pull requests.
 
   Heiward is free and open source (AGPL-3.0). The source is at github.com/Jcollier0120/Heiward.
   ```
@@ -79,7 +79,7 @@ Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4
   AI matching on the NPU, the graphics card or the processor
   A review page laid out like File Explorer: a card per drive, a folder tree, and each folder's duplicates
   Nothing is removed until you say so, and removed files go to the Recycle Bin
-  Developer cleanup: build outputs, finished worktrees, package caches, emulator images and old temp files
+  Developer mode: each repository's open pull requests, then its build outputs, worktrees and merged branches
   Optional automatic cleanup of plain copies and developer leftovers, with a "Leave it" button on each
   Scheduled scans in Windows' efficiency mode; Scan now runs at full speed
   Cloud-only files are never downloaded

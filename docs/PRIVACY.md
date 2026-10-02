@@ -1,8 +1,8 @@
 # Heiward privacy policy
 
-Effective 30 September 2026. It covers Heiward from the Microsoft Store and from [GitHub](https://github.com/Jcollier0120/Heiward/releases).
+Effective 2 October 2026. It covers Heiward from the Microsoft Store and from [GitHub](https://github.com/Jcollier0120/Heiward/releases).
 
-**In short: nothing about you or your files leaves your PC.** Heiward has no account, no telemetry, no ads and no analytics. The developer receives no data from it.
+**In short: nothing about you or your files leaves your PC.** Heiward has no account, no telemetry, no ads and no analytics. The developer receives no data from it. The one exception is yours to turn on: in developer mode, Heiward asks the services that host your code for their open pull requests (see [below](#pull-requests-in-developer-mode)).
 
 ## What Heiward reads
 
@@ -37,6 +37,17 @@ When it sets up, Heiward downloads the AI components it needs, and nothing else.
 The version from GitHub also downloads FFmpeg, from GitHub; the Store version comes with it.
 
 These downloads are ordinary web requests. Like any, they show your IP address to the site that serves the file (GitHub, NuGet or Hugging Face), under that site's own privacy policy. Heiward sends nothing about you or your files with them.
+
+## Pull requests, in developer mode
+
+Developer mode is off until you turn it on in Settings. On, the developer page lists your code repositories and, for those hosted on GitHub, Azure DevOps (or Azure DevOps Server and TFS), GitLab, Bitbucket, Gitea or Forgejo, their open pull requests.
+
+To list them, Heiward asks each host while the developer page is open:
+- **What it sends:** the names of your repositories hosted there, as their remotes in git name them, and nothing else about you or your files.
+- **Signed in as you:** with the host's own command-line tool if you use one (the GitHub CLI, the Azure CLI), with the sign-in git already keeps for that host (Git Credential Manager), or with your Windows sign-in for a server on your own network. A sign-in only ever goes to the host it belongs to, is never written anywhere, and Heiward never asks you for one.
+- **What it keeps:** the answer, in memory, for two minutes.
+
+These are ordinary requests to each host, under its own privacy policy. With developer mode off, nothing is asked.
 
 ## Children
 

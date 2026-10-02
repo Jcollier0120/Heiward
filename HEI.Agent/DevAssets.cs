@@ -39,6 +39,8 @@ namespace HEI.Agent {
 		public List<DevCategory> Categories { get; set; } = new();
 		/// <summary>Repositories with a remote, and their local branches merged into its default branch.</summary>
 		public List<RepoBranches> Repositories { get; set; } = new();
+		/// <summary>Every repository found, of any version control, with where it's hosted (<see cref="PullRequests"/> asks there).</summary>
+		public List<RepoSource> Sources { get; set; } = new();
 		/// <summary>The <see cref="AppBuild"/> that made it: another build's report is set aside, as the duplicates report is.</summary>
 		public string? Build { get; set; }
 
@@ -129,6 +131,10 @@ namespace HEI.Agent {
 				TempItems(cfg.TempOlderThanDays).ToList()));
 
 			report.Categories.RemoveAll(c => c.Items.Count == 0);
+			// Main checkouts only (a git worktree's .git is a file): what each uses, and where it's hosted.
+			report.Sources = repos.Where(r => !File.Exists(Path.Combine(r, ".git")))
+				.Select(r => VersionControl.Of(r) is { } vcs ? new RepoSource(r, vcs, VersionControl.RemoteOf(r, vcs)) : null)
+				.Where(s => s != null).Select(s => s!).ToList();
 			// Main checkouts only: a repository's worktrees share its branches.
 			report.Repositories = repos.Where(r => Directory.Exists(Path.Combine(r, ".git")))
 				.Select(BranchPruner.Inspect).Where(r => r != null).Select(r => r!)
@@ -192,7 +198,7 @@ namespace HEI.Agent {
 						found.Add((d.FullName, label));
 						continue;
 					}
-					if (depth >= 6 || d.Name is ".git" or ".hg" or ".svn" or ".vs" or ".idea" || IsRepository(d.FullName)) continue;
+					if (depth >= 6 || d.Name is ".vs" or ".idea" || ScanScope.RepositoryMarkers.Contains(d.Name, StringComparer.OrdinalIgnoreCase) || IsRepository(d.FullName)) continue;
 					stack.Push((d.FullName, depth + 1));
 				}
 			}

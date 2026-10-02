@@ -76,8 +76,14 @@ namespace HEI.Agent {
 
 		internal const string RepositoryReason = "Code repository";
 
-		/// <summary>A folder holding one of these is a code repository: its pictures belong to the project.</summary>
-		internal static readonly string[] RepositoryMarkers = { ".git", ".hg", ".svn" };
+		/// <summary>
+		/// A folder holding one of these is a code repository: its pictures belong to the project. Git,
+		/// Mercurial, Subversion, a TFVC local workspace, Unity Version Control (Plastic SCM), Bazaar,
+		/// Fossil (two names), Jujutsu, Darcs, Pijul, and Perforce's usual P4CONFIG file
+		/// (<see cref="VersionControl"/> names them).
+		/// </summary>
+		internal static readonly string[] RepositoryMarkers =
+			{ ".git", ".hg", ".svn", "$tf", ".plastic", ".bzr", ".fslckout", "_FOSSIL_", ".jj", "_darcs", ".pijul", ".p4config" };
 
 		/// <summary>
 		/// The folders to scan: every fixed drive that is ready (when enabled), then the extra folders.

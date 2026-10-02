@@ -58,6 +58,8 @@ const ICONS = {
   stack: [['rect', '2,5.5,9,8,1.5', 'stroke'], ['path', 'M5 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v6', 'stroke']],
   merge: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
+  pull: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
+    ['path', 'M4.5 5v6M11.5 11V6.5a2 2 0 0 0-2-2H7M8.6 3 7 4.5 8.6 6', 'stroke']],
   pause: [['path', 'M6 3.5v9M10 3.5v9', 'stroke']],
   play: [['path', 'M5.5 3.2v9.6l7.5-4.8z', 'stroke']],
   chip: [['rect', '4,4,8,8,1.5', 'stroke'], ['rect', '6.5,6.5,3,3,0.5', 'fill'],
@@ -1231,6 +1233,47 @@ async function loadDevReport() {
       }
 }
 
+// Open pull requests, asked of each repository's host (GitHub, Azure DevOps, GitLab …) while this view is open:
+// the agent keeps an answer two minutes, and Refresh asks again.
+let devPulls = null;          // /api/dev/pulls: { repos: { [repository folder]: { host, web, total, pulls, error } }, fetchedUtc }
+let devPullsAsked = 0;        // when they were last asked for (ms)
+let devPullsLoading = false;
+
+async function loadDevPulls(again) {
+  if (devPullsLoading) return;
+  devPullsLoading = true;
+  devPullsAsked = Date.now();
+  if (route.view === 'dev') renderDev();
+  try {
+    const res = await fetch('/api/dev/pulls' + (again ? '?again=true' : ''), { cache: 'no-store' });
+    if (res.ok) devPulls = await res.json();
+  } catch (e) { /* the section says nothing new; Refresh asks again */ }
+  devPullsLoading = false;
+  if (route.view === 'dev') renderDev();
+}
+
+const pullsOf = (r) => (devPulls && devPulls.repos[r.key]) || null;
+
+const VCS_NAMES = {
+  git: 'Git', hg: 'Mercurial', svn: 'Subversion', tfvc: 'TFVC', plastic: 'Unity Version Control', bzr: 'Bazaar',
+  fossil: 'Fossil', jj: 'Jujutsu', darcs: 'Darcs', pijul: 'Pijul', perforce: 'Perforce',
+};
+
+// What a pull request waits for: its tag, and its tone. Ready to merge and waiting for a review come first.
+const WAITS = {
+  merge: ['Ready to merge', 'good'],
+  review: ['Needs review', 'accent'],
+  changes: ['Changes requested', 'warn'],
+  checks: ['Checks failing', 'bad'],
+  conflicts: ['Has conflicts', 'bad'],
+  behind: ['Behind its base branch', 'warn'],
+  blocked: ['Blocked by branch rules', 'warn'],
+  running: ['Checks running', 'quiet'],
+  draft: ['Draft', 'quiet'],
+};
+const WAIT_ORDER = Object.keys(WAITS);
+const waitsOnYou = (p) => p.waits === 'merge' || p.waits === 'review';
+
 function devItems() {
   return ((devReport && devReport.categories) || []).flatMap((c) => c.items);
 }
@@ -1273,13 +1316,17 @@ function catIcon(k, big) {
 const devSize = (items) => items.reduce((a, i) => a + i.bytes, 0);
 const devPicked = () => devItems().filter((i) => devTicks.has(i.id) && !i.blocked);
 
-/** Repositories with their build outputs, worktrees and branches, bundled as the user asked. */
+/**
+ * Repositories with their open pull requests, build outputs, worktrees and branches, bundled as the user asked.
+ * Those with pull requests waiting to be merged or reviewed come first.
+ */
 function devGroups() {
   if (!devReport || !devReport.scannedAtUtc) return [];
+  const sources = new Map((devReport.sources || []).map((s) => [rkey(s.path), s]));
   const repos = new Map();
   const repoOf = (path) => {
     const k = rkey(path);
-    if (!repos.has(k)) repos.set(k, { key: k, name: path.replace(/\\+$/, '').split(SEP).pop(), path, outputs: [], worktrees: [], branches: null });
+    if (!repos.has(k)) repos.set(k, { key: k, name: path.replace(/\\+$/, '').split(SEP).pop(), path, outputs: [], worktrees: [], branches: null, source: sources.get(k) || null });
     return repos.get(k);
   };
   for (const c of devReport.categories) {
@@ -1303,8 +1350,11 @@ function devGroups() {
     g.items = [...g.outputs, ...g.worktrees];
     g.bytes = devSize(g.items);
     g.merged = g.branches.reduce((a, b) => a + b.merged.length, 0);
+    g.pulls = g.repos.flatMap((r) => (pullsOf(r) || { pulls: [] }).pulls);
+    g.open = g.repos.reduce((a, r) => a + ((pullsOf(r) || {}).total || 0), 0);
+    g.waiting = g.pulls.filter(waitsOnYou).length;
   }
-  return groups.sort((a, b) => b.bytes - a.bytes || b.merged - a.merged || a.name.localeCompare(b.name));
+  return groups.sort((a, b) => b.waiting - a.waiting || b.bytes - a.bytes || b.merged - a.merged || a.name.localeCompare(b.name));
 }
 
 function devGroupById(id) {
@@ -1318,12 +1368,16 @@ function renderDev() {
 
 function renderDevNav() {
   const rows = [];
-  const row = (label, glyph, hash, badge, selected, dim) => {
+  const row = (label, glyph, hash, badge, selected, dim, pulls) => {
     const b = el('button', 'tree-row' + (dim ? ' empty' : ''));
     b.style.paddingLeft = '8px';
     glyph.classList.add('glyph');
     b.append(glyph, el('span', 'label', label));
-    if (badge) b.append(el('span', 'count', badge));
+    if (pulls) {
+      const n = el('span', 'count pulls', String(pulls));
+      n.title = count(pulls, 'pull request', 'pull requests') + ' ready to merge or waiting for a review';
+      b.append(n);
+    } else if (badge) b.append(el('span', 'count', badge));
     if (selected) { b.classList.add('selected'); b.setAttribute('aria-current', 'page'); }
     b.addEventListener('click', () => { location.hash = hash; $('dev-nav').classList.remove('open'); });
     rows.push(b);
@@ -1331,10 +1385,10 @@ function renderDevNav() {
   row('Overview', icon('code'), '#/dev', null, !route.group && !route.cat);
   if (devReport && devReport.scannedAtUtc) {
     const groups = devGroups();
-    if (groups.length) rows.push(el('div', 'tree-section', 'Projects'));
+    if (groups.length) rows.push(el('div', 'tree-section', 'Repositories'));
     for (const g of groups)
       row(g.name, g.project ? icon('stack') : folderIcon(false), '#/dev/g/' + encodeURIComponent(g.id),
-        g.bytes >= 1 << 20 ? bytes(g.bytes) : g.merged ? count(g.merged, 'branch', 'branches') : '', route.group === g.id, !g.bytes && !g.merged);
+        g.bytes >= 1 << 20 ? bytes(g.bytes) : g.merged ? count(g.merged, 'branch', 'branches') : '', route.group === g.id, !g.bytes && !g.merged && !g.open, g.waiting);
     const shared = devReport.categories.filter((c) => SHARED.includes(c.key));
     if (shared.length) rows.push(el('div', 'tree-section', 'Shared'));
     for (const c of shared) row(DEV_META[c.key].short, catIcon(c.key), '#/dev/s/' + c.key, bytes(devSize(c.items)), route.cat === c.key);
@@ -1400,13 +1454,16 @@ function devOverview(dev) {
   again.disabled = dev.running;
   again.addEventListener('click', startDevCheck);
   const out = [devHeader(devIcon(), 'Developer cleanup',
-    'Things your development tools recreate when they need them, project by project. Cleaning deletes them permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer.',
+    'Your repositories, one by one: their open pull requests, then what your development tools recreate when they need them. Cleaning deletes it permanently, not to the Recycle Bin: tools rebuild or download it again, so the next build takes longer.',
     [el('span', 'chip', bytes(total) + ' in all'), el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)), again])];
 
   const groups = devGroups();
+  // Why a host's pull requests couldn't be read (a sign-in, mostly), once each.
+  const problems = [...new Set(Object.values((devPulls && devPulls.repos) || {}).map((r) => r.error).filter(Boolean))];
+  for (const p of problems.slice(0, 3)) out.push(el('div', 'dev-banner warn', 'Pull requests: ' + p));
   if (groups.length) {
     const head = el('div', 'list-head');
-    head.append(el('h2', null, 'Projects'));
+    head.append(el('h2', null, 'Repositories'));
     const toggle = el('button', 'link small', groupMode ? 'Cancel grouping' : 'Group repositories into a project');
     toggle.addEventListener('click', () => { groupMode = !groupMode; groupPick.clear(); renderDev(); });
     head.append(toggle);
@@ -1458,8 +1515,18 @@ function projectCard(g, biggest) {
   fill.style.width = Math.max(1.5, (100 * g.bytes) / biggest) + '%';
   bar.append(fill);
   card.append(bar);
+  // Its pull requests first: those waiting to be merged, then reviewed, then the rest.
+  if (g.open) {
+    const pulls = el('div', 'chips');
+    const merge = g.pulls.filter((p) => p.waits === 'merge').length, review = g.pulls.filter((p) => p.waits === 'review').length;
+    if (merge) pulls.append(el('span', 'chip good', merge + ' ready to merge'));
+    if (review) pulls.append(el('span', 'chip accent', review + ' to review'));
+    if (g.open - merge - review > 0) pulls.append(el('span', 'chip quiet', count(g.open - merge - review, 'other pull request', 'other pull requests')));
+    card.append(pulls);
+  }
   const parts = [];
   if (g.project) parts.push(count(g.repos.length, 'repository', 'repositories'));
+  else if (g.repos[0].source && g.repos[0].source.vcs !== 'git') parts.push(VCS_NAMES[g.repos[0].source.vcs] || g.repos[0].source.vcs);
   if (g.outputs.length) parts.push('build outputs');
   if (g.worktrees.length) parts.push(count(g.worktrees.length, 'worktree', 'worktrees'));
   if (g.merged) parts.push(count(g.merged, 'merged branch', 'merged branches'));
@@ -1528,7 +1595,7 @@ async function saveProjects(next) {
 // ---- a project's page
 
 function groupPage(g) {
-  const chips = [el('span', 'chip', bytes(g.bytes))];
+  const chips = g.bytes ? [el('span', 'chip', bytes(g.bytes))] : [];
   if (g.merged) chips.push(el('span', 'chip quiet', count(g.merged, 'merged branch', 'merged branches')));
   const picked = g.items.filter((i) => devTicks.has(i.id) && !i.blocked);
   if (picked.length) chips.push(el('span', 'chip good', bytes(devSize(picked)) + ' selected'));
@@ -1561,14 +1628,94 @@ function groupPage(g) {
     intro.append(ungroup);
   } else {
     intro = g.repos[0].path;
+    // Its version control, and where it's hosted.
+    const src = g.repos[0].source;
+    if (src) chips.unshift(el('span', 'chip quiet', (VCS_NAMES[src.vcs] || src.vcs) + (src.remote ? ' · ' + shortRemote(src.remote) : '')));
   }
   const out = [devHeader(g.project ? bigIcon('stack') : bigFolder(), g.name, intro, chips)];
   const multi = g.repos.length > 1;
+  // Its open pull requests, then its cleanup.
+  const pulls = pullSection(g, multi);
+  if (pulls) out.push(pulls);
   if (g.outputs.length) out.push(devSection('projects', g.outputs, multi));
   if (g.worktrees.length) out.push(devSection('worktrees', g.worktrees, multi));
   if (g.branches.length) out.push(branchSection(g.branches));
-  if (!g.outputs.length && !g.worktrees.length && !g.branches.length) out.push(el('div', 'empty-state', 'Nothing to clean in this project.'));
+  if (!g.outputs.length && !g.worktrees.length && !g.branches.length) out.push(el('div', 'empty-state', 'Nothing to clean in this ' + (g.project ? 'project.' : 'repository.')));
   return out;
+}
+
+/** "github.com/owner/repo" from https://github.com/owner/repo.git or git@github.com:owner/repo.git. */
+function shortRemote(url) {
+  return url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^[^@/]+@/, '').replace(/^([^:/]+):(?!\d)/, '$1/').replace(/\.git$/i, '');
+}
+
+/**
+ * The open pull requests of a repository, or of a project's repositories: those ready to merge and those waiting for
+ * a review first. Each opens on its host, where it's merged or reviewed. Null for a repository without a known host.
+ */
+function pullSection(g, multi) {
+  const hosted = g.repos.filter((r) => r.source && r.source.vcs === 'git' && r.source.remote);
+  const known = g.repos.map((r) => [r, pullsOf(r)]).filter(([, p]) => p);
+  if (!known.length && !(devPullsLoading && hosted.length)) return null;
+  const box = el('section', 'dev-section');
+  const head = el('div', 'dev-section-head');
+  const glyph = el('span', 'cat-icon');
+  glyph.append(icon('pull'));
+  head.append(glyph);
+  const title = el('div', 'dev-section-title');
+  const open = known.reduce((a, [, p]) => a + p.total, 0);
+  title.append(el('span', null, 'Pull requests'), el('span', 'muted', known.length ? ' · ' + open + ' open' : ''));
+  head.append(title);
+  const again = el('button', 'link small', devPullsLoading ? 'Asking…' : 'Refresh');
+  again.disabled = devPullsLoading;
+  again.addEventListener('click', () => loadDevPulls(true));
+  head.append(again);
+  box.append(head);
+  const hosts = [...new Set(known.map(([, p]) => p.host))];
+  box.append(el('p', 'muted small', !known.length ? 'Asking where it\'s hosted…'
+    : 'On ' + hosts.join(' and ') + (devPulls ? ', as of ' + ago(devPulls.fetchedUtc) : '') + '. Each opens there, to merge or review it.'));
+  for (const [r, p] of known) if (p.error) box.append(el('div', 'result small bad', (multi ? r.name + ': ' : '') + p.error));
+  const rows = known.flatMap(([r, p]) => p.pulls.map((pr) => [r, p, pr]))
+    .sort((a, b) => WAIT_ORDER.indexOf(a[2].waits) - WAIT_ORDER.indexOf(b[2].waits) || (b[2].asksYou - a[2].asksYou) || String(b[2].updatedUtc).localeCompare(String(a[2].updatedUtc)));
+  if (rows.length) {
+    const list = el('div', 'dev-list');
+    for (const [r, p, pr] of rows) list.append(pullRow(pr, p.host, multi ? r.name : null));
+    box.append(list);
+  } else if (known.some(([, p]) => !p.error)) box.append(el('div', 'muted small', 'No open pull requests.'));
+  for (const [r, p] of known)
+    if (p.total > p.pulls.length) {
+      const more = el('a', 'link small', 'And ' + (p.total - p.pulls.length) + ' more on ' + p.host + (multi ? ' (' + r.name + ')' : ''));
+      more.href = p.web;
+      more.target = '_blank';
+      more.rel = 'noopener noreferrer';
+      box.append(more);
+    }
+  return box;
+}
+
+function pullRow(p, host, repoName) {
+  const row = el('div', 'dev-item pull-item');
+  const main = el('div', 'dev-item-main');
+  const name = el('div', 'dev-item-name');
+  const link = el('a', 'pull-title', p.title || p.ref);
+  link.href = p.url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  const [label, tone] = WAITS[p.waits] || [p.waits, 'quiet'];
+  name.append(link, el('span', 'tag pull-' + tone, p.waits === 'review' && p.asksYou ? 'Your review is asked for' : label));
+  main.append(name);
+  main.append(el('div', 'muted small', [repoName, p.ref, p.head && p.base ? p.head + ' → ' + p.base : '', p.yours ? 'yours' : p.author ? 'by ' + p.author : '',
+    p.updatedUtc ? 'updated ' + ago(p.updatedUtc) : ''].filter(Boolean).join(' · ')));
+  row.append(main);
+  const side = el('div', 'dev-item-side');
+  const go = el('a', waitsOnYou(p) ? 'btn' : 'btn secondary', (p.waits === 'merge' ? 'Merge' : p.waits === 'review' ? 'Review' : 'Open') + ' ↗');
+  go.href = p.url;
+  go.target = '_blank';
+  go.rel = 'noopener noreferrer';
+  go.title = 'Opens it on ' + host;
+  side.append(go);
+  row.append(side);
+  return row;
 }
 
 function bigIcon(name) {
@@ -2815,6 +2962,8 @@ async function renderRoute() {
   }
   if (route.view === 'dev') {
     if (!devReport || (state.dev.scannedAtUtc && devReport.scannedAtUtc !== state.dev.scannedAtUtc)) await loadDevReport();
+    // Pull requests come later, from the hosts: the page shows the rest meanwhile.
+    if (devReport && devReport.scannedAtUtc && Date.now() - devPullsAsked > 120000) loadDevPulls(false);
     renderCrumbs(); // a project's name comes with the report
     renderDev();
     return;
