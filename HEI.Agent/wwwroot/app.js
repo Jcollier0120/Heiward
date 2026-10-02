@@ -308,6 +308,8 @@ function renderAgent(s) {
     showAgentBanner('Scans are paused ' + a.pausedText + ': scheduled scans skip themselves. Scan now still works.', ['Resume scans', resumeScans]);
   } else if (a.scheduleMissing) {
     showAgentBanner('Scheduled scans aren\'t running: Heiward\'s scan task is missing, or turned off in Task Scheduler.', ['Turn them back on', startSchedule]);
+  } else if (a.dev) {
+    showAgentBanner('A development build: it doesn\'t scan on a schedule, and keeps apart from the installed Heiward. Scan now works.');
   } else showAgentBanner(null);
 }
 
@@ -3009,8 +3011,13 @@ async function refresh(force) {
   } catch (e) {
     // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
     serverLost = true;
-    showAgentBanner('Heiward isn\'t running, so this page can\'t update or clean up. Start it, and the page carries on.',
-      ['Start Heiward', 'heiward://start'], true);
+    // heiward://start starts the installed Heiward, which isn't a development build's page.
+    if (state && state.agent.dev) {
+      showAgentBanner('This development build isn\'t running, so this page can\'t update or clean up. Start it again (hei serve), and the page carries on.', null, true);
+    } else {
+      showAgentBanner('Heiward isn\'t running, so this page can\'t update or clean up. Start it, and the page carries on.',
+        ['Start Heiward', 'heiward://start'], true);
+    }
     $('scan-now').disabled = true;
     timer = setTimeout(refresh, 5000);
   }

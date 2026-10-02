@@ -66,13 +66,13 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 </details>
 
-**Already downloaded?** If another copy of Heiward already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
+**Already downloaded?** If another copy of Heiward already has FFmpeg and the AI components, the installer copies them instead of downloading: `hei install --reuse-from <that copy's folder>`. It also looks in the folder it was started from, and `hei setup` in the installed copy's. A copy is kept only if it passes the same check as a download, and the NPU pack only if the model then really runs on the NPU.
 
 **Updating:** run the new version's exe; it installs over the old one and scans again. Each report records the build that made it (its version and commit), because the sets are that build's rules. A report from another build is set aside, even under the same version number: the page shows none of its sets and nothing is cleaned up from them. The next scan finds them again with the new build: the next one due, or Scan now. The same goes for the developer report, and for the Microsoft Store version, which updates by itself. Sets the old report already listed aren't announced as new.
 
 **Opening or reloading the page doesn't scan.** When the page starts (opened, reopened after it exited, or restarted), it starts a scan only if one is due by the schedule: the last scan, finished or stopped, plus the interval between scans (`scanEveryMinutes`, at least 15). Otherwise it shows the last scan's results, and the title bar says when the next scan is due. A scan you stop isn't started again by the next reload. With scans only when you press Scan now (`scanEveryMinutes: 0`), the page never starts one. Paused scans and the Store version's setup start none either.
 
-Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, and `--scan-speed background` or `full` for how hard scans work). Preview every step without changing anything: `hei install --dry-run`.
+Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, `--scan-speed background` or `full` for how hard scans work, and `--no-browser` to leave the browser alone: the first scan then starts without a window, and the page opens only when you open it). It asks nothing, and exits with 0 once installed, or with another code and the reason otherwise. Preview every step without changing anything: `hei install --dry-run`.
 
 Heiward does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
 
@@ -210,7 +210,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 
 ## Settings
 
-`%LOCALAPPDATA%\Heiward\settings.json`. Every field has a default.
+`%LOCALAPPDATA%\Heiward\settings.json` (a [development build](#development-builds)'s is in `%LOCALAPPDATA%\Heiward-dev`). Every field has a default.
 
 | Field | Default | |
 |---|---|---|
@@ -228,7 +228,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 | `moreMemory` | true | The page's **Use more memory to scan faster**: in the background, the graphics chip decodes one video per 4 GB of memory at once (up to 8, about half a gigabyte each); `false`: two. Scans use less while a game or another 3D program runs either way |
 | `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
 | `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
-| `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |
+| `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only). A development build's is 28484 |
 | `toast` | true | A notification when a scan finds something new |
 | `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
@@ -269,6 +269,8 @@ hei uninstall       [--purge] [--dry-run]
 | `toReview` | Sets in that report you haven't decided on yet |
 | `page` | `url`: the review page's address; `up`: whether it answers now. Asking (`/api/ping`) doesn't keep an unused page running |
 | `summary` | One short sentence, e.g. "Scans every hour, next at 15:00. 3 sets to review." |
+
+Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans, and `hei serve --no-browser` to start its review page.
 
 ## The review page
 
@@ -320,6 +322,17 @@ dotnet publish HEI.Agent -c Release -r win-arm64 --self-contained -p:PublishSing
 Use `-r win-x64` for Intel and AMD PCs. The single file (`hei.exe`) is about 50 MB. Set `HEIWARD_HOME` to keep a test copy's settings and report somewhere else.
 
 The icon (`heiward.ico`, and `wwwroot\heiward.png` for notifications) is rendered from `wwwroot\favicon.svg` by `make-icon.ps1`; run it again after changing the mark.
+
+### Development builds
+
+A `hei.exe` built in a checkout is a development build: a folder above it (up to eight) holds `.git`, a folder or a git worktree's file. It runs beside the installed Heiward without touching it:
+- its settings, report and caches are in `%LOCALAPPDATA%\Heiward-dev`, not `%LOCALAPPDATA%\Heiward`;
+- its review page is on port 28484, not 18484. A `port` in its own settings.json stands, unless it's the installed copy's 18484;
+- it has no scheduled tasks: it scans when you press Scan now, or run `hei scan`.
+
+The NPU lock is the same machine-wide one. `HEIWARD_HOME` overrides the data folder as before, and then the port is 18484 unless settings.json says otherwise.
+
+`hei install` and `hei uninstall` act on the installed copy, from a development build too: install copies the exe to `%LOCALAPPDATA%\Programs\Heiward`, and the settings, downloads, tasks and shortcuts it sets up are the installed copy's. To try development work as the real Heiward, build a release with `release.ps1` (below) and run it, as you would a download.
 
 ### Making a release
 
