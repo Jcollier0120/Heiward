@@ -23,8 +23,27 @@ using HEI.Core.Utils;
 
 namespace HEI.Agent {
 	/// <summary>Live progress for the review page, rewritten about once a second while a scan runs.</summary>
-	/// <param name="Roots">The drives and folders this scan reads, whose cards wait for its end: not those scanned only when asked.</param>
-	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max, bool FullSpeed = false, IReadOnlyList<string>? Roots = null);
+	/// <param name="Roots">The drives and folders this scan reads, whose cards show its progress: not those scanned only when asked, nor those where nothing changed.</param>
+	/// <param name="Phase"><see cref="ScanPhase"/>: what the scan is doing now.</param>
+	/// <param name="Listed">Of <paramref name="Roots"/>, those whose files are listed (while <paramref name="Phase"/> is "listing").</param>
+	/// <param name="Drives">Each drive's files checked so far, from "checking" on: only drives with files in this scan.</param>
+	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max, bool FullSpeed = false, IReadOnlyList<string>? Roots = null,
+		string Phase = ScanPhase.Listing, IReadOnlyList<string>? Listed = null, IReadOnlyList<DriveCheck>? Drives = null);
+
+	/// <summary>One drive's part of checking the files: done of total, as files and as bytes.</summary>
+	sealed record DriveCheck(string Root, int Done, int Total, long DoneBytes, long TotalBytes);
+
+	/// <summary>A scan's steps, in order, as <see cref="ScanStatus.Phase"/> names them.</summary>
+	static class ScanPhase {
+		/// <summary>Finding the photos and videos: each root is walked, or listed from its change journal.</summary>
+		public const string Listing = "listing";
+		/// <summary>Reading new and changed files (frames, fingerprints, AI), each drive at its own pace.</summary>
+		public const string Checking = "checking";
+		/// <summary>Comparing every file with the others, across drives: <see cref="ScanStatus.Stage"/> says which pass.</summary>
+		public const string Comparing = "comparing";
+		/// <summary>Making the report: byte-for-byte checks of the copies and the videos' sound.</summary>
+		public const string Finishing = "finishing";
+	}
 
 	/// <summary>
 	/// One scan of the configured folders: VDF's engine (photos through WIC, embeddings on the NPU
@@ -84,19 +103,28 @@ namespace HEI.Agent {
 			List<string> reading = plan?.Roots.Where(r => r.Mode != ListingMode.Resting).Select(r => r.Root).ToList() ?? settings.IncludeList.ToList();
 			var engine = new ScanEngine { Settings = settings, ListRoot = plan == null ? null : plan.ListingFor, MayRead = mayRead };
 			int files = 0;
-			string stage = "Finding files";
-			long lastWrite = 0;
+			string phase = ScanPhase.Listing;
+			ScanProgressSnapshot? latest = null;
+			IReadOnlyList<DriveCheck>? checks = null;
 			engine.Progress += (_, e) => {
-				if (stage == "Checking files") files = Math.Max(files, e.MaxPosition);
-				long now = Stopwatch.GetTimestamp();
-				if (Stopwatch.GetElapsedTime(lastWrite, now) < TimeSpan.FromSeconds(1)) return;
-				lastWrite = now;
-				WriteStatus(new ScanStatus(Environment.ProcessId, started, string.IsNullOrEmpty(e.CurrentStage) ? stage : e.CurrentStage, e.CurrentPosition, e.MaxPosition, fullSpeed, reading));
+				if (phase == ScanPhase.Checking) files = Math.Max(files, e.MaxPosition);
+				latest = e;
 			};
-			engine.FilesEnumerated += (_, _) => stage = "Checking files";
-			WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, 0, 0, fullSpeed, reading));
+			engine.FilesEnumerated += (_, _) => { latest = null; phase = ScanPhase.Checking; };
+			// Once a second, whether or not a file finished: the listing reports nothing, and a drive's
+			// last files can take minutes. The drives keep their last counts after the checking.
+			void Write() {
+				ScanProgressSnapshot? e = latest;
+				if (e?.Drives is { } d) checks = d.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList();
+				string stage = !string.IsNullOrEmpty(e?.CurrentStage) ? e.CurrentStage : phase switch {
+					ScanPhase.Listing => "Finding files", ScanPhase.Checking => "Checking files", ScanPhase.Comparing => "Comparing", _ => "Finishing",
+				};
+				WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? 0, e?.MaxPosition ?? 0, fullSpeed, reading,
+					phase, phase == ScanPhase.Listing ? engine.ListingTimes.Keys.ToList() : null, checks));
+			}
+			await using var status = new StatusFile(Write);
 			try {
-				await RunEngineAsync(engine, () => stage = "Comparing", stopped.Token);
+				await RunEngineAsync(engine, () => { latest = null; phase = ScanPhase.Comparing; }, stopped.Token);
 			}
 			catch (OperationCanceledException) {
 				AgentPaths.AppendLog("scan aborted");
@@ -108,8 +136,9 @@ namespace HEI.Agent {
 				await pacing;
 				await watching;
 				ScanStop.Clear();
-				try { File.Delete(AgentPaths.ScanStatus); } catch { }
 			}
+			latest = null;
+			phase = ScanPhase.Finishing;
 
 			// The files the listing found (the progress counts the database's entries, a deleted file's too).
 			if (engine.FoundFiles.Count > 0) files = engine.FoundFiles.Count;
@@ -136,6 +165,7 @@ namespace HEI.Agent {
 			try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
 			AutoRun? auto = Housekeeping(cfg, ct);
+			await status.DisposeAsync();
 
 			var decisions = DecisionStore.Load();
 			var known = new HashSet<string>(previous?.Groups.Select(g => g.Key) ?? Enumerable.Empty<string>());
@@ -336,6 +366,31 @@ namespace HEI.Agent {
 		static void WriteStatus(ScanStatus status) {
 			try { AgentPaths.WriteAtomic(AgentPaths.ScanStatus, JsonSerializer.Serialize(status, AgentConfig.Json)); }
 			catch { /* progress is cosmetic */ }
+		}
+
+		/// <summary>scan-status.json, written now and once a second on one thread until disposed, which deletes it.</summary>
+		sealed class StatusFile : IAsyncDisposable {
+			readonly CancellationTokenSource stop = new();
+			readonly Task loop;
+
+			public StatusFile(Action write) {
+				write();
+				loop = Task.Run(async () => {
+					using var tick = new PeriodicTimer(TimeSpan.FromSeconds(1));
+					try {
+						while (await tick.WaitForNextTickAsync(stop.Token))
+							try { write(); } catch { /* progress is cosmetic */ }
+					}
+					catch (OperationCanceledException) { }
+				});
+			}
+
+			public async ValueTask DisposeAsync() {
+				if (stop.IsCancellationRequested) return;
+				stop.Cancel();
+				await loop;
+				try { File.Delete(AgentPaths.ScanStatus); } catch { }
+			}
 		}
 	}
 

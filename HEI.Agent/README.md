@@ -260,12 +260,15 @@ It's laid out like File Explorer, so you can go where you care most instead of s
   - A folder's cleanup, or its **Skip all**, is one line.
   - **Clear history** empties the list and forgets the file names in it. Sets you kept stay hidden, and "freed so far" stays.
   - **Keep a history** off (in Settings) lists nothing new.
+  - **While a scan runs,** each drive it reads shows how far it has got: finding the files, then checking them, which every drive does at its own pace ("Checking files · 1,234 of 5,678"), then comparing them all together. A line above the cards says whether it runs in the background or at full speed. Drives it leaves alone (nothing changed, or scanned only when you ask) keep their details.
 - **A folder:** the navigation tree on the left and the folder on the right:
   - Its subfolders in a details view you can sort by space to free, with only the duplicates that touch this folder below.
   - Copies and look-alikes are shown separately.
   - A copy kept in another folder is dimmed and says so.
   - One button moves every ticked copy in the folder to the Recycle Bin, keeping the kept file of each set.
 - **Exempt folders** (system, programs, games, code, other accounts) are greyed out with the reason. Many of them together fold into one row. Folders without photos or videos are hidden behind a "show" link.
+
+**Heiward's name** in the title bar goes back to This PC from anywhere.
 
 **Where AI matching runs:** a badge in the title bar. It's green ("NPU ready", then "Running on the NPU" once a scan has used it). Otherwise it names the device and why: "No NPU available", "Unsupported NPU" (an NPU this version can't drive yet), "NPU not set up" (its pack isn't downloaded), or "NPU fell back" (it couldn't run the model; `heiward.log` says why). The install, `hei setup` and every scan write this to `ai-status.json`, so the page reads one small file and is right from the first visit.
 
