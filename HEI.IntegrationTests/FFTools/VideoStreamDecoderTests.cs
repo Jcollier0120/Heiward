@@ -15,6 +15,7 @@
 //
 
 using FFmpeg.AutoGen;
+using HEI.Core.FFTools;
 using HEI.Core.FFTools.FFmpegNative;
 using HEI.IntegrationTests.Fixtures;
 
@@ -117,5 +118,59 @@ public class VideoStreamDecoderTests {
 
 		Assert.True(vsd.TryDecodeFrame(out _, TimeSpan.FromSeconds(1)),
 			"second position failed after idling past the timeout — the deadline was not re-armed per call");
+	}
+
+	/// <summary>
+	/// A clock that stands still until the test sets <see cref="Step"/>; from then on each time FFmpeg
+	/// asks the interrupt callback (the only reader), that much time has gone by.
+	/// </summary>
+	sealed class SteppingClock : TimeProvider {
+		long _ticks;
+		public TimeSpan Step;
+		public int Asks;
+		public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+		public override long GetTimestamp() {
+			Asks++;
+			return _ticks += Step.Ticks;
+		}
+	}
+
+	/// <summary>
+	/// A slow decode that keeps going is not a hung one. Under a background scan's capped processor,
+	/// decoding forward from the keyframe to one position of a 4K HEVC iPhone clip took more than the
+	/// 15 s timeout; the interrupt then sent the file to the FFmpeg process, whose frames differ, so
+	/// its AI vectors depended on how busy the PC was. Here a second goes by between FFmpeg's asks:
+	/// the position, about 100 packets past the only keyframe, takes far longer than the timeout in
+	/// all, and still decodes natively, as no single packet takes that long.
+	/// </summary>
+	[SkippableFact]
+	public void TryDecodeFrame_SlowButProgressing_IsNotTimedOut() {
+		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");
+		Skip.If(_fixture.H264_OneKeyframe == null, "one-keyframe test video not generated");
+
+		var clock = new SteppingClock();
+		var timeout = TimeSpan.FromSeconds(2.5);
+		using var vsd = new VideoStreamDecoder(_fixture.H264_OneKeyframe!, timeoutMs: (int)timeout.TotalMilliseconds, clock: clock);
+
+		clock.Step = TimeSpan.FromSeconds(1);
+		clock.Asks = 0;
+		Assert.True(vsd.TryDecodeFrame(out _, TimeSpan.FromSeconds(3.9)), "a slow but progressing decode was cut off");
+		Assert.True(clock.Asks * clock.Step > timeout + clock.Step,
+			$"FFmpeg asked only {clock.Asks} times: a timeout counted per position wouldn't have expired either, so the test proves nothing");
+	}
+
+	/// <summary>
+	/// The protection against files that truly hang stays: when FFmpeg keeps asking with nothing
+	/// moving in between (here an hour goes by between asks while it opens the file), the interrupt
+	/// still ends it. The file opens fine otherwise. FFmpeg's probe reports the interrupted read as
+	/// invalid data rather than as the interrupt, so only the failure is checked.
+	/// </summary>
+	[SkippableFact]
+	public void Stalled_IsInterrupted() {
+		Skip.If(!_fixture.NativeBindingAvailable, "FFmpeg native libraries not available");
+		Skip.If(_fixture.H264_8bit == null, "H264 test video not generated");
+
+		var clock = new SteppingClock { Step = TimeSpan.FromHours(1) };
+		Assert.Throws<FFInvalidExitCodeException>(() => new VideoStreamDecoder(_fixture.H264_8bit!, clock: clock).Dispose());
 	}
 }

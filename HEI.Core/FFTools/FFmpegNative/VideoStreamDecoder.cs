@@ -14,7 +14,6 @@
 // */
 //
 
-using System.Diagnostics;
 using FFmpeg.AutoGen;
 
 namespace HEI.Core.FFTools.FFmpegNative {
@@ -26,8 +25,7 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		AVFrame* _pReceivedFrame;
 		readonly int _streamIndex;
 		readonly AVIOInterruptCB_callback _interruptCbDelegate;
-		readonly long _timeoutTicks;
-		long _deadlineTicks;
+		readonly ProgressDeadline _deadline;
 		/// <summary>The video holds a slot of <see cref="HardwareVideoDecode"/>, given back on dispose.</summary>
 		string? _gpuSlotFor;
 
@@ -35,22 +33,23 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		/// Decode on the GPU when <see cref="HardwareVideoDecode"/> has a slot free and a hardware path for the
 		/// codec (only when <paramref name="HWDeviceType"/> is none); else on the CPU.
 		/// </param>
-		public VideoStreamDecoder(string url, AVHWDeviceType HWDeviceType = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE, int timeoutMs = 15_000, bool gpuLane = false) {
+		/// <param name="timeoutMs">How long the decode may go without progress before it counts as hung.</param>
+		/// <param name="clock">The clock the timeout runs on; tests pass one they control.</param>
+		public VideoStreamDecoder(string url, AVHWDeviceType HWDeviceType = AVHWDeviceType.AV_HWDEVICE_TYPE_NONE, int timeoutMs = 15_000, bool gpuLane = false, TimeProvider? clock = null) {
 			_pFormatContext = ffmpeg.avformat_alloc_context();
 			if (_pFormatContext == null)
 				throw new FFInvalidExitCodeException("Failed to allocate AVFormatContext.");
 
 			// Set up an interrupt callback so FFmpeg aborts blocking I/O when the
-			// timeout expires.  This lets Dispose() run normally and release the
-			// file handle — unlike killing a thread, which would leak it.
-			// The deadline is re-armed at the start of every TryDecodeFrame: the same
-			// decoder serves all sampled positions of a file (batch extraction), and a
-			// single construction-time deadline made the TOTAL decode time of the batch
-			// count against one 15 s budget — long/slow files tripped the interrupt
-			// halfway through and every remaining position failed to CLI fallback.
-			_timeoutTicks = (long)(timeoutMs / 1000.0 * Stopwatch.Frequency);
-			_deadlineTicks = Stopwatch.GetTimestamp() + _timeoutTicks;
-			_interruptCbDelegate = _ => Stopwatch.GetTimestamp() > _deadlineTicks ? 1 : 0;
+			// decode stops making progress.  This lets Dispose() run normally and
+			// release the file handle — unlike killing a thread, which would leak it.
+			// The timeout starts again on every step of TryDecodeFrame, not once per
+			// position: under a background scan's capped processor, decoding forward
+			// from the keyframe to one position of a 4K HEVC clip took more than 15 s.
+			// The interrupt then fired mid-decode and the file went to the FFmpeg process,
+			// whose frames differ — so the AI vectors depended on how busy the PC was.
+			_deadline = new ProgressDeadline(TimeSpan.FromMilliseconds(timeoutMs), clock);
+			_interruptCbDelegate = _ => _deadline.Expired() ? 1 : 0;
 			_pFormatContext->interrupt_callback = new AVIOInterruptCB { callback = _interruptCbDelegate };
 
 			_pReceivedFrame = ffmpeg.av_frame_alloc();
@@ -63,6 +62,9 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			int openRet = ffmpeg.avformat_open_input(&pFormatContext, url, null, null);
 			_pFormatContext = pFormatContext;
 			openRet.ThrowExceptionIfError();
+			// The probe decodes a frame or so with no step of ours in between, so its time does count
+			// against the timeout. In the background scans of 4K iPhone clips that ran out of time,
+			// it never was the probe: every interrupt came in TryDecodeFrame.
 			ffmpeg.avformat_find_stream_info(_pFormatContext, null).ThrowExceptionIfError();
 			AVCodec* codec = null;
 
@@ -202,8 +204,8 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		}
 
 		public bool TryDecodeFrame(out AVFrame frame, TimeSpan position) {
-			// Fresh timeout budget per position — see the constructor note.
-			_deadlineTicks = Stopwatch.GetTimestamp() + _timeoutTicks;
+			// The whole timeout for the seek — and not what earlier positions of the file took.
+			_deadline.Progress();
 			ffmpeg.av_frame_unref(_pFrame);
 			ffmpeg.av_frame_unref(_pReceivedFrame);
 
@@ -238,7 +240,14 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			// never received and still-image decoding fails outright, forcing a CLI fallback
 			// (native analogue of the #801 -ss-on-stills bug).
 			bool draining = false;
+			bool reachedTarget = false;
 			for (int iter = 0; iter < maxIterations; iter++) {
+				// Each pass hands the decoder a packet (or takes a frame out of it): progress, so the
+				// timeout starts again. What it guards is reading the next packet, where FFmpeg asks
+				// the interrupt callback; the time the decoder spent on the last one, however slow
+				// under the background pace, doesn't count against it. The caps above bound the
+				// work instead, whatever the clock says.
+				_deadline.Progress();
 				if (!draining) {
 					int error;
 					while (true) {
@@ -297,11 +306,19 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				}
 
 				// Check if we've reached or passed the target position
-				if (_pFrame->pts >= targetPts || _pFrame->pts == ffmpeg.AV_NOPTS_VALUE)
+				if (_pFrame->pts >= targetPts || _pFrame->pts == ffmpeg.AV_NOPTS_VALUE) {
+					reachedTarget = true;
 					break;
+				}
 
 				// Not at target yet - discard this frame and decode the next
 				ffmpeg.av_frame_unref(_pFrame);
+			}
+			// Out of passes before the target (keyframes very far apart): no frame. Without this the
+			// discarded frame went out as if decoded — the timeout used to end such a decode first.
+			if (!reachedTarget) {
+				frame = *_pFrame;
+				return false;
 			}
 
 			// Only download when the frame actually lives in GPU memory. Hardware

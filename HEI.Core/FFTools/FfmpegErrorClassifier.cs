@@ -34,6 +34,8 @@ namespace HEI.Core.FFTools {
 		FileAccess,
 		/// <summary>The FFmpeg shared libraries could not be loaded or are the wrong version.</summary>
 		LibraryLoad,
+		/// <summary>The decode made no progress for the native binding's timeout (a stalled drive or share).</summary>
+		Stalled,
 	}
 
 	/// <summary>
@@ -50,6 +52,14 @@ namespace HEI.Core.FFTools {
 		// Ordered most-specific / most-commonly-confused first; the first matching group wins.
 		// Substrings are matched case-insensitively against the combined diagnostics text.
 		static readonly (FfmpegErrorCategory Category, string[] Needles)[] Rules = {
+			// AVERROR_EXIT: the native binding's interrupt callback ended a decode that stopped
+			// making progress (VideoStreamDecoder). That is the cause whatever else FFmpeg logged
+			// before it: a file with one damaged packet the decoder skips over logs corruption
+			// lines, and calling the stall "corrupt" skipped the FFmpeg process retry and left
+			// the file out of the scan.
+			(FfmpegErrorCategory.Stalled, new[] {
+				"immediate exit requested",
+			}),
 			(FfmpegErrorCategory.HardwareAcceleration, new[] {
 				"lacking required capabilities",
 				"hwaccel initiali",                 // "initialisation"/"initialization" returned error
@@ -135,6 +145,9 @@ namespace HEI.Core.FFTools {
 				"This FFmpeg build has no decoder for the file's codec. Install or point VDF at a full FFmpeg build.",
 			FfmpegErrorCategory.FileAccess =>
 				"VDF could not read the file (permissions, a locked file, or an invalid/too-long path).",
+			FfmpegErrorCategory.Stalled =>
+				"Reading the file stopped making progress. Check that its drive or network share is still " +
+				"connected and responding.",
 			FfmpegErrorCategory.LibraryLoad =>
 				"The FFmpeg shared libraries could not be loaded or are the wrong version. Disable " +
 				"'Use native FFmpeg binding', or install an FFmpeg matching the bundled version.",
