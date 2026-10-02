@@ -442,16 +442,18 @@ function renderHeader(s) {
   renderAiBadge(s.ai);
 
   const running = s.scan.running;
+  // Just started: running from the click, though it can't be stopped until its process has begun.
+  const starting = !!s.scan.starting;
   const scanBtn = $('scan-now');
-  scanBtn.disabled = s.setup.needed || s.agent.stopping;
-  scanBtn.textContent = running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
+  scanBtn.disabled = s.setup.needed || s.agent.stopping || starting;
+  scanBtn.textContent = starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
   scanBtn.classList.toggle('secondary', running);
   renderAgent(s);
   // How the scan runs, above the drives; each drive's card shows how far it has got.
   const st = s.scan.status;
   const pace = $('scan-pace');
   pace.classList.toggle('hidden', !running);
-  pace.textContent = !running ? '' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
+  pace.textContent = !running ? '' : starting ? 'Starting the scan…' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
   pace.title = st ? (st.fullSpeed
     ? 'Full speed: every core but one, at normal priority.'
     : 'In the background: Windows\' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
@@ -529,6 +531,7 @@ function renderHome(s) {
   $('t-free').textContent = bytes(s.totals.reclaimableBytes);
   $('t-freed').textContent = bytes(s.totals.recycledBytes);
 
+  renderGlance(s.glance);
   const drives = $('drives');
   drives.replaceChildren(...s.drives.map(driveCard));
   if (!s.drives.length) drives.append(el('p', 'muted', 'No drives found.'));
@@ -563,6 +566,121 @@ function renderHome(s) {
   renderDevCard(s.dev);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- home: at a glance
+
+/** A share as a percentage that never rounds a real part away: "<1%" rather than "0%". */
+function share(part, whole) {
+  if (!whole || part <= 0) return '0%';
+  const p = (100 * part) / whole;
+  return p < 1 ? '<1%' : p >= 99.5 && part < whole ? '>99%' : Math.round(p) + '%';
+}
+
+const GLANCE_TIPS = {
+  videos: 'Videos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
+  photos: 'Photos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
+  developer: 'What development tools recreate: build outputs, worktrees, package caches, emulators (Developer cleanup).',
+  bin: 'Files in the Recycle Bin take their space until it\'s emptied, the copies Heiward recycled too.',
+  other: 'Windows, apps, games, documents and everything else Heiward doesn\'t sort.',
+};
+
+const kindClass = (kind) => (kind === 'video' ? 'videos' : kind === 'photo' ? 'photos' : 'other');
+
+/**
+ * Every drive of this PC in one card, above the drive cards: how big, how full, what the used space is
+ * (photos, videos, developer files, the Recycle Bin, everything else), the photos and videos by type,
+ * the drives nearly full, and what could be freed now. Network drives have their cards but aren't counted.
+ */
+function renderGlance(g) {
+  const box = $('glance');
+  box.classList.toggle('hidden', !g || !g.drives);
+  if (!g || !g.drives) { box.replaceChildren(); return; }
+
+  const head = el('div', 'glance-head');
+  head.append(el('div', 'glance-title', 'At a glance'), el('div', 'muted small', count(g.drives, 'drive', 'drives') + ' on this PC' +
+    (g.networkDrives ? ' · ' + count(g.networkDrives, 'network drive', 'network drives') + ' not counted' : '')));
+
+  const stats = el('div', 'glance-stats');
+  const stat = (value, label, cls) => {
+    const s = el('div', 'glance-stat' + (cls ? ' ' + cls : ''));
+    s.append(el('div', 'glance-value', value), el('div', 'muted small', label));
+    return s;
+  };
+  stats.append(
+    stat(bytes(g.totalBytes), 'total space'),
+    stat(bytes(g.usedBytes), share(g.usedBytes, g.totalBytes) + ' used', g.usedBytes / g.totalBytes >= 0.9 ? 'low' : ''),
+    stat(bytes(g.freeBytes), share(g.freeBytes, g.totalBytes) + ' free'),
+    stat(g.reclaim.total ? bytes(g.reclaim.total) : '–', 'you could free', g.reclaim.total ? 'good' : ''));
+
+  // The capacity as one bar: each kind of used space in its colour, the rest free.
+  const bar = el('div', 'glance-bar');
+  bar.setAttribute('role', 'img');
+  bar.setAttribute('aria-label', g.kinds.map((k) => k.label + ' ' + bytes(k.bytes)).join(', ') + ', free ' + bytes(g.freeBytes));
+  const legend = el('div', 'glance-legend');
+  const item = (key, label, amount, pct, tip) => {
+    const it = el('div', 'glance-item');
+    it.title = tip || '';
+    const text = el('span', null, label + ' ');
+    text.append(el('b', null, bytes(amount)));
+    it.append(el('span', 'swatch k-' + key), text, el('span', 'muted', pct));
+    return it;
+  };
+  for (const k of g.kinds) {
+    if (k.bytes <= 0) continue;
+    const seg = el('div', 'seg k-' + k.key);
+    seg.style.width = (100 * k.bytes) / g.totalBytes + '%';
+    seg.title = k.label + ': ' + bytes(k.bytes) + (k.files ? ', ' + count(k.files, 'file', 'files') : '');
+    bar.append(seg);
+    legend.append(item(k.key, k.label, k.bytes, share(k.bytes, g.usedBytes), GLANCE_TIPS[k.key]));
+  }
+  legend.append(item('free', 'Free', g.freeBytes, share(g.freeBytes, g.totalBytes), 'Free space on these drives.'));
+  const note = el('div', 'muted small', 'Each kind\'s share is of the used space; free is of the total.');
+
+  // The photos and videos, by file type.
+  const types = el('div', 'glance-types');
+  types.append(el('div', 'glance-sub', 'Photos and videos by type'));
+  const media = g.types.reduce((n, t) => n + t.bytes, 0) + (g.otherTypes ? g.otherTypes.bytes : 0);
+  if (!g.typed) {
+    types.append(el('div', 'muted small', g.scannedAtUtc ? 'After the next scan: the last one was made before Heiward sorted files by type.' : 'After the first scan.'));
+  } else if (!media) {
+    types.append(el('div', 'muted small', 'The last scan found no photos or videos on these drives.'));
+  } else {
+    const rows = el('div', 'type-rows');
+    for (const t of g.otherTypes ? [...g.types, g.otherTypes] : g.types) {
+      const mixed = t.kind === 'mixed';
+      const row = el('div', 'type-row');
+      row.title = (mixed ? t.type + ' types: ' : '') + count(t.files, 'file', 'files') + ', ' + bytes(t.bytes) + (mixed ? '' : ' (' + kindClass(t.kind) + ')');
+      const meter = el('span', 'type-meter');
+      const fill = el('span', 'fill k-' + (mixed ? 'other' : kindClass(t.kind)));
+      fill.style.width = Math.max(1.5, (100 * t.bytes) / media) + '%';
+      meter.append(fill);
+      row.append(el('span', 'type-name' + (mixed ? ' muted' : ''), mixed ? 'Others' : t.type.toUpperCase() || '(none)'),
+        meter, el('span', 'type-pct', share(t.bytes, media)), el('span', 'muted small type-bytes', bytes(t.bytes)));
+      rows.append(row);
+    }
+    types.append(rows);
+  }
+
+  // What needs a look: drives nearly full, and what can be freed now.
+  const notes = el('div', 'glance-notes');
+  notes.append(el('div', 'glance-sub', 'Worth knowing'));
+  const list = el('ul', 'glance-list');
+  for (const d of g.low) {
+    const li = el('li', 'warn-line');
+    li.append(el('b', null, d.name), document.createTextNode(' is ' + Math.round(100 * d.usedShare) + '% full: ' + bytes(d.freeBytes) + ' left.'));
+    list.append(li);
+  }
+  const r = g.reclaim;
+  if (r.duplicates) list.append(el('li', null, bytes(r.duplicates) + ' in copies to review (Where the duplicates are, below).'));
+  if (r.developer) list.append(el('li', null, bytes(r.developer) + ' of developer files ticked to clean (Developer cleanup).'));
+  if (r.recycleBin) list.append(el('li', null, bytes(r.recycleBin) + ' in the Recycle Bin: empty it to get that space back.'));
+  if (!list.childElementCount) list.append(el('li', 'muted', 'No drive is nearly full, and there\'s nothing to free right now.'));
+  notes.append(list);
+
+  const lower = el('div', 'glance-lower');
+  lower.append(types, notes);
+  box.replaceChildren(head, stats, bar, legend, note, lower);
 }
 
 // ---------------------------------------------------------------- settings
@@ -1711,7 +1829,8 @@ function overlaps(a, b) {
 
 function scanReads(d) {
   if (!state.scan.running) return false;
-  const roots = state.scan.status && state.scan.status.roots;
+  // A scan still starting has no status yet; the server says what it will read.
+  const roots = (state.scan.status && state.scan.status.roots) || state.scan.roots;
   if (!roots) return !d.onRequest;
   return roots.some((r) => overlaps(d.root, r));
 }
@@ -2722,7 +2841,8 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    timer = setTimeout(refresh, s.setup.running ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
+    // Quickly while something is starting, so its progress shows as soon as it has some.
+    timer = setTimeout(refresh, s.setup.running || s.scan.starting ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
     // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
     serverLost = true;

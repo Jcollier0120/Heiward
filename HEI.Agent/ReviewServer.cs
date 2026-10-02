@@ -229,11 +229,11 @@ namespace HEI.Agent {
 			});
 			// "Scan this drive now", on the page of a drive scanned only when asked.
 			app.MapPost("/api/scan/drive", (DriveRequest request) => {
-				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				string? drive = AgentConfig.DriveOf(request.Root ?? "");
 				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
-				StartDetached("scan", "--drive", drive);
+				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
 				return Results.Accepted();
 			});
 			// Developer mode off (Settings): its part of the page is hidden, and its requests are refused.
@@ -248,8 +248,8 @@ namespace HEI.Agent {
 				return Results.Json(saved.DevProjects, AgentConfig.Json);
 			});
 			devApi.MapPost("/scan", () => {
-				if (DevScan.IsRunning()) return Results.Conflict(new { error = "A developer check is already running." });
-				StartDetached("dev", "--scan");
+				if (DevBusy()) return Results.Conflict(new { error = "A developer check is already running." });
+				DevLaunch.Started(StartDetached("dev", "--scan"), DateTime.UtcNow);
 				return Results.Accepted();
 			});
 			devApi.MapPost("/items/{id}/clean", (string id) => {
@@ -310,9 +310,9 @@ namespace HEI.Agent {
 				return Results.Json(AgentView(cfg), AgentConfig.Json);
 			});
 			app.MapPost("/api/scan", () => {
-				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
-				StartDetached("scan");
+				ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
 				return Results.Accepted();
 			});
 
@@ -364,9 +364,23 @@ namespace HEI.Agent {
 		/// scans are paused, and not before the Store version's setup, which starts its own first scan.
 		/// </summary>
 		static void RescanAfterUpdate() {
-			if (!Report.IsStale() || AgentScanner.IsRunning() || StoreSetup.Needed || AgentPause.Load() != null) return;
+			if (!Report.IsStale() || ScanBusy() || StoreSetup.Needed || AgentPause.Load() != null) return;
 			AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {Report.LoadAny()?.Build ?? "an older build"}: scanning again");
-			StartDetached("scan");
+			ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
+		}
+
+		/// <summary>The scan and the developer check this page started, until each holds its lock (see <see cref="Launch"/>).</summary>
+		static readonly Launch ScanLaunch = new(), DevLaunch = new();
+
+		/// <summary>A scan holds scan.lock, or one this page started is still starting.</summary>
+		static bool ScanBusy() {
+			bool locked = AgentScanner.IsRunning();
+			return ScanLaunch.Starting(locked, DateTime.UtcNow) || locked;
+		}
+
+		static bool DevBusy() {
+			bool locked = DevScan.IsRunning();
+			return DevLaunch.Starting(locked, DateTime.UtcNow) || locked;
 		}
 
 		/// <summary>Everything the page draws, in one poll.</summary>
@@ -378,6 +392,11 @@ namespace HEI.Agent {
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
+			var drives = ExplorerView.Drives(cfg, index, pending);
+			// This PC's drives at a glance, from what's here already (DiskGlance).
+			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
+			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
+				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives));
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
 				.Where(d => !d.Value.Unlisted)
@@ -413,9 +432,10 @@ namespace HEI.Agent {
 				},
 				dev = DevSummary(cfg, devReport),
 				auto = AutoView(report, devReport, decisions),
-				drives = ExplorerView.Drives(cfg, index, pending),
+				drives,
+				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
-				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
+				scan = ScanView(),
 				setup = StoreSetup.View(),
 				agent = AgentView(cfg),
 				ai = AiStatus.Load(),
@@ -449,7 +469,7 @@ namespace HEI.Agent {
 		static object DevSummary(AgentConfig cfg, DevReport? r) {
 			return new {
 				enabled = cfg.DeveloperModeOn,
-				running = cfg.DeveloperModeOn && DevScan.IsRunning(),
+				running = cfg.DeveloperModeOn && DevBusy(),
 				scannedAtUtc = r?.ScannedAtUtc,
 				totalBytes = r?.Categories.SelectMany(c => c.Items).Sum(i => i.Bytes) ?? 0,
 				suggestedBytes = r?.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes) ?? 0,
@@ -502,10 +522,26 @@ namespace HEI.Agent {
 			StartDetached("serve", "--no-browser");
 		}
 
-		static void StartDetached(params string[] args) {
+		/// <summary>
+		/// The scan for the page. A scan this page has just started counts as running from the moment it's
+		/// started (<c>starting</c>), so the page shows it at once; its status file is the last scan's until
+		/// it writes its own, so none is given, and <c>roots</c> says what it will read when that isn't every drive.
+		/// </summary>
+		static object ScanView() {
+			bool locked = AgentScanner.IsRunning();
+			bool starting = ScanLaunch.Starting(locked, DateTime.UtcNow);
+			return new {
+				running = locked || starting,
+				starting,
+				roots = starting ? ScanLaunch.Roots : null,
+				status = starting ? null : AgentScanner.ReadStatus(),
+			};
+		}
+
+		static Process? StartDetached(params string[] args) {
 			var psi = new ProcessStartInfo(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
-			Process.Start(psi);
+			return Process.Start(psi);
 		}
 
 		/// <summary>The name the page goes by: Heiward's own, on this PC only (see the Host check).</summary>
