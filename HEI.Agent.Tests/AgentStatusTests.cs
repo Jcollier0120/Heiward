@@ -93,6 +93,14 @@ public sealed class AgentStatusTests : IDisposable {
 	}
 
 	[Fact]
+	public void ADevelopmentBuild_SaysItHasNoScheduledScans() {
+		AgentStatus dev = AgentStatus.Build(new AgentConfig(), Now, pageUp: false, nextRun: null, devBuild: true);
+		Assert.True(dev.Running);
+		Assert.False(dev.Scheduled);
+		Assert.StartsWith("No scheduled scans: a development build has none.", dev.Summary);
+	}
+
+	[Fact]
 	public void ToReview_CountsTheSetsNotDecidedYet() {
 		static ReportGroup Set(string key) => new(key, "copies", "image", @"C:\Pictures\" + key + ".jpg", "kept", 100, 99.9f, new());
 		new Report(Report.CurrentVersion, Now.AddHours(-2), 1, "NPU", 10, new(), new(), new(), new() { Set("a"), Set("b"), Set("c") }, AppBuild.Current).Save();

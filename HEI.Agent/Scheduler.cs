@@ -180,9 +180,11 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// "Next Run Time" of the scan task, or null when it isn't registered or someone disabled it in Task
-		/// Scheduler: either way no scheduled scan comes. Cached for a minute.
+		/// Scheduler: either way no scheduled scan comes. Cached for a minute. A development build has none: the
+		/// task runs the installed copy, with that copy's settings.
 		/// </summary>
 		public static string? NextRun() {
+			if (DevBuild.Current) return null;
 			if (DateTime.UtcNow - cachedQuery.At < TimeSpan.FromMinutes(1)) return cachedQuery.Next;
 			string? next = null;
 			try {
