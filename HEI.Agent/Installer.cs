@@ -406,11 +406,11 @@ namespace HEI.Agent {
 
 		/// <summary>GPU or CPU for a PC without an NPU; Auto means "cancel". --yes (and no console) picks the GPU.</summary>
 		static AiDevice AskDevice(bool assumeYes) {
+			if (assumeYes || Console.IsInputRedirected) return AiDevice.Gpu; // nobody to ask: no question either
 			Console.WriteLine("  The AI step can run on your graphics card or on the processor:");
 			Console.WriteLine("    [G] GPU (recommended if you have a graphics card; any DirectX 12 GPU): fast and light on power");
 			Console.WriteLine("    [C] CPU: works everywhere, uses more power");
 			Console.WriteLine("    [N] Don't install");
-			if (assumeYes || Console.IsInputRedirected) return AiDevice.Gpu;
 			Console.Write("  Your choice [G/c/n]: ");
 			string answer = Console.ReadLine()?.Trim().ToLowerInvariant() ?? "";
 			return answer.StartsWith('n') ? AiDevice.Auto : answer.StartsWith('c') ? AiDevice.Cpu : AiDevice.Gpu;
@@ -418,20 +418,20 @@ namespace HEI.Agent {
 
 		/// <summary>Without an NPU: scheduled scans every 6 hours, or only on demand. --yes picks the schedule.</summary>
 		static bool AskOnDemand(bool assumeYes) {
+			if (assumeYes || Console.IsInputRedirected) return false;
 			Console.WriteLine("  When should it look for new duplicates?");
 			Console.WriteLine("    [S] Every 6 hours, only on AC power, in Windows' efficiency mode (recommended)");
 			Console.WriteLine("    [D] Only when I press \"Scan now\" on the review page");
-			if (assumeYes || Console.IsInputRedirected) return false;
 			Console.Write("  Your choice [S/d]: ");
 			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('d');
 		}
 
 		/// <summary>How hard scans work: in the background, or at full speed. --yes keeps what settings.json has.</summary>
 		static string AskSpeed(bool assumeYes, string current) {
+			if (assumeYes || Console.IsInputRedirected) return current;
 			Console.WriteLine("  How hard should scans work?");
 			Console.WriteLine("    [B] In the background: low power, in Windows' efficiency mode, and on the NPU where there is one. Slower (recommended)");
 			Console.WriteLine("    [F] At full speed: as many cores as it takes, at normal priority, to finish as fast as possible");
-			if (assumeYes || Console.IsInputRedirected) return current;
 			Console.Write("  Your choice [B/f]: ");
 			return (Console.ReadLine()?.Trim().ToLowerInvariant() ?? "").StartsWith('f') ? "full" : "background";
 		}
