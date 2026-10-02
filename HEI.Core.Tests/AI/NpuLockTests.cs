@@ -96,6 +96,18 @@ public sealed class NpuLockTests : IDisposable {
 		File.WriteAllText(Path.Combine(dir, "owner.json"), $$"""{"pid":{{Environment.ProcessId}},"since":{{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}""");
 	}
 
+	/// <summary>Removes a folder the way a well-behaved tool does: retrying while someone has a file in it open for a moment.</summary>
+	static void DeleteRetrying(string path) {
+		var sw = System.Diagnostics.Stopwatch.StartNew();
+		while (true) {
+			try {
+				Directory.Delete(path, recursive: true);
+				return;
+			}
+			catch (IOException) when (sw.Elapsed < TimeSpan.FromSeconds(5)) { Thread.Sleep(20); }
+		}
+	}
+
 	static void Until(Func<bool> check) {
 		var sw = System.Diagnostics.Stopwatch.StartNew();
 		while (!check()) {
@@ -104,24 +116,89 @@ public sealed class NpuLockTests : IDisposable {
 		}
 	}
 
+	/// <summary>
+	/// Waiters on their own threads. An exception is recorded rather than thrown (a thread's exception
+	/// would end the whole test run), and <see cref="Dispose"/> joins them before the test's folder is
+	/// deleted, so a failed test never pulls the folder out from under a waiter.
+	/// </summary>
+	sealed class Waiters : IDisposable {
+		readonly List<Thread> threads = [];
+		public readonly System.Collections.Concurrent.ConcurrentQueue<string> Order = new();
+		public readonly System.Collections.Concurrent.ConcurrentQueue<Exception> Errors = new();
+
+		public int Count => threads.Count;
+
+		public void Start(string label, bool interactive) {
+			var t = new Thread(() => {
+				try { using (NpuLock.Acquire(TimeSpan.FromSeconds(20), interactive)) Order.Enqueue(label); }
+				catch (Exception e) { Errors.Enqueue(e); }
+			});
+			t.Start();
+			threads.Add(t);
+		}
+
+		public bool JoinAll() => threads.All(t => t.Join(TimeSpan.FromSeconds(25)));
+
+		public void Dispose() => JoinAll();
+	}
+
 	[Fact]
 	public void ServesWaitersInLineOrder_APersonFirst() {
 		if (!OperatingSystem.IsWindows()) return;
 		HoldAsAnotherTool();
-		var order = new System.Collections.Concurrent.ConcurrentQueue<string>();
-		var threads = new List<Thread>();
+		using var waiters = new Waiters();
 		foreach (var (label, interactive) in new[] { ("a", false), ("b", false), ("c", true) }) {
-			var t = new Thread(() => { using (NpuLock.Acquire(TimeSpan.FromSeconds(20), interactive)) order.Enqueue(label); });
-			t.Start();
-			threads.Add(t);
-			int expected = threads.Count;
+			waiters.Start(label, interactive);
+			int expected = waiters.Count;
 			Until(() => Tickets().Length == expected);
 		}
-		Directory.Delete(dir, recursive: true);
-		foreach (var t in threads) Assert.True(t.Join(TimeSpan.FromSeconds(20)));
-		Assert.Equal(["c", "a", "b"], order);
+		DeleteRetrying(dir); // the other tool lets go
+		Assert.True(waiters.JoinAll());
+		Assert.Empty(waiters.Errors);
+		Assert.Equal(["c", "a", "b"], waiters.Order);
 		Assert.Empty(Tickets());
 		Assert.False(Directory.Exists(dir));
+	}
+
+	[Fact]
+	public void AReaderNeverBlocksTheRelease() {
+		if (!OperatingSystem.IsWindows()) return;
+		HoldAsAnotherTool();
+		// A waiter mid-read (the head of the line reads owner.json 20 times a second) while the holder lets go.
+		using (NpuLock.OpenShared(Path.Combine(dir, "owner.json")))
+			Directory.Delete(dir, recursive: true);
+		Assert.False(Directory.Exists(dir));
+	}
+
+	[Fact]
+	public void ReleaseWaitsOutAReaderThatDoesNotShareDelete() {
+		if (!OperatingSystem.IsWindows()) return;
+		IDisposable held = NpuLock.Acquire();
+		// Another tool reads owner.json the plain way (Python's open() shares read and write, not delete).
+		var reader = new FileStream(Path.Combine(dir, "owner.json"), FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+		var closes = new Thread(() => {
+			Thread.Sleep(300);
+			reader.Dispose();
+		});
+		closes.Start();
+		held.Dispose();
+		closes.Join();
+		Assert.False(Directory.Exists(dir), "the release gave up and left a live process holding the NPU");
+	}
+
+	[Fact]
+	public void KeepsItsPlaceWhenTheQueueFolderIsRemoved() {
+		if (!OperatingSystem.IsWindows()) return;
+		HoldAsAnotherTool();
+		using var waiters = new Waiters();
+		waiters.Start("a", false);
+		Until(() => Tickets().Length == 1);
+		DeleteRetrying(QueueDir);
+		Until(() => Tickets().Length == 1); // back in line, not crashed
+		DeleteRetrying(dir);
+		Assert.True(waiters.JoinAll());
+		Assert.Empty(waiters.Errors);
+		Assert.Equal(["a"], waiters.Order);
 	}
 
 	[Fact]

@@ -86,7 +86,13 @@ namespace HEI.Core.AI {
 			string name = $"{(interactive ? 0 : 1)}-{us:D17}-{Environment.ProcessId}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}.ticket";
 			string ticket = Path.Combine(queueDir, name);
 			string body = $$"""{"pid":{{Environment.ProcessId}},"since":{{us / 1000}},"lane":"{{(interactive ? "interactive" : "background")}}","who":"heiward"}""";
-			File.WriteAllText(ticket, body);
+			// Into the line, at the same place every time: also after the queue folder was removed under us
+			// (another tool tidying up, a person clearing temp folders), which must not end a scan.
+			void Enter() {
+				Directory.CreateDirectory(queueDir);
+				File.WriteAllText(ticket, body);
+			}
+			Enter();
 
 			var beat = Stopwatch.StartNew();
 			bool logged = false;
@@ -94,12 +100,12 @@ namespace HEI.Core.AI {
 				while (true) {
 					if (beat.Elapsed >= Heartbeat) {
 						try { File.SetLastWriteTimeUtc(ticket, DateTime.UtcNow); }
-						catch (IOException) { File.WriteAllText(ticket, body); } // taken for dead (a long pause): back in, same place
+						catch (IOException) { Enter(); } // taken for dead (a long pause): back in, same place
 						beat.Restart();
 					}
 					List<string> line = ReadLine(queueDir, keep: name);
 					if (!line.Contains(name)) {
-						File.WriteAllText(ticket, body);
+						Enter();
 						beat.Restart();
 						continue;
 					}
@@ -233,9 +239,22 @@ namespace HEI.Core.AI {
 		}
 
 		static Owner? ReadOwner(string path) {
-			try { return JsonSerializer.Deserialize(File.ReadAllText(path), OwnerJson.Default.Owner); }
+			try {
+				using FileStream s = OpenShared(path);
+				return JsonSerializer.Deserialize(s, OwnerJson.Default.Owner);
+			}
 			catch { return null; }
 		}
+
+		/// <summary>
+		/// Opens owner.json the way a reader must: sharing delete, so a holder can always release while
+		/// waiters read (every waiter at the head of the line reads it 20 times a second). A plain
+		/// File.ReadAllText shares read only, and the holder's delete then fails.
+		/// </summary>
+		internal static FileStream OpenShared(string path) => new(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+		/// <summary>How long a release keeps trying while another tool's reader holds owner.json without sharing delete.</summary>
+		internal static readonly TimeSpan ReleaseRetry = TimeSpan.FromSeconds(2);
 
 		internal sealed record Owner(int Pid, long Since);
 
@@ -243,12 +262,25 @@ namespace HEI.Core.AI {
 			int released;
 			public void Dispose() {
 				if (Interlocked.Exchange(ref released, 1) != 0) return;
-				try {
-					// Only remove it while it is still ours (an overstayed holder may have been evicted).
-					if (ReadOwner(Path.Combine(dir, "owner.json")) is { } o && o.Pid == me.Pid && o.Since == me.Since)
-						Directory.Delete(dir, recursive: true);
+				// Giving up would leave the lock to a live process: every waiter would wait out the
+				// 10-minute stale rule. So keep trying for a moment.
+				var sw = Stopwatch.StartNew();
+				while (true) {
+					try {
+						// Only remove it while it is still ours (an overstayed holder may have been evicted).
+						if (ReadOwner(Path.Combine(dir, "owner.json")) is { } o && o.Pid == me.Pid && o.Since == me.Since)
+							Directory.Delete(dir, recursive: true);
+						return;
+					}
+					catch (DirectoryNotFoundException) { return; } // gone already
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+						if (sw.Elapsed > ReleaseRetry) {
+							Logger.Instance.Info($"Could not release the NPU lock {dir}: {e.Message}. Other tools take it once it goes stale.");
+							return;
+						}
+						Thread.Sleep(20);
+					}
 				}
-				catch { /* the next taker's stale check cleans up */ }
 			}
 		}
 
