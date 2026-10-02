@@ -36,6 +36,12 @@ namespace HEI.Core.AI {
 	/// ticket heads the line. Heiward's work is background: a request a person is waiting on goes
 	/// ahead of it, but never ahead of a scan that has waited two minutes.
 	/// </para>
+	/// <para>
+	/// The same lock and line, unchanged, serve every accelerator (Manor's docs/ACCELERATORS.md): a graphics
+	/// card's first slot is the folder <c>&lt;locks&gt;\gpu-&lt;name&gt;</c> beside the NPU's (<see cref="LockDirectoryFor"/>),
+	/// its line <c>gpu-&lt;name&gt;.queue</c>. Other tools may serve a card with more slots (<c>&lt;id&gt;.2</c>, …);
+	/// Heiward knows nothing of them and only ever takes the first, through the same line, which they honour.
+	/// </para>
 	/// </summary>
 	public static partial class NpuLock {
 		static readonly TimeSpan Stale = TimeSpan.FromMinutes(10);
@@ -65,18 +71,40 @@ namespace HEI.Core.AI {
 			}
 		}
 
+		/// <summary>
+		/// An accelerator's lock folder (its first slot): the NPU's is <see cref="LockDirectory"/>; any other's, the
+		/// folder named by its id beside it. Null when the locks aren't in use on this PC (see <see cref="LockDirectory"/>).
+		/// </summary>
+		/// <param name="accelerator">An accelerator id: <c>npu</c>, <c>cpu</c> or <c>gpu-…</c> (<see cref="Accelerators"/>).</param>
+		public static string? LockDirectoryFor(string accelerator) {
+			if (!Accelerators.IsId(accelerator))
+				throw new ArgumentException($"Not an accelerator id: \"{accelerator}\".", nameof(accelerator));
+			string? npu = LockDirectory;
+			if (npu == null || accelerator == Accelerators.Npu) return npu;
+			return Path.GetDirectoryName(npu) is { Length: > 0 } locks ? Path.Combine(locks, accelerator) : null;
+		}
+
 		/// <summary>The NPU queue: the folder of tickets next to the lock.</summary>
 		internal static string QueueDirectoryFor(string lockDir) => lockDir + ".queue";
 
 		/// <summary>
-		/// Holds the lock until disposed, after waiting its turn in the NPU queue. Waits up to
+		/// Holds the NPU lock until disposed, after waiting its turn in the NPU queue. Waits up to
 		/// <paramref name="wait"/> (default 5 min), then throws <see cref="TimeoutException"/>.
 		/// </summary>
-		public static IDisposable Acquire(TimeSpan? wait = null) => Acquire(wait, interactive: false);
+		public static IDisposable Acquire(TimeSpan? wait = null) => Acquire(Accelerators.Npu, wait, interactive: false);
 
-		internal static IDisposable Acquire(TimeSpan? wait, bool interactive) {
-			string? dir = LockDirectory;
+		/// <summary>
+		/// Holds an accelerator's lock (its first slot) until disposed, after waiting its turn in its line, as
+		/// <see cref="Acquire(TimeSpan?)"/> does for the NPU.
+		/// </summary>
+		public static IDisposable Acquire(string accelerator, TimeSpan? wait = null) => Acquire(accelerator, wait, interactive: false);
+
+		internal static IDisposable Acquire(TimeSpan? wait, bool interactive) => Acquire(Accelerators.Npu, wait, interactive);
+
+		internal static IDisposable Acquire(string accelerator, TimeSpan? wait, bool interactive) {
+			string? dir = LockDirectoryFor(accelerator);
 			if (dir == null) return NoLock.Instance;
+			string what = accelerator == Accelerators.Npu ? "NPU" : accelerator;
 			string queueDir = QueueDirectoryFor(dir);
 			Directory.CreateDirectory(queueDir);
 			var deadline = Stopwatch.StartNew();
@@ -104,12 +132,12 @@ namespace HEI.Core.AI {
 						continue;
 					}
 					bool head = line[0] == name;
-					if (head && TryLock(dir) is { } held)
+					if (head && TryLock(dir, what) is { } held)
 						return held;
 					if (deadline.Elapsed > limit)
-						throw new TimeoutException($"Timed out after {limit.TotalSeconds:N0} s waiting for the NPU lock {dir} ({line.Count} in line).");
+						throw new TimeoutException($"Timed out after {limit.TotalSeconds:N0} s waiting for the {what} lock {dir} ({line.Count} in line).");
 					if (!logged) {
-						Logger.Instance.Info($"Waiting for the NPU: {line.IndexOf(name)} ahead in line (lock {dir}).");
+						Logger.Instance.Info($"Waiting for the {what}: {line.IndexOf(name)} ahead in line (lock {dir}).");
 						logged = true;
 					}
 					Thread.Sleep(head ? HeadPollMs : PollMs);
@@ -121,7 +149,7 @@ namespace HEI.Core.AI {
 		}
 
 		/// <summary>One try at the lock folder: ours, or null. Evicts a holder that died or overstayed.</summary>
-		static Held? TryLock(string dir) {
+		static Held? TryLock(string dir, string what) {
 			for (int attempt = 0; attempt < 2; attempt++) {
 				try {
 					// Win32 CreateDirectory fails when the folder exists: the atomic test-and-set the
@@ -132,9 +160,9 @@ namespace HEI.Core.AI {
 						return new Held(dir, me);
 					}
 					if (Marshal.GetLastPInvokeError() != ErrorAlreadyExists)
-						throw new IOException($"Cannot create the NPU lock {dir} (Win32 error {Marshal.GetLastPInvokeError()}).");
+						throw new IOException($"Cannot create the {what} lock {dir} (Win32 error {Marshal.GetLastPInvokeError()}).");
 					if (!IsStale(dir)) return null;
-					Logger.Instance.Info($"NPU lock {dir} was held by a process that died or overstayed; taking it over.");
+					Logger.Instance.Info($"{what} lock {dir} was held by a process that died or overstayed; taking it over.");
 					Directory.Delete(dir, recursive: true);
 				}
 				catch (IOException) { return null; } // lost a race with another taker: try again next poll

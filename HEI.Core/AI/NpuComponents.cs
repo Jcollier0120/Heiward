@@ -24,8 +24,9 @@ using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
 	/// <summary>
-	/// Where AI embeddings run. Auto = the NPU when this machine has one and the NPU pack is installed,
-	/// else the CPU. Gpu = DirectML (<see cref="GpuComponents"/>), chosen explicitly, never by Auto.
+	/// Where AI embeddings run. Auto = the NPU when this machine has one, its pack is installed and it hasn't
+	/// failed in the last 10 minutes; else the graphics card in use, with the GPU pack, once it has passed a
+	/// check; else the CPU (<see cref="AcceleratorPlan.ChooseAuto"/>). Gpu = DirectML (<see cref="GpuComponents"/>).
 	/// </summary>
 	public enum AiDevice { Auto, Cpu, Npu, Gpu }
 
@@ -156,9 +157,15 @@ namespace HEI.Core.AI {
 		public static bool WillUseNpu(AiDevice device) =>
 			device is AiDevice.Auto or AiDevice.Npu && GetNpuDevices().Count > 0;
 
-		/// <summary>The device the given setting will run on: "NPU", "GPU" or "CPU" (without opening a session).</summary>
-		public static string DeviceFor(AiDevice device) =>
-			device == AiDevice.Gpu ? (GpuComponents.IsInstalled ? "GPU" : "CPU") : WillUseNpu(device) ? "NPU" : "CPU";
+		/// <summary>
+		/// The device the given setting will run on: "NPU", "GPU" or "CPU" (without opening a session). Asking about the
+		/// NPU loads ONNX Runtime, so a GPU session can't follow in this process.
+		/// </summary>
+		public static string DeviceFor(AiDevice device) => AcceleratorPlan.For(device).Device switch {
+			AiDevice.Gpu => "GPU",
+			AiDevice.Npu => GetNpuDevices().Count > 0 ? "NPU" : "CPU",
+			_ => "CPU",
+		};
 
 		/// <summary>The embedding-cache key the given device setting will produce (see <see cref="ModelKey"/>).</summary>
 		public static string? CacheKeyFor(AiDevice device) => DeviceFor(device) switch {

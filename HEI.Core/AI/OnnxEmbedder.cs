@@ -64,15 +64,38 @@ namespace HEI.Core.AI {
 		/// </summary>
 		readonly int framesAtOnce;
 		/// <summary>
-		/// NPU only: the machine-wide NPU lock (<see cref="NpuLock"/>), held across back-to-back batches
-		/// for at most <see cref="LeaseLimit"/> so another NPU tool never waits longer than that.
+		/// The NPU's or the graphics card's machine-wide lock (<see cref="NpuLock"/>, by accelerator id), held across
+		/// back-to-back batches for at most <see cref="LeaseLimit"/> so another program never waits longer than that.
+		/// The CPU takes none: its lock is the manor's CPU model server's slots, which Heiward doesn't use.
 		/// </summary>
-		IDisposable? npuLease;
+		IDisposable? lease;
+		readonly string? lockId;
 		readonly Stopwatch leaseAge = new();
 		static readonly TimeSpan LeaseLimit = TimeSpan.FromSeconds(2);
+		/// <summary>Set after the first batch that ran on the accelerator: its failure marker is gone, a card's check recorded.</summary>
+		bool workedOnce;
+		/// <summary>The accelerator failed under a batch: marked once, then the batches throw as before.</summary>
+		bool markedFailed;
 
-		/// <summary>"CPU" or "NPU", for logs and diagnostics.</summary>
+		/// <summary>"CPU", "NPU" or "GPU", for logs and diagnostics.</summary>
 		public string DeviceName { get; }
+		/// <summary>The manor's id for where it runs: npu, cpu or gpu-… (<see cref="Accelerators"/>).</summary>
+		public string AcceleratorId { get; } = Accelerators.Cpu;
+		/// <summary>On a graphics card, the card (its <see cref="GpuAdapter.Key"/>); otherwise null.</summary>
+		public GpuAdapter? Card { get; }
+		/// <summary>"NPU" or "GPU" when the work was meant for that device but runs here (or stopped), else null.</summary>
+		public string? FellBackFrom { get; private set; }
+		/// <summary>One line: why it doesn't run on <see cref="FellBackFrom"/>.</summary>
+		public string? FallbackReason { get; private set; }
+		/// <summary>
+		/// "NPU to CPU: the Qualcomm Hexagon NPU could not run the model: …", "GPU failed: … during a scan; AI matching stopped
+		/// for the files left", or null when it runs where it was meant to.
+		/// </summary>
+		public string? Fallback => FellBackFrom == null ? null
+			: FellBackFrom == DeviceName ? $"{DeviceName} failed: {FallbackReason}"
+			: $"{FellBackFrom} to {DeviceName}: {FallbackReason}";
+		/// <summary>The lock it takes per batch, as the scan's log names it: "NPU", a card's id, or null for none.</summary>
+		public string? LockName => lockId == null ? null : lockId == Accelerators.Npu ? "NPU" : lockId;
 		/// <summary>Which embedding sidecars this model's vectors belong in (null = VDF's int8 model).</summary>
 		public string? CacheKey { get; }
 		/// <summary>The NPU's static batch size, or 0 when any batch size runs.</summary>
@@ -94,12 +117,15 @@ namespace HEI.Core.AI {
 			(inputNames, outputNames, clsFromHiddenState) = DescribeOutputs(session);
 		}
 
-		OnnxEmbedder(InferenceSession acceleratedSession, string deviceName, string cacheKey, int fixedBatch,
+		OnnxEmbedder(InferenceSession acceleratedSession, string deviceName, string cacheKey, int fixedBatch, string acceleratorId, GpuAdapter? card,
 			Dictionary<string, string>? fullSpeedRun = null, Dictionary<string, string>? backgroundRun = null) {
 			session = acceleratedSession;
 			this.fixedBatch = fixedBatch;
 			DeviceName = deviceName;
 			CacheKey = cacheKey;
+			AcceleratorId = acceleratorId;
+			lockId = acceleratorId;
+			Card = card;
 			(inputNames, outputNames, clsFromHiddenState) = DescribeOutputs(session);
 			if (fullSpeedRun != null && backgroundRun != null) {
 				foreach (var (key, value) in fullSpeedRun)
@@ -114,40 +140,72 @@ namespace HEI.Core.AI {
 		RunOptions CurrentRunOptions => backgroundRun != null && !Pace.FullSpeed ? backgroundRun : runOptions;
 
 		/// <summary>
-		/// The embedder for <paramref name="device"/>: the NPU when it is requested (or Auto) and
-		/// available, the GPU when requested (DirectML), otherwise VDF's int8 model on the CPU. An
-		/// accelerator that fails to open a session is logged and falls back to the CPU, so AI matching
-		/// never breaks because of it.
+		/// The embedder for <paramref name="device"/> (<see cref="AcceleratorPlan.For"/>): the NPU when it is requested, or
+		/// Auto finds one that hasn't failed lately; the GPU (DirectML) when requested, or Auto finds no working NPU and the
+		/// card in use has passed a check; otherwise VDF's int8 model on the CPU. An accelerator that fails to open a session
+		/// is marked failed for the others (<see cref="Accelerators.MarkFailed"/>), and the work falls back to the CPU, so AI
+		/// matching never breaks because of it. <see cref="Fallback"/> says why it didn't run where it was meant to.
 		/// </summary>
 		internal static OnnxEmbedder Create(AiDevice device) {
-			if (device == AiDevice.Gpu) {
+			AcceleratorPlan plan = AcceleratorPlan.For(device);
+			string? from = plan.FellBackFrom, why = plan.Why;
+			// Work already meant for another device keeps that one, with both reasons.
+			void Fell(string meantFor, string reason) {
+				if (from == null) (from, why) = (meantFor, reason);
+				else why += "; " + reason;
+			}
+			if (plan.Device == AiDevice.Gpu) {
+				GpuAdapter? card = plan.Card;
+				string id = card?.AcceleratorId ?? Accelerators.GpuId("");
+				string name = card != null ? "the " + card.Key : "the GPU";
 				// Before anything else touches ONNX Runtime: the DirectML build must be the one loaded.
 				if (GpuComponents.TrySelectRuntime()) {
 					try {
-						return new OnnxEmbedder(OpenGpuSession(), "GPU", GpuComponents.ModelKey, fixedBatch: 0);
+						var embedder = new OnnxEmbedder(OpenGpuSession(id), "GPU", GpuComponents.ModelKey, fixedBatch: 0, id, card) { FellBackFrom = from, FallbackReason = why };
+						if (from != null) Logger.Instance.Warn($"AI matching runs on {name} instead of the {from}: {why}.");
+						return embedder;
 					}
 					catch (Exception e) {
-						Logger.Instance.Warn($"The GPU could not run the AI model, falling back to the CPU: {e.Message}");
+						Fell("GPU", Failure(e, id, $"DirectML could not open the model on {name}"));
 					}
 				}
 				else
-					Logger.Instance.Info("AI device is GPU, but the GPU pack is not installed (or another runtime was loaded first) - using the CPU.");
+					Fell("GPU", "another ONNX Runtime was loaded first in this process");
 			}
-			else if (device != AiDevice.Cpu) {
+			else if (plan.Device == AiDevice.Npu) {
 				IReadOnlyList<OrtEpDevice> npus = NpuComponents.GetNpuDevices();
 				if (npus.Count > 0) {
 					try {
-						return new OnnxEmbedder(OpenNpuSession(npus), "NPU", NpuComponents.ModelKey, NpuComponents.NpuBatch,
+						return new OnnxEmbedder(OpenNpuSession(npus), "NPU", NpuComponents.ModelKey, NpuComponents.NpuBatch, Accelerators.Npu, null,
 							NpuComponents.RunConfig(fullSpeed: true), NpuComponents.RunConfig(fullSpeed: false));
 					}
 					catch (Exception e) {
-						Logger.Instance.Warn($"The NPU could not run the AI model, falling back to the CPU: {e.Message}");
+						Fell("NPU", Failure(e, Accelerators.Npu, $"the {NpuComponents.NpuName} could not run the model"));
 					}
 				}
-				else if (device == AiDevice.Npu)
-					Logger.Instance.Info("AI device is NPU, but no NPU is available (none on this PC, one this build cannot drive, or the NPU pack is not installed) - using the CPU.");
+				else {
+					// The pack is here but its plugin offers no NPU (a driver problem, say): the NPU can't work for now.
+					string none = $"the {NpuComponents.NpuName} pack found no NPU (see the log)";
+					Accelerators.MarkFailed(Accelerators.Npu, none);
+					Fell("NPU", none);
+				}
 			}
-			return new OnnxEmbedder(AiComponents.ModelPath);
+			if (from != null)
+				Logger.Instance.Warn($"AI matching runs on the CPU instead of the {from}: {why}.");
+			return new OnnxEmbedder(AiComponents.ModelPath) { FellBackFrom = from, FallbackReason = why };
+		}
+
+		/// <summary>
+		/// Why an accelerator couldn't open its session, in one line. It's marked failed for the others too, unless it was
+		/// only a long wait for its turn (that's the line, not the accelerator).
+		/// </summary>
+		static string Failure(Exception e, string id, string what) {
+			string why = $"{what}: {Accelerators.OneLine(e.Message)}";
+			if (e is TimeoutException)
+				why = $"waited too long for its turn ({Accelerators.OneLine(e.Message)})";
+			else
+				Accelerators.MarkFailed(id, why);
+			return why;
 		}
 
 		/// <summary>
@@ -213,8 +271,12 @@ namespace HEI.Core.AI {
 			catch (IOException) { }
 		}
 
-		/// <summary>The FP32 model on DirectML: sequential execution and no memory patterns, as the DML EP requires.</summary>
-		static InferenceSession OpenGpuSession() {
+		/// <summary>
+		/// The FP32 model on DirectML: sequential execution and no memory patterns, as the DML EP requires. Loading it onto
+		/// the card is the card's work too: in its turn, as the NPU's compile is.
+		/// </summary>
+		static InferenceSession OpenGpuSession(string cardId) {
+			using IDisposable cardTurn = NpuLock.Acquire(cardId);
 			AiComponents.EnsureResolverInstalled();
 			using var options = new SessionOptions();
 			options.EnableMemoryPattern = false;
@@ -290,9 +352,29 @@ namespace HEI.Core.AI {
 			OrtValue[] input = Input(rgbFrames, start, count, batch);
 			try {
 				Interlocked.Add(ref Stats.InputTicks, Stopwatch.GetTimestamp() - began);
-				if (fixedBatch > 0)
-					EnterNpu();
-				Run(input, start, count, batch, sink);
+				if (lockId != null)
+					EnterLock();
+				try {
+					Run(input, start, count, batch, sink);
+				}
+				catch (OnnxRuntimeException e) when (lockId != null) {
+					// The accelerator failed under the work (a DirectML error, the NPU's driver): the others skip it for a while.
+					if (!markedFailed) {
+						markedFailed = true;
+						string message = Accelerators.OneLine(e.Message);
+						Accelerators.MarkFailed(AcceleratorId, $"{(Card != null ? "the " + Card.Key : "the " + DeviceName)} failed during a scan: {message}");
+						string why = $"{message} during a scan; AI matching stopped for the files left";
+						FallbackReason = FellBackFrom != null ? FallbackReason + "; then the " + DeviceName + ": " + why : why;
+						FellBackFrom ??= DeviceName;
+					}
+					throw;
+				}
+				if (!workedOnce && lockId != null) {
+					workedOnce = true;
+					Accelerators.Succeeded(AcceleratorId);
+					if (Card != null && !GpuChecks.Passed(Card))
+						GpuChecks.Record(Card, passed: true);
+				}
 			}
 			finally {
 				// A static batch keeps its tensor for the next run.
@@ -379,25 +461,25 @@ namespace HEI.Core.AI {
 				v[i] *= inv;
 		}
 
-		void EnterNpu() {
-			if (npuLease != null && leaseAge.Elapsed < LeaseLimit)
+		void EnterLock() {
+			if (lease != null && leaseAge.Elapsed < LeaseLimit)
 				return;
-			YieldNpu();
+			YieldAccelerator();
 			long waiting = Stopwatch.GetTimestamp();
-			npuLease = NpuLock.Acquire();
+			lease = NpuLock.Acquire(lockId!);
 			Stats.LockTicks += Stopwatch.GetTimestamp() - waiting;
 			Stats.LockTurns++;
 			leaseAge.Restart();
 		}
 
-		/// <summary>Releases the NPU lock between bursts of work (the pipeline calls this when nothing is queued).</summary>
-		internal void YieldNpu() {
-			npuLease?.Dispose();
-			npuLease = null;
+		/// <summary>Releases the NPU's or the card's lock between bursts of work (the pipeline calls this when nothing is queued).</summary>
+		internal void YieldAccelerator() {
+			lease?.Dispose();
+			lease = null;
 		}
 
 		public void Dispose() {
-			YieldNpu();
+			YieldAccelerator();
 			if (staticInput != null)
 				staticInput[0].Dispose();
 			while (singleFrames.TryTake(out SingleFrame? frame))

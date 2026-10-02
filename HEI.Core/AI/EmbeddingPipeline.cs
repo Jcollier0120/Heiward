@@ -53,7 +53,7 @@ namespace HEI.Core.AI {
 		/// </summary>
 		static readonly TimeSpan FillWait = TimeSpan.FromMilliseconds(100);
 		/// <summary>
-		/// How long the queue may stay empty before the NPU lock goes back to other NPU tools: shorter gaps are
+		/// How long the queue may stay empty before the NPU's or the card's lock goes back to the others: shorter gaps are
 		/// the decoders between frames, and releasing and retaking the lock for each costs file operations.
 		/// The lease's own limit (2 s) still applies.
 		/// </summary>
@@ -87,6 +87,8 @@ namespace HEI.Core.AI {
 		}
 
 		public string DeviceName => embedder.DeviceName;
+		/// <summary>Why the embeddings don't run where the setting meant them to, or stopped (<see cref="OnnxEmbedder.Fallback"/>); read once it's done.</summary>
+		public string? Fallback => embedder.Fallback;
 
 		public int EmbeddedCount => embeddedCount;
 		public bool Faulted => faulted;
@@ -125,7 +127,7 @@ namespace HEI.Core.AI {
 			string text = $"AI on the {embedder.DeviceName}: {s.Images:N0} frames in {runs}; " +
 				$"model {model:N1} s, input {EmbedderStats.Seconds(s.InputTicks):N2} s";
 			if (s.LockTurns > 0)
-				text += $", NPU lock {EmbedderStats.Seconds(s.LockTicks):N1} s over {s.LockTurns:N0} turns";
+				text += $", {embedder.LockName} lock {EmbedderStats.Seconds(s.LockTicks):N1} s over {s.LockTurns:N0} turns";
 			if (wall > 0)
 				text += $"; busy {model / wall:P0} of {wall:N0} s";
 			return text;
@@ -192,8 +194,8 @@ namespace HEI.Core.AI {
 		bool Gather(List<(FileEntry entry, double key)> entries, List<byte[]> frames) {
 			(FileEntry entry, double key, byte[] rgb) item;
 			if (!queue.TryTake(out item, (int)IdleGrace.TotalMilliseconds, token)) {
-				// Nothing queued for a while: the decoders are busy. Let other NPU tools in meanwhile.
-				embedder.YieldNpu();
+				// Nothing queued for a while: the decoders are busy. Let the others in meanwhile.
+				embedder.YieldAccelerator();
 				try {
 					item = queue.Take(token);
 				}

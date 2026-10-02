@@ -55,7 +55,7 @@ static class NpuEmbedProbe {
 		var wall = Stopwatch.StartNew();
 		float[][] embeddings = embedder.EmbedBatch(frames);
 		wall.Stop();
-		embedder.YieldNpu();
+		embedder.YieldAccelerator();
 
 		long runs = s.Runs - before.runs, images = s.Images - before.images;
 		double model = EmbedderStats.Seconds(s.ModelTicks - before.model), input = EmbedderStats.Seconds(s.InputTicks - before.input);
