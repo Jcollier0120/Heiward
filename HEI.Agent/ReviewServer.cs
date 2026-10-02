@@ -31,6 +31,8 @@ namespace HEI.Agent {
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
 	/// <param name="OnRequest">Scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>), or automatically again.</param>
 	sealed record DriveRequest(string Root, bool OnRequest = false);
+	/// <param name="Open">For a folder: open it, rather than show it selected in the folder it's in.</param>
+	sealed record RevealRequest(string? Path, bool Open = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
 
@@ -216,13 +218,22 @@ namespace HEI.Agent {
 						: "scanned automatically again, from the next scan.",
 				});
 			});
+			// "Show in File Explorer" on a file or folder the page lists (right-click): see Reveal.
+			app.MapPost("/api/reveal", (RevealRequest request) => {
+				if (Reveal.Check(request.Path) is string error) return Results.BadRequest(new { error });
+				try { Reveal.Show(request.Path!, request.Open); }
+				catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) {
+					return Results.Problem("File Explorer didn't start: " + e.Message);
+				}
+				return Results.Ok();
+			});
 			// "Scan this drive now", on the page of a drive scanned only when asked.
 			app.MapPost("/api/scan/drive", (DriveRequest request) => {
-				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				string? drive = AgentConfig.DriveOf(request.Root ?? "");
 				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
-				StartDetached("scan", "--drive", drive);
+				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
 				return Results.Accepted();
 			});
 			// Developer mode off (Settings): its part of the page is hidden, and its requests are refused.
@@ -240,8 +251,8 @@ namespace HEI.Agent {
 			devApi.MapGet("/pulls", async (bool? again, CancellationToken requestAborted) =>
 				Results.Json(await PullRequests.GetAsync(DevReport.Load()?.Sources ?? new(), again == true, requestAborted), AgentConfig.Json));
 			devApi.MapPost("/scan", () => {
-				if (DevScan.IsRunning()) return Results.Conflict(new { error = "A developer check is already running." });
-				StartDetached("dev", "--scan");
+				if (DevBusy()) return Results.Conflict(new { error = "A developer check is already running." });
+				DevLaunch.Started(StartDetached("dev", "--scan"), DateTime.UtcNow);
 				return Results.Accepted();
 			});
 			devApi.MapPost("/items/{id}/clean", (string id) => {
@@ -302,9 +313,9 @@ namespace HEI.Agent {
 				return Results.Json(AgentView(cfg), AgentConfig.Json);
 			});
 			app.MapPost("/api/scan", () => {
-				if (AgentScanner.IsRunning()) return Results.Conflict(new { error = "A scan is already running." });
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
-				StartDetached("scan");
+				ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
 				return Results.Accepted();
 			});
 
@@ -322,7 +333,7 @@ namespace HEI.Agent {
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
-			RescanAfterUpdate();
+			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
 			return 0;
@@ -351,25 +362,55 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// A new build of Heiward (an update, from GitHub or the Store) sets the last report aside, since
-		/// its sets were judged by the old build's rules: a scan with this build finds them again. Not while
-		/// scans are paused, and not before the Store version's setup, which starts its own first scan.
+		/// The page starting (opened, reloaded after it exited, restarted) starts a scan only when one is due
+		/// by the schedule (<see cref="ScanWhenDue"/>): the last scan plus the interval between scans. A new
+		/// build of Heiward sets the last report aside, since its sets were judged by the old build's rules,
+		/// but no longer rescans at every start until one finishes: the next due scan, or Scan now, finds
+		/// them again. Not while scans are paused, and not before the Store version's setup, which starts its
+		/// own first scan.
 		/// </summary>
-		static void RescanAfterUpdate() {
-			if (!Report.IsStale() || AgentScanner.IsRunning() || StoreSetup.Needed || AgentPause.Load() != null) return;
-			AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {Report.LoadAny()?.Build ?? "an older build"}: scanning again");
-			StartDetached("scan");
+		static void ScanIfDue(AgentConfig cfg) {
+			if (ScanBusy() || StoreSetup.Needed || AgentPause.Load() != null) return;
+			Report? last = Report.LoadAny();
+			bool setAside = last != null && last.Build != AppBuild.Current;
+			if (ScanWhenDue.Due(last?.ScannedAtUtc, AgentScanner.LastStartedUtc(), cfg.ScanEveryMinutes, DateTime.UtcNow) is not { } why) {
+				if (setAside) AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {last!.Build ?? "an older build"}: the next scan finds the sets again");
+				return;
+			}
+			AgentPaths.AppendLog($"review page started: scanning, since {why}" + (setAside ? $" (and Heiward {AppBuild.Current} set aside the last report)" : ""));
+			ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
+		}
+
+		/// <summary>The scan and the developer check this page started, until each holds its lock (see <see cref="Launch"/>).</summary>
+		static readonly Launch ScanLaunch = new(), DevLaunch = new();
+
+		/// <summary>A scan holds scan.lock, or one this page started is still starting.</summary>
+		static bool ScanBusy() {
+			bool locked = AgentScanner.IsRunning();
+			return ScanLaunch.Starting(locked, DateTime.UtcNow) || locked;
+		}
+
+		static bool DevBusy() {
+			bool locked = DevScan.IsRunning();
+			return DevLaunch.Starting(locked, DateTime.UtcNow) || locked;
 		}
 
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {
-			Report? report = Report.Load();
+			// The last report, whichever build made it, read once; the page shows this build's own (Report.Load).
+			Report? anyReport = Report.LoadAny();
+			Report? report = anyReport?.Build == AppBuild.Current ? anyReport : null;
 			ScanIndex? index = ScanIndex.Load();
 			var decisions = DecisionStore.Load();
 			DevReport? devReport = cfg.DeveloperModeOn ? DevReport.Load() : null;
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
+			var drives = ExplorerView.Drives(cfg, index, pending);
+			// This PC's drives at a glance, from what's here already (DiskGlance).
+			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
+			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
+				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives));
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
 				.Where(d => !d.Value.Unlisted)
@@ -392,8 +433,8 @@ namespace HEI.Agent {
 				report = report == null ? null : new {
 					report.ScannedAtUtc, report.DurationSec, report.Device, report.FilesScanned, report.Folders, report.ExcludedExtensions, report.Notes,
 				},
-				// The last report is another build's, set aside until a scan with this one (RescanAfterUpdate).
-				updated = report == null && Report.IsStale(),
+				// The last report is another build's, set aside until a scan with this one (ScanIfDue).
+				updated = report == null && anyReport != null,
 				pending,
 				done,
 				totals = new {
@@ -405,13 +446,18 @@ namespace HEI.Agent {
 				},
 				dev = DevSummary(cfg, devReport),
 				auto = AutoView(report, devReport, decisions),
-				drives = ExplorerView.Drives(cfg, index, pending),
+				drives,
+				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
-				scan = new { running = AgentScanner.IsRunning(), status = AgentScanner.ReadStatus() },
+				scan = ScanView(),
 				setup = StoreSetup.View(),
 				agent = AgentView(cfg),
 				ai = AiStatus.Load(),
-				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
+				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
+				schedule = new {
+					next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes,
+					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), cfg.ScanEveryMinutes),
+				},
 				config = new {
 					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
 					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true),
@@ -441,7 +487,7 @@ namespace HEI.Agent {
 		static object DevSummary(AgentConfig cfg, DevReport? r) {
 			return new {
 				enabled = cfg.DeveloperModeOn,
-				running = cfg.DeveloperModeOn && DevScan.IsRunning(),
+				running = cfg.DeveloperModeOn && DevBusy(),
 				scannedAtUtc = r?.ScannedAtUtc,
 				totalBytes = r?.Categories.SelectMany(c => c.Items).Sum(i => i.Bytes) ?? 0,
 				suggestedBytes = r?.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes) ?? 0,
@@ -494,10 +540,26 @@ namespace HEI.Agent {
 			StartDetached("serve", "--no-browser");
 		}
 
-		static void StartDetached(params string[] args) {
+		/// <summary>
+		/// The scan for the page. A scan this page has just started counts as running from the moment it's
+		/// started (<c>starting</c>), so the page shows it at once; its status file is the last scan's until
+		/// it writes its own, so none is given, and <c>roots</c> says what it will read when that isn't every drive.
+		/// </summary>
+		static object ScanView() {
+			bool locked = AgentScanner.IsRunning();
+			bool starting = ScanLaunch.Starting(locked, DateTime.UtcNow);
+			return new {
+				running = locked || starting,
+				starting,
+				roots = starting ? ScanLaunch.Roots : null,
+				status = starting ? null : AgentScanner.ReadStatus(),
+			};
+		}
+
+		static Process? StartDetached(params string[] args) {
 			var psi = new ProcessStartInfo(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
-			Process.Start(psi);
+			return Process.Start(psi);
 		}
 
 		/// <summary>The name the page goes by: Heiward's own, on this PC only (see the Host check).</summary>

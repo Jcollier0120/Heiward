@@ -94,12 +94,12 @@ namespace HEI.Core.AI {
 				while (true) {
 					if (beat.Elapsed >= Heartbeat) {
 						try { File.SetLastWriteTimeUtc(ticket, DateTime.UtcNow); }
-						catch (IOException) { File.WriteAllText(ticket, body); } // taken for dead (a long pause): back in, same place
+						catch (IOException) { WriteTicket(ticket, body); } // taken for dead (a long pause): back in, same place
 						beat.Restart();
 					}
 					List<string> line = ReadLine(queueDir, keep: name);
 					if (!line.Contains(name)) {
-						File.WriteAllText(ticket, body);
+						WriteTicket(ticket, body);
 						beat.Restart();
 						continue;
 					}
@@ -232,9 +232,26 @@ namespace HEI.Core.AI {
 			return !PidAlive(owner.Pid);
 		}
 
+		/// <summary>
+		/// Reads owner.json letting others write and delete it meanwhile. File.ReadAllText doesn't share
+		/// delete, so a waiter checking the holder at the moment it let go made its release fail, and the
+		/// lock stayed taken until it went stale.
+		/// </summary>
 		static Owner? ReadOwner(string path) {
-			try { return JsonSerializer.Deserialize(File.ReadAllText(path), OwnerJson.Default.Owner); }
+			try {
+				using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+				return JsonSerializer.Deserialize(file, OwnerJson.Default.Owner);
+			}
 			catch { return null; }
+		}
+
+		/// <summary>Writes a ticket, putting the queue folder back if it was removed.</summary>
+		static void WriteTicket(string ticket, string body) {
+			try { File.WriteAllText(ticket, body); }
+			catch (DirectoryNotFoundException) {
+				Directory.CreateDirectory(Path.GetDirectoryName(ticket)!);
+				File.WriteAllText(ticket, body);
+			}
 		}
 
 		internal sealed record Owner(int Pid, long Since);
@@ -245,8 +262,19 @@ namespace HEI.Core.AI {
 				if (Interlocked.Exchange(ref released, 1) != 0) return;
 				try {
 					// Only remove it while it is still ours (an overstayed holder may have been evicted).
-					if (ReadOwner(Path.Combine(dir, "owner.json")) is { } o && o.Pid == me.Pid && o.Since == me.Since)
-						Directory.Delete(dir, recursive: true);
+					if (ReadOwner(Path.Combine(dir, "owner.json")) is not { } o || o.Pid != me.Pid || o.Since != me.Since) return;
+					// A waiter may have a file in it open for a moment (another tool's reader may not share
+					// delete): try again briefly rather than leave the lock taken until it goes stale.
+					for (int attempt = 0; ; attempt++) {
+						try {
+							Directory.Delete(dir, recursive: true);
+							return;
+						}
+						catch (DirectoryNotFoundException) { return; }
+						catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 40) {
+							Thread.Sleep(25);
+						}
+					}
 				}
 				catch { /* the next taker's stale check cleans up */ }
 			}

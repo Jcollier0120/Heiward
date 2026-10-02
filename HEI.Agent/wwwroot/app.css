@@ -439,6 +439,43 @@ button { font: inherit; color: inherit; }
 .chip.good { background: var(--ok-bg); color: var(--ok); font-weight: 600; }
 .chip.quiet { background: transparent; border: 1px solid var(--line); color: var(--muted); }
 
+/* At a glance: this PC's drives in one card, above the drive cards */
+.glance {
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px;
+  margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+.glance-head { display: flex; align-items: baseline; justify-content: space-between; gap: 4px 12px; flex-wrap: wrap; }
+.glance-title { font-weight: 600; font-size: 15px; }
+.glance-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+.glance-stat { min-width: 0; }
+.glance-value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.glance-stat.low .glance-value { color: var(--drive-low); }
+.glance-stat.good .glance-value { color: var(--ok); }
+.glance-bar { display: flex; height: 12px; background: var(--line); border-radius: 6px; overflow: hidden; }
+.glance-bar .seg { height: 100%; min-width: 2px; }
+.glance-bar .seg + .seg { box-shadow: -1px 0 0 var(--surface-2); }
+.k-videos { background: var(--drive-bar); }
+.k-photos { background: var(--folder); }
+.k-developer { background: var(--ok); }
+.k-bin { background: var(--alert); }
+.k-other { background: var(--faint); }
+.k-free { background: var(--line); }
+.glance-legend { display: flex; flex-wrap: wrap; gap: 4px 18px; font-size: 13px; }
+.glance-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.glance-item .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.glance-item .swatch.k-free { box-shadow: inset 0 0 0 1px var(--faint); }
+.glance-lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 24px; border-top: 1px solid var(--line); padding-top: 10px; }
+.glance-sub { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.type-rows { display: flex; flex-direction: column; gap: 4px; }
+.type-row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr) 3em 5.5em; align-items: center; gap: 8px; font-size: 13px; }
+.type-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.type-meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.type-meter .fill { display: block; height: 100%; border-radius: 3px; }
+.type-pct { text-align: right; font-variant-numeric: tabular-nums; }
+.type-bytes { text-align: right; white-space: nowrap; }
+.glance-list { margin: 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+.glance-list .warn-line { color: var(--drive-low); }
+
 /* Where the duplicates are */
 .hotspots { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .hotspot {
@@ -786,4 +823,8 @@ footer a { color: var(--accent-text); }
   .tiles { grid-template-columns: repeat(3, 1fr); gap: 8px; }
   .tile { padding: 8px 10px; }
   .tile-value { font-size: 17px; }
+  .glance { padding: 12px; }
+  .glance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .glance-value { font-size: 17px; }
+  .glance-lower { grid-template-columns: minmax(0, 1fr); }
 }

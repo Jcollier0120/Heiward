@@ -61,6 +61,8 @@ namespace HEI.Agent {
 				return 0;
 			}
 			var started = DateTime.UtcNow;
+			try { AgentPaths.WriteAtomic(AgentPaths.ScanStarted, started.ToString("O")); }
+			catch { /* only the page's scan-when-due check reads it */ }
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
 			bool fullSpeed = ScanPace.FullSpeed(cfg, scheduled);
@@ -355,6 +357,16 @@ namespace HEI.Agent {
 			if (!File.Exists(AgentPaths.ScanLock)) return false;
 			using FileStream? probe = TryLock();
 			return probe == null;
+		}
+
+		/// <summary>When the last scan started, whether it finished, was stopped or failed; null before the first.</summary>
+		public static DateTime? LastStartedUtc() {
+			try {
+				return File.Exists(AgentPaths.ScanStarted) && DateTime.TryParse(File.ReadAllText(AgentPaths.ScanStarted).Trim(),
+					System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.RoundtripKind, out DateTime t)
+					? t.ToUniversalTime() : null;
+			}
+			catch { return null; }
 		}
 
 		public static ScanStatus? ReadStatus() {

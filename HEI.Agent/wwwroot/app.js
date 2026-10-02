@@ -427,6 +427,16 @@ function renderAiBadge(ai) {
   badge.className = 'ai-badge ' + tone;
 }
 
+/**
+ * When the next scan is due by the last one and the interval ("in 20 min"), as the page starting checks
+ * before it scans; null when scans run only when asked or there's been none.
+ */
+function scanDueIn(schedule) {
+  if (!schedule || !schedule.dueUtc) return null;
+  const min = Math.round((Date.parse(schedule.dueUtc) - Date.now()) / 60000);
+  return min <= 1 ? 'now' : min < 90 ? 'in ' + min + ' min' : 'in about ' + Math.round(min / 60) + ' hours';
+}
+
 function renderHeader(s) {
   const r = s.report;
   const parts = [];
@@ -434,26 +444,31 @@ function renderHeader(s) {
     parts.push('Last scan ' + ago(r.scannedAtUtc));
     parts.push(r.device === 'off' ? 'AI matching off' : 'AI on the ' + r.device);
   } else {
-    // A new build set the last report aside: its sets were judged by the old rules.
-    parts.push(s.updated ? 'Heiward was updated: finding the sets again with this version' : 'No scan yet');
+    // A new build set the last report aside: its sets were judged by the old rules. The next due scan
+    // (or Scan now) finds them again; opening or reloading the page doesn't start one before it's due.
+    parts.push(!s.updated ? 'No scan yet' : s.scan.running ? 'Heiward was updated: finding the sets again with this version'
+      : 'Heiward was updated: the next scan finds the sets again');
   }
   if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
+  else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
   $('subtitle').textContent = parts.join(' · ');
   renderAiBadge(s.ai);
 
   const running = s.scan.running;
+  // Just started: running from the click, though it can't be stopped until its process has begun.
+  const starting = !!s.scan.starting;
   const scanBtn = $('scan-now');
-  scanBtn.disabled = s.setup.needed || s.agent.stopping;
-  scanBtn.textContent = running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
+  scanBtn.disabled = s.setup.needed || s.agent.stopping || starting;
+  scanBtn.textContent = starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
   scanBtn.classList.toggle('secondary', running);
   renderAgent(s);
   // How the scan runs, above the drives; each drive's card shows how far it has got.
   const st = s.scan.status;
   const pace = $('scan-pace');
   pace.classList.toggle('hidden', !running);
-  pace.textContent = !running ? '' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
+  pace.textContent = !running ? '' : starting ? 'Starting the scan…' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
   pace.title = st ? (st.fullSpeed
     ? 'Full speed: every core but one, at normal priority.'
     : 'In the background: Windows\' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
@@ -531,6 +546,7 @@ function renderHome(s) {
   $('t-free').textContent = bytes(s.totals.reclaimableBytes);
   $('t-freed').textContent = bytes(s.totals.recycledBytes);
 
+  renderGlance(s.glance);
   const drives = $('drives');
   drives.replaceChildren(...s.drives.map(driveCard));
   if (!s.drives.length) drives.append(el('p', 'muted', 'No drives found.'));
@@ -558,12 +574,128 @@ function renderHome(s) {
     row.append(meter);
     row.title = h.folder;
     row.addEventListener('click', () => go(h.folder));
+    row.addEventListener('contextmenu', (e) => openFolderMenu(e, { name: h.folder.slice(h.folder.lastIndexOf(SEP) + 1), path: h.folder }));
     return row;
   }));
 
   renderDevCard(s.dev);
   renderDone(s);
   renderFooter(s);
+}
+
+// ---------------------------------------------------------------- home: at a glance
+
+/** A share as a percentage that never rounds a real part away: "<1%" rather than "0%". */
+function share(part, whole) {
+  if (!whole || part <= 0) return '0%';
+  const p = (100 * part) / whole;
+  return p < 1 ? '<1%' : p >= 99.5 && part < whole ? '>99%' : Math.round(p) + '%';
+}
+
+const GLANCE_TIPS = {
+  videos: 'Videos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
+  photos: 'Photos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
+  developer: 'What development tools recreate: build outputs, worktrees, package caches, emulators (Developer cleanup).',
+  bin: 'Files in the Recycle Bin take their space until it\'s emptied, the copies Heiward recycled too.',
+  other: 'Windows, apps, games, documents and everything else Heiward doesn\'t sort.',
+};
+
+const kindClass = (kind) => (kind === 'video' ? 'videos' : kind === 'photo' ? 'photos' : 'other');
+
+/**
+ * Every drive of this PC in one card, above the drive cards: how big, how full, what the used space is
+ * (photos, videos, developer files, the Recycle Bin, everything else), the photos and videos by type,
+ * the drives nearly full, and what could be freed now. Network drives have their cards but aren't counted.
+ */
+function renderGlance(g) {
+  const box = $('glance');
+  box.classList.toggle('hidden', !g || !g.drives);
+  if (!g || !g.drives) { box.replaceChildren(); return; }
+
+  const head = el('div', 'glance-head');
+  head.append(el('div', 'glance-title', 'At a glance'), el('div', 'muted small', count(g.drives, 'drive', 'drives') + ' on this PC' +
+    (g.networkDrives ? ' · ' + count(g.networkDrives, 'network drive', 'network drives') + ' not counted' : '')));
+
+  const stats = el('div', 'glance-stats');
+  const stat = (value, label, cls) => {
+    const s = el('div', 'glance-stat' + (cls ? ' ' + cls : ''));
+    s.append(el('div', 'glance-value', value), el('div', 'muted small', label));
+    return s;
+  };
+  stats.append(
+    stat(bytes(g.totalBytes), 'total space'),
+    stat(bytes(g.usedBytes), share(g.usedBytes, g.totalBytes) + ' used', g.usedBytes / g.totalBytes >= 0.9 ? 'low' : ''),
+    stat(bytes(g.freeBytes), share(g.freeBytes, g.totalBytes) + ' free'),
+    stat(g.reclaim.total ? bytes(g.reclaim.total) : '–', 'you could free', g.reclaim.total ? 'good' : ''));
+
+  // The capacity as one bar: each kind of used space in its colour, the rest free.
+  const bar = el('div', 'glance-bar');
+  bar.setAttribute('role', 'img');
+  bar.setAttribute('aria-label', g.kinds.map((k) => k.label + ' ' + bytes(k.bytes)).join(', ') + ', free ' + bytes(g.freeBytes));
+  const legend = el('div', 'glance-legend');
+  const item = (key, label, amount, pct, tip) => {
+    const it = el('div', 'glance-item');
+    it.title = tip || '';
+    const text = el('span', null, label + ' ');
+    text.append(el('b', null, bytes(amount)));
+    it.append(el('span', 'swatch k-' + key), text, el('span', 'muted', pct));
+    return it;
+  };
+  for (const k of g.kinds) {
+    if (k.bytes <= 0) continue;
+    const seg = el('div', 'seg k-' + k.key);
+    seg.style.width = (100 * k.bytes) / g.totalBytes + '%';
+    seg.title = k.label + ': ' + bytes(k.bytes) + (k.files ? ', ' + count(k.files, 'file', 'files') : '');
+    bar.append(seg);
+    legend.append(item(k.key, k.label, k.bytes, share(k.bytes, g.usedBytes), GLANCE_TIPS[k.key]));
+  }
+  legend.append(item('free', 'Free', g.freeBytes, share(g.freeBytes, g.totalBytes), 'Free space on these drives.'));
+  const note = el('div', 'muted small', 'Each kind\'s share is of the used space; free is of the total.');
+
+  // The photos and videos, by file type.
+  const types = el('div', 'glance-types');
+  types.append(el('div', 'glance-sub', 'Photos and videos by type'));
+  const media = g.types.reduce((n, t) => n + t.bytes, 0) + (g.otherTypes ? g.otherTypes.bytes : 0);
+  if (!g.typed) {
+    types.append(el('div', 'muted small', g.scannedAtUtc ? 'After the next scan: the last one was made before Heiward sorted files by type.' : 'After the first scan.'));
+  } else if (!media) {
+    types.append(el('div', 'muted small', 'The last scan found no photos or videos on these drives.'));
+  } else {
+    const rows = el('div', 'type-rows');
+    for (const t of g.otherTypes ? [...g.types, g.otherTypes] : g.types) {
+      const mixed = t.kind === 'mixed';
+      const row = el('div', 'type-row');
+      row.title = (mixed ? t.type + ' types: ' : '') + count(t.files, 'file', 'files') + ', ' + bytes(t.bytes) + (mixed ? '' : ' (' + kindClass(t.kind) + ')');
+      const meter = el('span', 'type-meter');
+      const fill = el('span', 'fill k-' + (mixed ? 'other' : kindClass(t.kind)));
+      fill.style.width = Math.max(1.5, (100 * t.bytes) / media) + '%';
+      meter.append(fill);
+      row.append(el('span', 'type-name' + (mixed ? ' muted' : ''), mixed ? 'Others' : t.type.toUpperCase() || '(none)'),
+        meter, el('span', 'type-pct', share(t.bytes, media)), el('span', 'muted small type-bytes', bytes(t.bytes)));
+      rows.append(row);
+    }
+    types.append(rows);
+  }
+
+  // What needs a look: drives nearly full, and what can be freed now.
+  const notes = el('div', 'glance-notes');
+  notes.append(el('div', 'glance-sub', 'Worth knowing'));
+  const list = el('ul', 'glance-list');
+  for (const d of g.low) {
+    const li = el('li', 'warn-line');
+    li.append(el('b', null, d.name), document.createTextNode(' is ' + Math.round(100 * d.usedShare) + '% full: ' + bytes(d.freeBytes) + ' left.'));
+    list.append(li);
+  }
+  const r = g.reclaim;
+  if (r.duplicates) list.append(el('li', null, bytes(r.duplicates) + ' in copies to review (Where the duplicates are, below).'));
+  if (r.developer) list.append(el('li', null, bytes(r.developer) + ' of developer files ticked to clean (Developer cleanup).'));
+  if (r.recycleBin) list.append(el('li', null, bytes(r.recycleBin) + ' in the Recycle Bin: empty it to get that space back.'));
+  if (!list.childElementCount) list.append(el('li', 'muted', 'No drive is nearly full, and there\'s nothing to free right now.'));
+  notes.append(list);
+
+  const lower = el('div', 'glance-lower');
+  lower.append(types, notes);
+  box.replaceChildren(head, stats, bar, legend, note, lower);
 }
 
 // ---------------------------------------------------------------- settings
@@ -1473,6 +1605,7 @@ function groupPage(g) {
       const chip = el('span', 'chip quiet repo-chip');
       chip.append(el('span', null, r.name));
       chip.title = r.path;
+      chip.addEventListener('contextmenu', (e) => openPathMenu(e, { name: r.name, path: r.path, folder: true }));
       const x = el('button', 'chip-x', '×');
       x.title = 'Take ' + r.name + ' out of ' + g.name;
       x.setAttribute('aria-label', x.title);
@@ -1703,6 +1836,8 @@ function devRow(i, showRepo) {
   const where = el('div', 'folder muted small', i.location);
   where.title = i.location;
   main.append(where);
+  const places = i.paths || [];
+  if (places.length) row.addEventListener('contextmenu', (e) => openPathMenu(e, { name: i.name, path: places[0], folder: true, more: places.length - 1 }));
   // On a single repository's page, 'worktree of <it>' says nothing new.
   const facts = (i.detail || '').split(/, | · /).filter((f) => f && !(i.kind === 'worktrees' && !showRepo && f.startsWith('worktree of ')));
   if (facts.length) {
@@ -1854,7 +1989,8 @@ function overlaps(a, b) {
 
 function scanReads(d) {
   if (!state.scan.running) return false;
-  const roots = state.scan.status && state.scan.status.roots;
+  // A scan still starting has no status yet; the server says what it will read.
+  const roots = (state.scan.status && state.scan.status.roots) || state.scan.roots;
   if (!roots) return !d.onRequest;
   return roots.some((r) => overlaps(d.root, r));
 }
@@ -2029,6 +2165,7 @@ function renderDone(s) {
   const where = (folder) => {
     const w = el('span', 'where', nameOf(folder));
     w.title = folder;
+    w.addEventListener('contextmenu', (e) => openPathMenu(e, { name: nameOf(folder), path: folder, folder: true }));
     return w;
   };
   box.replaceChildren(historyBar(s), ...s.done.map((d) => {
@@ -2248,7 +2385,8 @@ function treeKeys(e, node) {
 // ---------------------------------------------------------------- folder menu (right-click)
 
 // Right-click a folder (or press the menu key on it) to include it in scans or leave it out, whichever it
-// isn't now. Saved to "folders" / "excludeFolders" in the settings; the next scan follows.
+// isn't now. Saved to "folders" / "excludeFolders" in the settings; the next scan follows. Right-click
+// any file or folder the page lists to show it in File Explorer, selected in its folder, or copy its path.
 let menuReturn = null;
 
 function closeFolderMenu(focusBack) {
@@ -2259,11 +2397,8 @@ function closeFolderMenu(focusBack) {
   menuReturn = null;
 }
 
-/** node: { name, path, exempt, drive } as the tree and the folder table have them. */
-function openFolderMenu(e, node) {
-  e.preventDefault();
-  e.stopPropagation();
-  const m = $('folder-menu');
+/** A right-click menu's items, in order: item(label, run) adds one; a reason instead of run greys it out. */
+function menuItems() {
   const items = [];
   const item = (label, run, why) => {
     const b = el('button', 'menu-item', label);
@@ -2274,10 +2409,66 @@ function openFolderMenu(e, node) {
     items.push(b);
     return b;
   };
+  return { items, item };
+}
+
+/** Shows the right-click menu: at the pointer, or from the keyboard under the row, its first item focused. */
+function showMenu(e, label, items, hint) {
+  e.preventDefault();
+  e.stopPropagation();
+  const m = $('folder-menu');
+  m.setAttribute('aria-label', label);
+  m.replaceChildren(el('div', 'menu-label', label), ...items);
+  if (hint) m.append(el('div', 'menu-hint', hint));
+  m.classList.remove('hidden');
+  const r = e.currentTarget.getBoundingClientRect();
+  const fromKeys = !e.clientX && !e.clientY;
+  const x = Math.max(8, Math.min(fromKeys ? r.left + 28 : e.clientX, window.innerWidth - m.offsetWidth - 8));
+  const y = Math.max(8, Math.min(fromKeys ? r.bottom : e.clientY, window.innerHeight - m.offsetHeight - 8));
+  m.style.left = x + 'px';
+  m.style.top = y + 'px';
+  menuReturn = e.currentTarget;
+  (items.find((b) => !b.disabled) || items[0]).focus();
+}
+
+/**
+ * File Explorer, from this PC's Heiward: shows the file or folder selected in the folder it's in, or with
+ * `open`, opens a folder itself. The server checks it's still there first.
+ */
+async function revealPath(path, open) {
+  try { await post('/api/reveal', { path, open: !!open }); }
+  catch (e) { showError(e.message); }
+}
+
+async function copyPath(path) {
+  try {
+    await navigator.clipboard.writeText(path);
+    showNotice('Copied ' + path);
+  } catch { showError('The path couldn\'t be copied: the browser didn\'t allow it.'); }
+}
+
+/**
+ * The right-click menu of a file or folder listed on the page (a copy in a set, a developer item, a
+ * folder in the history): show it in File Explorer, or copy its path. `more`: further places it covers.
+ */
+function openPathMenu(e, { name, path, folder, more }) {
+  const { items, item } = menuItems();
+  item('Show in File Explorer', () => revealPath(path, false));
+  if (folder) item('Open in File Explorer', () => revealPath(path, true));
+  item('Copy path', () => copyPath(path));
+  showMenu(e, name, items, more ? 'Also in ' + count(more, 'other place', 'other places') + '; File Explorer shows the first.' : null);
+}
+
+/** node: { name, path, exempt, drive } as the tree and the folder table have them. */
+function openFolderMenu(e, node) {
+  const { items, item } = menuItems();
   item('Open', () => go(node.path));
   const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
   let hint = null;
   const isDrive = card && sameFolder(card.root, node.path) && card.type !== 'folder';
+  // A drive opens in File Explorer; a folder can also be shown selected in the folder it's in.
+  item('Open in File Explorer', () => revealPath(node.path, true));
+  if (!isDrive) item('Show in File Explorer', () => revealPath(node.path, false));
   if (node.exempt) {
     item('Include in scans', () => overrideFolder(node.path, true));
     hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
@@ -2293,18 +2484,8 @@ function openFolderMenu(e, node) {
   } else {
     item('Leave out of scans', () => overrideFolder(node.path, false));
   }
-  m.replaceChildren(el('div', 'menu-label', node.name), ...items);
-  if (hint) m.append(el('div', 'menu-hint', hint));
-  m.classList.remove('hidden');
-  // At the pointer; from the keyboard, under the row.
-  const r = e.currentTarget.getBoundingClientRect();
-  const fromKeys = !e.clientX && !e.clientY;
-  const x = Math.max(8, Math.min(fromKeys ? r.left + 28 : e.clientX, window.innerWidth - m.offsetWidth - 8));
-  const y = Math.max(8, Math.min(fromKeys ? r.bottom : e.clientY, window.innerHeight - m.offsetHeight - 8));
-  m.style.left = x + 'px';
-  m.style.top = y + 'px';
-  menuReturn = e.currentTarget;
-  (items.find((b) => !b.disabled) || items[0]).focus();
+  item('Copy path', () => copyPath(node.path));
+  showMenu(e, node.name, items, hint);
 }
 
 function setupFolderMenu() {
@@ -2541,7 +2722,8 @@ function duplicatesSection(path) {
 
   if (!here.length) {
     box.append(el('div', 'empty-state', state.report ? 'No duplicates in this folder.'
-      : state.updated ? 'Heiward was updated. Its next scan finds the sets again with this version\'s rules' + (state.scan.running ? ': it\'s running now.' : ': press "Scan now".')
+      : state.updated ? 'Heiward was updated. Its next scan finds the sets again with this version\'s rules' + (state.scan.running ? ': it\'s running now.'
+        : scanDueIn(state.schedule) ? ' (due ' + scanDueIn(state.schedule) + '), or press "Scan now".' : ': press "Scan now".')
       : 'No scan yet: press "Scan now".'));
     return box;
   }
@@ -2667,6 +2849,7 @@ function itemTile(g, item, index, folder) {
   const where = el('div', 'folder muted small', item.folder);
   where.title = item.path;
   body.append(where);
+  tile.addEventListener('contextmenu', (e) => openPathMenu(e, { name: item.name, path: item.path }));
   if (outside) body.append(el('div', 'elsewhere', 'In another folder'));
   const facts = [];
   if (item.width && item.height) facts.push(item.width + ' × ' + item.height);
@@ -2821,7 +3004,8 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    timer = setTimeout(refresh, s.setup.running ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
+    // Quickly while something is starting, so its progress shows as soon as it has some.
+    timer = setTimeout(refresh, s.setup.running || s.scan.starting ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
     // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
     serverLost = true;
