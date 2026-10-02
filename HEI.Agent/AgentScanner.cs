@@ -94,8 +94,14 @@ namespace HEI.Agent {
 			}
 			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : $"in the background, at most {cpuCap:0.#}% of the processor")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", pace not fully set")}): " +
 				(plan?.Describe() ?? string.Join("; ", settings.IncludeList)));
+			// Auto with no working NPU takes the graphics card once it has passed a check: one it hasn't, checked now, in its
+			// own process (this one's ONNX Runtime must stay unloaded until the scan picks its device).
+			if (settings.UseAiMatching && settings.AiDevice == AiDevice.Auto)
+				await GpuCheck.EnsureAsync(cfg, AgentPaths.AppendLog, ct);
+			// The card the scan's GPU work runs on, whose 3D engines a game would compete for.
+			GpuAdapter? card = GpuAdapters.InUse(cfg.Gpu, GpuAdapters.List());
 			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
-			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, stopPacing.Token);
+			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, card, stopPacing.Token);
 			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would.
 			ScanStop.Clear();
 			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -161,7 +167,7 @@ namespace HEI.Agent {
 			if (fingerprints.AudioAdded)
 				try { DatabaseUtils.SaveDatabase(); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the audio fingerprints failed: " + e.Message); }
-			AiStatus.Record(cfg, device, "scan");
+			AiStatus.Record(cfg, device, "scan", engine.AiAcceleratorUsed, engine.AiCardUsed, engine.AiFallback);
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
 			report.Save();
@@ -177,7 +183,8 @@ namespace HEI.Agent {
 			// New sets that need the user; automatic cleanup takes care of the others without a word.
 			var waiting = AutoCleaner.WaitingForUser(cfg, report, decisions, AutoCleanState.Load(), DateTime.UtcNow).Select(g => g.Key).ToHashSet();
 			var fresh = groups.Where(g => !known.Contains(g.Key) && waiting.Contains(g.Key)).ToList();
-			string summary = $"{groups.Count} group(s), {fresh.Count} new to review; {files:N0} files in {timer.Elapsed.TotalSeconds:N0} s, AI on {device}";
+			string summary = $"{groups.Count} group(s), {fresh.Count} new to review; {files:N0} files in {timer.Elapsed.TotalSeconds:N0} s, AI on {device}" +
+				(engine.AiCardUsed != null ? $" ({engine.AiCardUsed})" : "");
 			// Where the time went, so a slow scan says which part was slow.
 			if (engine.DecodeSummary is { } decoding) AgentPaths.AppendLog("  " + decoding);
 			if (engine.AiSummary is { } ai) AgentPaths.AppendLog("  " + ai);
@@ -277,12 +284,12 @@ namespace HEI.Agent {
 		/// Follows the review page while the scan runs: open it and a background scan speeds up, close it
 		/// and a scheduled scan steps back (checked every 5 s; settings.json is read fresh, so the page's
 		/// switches apply at once). The number of files decoded at once stays as the scan started.
-		/// And it makes way for games and 3D programs (<see cref="ThreeDWatch"/>): while one runs, the scan
-		/// runs in the background and with less memory (<see cref="Pace.MoreMemory"/>), whatever the
-		/// settings say, until it's gone. Two checks in a row either way, so a moment's 3D work doesn't flip it.
+		/// And it makes way for games and 3D programs (<see cref="ThreeDWatch"/>) on <paramref name="card"/>, the one its GPU
+		/// work runs on: while one runs, the scan runs in the background and with less memory (<see cref="Pace.MoreMemory"/>),
+		/// whatever the settings say, until it's gone. Two checks in a row either way, so a moment's 3D work doesn't flip it.
 		/// </summary>
-		static async Task FollowPageAsync(bool scheduled, bool current, Action<bool> changed, CancellationToken ct) {
-			using var watch = new ThreeDWatch();
+		static async Task FollowPageAsync(bool scheduled, bool current, Action<bool> changed, GpuAdapter? card, CancellationToken ct) {
+			using var watch = new ThreeDWatch(card);
 			string? makingWayFor = null;
 			int busyChecks = 0, freeChecks = 0;
 			while (true) {

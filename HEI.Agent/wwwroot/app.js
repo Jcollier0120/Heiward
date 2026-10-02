@@ -423,7 +423,10 @@ function renderAiBadge(ai) {
       tone = 'warn'; text = 'NPU fell back · ' + on;
       tip = 'The ' + npu + ' is set up, but it could not run the model, so AI matching ran on the ' + on + '. heiward.log has the reason.';
     }
+    if (ai.card) tip += ' The graphics card: ' + ai.card + '.';
   }
+  // Why the last run didn't run where it was meant to (ai-status.json's fallback, also in heiward.log).
+  if (ai.fallback) tip += ' It fell back: ' + ai.fallback + '.';
   badge.textContent = text;
   badge.title = tip;
   badge.className = 'ai-badge ' + tone;
@@ -770,6 +773,27 @@ function renderHistoryCard(s) {
   $('history-card').replaceChildren(card);
 }
 
+/**
+ * Where AI matching last ran, as the manor's programs name it (npu, cpu, gpu-…: they take turns on each through
+ * its lock), why it fell back, and the devices that failed for Heiward lately, which its Auto leaves alone for
+ * 10 minutes (Heiward's own marks: other programs' failures, of their model servers, don't count here).
+ */
+function acceleratorNotes(a) {
+  const notes = [];
+  if (!a) return notes;
+  if (a.inUse) {
+    const where = a.card ? 'the ' + a.card : a.inUse === 'npu' ? 'the NPU' : a.inUse === 'cpu' ? 'the processor' : a.inUse;
+    notes.push(el('div', 'muted small', 'Last ran on ' + where + ' (' + a.inUse + ').'));
+  }
+  if (a.fallback) notes.push(el('div', 'small gpu-note', 'It fell back: ' + a.fallback + '.'));
+  const until = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  for (const f of a.failed || []) {
+    notes.push(el('div', 'small gpu-note', (f.name.startsWith('the ') ? 'The ' + f.name.slice(4) : f.name) + ' (' + f.id + ') failed at ' +
+      until(f.sinceUtc) + ', so Heiward leaves it until ' + until(f.untilUtc) + ': ' + f.reason));
+  }
+  return notes;
+}
+
 /** What the page has no switch for: where it's set, and what it's set to now. */
 function renderMoreCard(s) {
   const c = s.config;
@@ -781,15 +805,16 @@ function renderMoreCard(s) {
       : c.folders.join('; ') || 'Nothing: add folders in the settings file.',
       'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
     ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', 'excludeExtensions in the settings file.'],
-    ['Where AI matching runs', c.aiDevice === 'auto' ? 'On the NPU when there is one, otherwise as set up.'
+    ['Where AI matching runs', c.aiDevice === 'auto'
+      ? 'On the NPU when there is one that works, otherwise on the graphics card once Heiward has checked it, otherwise on the processor.'
       : 'On the ' + c.aiDevice.toUpperCase() + (c.aiDevice === 'gpu' && s.gpu && (s.gpu.chosen || s.gpu.windowsDefault)
         ? ': the ' + (s.gpu.missing ? s.gpu.windowsDefault : s.gpu.chosen || s.gpu.windowsDefault) : '') + '.',
-      'aiDevice in the settings file: auto, npu, gpu or cpu.'],
+      'aiDevice in the settings file: auto, npu, gpu or cpu.', acceleratorNotes(s.accelerators)],
   ];
-  for (const [title, value, how] of rows) {
+  for (const [title, value, how, notes] of rows) {
     const r = el('div', 'auto-row');
     const text = el('div', 'auto-text');
-    text.append(el('div', 'auto-title', title), el('div', null, value), el('div', 'muted small', how));
+    text.append(el('div', 'auto-title', title), el('div', null, value), ...(notes || []), el('div', 'muted small', how));
     r.append(text);
     card.append(r);
   }

@@ -45,11 +45,32 @@ public class ThreeDWatchTests {
 		}, Self, Dwm));
 
 	[Fact]
+	public void OnlyTheScansCard_Counts() {
+		// A game on the discrete card leaves the scan's graphics chip alone, and the other way round.
+		const string Chip = "0x00000000_0x0000D1F1", Discrete = "0x00000000_0x0001a2b3";
+		static (string, double) On(string luid, int pid, double percent) => ($"pid_{pid}_luid_{luid}_phys_0_eng_0_engtype_3D", percent);
+		var samples = new[] { On(Discrete, 9876, 97), On(Chip, 5555, 4) };
+		Assert.Null(ThreeDWatch.Busiest(samples, Self, Dwm, luid: "0x00000000_0x0000d1f1")); // any case
+		Assert.Equal(9876, ThreeDWatch.Busiest(samples, Self, Dwm, luid: Discrete));
+		Assert.Equal(9876, ThreeDWatch.Busiest(samples, Self, Dwm)); // no card known: any card counts, as before
+	}
+
+	[Fact]
+	public void AQuarterOfAnEngine_IsTheLine_AsTheOtherProgramsDrawIt() {
+		Assert.Equal(25, ThreeDWatch.BusyPercent);
+		Assert.Equal(9876, ThreeDWatch.Busiest(new[] { Engine(9876, 0, 26) }, Self, Dwm));
+		Assert.Null(ThreeDWatch.Busiest(new[] { Engine(9876, 0, 24) }, Self, Dwm));
+	}
+
+	[Fact]
 	public void TheWatch_RunsOnThisPc() {
 		// Whatever this machine is doing, asking must not throw (no counters, no shell, a VM).
 		using var watch = new ThreeDWatch();
 		_ = watch.Busy();
 		_ = watch.Busy();
+		using var onACard = new ThreeDWatch(HEI.Core.Utils.GpuAdapters.InUse(null, HEI.Core.Utils.GpuAdapters.List()));
+		_ = onACard.Busy();
+		_ = onACard.Busy();
 	}
 
 	[Fact]

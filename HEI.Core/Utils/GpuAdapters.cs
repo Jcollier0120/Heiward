@@ -23,10 +23,15 @@ namespace HEI.Core.Utils {
 	/// <param name="Index">Its place in DXGI's list: the adapter number DirectML and FFmpeg's D3D11VA and D3D12VA take.</param>
 	/// <param name="Key">What settings.json's gpu holds: the name, and " #2" on the second card of the same name.</param>
 	/// <param name="DedicatedMemory">Its own video memory in bytes; a graphics chip that shares the PC's RAM has little or none.</param>
-	public sealed record GpuAdapter(int Index, string Key, string Name, ulong DedicatedMemory, uint VendorId);
+	/// <param name="Luid">Its LUID as Windows' GPU Engine counters name it ("0x00000000_0x0000c6b1"), lowercase; "" when unknown. It changes from boot to boot.</param>
+	/// <param name="Driver">Its driver's version ("32.0.101.6127"), "" when DXGI doesn't say.</param>
+	public sealed record GpuAdapter(int Index, string Key, string Name, ulong DedicatedMemory, uint VendorId, string Luid = "", string Driver = "") {
+		/// <summary>The manor's id for it (Manor's docs/ACCELERATORS.md): "gpu-" and its <see cref="Key"/> slugged.</summary>
+		public string AcceleratorId => AI.Accelerators.GpuId(Key);
+	}
 
 	/// <summary>One adapter as DXGI describes it, before <see cref="GpuAdapters.Keyed"/> leaves out the software ones and names it.</summary>
-	internal readonly record struct DxgiAdapter(int Index, string Name, ulong DedicatedMemory, uint VendorId, bool Software);
+	internal readonly record struct DxgiAdapter(int Index, string Name, ulong DedicatedMemory, uint VendorId, bool Software, string Luid = "", string Driver = "");
 
 	/// <summary>
 	/// The graphics cards on this PC, and the one a scan's GPU work runs on: AI matching on the GPU (DirectML),
@@ -74,7 +79,7 @@ namespace HEI.Core.Utils {
 				string name = string.IsNullOrWhiteSpace(a.Name) ? $"Graphics card {a.Index + 1}" : a.Name.Trim();
 				int n = seen.TryGetValue(name, out int before) ? before + 1 : 1;
 				seen[name] = n;
-				list.Add(new GpuAdapter(a.Index, n == 1 ? name : $"{name} #{n}", name, a.DedicatedMemory, a.VendorId));
+				list.Add(new GpuAdapter(a.Index, n == 1 ? name : $"{name} #{n}", name, a.DedicatedMemory, a.VendorId, a.Luid, a.Driver));
 			}
 			return list;
 		}
@@ -87,8 +92,18 @@ namespace HEI.Core.Utils {
 		public static GpuAdapter? Find(string? key, IReadOnlyList<GpuAdapter> adapters) =>
 			string.IsNullOrWhiteSpace(key) ? null : adapters.FirstOrDefault(a => string.Equals(a.Key, key.Trim(), StringComparison.OrdinalIgnoreCase));
 
+		/// <summary>
+		/// The card GPU work runs on when settings.json's gpu is <paramref name="key"/>: that card, else Windows' default
+		/// (the first DXGI lists, as DirectML's device 0 and FFmpeg's default are). Null on a PC with none.
+		/// </summary>
+		public static GpuAdapter? InUse(string? key, IReadOnlyList<GpuAdapter> adapters) =>
+			Find(key, adapters) ?? adapters.MinBy(a => a.Index);
+
 		/// <summary>The card this process's GPU work runs on, or null for Windows' default.</summary>
 		public static GpuAdapter? Chosen { get; private set; }
+
+		/// <summary>The card this process's GPU work runs on now: <see cref="Chosen"/>, else Windows' default. Null on a PC with none.</summary>
+		public static GpuAdapter? InUseNow() => Chosen ?? List().MinBy(a => a.Index);
 
 		/// <summary>The card the settings named at the last <see cref="Choose"/>, found or not; null when they named none.</summary>
 		public static string? Requested { get; private set; }
@@ -130,6 +145,17 @@ namespace HEI.Core.Utils {
 		static extern int CreateDXGIFactory1(in Guid riid, out IntPtr factory);
 
 		static readonly Guid IDXGIFactory1 = new("770aae78-f26f-4dba-a829-253c83d1b387");
+		/// <summary>IDXGIDevice: asked about, IDXGIAdapter::CheckInterfaceSupport gives the user-mode driver's version (as browsers read it).</summary>
+		static readonly Guid IDXGIDevice = new("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
+
+		/// <summary>The LUID as the GPU Engine counters' instance names have it: high part, then low part, each as 8 hex digits.</summary>
+		internal static string LuidText(int high, uint low) => $"0x{(uint)high:x8}_0x{low:x8}";
+
+		/// <summary>A driver version as Windows shows it: four 16-bit parts, most significant first.</summary>
+		internal static string DriverText(long version) {
+			ulong v = (ulong)version;
+			return $"{v >> 48}.{(v >> 32) & 0xFFFF}.{(v >> 16) & 0xFFFF}.{v & 0xFFFF}";
+		}
 
 		/// <summary>DXGI_ADAPTER_DESC1.</summary>
 		[StructLayout(LayoutKind.Sequential)]
@@ -154,11 +180,18 @@ namespace HEI.Core.Utils {
 					if (enumAdapters1(factory, i, &adapter) < 0) // DXGI_ERROR_NOT_FOUND after the last one
 						break;
 					try {
-						// IUnknown (0-2), IDXGIObject (3-6), IDXGIAdapter (7-9), then IDXGIAdapter1::GetDesc1.
+						// IUnknown (0-2), IDXGIObject (3-6), IDXGIAdapter (7-9: EnumOutputs, GetDesc, CheckInterfaceSupport),
+						// then IDXGIAdapter1::GetDesc1.
 						var getDesc1 = (delegate* unmanaged[Stdcall]<IntPtr, AdapterDesc1*, int>)(*(void***)adapter)[10];
+						var checkInterfaceSupport = (delegate* unmanaged[Stdcall]<IntPtr, Guid*, long*, int>)(*(void***)adapter)[9];
 						AdapterDesc1 desc;
-						if (getDesc1(adapter, &desc) >= 0)
-							found.Add(new DxgiAdapter((int)i, new string(desc.Description), desc.DedicatedVideoMemory, desc.VendorId, (desc.Flags & SoftwareFlag) != 0));
+						if (getDesc1(adapter, &desc) >= 0) {
+							Guid device = IDXGIDevice;
+							long umd;
+							string driver = checkInterfaceSupport(adapter, &device, &umd) >= 0 ? DriverText(umd) : "";
+							found.Add(new DxgiAdapter((int)i, new string(desc.Description), desc.DedicatedVideoMemory, desc.VendorId, (desc.Flags & SoftwareFlag) != 0,
+								LuidText(desc.LuidHigh, desc.LuidLow), driver));
+						}
 					}
 					finally {
 						Marshal.Release(adapter);

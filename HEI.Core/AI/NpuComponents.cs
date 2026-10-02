@@ -24,8 +24,9 @@ using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
 	/// <summary>
-	/// Where AI embeddings run. Auto = the NPU when this machine has one and the NPU pack is installed,
-	/// else the CPU. Gpu = DirectML (<see cref="GpuComponents"/>), chosen explicitly, never by Auto.
+	/// Where AI embeddings run. Auto = the NPU when this machine has one, its pack is installed and it hasn't
+	/// failed in the last 10 minutes; else the graphics card in use, with the GPU pack, once it has passed a
+	/// check; else the CPU (<see cref="AcceleratorPlan.ChooseAuto"/>). Gpu = DirectML (<see cref="GpuComponents"/>).
 	/// </summary>
 	public enum AiDevice { Auto, Cpu, Npu, Gpu }
 
@@ -114,6 +115,12 @@ namespace HEI.Core.AI {
 		static IReadOnlyList<OrtEpDevice>? npuDevices;
 
 		/// <summary>
+		/// Why <see cref="GetNpuDevices"/> found none, in one line ("the Qualcomm Hexagon NPU pack failed to load (…)"), once
+		/// it has looked; null before, or when it found one.
+		/// </summary>
+		public static string? UnavailableReason { get; private set; }
+
+		/// <summary>
 		/// The NPU devices the pack's plugin reports, registering the plugin with ONNX Runtime on first
 		/// use (once per process). Empty when the pack is missing, the platform has no NPU, or the plugin
 		/// fails to load — callers then stay on the CPU.
@@ -136,13 +143,16 @@ namespace HEI.Core.AI {
 					npuDevices = env.GetEpDevices()
 						.Where(d => string.Equals(d.EpName, pack.EpName, StringComparison.OrdinalIgnoreCase) && pack.Accepts(d.HardwareDevice.Type))
 						.ToList();
-					if (npuDevices.Count == 0)
+					if (npuDevices.Count == 0) {
 						// What the plugin does offer, so a report from an untested NPU says why.
 						Logger.Instance.Info($"The {pack.DisplayName} pack offers no NPU. ONNX Runtime devices: " +
 							string.Join("; ", env.GetEpDevices().Select(d => $"{d.EpName} {d.HardwareDevice.Type} ({d.HardwareDevice.Vendor})")));
+						UnavailableReason = $"the {pack.DisplayName} pack offers no NPU (see the log)";
+					}
 				}
 				catch (Exception e) {
 					Logger.Instance.Info($"NPU unavailable, AI matching stays on the CPU: {e.Message}");
+					UnavailableReason = $"the {pack.DisplayName} pack failed to load ({Accelerators.OneLine(e.Message)})";
 					npuDevices = Array.Empty<OrtEpDevice>();
 				}
 				return npuDevices;
@@ -156,9 +166,15 @@ namespace HEI.Core.AI {
 		public static bool WillUseNpu(AiDevice device) =>
 			device is AiDevice.Auto or AiDevice.Npu && GetNpuDevices().Count > 0;
 
-		/// <summary>The device the given setting will run on: "NPU", "GPU" or "CPU" (without opening a session).</summary>
-		public static string DeviceFor(AiDevice device) =>
-			device == AiDevice.Gpu ? (GpuComponents.IsInstalled ? "GPU" : "CPU") : WillUseNpu(device) ? "NPU" : "CPU";
+		/// <summary>
+		/// The device the given setting will run on: "NPU", "GPU" or "CPU" (without opening a session). Asking about the
+		/// NPU loads ONNX Runtime, so a GPU session can't follow in this process.
+		/// </summary>
+		public static string DeviceFor(AiDevice device) => AcceleratorPlan.For(device).Device switch {
+			AiDevice.Gpu => "GPU",
+			AiDevice.Npu => GetNpuDevices().Count > 0 ? "NPU" : "CPU",
+			_ => "CPU",
+		};
 
 		/// <summary>The embedding-cache key the given device setting will produce (see <see cref="ModelKey"/>).</summary>
 		public static string? CacheKeyFor(AiDevice device) => DeviceFor(device) switch {

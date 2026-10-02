@@ -133,6 +133,12 @@ namespace HEI.Core {
 		public string? AiCacheKeyUsed { get; private set; }
 		/// <summary>Where the last search's AI time went (<see cref="AI.EmbeddingPipeline.Describe"/>), or null without AI.</summary>
 		public string? AiSummary { get; private set; }
+		/// <summary>The accelerator the last search's AI ran on, as the manor names it ("npu", "cpu", "gpu-…"); null without AI matching.</summary>
+		public string? AiAcceleratorUsed { get; private set; }
+		/// <summary>The graphics card it ran on (<see cref="Utils.GpuAdapter.Key"/>), when it ran on one.</summary>
+		public string? AiCardUsed { get; private set; }
+		/// <summary>Why the last search's AI didn't run where its setting meant it to, or stopped (<see cref="AI.OnnxEmbedder.Fallback"/>); null when it did.</summary>
+		public string? AiFallback { get; private set; }
 		// What reading the files cost the last search: files decoded and the workers' time on them, photos and videos apart.
 		int photosRead, videosRead;
 		long photoTicks, videoTicks;
@@ -425,7 +431,10 @@ namespace HEI.Core {
 						aiEmbeddingPipeline = new AI.EmbeddingPipeline(embedder, unionEmbeddingStore, cancelationTokenSource.Token);
 						AiDeviceUsed = embedder.DeviceName;
 						AiCacheKeyUsed = embedder.CacheKey;
-						Logger.Instance.Info($"AI embeddings run on the {embedder.DeviceName}.");
+						AiAcceleratorUsed = embedder.AcceleratorId;
+						AiCardUsed = embedder.Card?.Key;
+						AiFallback = embedder.Fallback;
+						Logger.Instance.Info($"AI embeddings run on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
 					}
 					Logger.Instance.Info(T("Log.GatheringMediaInfo"));
 					if (!cancelationTokenSource.IsCancellationRequested)
@@ -439,6 +448,8 @@ namespace HEI.Core {
 						Logger.Instance.Info($"AI embeddings computed for this scan: {aiEmbeddingPipeline.EmbeddedCount}");
 						AiSummary = aiEmbeddingPipeline.Describe();
 						Logger.Instance.Info(AiSummary);
+						// It may have stopped since it started (the accelerator failed under a batch).
+						AiFallback = aiEmbeddingPipeline.Fallback;
 					}
 				}
 				finally {
@@ -551,6 +562,9 @@ namespace HEI.Core {
 			AiDeviceUsed = null;
 			AiCacheKeyUsed = null;
 			AiSummary = null;
+			AiAcceleratorUsed = null;
+			AiCardUsed = null;
+			AiFallback = null;
 			photosRead = videosRead = 0;
 			photoTicks = videoTicks = 0;
 			// Before anything opens a GPU device: the card the settings name, for this scan.

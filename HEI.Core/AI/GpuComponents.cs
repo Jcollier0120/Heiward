@@ -26,10 +26,13 @@ namespace HEI.Core.AI {
 	/// AMD, Intel, Qualcomm Adreno) and DirectML itself, both SHA256-pinned NuGet packages of which only
 	/// the native DLLs are kept, in <c>{ai}/gpu</c>, plus the FP32 model the NPU uses. A process loads one
 	/// ONNX Runtime, so GPU mode must be chosen before anything touches ONNX Runtime
-	/// (<see cref="AiComponents.RuntimeFolderOverride"/>); <see cref="AiDevice.Auto"/> never picks the GPU.
+	/// (<see cref="AiComponents.RuntimeFolderOverride"/>). <see cref="AiDevice.Auto"/> picks the GPU only without
+	/// a working NPU, and only a card that has passed a check (<see cref="GpuChecks"/>, <see cref="AcceleratorPlan"/>).
 	/// </summary>
 	public static class GpuComponents {
 		const string OrtDmlVersion = "1.24.4";
+		/// <summary>The pack's version (its ONNX Runtime DirectML's), which a card's check is kept with.</summary>
+		public const string PackVersion = OrtDmlVersion;
 		const string OrtDmlSha256 = "57e9f11b73437bef7a309496135d4c1f96b1a8e9ddba60013fa27bfc1d788681";
 		const string OrtDmlUrl = "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime.directml/1.24.4/microsoft.ml.onnxruntime.directml.1.24.4.nupkg";
 		public const string DirectMLVersion = "1.15.4";

@@ -138,9 +138,15 @@ setup.SetAction(async (r, ct) => {
 		// The installed copy's folder too: a development build starts empty, and the installed Heiward has them.
 		var sources = ComponentReuse.Sources((r.GetValue(reuseFrom) ?? Array.Empty<string>()).Append(Installer.InstallDir), CoreUtils.StateFolder);
 		await Installer.EnsurePrerequisitesAsync(sources, dryRun: false, ct);
-		using var embedder = OnnxEmbedder.Create(AiDevice.Auto);
-		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}.");
-		AiStatus.Record(AgentConfig.Load(), embedder.DeviceName, "setup");
+		var cfg = AgentConfig.Load();
+		AiDevice setting = Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto;
+		// The card the settings name, as a scan takes it; and, for Auto without a working NPU, checked first if it hasn't been.
+		GpuAdapters.Choose(cfg.Gpu);
+		if (setting == AiDevice.Auto) await GpuCheck.EnsureAsync(cfg, line => Console.WriteLine("  " + line), ct);
+		using var embedder = OnnxEmbedder.Create(setting);
+		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
+		if (embedder.Fallback != null) Console.WriteLine("  It fell back: " + embedder.Fallback);
+		AiStatus.Record(cfg, embedder.DeviceName, "setup", embedder.AcceleratorId, embedder.Card?.Key, embedder.Fallback);
 		return 0;
 	}
 	catch (Exception e) when (e is not OperationCanceledException) {
@@ -165,7 +171,9 @@ install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetVal
 	removeGitHubCopy: r.GetValue(removeGitHubOpt), gpu: r.GetValue(gpuOpt)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
-// check runs this in its own process: a process can only load one ONNX Runtime).
+// check runs this in its own process: a process can only load one ONNX Runtime). A GPU check is
+// recorded for the card (GpuChecks: Auto takes a card that passed one), and a card that fails it gets
+// Heiward's own failure marker, which its Auto skips for 10 minutes.
 var probeDevice = new Option<AiDevice>("--device") { Description = "npu, gpu or cpu.", DefaultValueFactory = _ => AiDevice.Auto };
 var probeGpu = new Option<string?>("--gpu") { Description = "The graphics card, by name (settings.json's gpu). Default: Windows' default." };
 var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice, probeGpu };
@@ -173,10 +181,24 @@ probe.Hidden = true;
 probe.SetAction(r => {
 	AiDevice wanted = r.GetValue(probeDevice);
 	GpuAdapters.Choose(r.GetValue(probeGpu));
-	using var embedder = OnnxEmbedder.Create(wanted);
-	embedder.EmbedBatch(new[] { new byte[OnnxEmbedder.InputSide * OnnxEmbedder.InputSide * 3] });
-	Console.WriteLine($"The AI model runs on the {embedder.DeviceName}.");
-	return wanted is AiDevice.Auto || string.Equals(embedder.DeviceName, wanted.ToString(), StringComparison.OrdinalIgnoreCase) ? 0 : 1;
+	// Only a card with the GPU pack here is checked: without the pack there's nothing to learn about the card.
+	GpuAdapter? card = wanted == AiDevice.Gpu && GpuComponents.IsInstalled ? GpuAdapters.InUseNow() : null;
+	try {
+		using var embedder = OnnxEmbedder.Create(wanted);
+		embedder.EmbedBatch(new[] { new byte[OnnxEmbedder.InputSide * OnnxEmbedder.InputSide * 3] });
+		Console.WriteLine($"The AI model runs on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
+		bool ran = wanted is AiDevice.Auto || string.Equals(embedder.DeviceName, wanted.ToString(), StringComparison.OrdinalIgnoreCase);
+		if (card != null) GpuChecks.Record(card, ran, embedder.FallbackReason);
+		return ran ? 0 : 1;
+	}
+	catch (Exception e) {
+		Console.WriteLine($"The AI model couldn't run: {Accelerators.OneLine(e.Message)}");
+		if (card != null) {
+			GpuChecks.Record(card, passed: false, e.Message);
+			Accelerators.MarkFailed(card.AcceleratorId, $"the {card.Key} failed its check: {e.Message}");
+		}
+		return 1;
+	}
 });
 root.Subcommands.Add(probe);
 root.Subcommands.Add(install);
@@ -202,8 +224,10 @@ status.SetAction(async (r, _) => {
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
-	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} (checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
+	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} ({(ai.Accelerator != null ? ai.Accelerator + ", " : "")}checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	IReadOnlyList<GpuAdapter> cards = GpuAdapters.List();
+	foreach (var f in AiStatus.Failures(cards))
+		Console.WriteLine($"Failed for Heiward: {f.Name} ({f.Id}) at {f.SinceUtc.ToLocalTime():t}, skipped until {f.UntilUtc.ToLocalTime():t}: {f.Reason}");
 	bool gpuSet = !string.IsNullOrWhiteSpace(cfg.Gpu);
 	if (cards.Count > 1 || gpuSet)
 		Console.WriteLine($"Graphics card: {(gpuSet ? cfg.Gpu : "Windows' default")}" +
@@ -221,6 +245,8 @@ status.SetAction(async (r, _) => {
 	Console.WriteLine($"Next scheduled scan: {Scheduler.NextRun() ?? (DevBuild.Current ? "none in a development build" : "not scheduled (run 'hei install')")}");
 	if (AgentPause.Load() is { } paused) Console.WriteLine($"Paused: scheduled scans skip themselves {paused.Describe(DateTime.UtcNow)} ('hei resume').");
 	Console.WriteLine($"NPU lock shared with: {NpuLock.LockDirectory ?? "(no other NPU tool found)"}");
+	if (NpuLock.LockDirectory != null && GpuAdapters.InUse(cfg.Gpu, cards) is { } lockCard)
+		Console.WriteLine($"Graphics card lock (AI on the GPU): {NpuLock.LockDirectoryFor(lockCard.AcceleratorId)}");
 	Console.WriteLine($"Scan running: {(AgentScanner.IsRunning() ? "yes" : "no")}");
 	PrintAutoClean(cfg, detail: false);
 	return 0;

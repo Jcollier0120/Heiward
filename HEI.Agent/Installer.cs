@@ -588,9 +588,13 @@ namespace HEI.Agent {
 			catch { return false; }
 		}
 
-		/// <summary>Runs "hei probe --device {device}" in its own process: true when the model runs there.</summary>
+		/// <summary>
+		/// Runs "hei probe --device {device}" in its own process: true when the model runs there. A GPU probe records the
+		/// card's check (<see cref="GpuChecks"/>), and a failing one marks the card failed (Heiward's own marker).
+		/// </summary>
 		/// <param name="gpu">The graphics card to check, by name; null or empty: Windows' default.</param>
-		static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct, string? gpu = null) {
+		/// <param name="say">Where the probe's answer goes; null: this window.</param>
+		internal static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct, string? gpu = null, Action<string>? say = null) {
 			var psi = new ProcessStartInfo(CurrentExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.ArgumentList.Add("probe");
 			psi.ArgumentList.Add("--device");
@@ -604,8 +608,8 @@ namespace HEI.Agent {
 			Task<string> errors = p.StandardError.ReadToEndAsync(ct);
 			string output = await p.StandardOutput.ReadToEndAsync(ct);
 			await p.WaitForExitAsync(ct);
-			Console.WriteLine("  " + output.Trim());
-			if (p.ExitCode != 0) AgentPaths.AppendLog($"probe --device {device} failed: {(await errors).Trim()}");
+			(say ?? (line => Console.WriteLine("  " + line)))(output.Trim());
+			if (p.ExitCode != 0) AgentPaths.AppendLog($"probe --device {device}{(string.IsNullOrEmpty(gpu) ? "" : $" --gpu \"{gpu}\"")} failed: {(await errors).Trim()}");
 			return p.ExitCode == 0;
 		}
 
