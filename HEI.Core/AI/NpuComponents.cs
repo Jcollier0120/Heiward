@@ -115,6 +115,12 @@ namespace HEI.Core.AI {
 		static IReadOnlyList<OrtEpDevice>? npuDevices;
 
 		/// <summary>
+		/// Why <see cref="GetNpuDevices"/> found none, in one line ("the Qualcomm Hexagon NPU pack failed to load (…)"), once
+		/// it has looked; null before, or when it found one.
+		/// </summary>
+		public static string? UnavailableReason { get; private set; }
+
+		/// <summary>
 		/// The NPU devices the pack's plugin reports, registering the plugin with ONNX Runtime on first
 		/// use (once per process). Empty when the pack is missing, the platform has no NPU, or the plugin
 		/// fails to load — callers then stay on the CPU.
@@ -137,13 +143,16 @@ namespace HEI.Core.AI {
 					npuDevices = env.GetEpDevices()
 						.Where(d => string.Equals(d.EpName, pack.EpName, StringComparison.OrdinalIgnoreCase) && pack.Accepts(d.HardwareDevice.Type))
 						.ToList();
-					if (npuDevices.Count == 0)
+					if (npuDevices.Count == 0) {
 						// What the plugin does offer, so a report from an untested NPU says why.
 						Logger.Instance.Info($"The {pack.DisplayName} pack offers no NPU. ONNX Runtime devices: " +
 							string.Join("; ", env.GetEpDevices().Select(d => $"{d.EpName} {d.HardwareDevice.Type} ({d.HardwareDevice.Vendor})")));
+						UnavailableReason = $"the {pack.DisplayName} pack offers no NPU (see the log)";
+					}
 				}
 				catch (Exception e) {
 					Logger.Instance.Info($"NPU unavailable, AI matching stays on the CPU: {e.Message}");
+					UnavailableReason = $"the {pack.DisplayName} pack failed to load ({Accelerators.OneLine(e.Message)})";
 					npuDevices = Array.Empty<OrtEpDevice>();
 				}
 				return npuDevices;

@@ -145,13 +145,13 @@ public sealed class AgentStatusTests : IDisposable {
 	public void TheJson_SaysWhichDeviceAndCard_AndWhyItFellBack() {
 		var cfg = new AgentConfig { AiDevice = "auto" };
 		AiStatus.Record(cfg, "GPU", "scan", "gpu-qualcomm-r-adreno-tm-x2-90-gpu", "Qualcomm(R) Adreno(TM) X2-90 GPU",
-			"NPU to GPU: the NPU was marked failed by reeve (GenieX did not start within 30 s) until 14:12");
+			"NPU to GPU: the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed), at 14:02 (tried again from 14:12)");
 		using (var doc = JsonDocument.Parse(Build().ToJson())) {
 			JsonElement root = doc.RootElement;
 			Assert.Equal("gpu", root.GetProperty("device").GetString());
 			Assert.Equal("gpu-qualcomm-r-adreno-tm-x2-90-gpu", root.GetProperty("accelerator").GetString());
 			Assert.Equal("Qualcomm(R) Adreno(TM) X2-90 GPU", root.GetProperty("card").GetString());
-			Assert.StartsWith("NPU to GPU: the NPU was marked failed by reeve", root.GetProperty("lastFallback").GetString());
+			Assert.StartsWith("NPU to GPU: the Qualcomm Hexagon NPU pack failed to load", root.GetProperty("lastFallback").GetString());
 		}
 		// The fallback is in heiward.log too.
 		Assert.Contains("AI fell back (scan): NPU to GPU", File.ReadAllText(AgentPaths.Log));

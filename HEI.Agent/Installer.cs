@@ -590,7 +590,7 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// Runs "hei probe --device {device}" in its own process: true when the model runs there. A GPU probe records the
-		/// card's check (<see cref="GpuChecks"/>), and a failing one marks the card failed for the manor's other programs.
+		/// card's check (<see cref="GpuChecks"/>), and a failing one marks the card failed (Heiward's own marker).
 		/// </summary>
 		/// <param name="gpu">The graphics card to check, by name; null or empty: Windows' default.</param>
 		/// <param name="say">Where the probe's answer goes; null: this window.</param>

@@ -172,8 +172,8 @@ install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetVal
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime). A GPU check is
-// recorded for the card (GpuChecks: Auto takes a card that passed one), and a card that fails it is
-// marked failed for the manor's other programs.
+// recorded for the card (GpuChecks: Auto takes a card that passed one), and a card that fails it gets
+// Heiward's own failure marker, which its Auto skips for 10 minutes.
 var probeDevice = new Option<AiDevice>("--device") { Description = "npu, gpu or cpu.", DefaultValueFactory = _ => AiDevice.Auto };
 var probeGpu = new Option<string?>("--gpu") { Description = "The graphics card, by name (settings.json's gpu). Default: Windows' default." };
 var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice, probeGpu };
@@ -195,7 +195,7 @@ probe.SetAction(r => {
 		Console.WriteLine($"The AI model couldn't run: {Accelerators.OneLine(e.Message)}");
 		if (card != null) {
 			GpuChecks.Record(card, passed: false, e.Message);
-			Accelerators.MarkFailed(card.AcceleratorId, $"the {card.Key} failed Heiward's check: {e.Message}");
+			Accelerators.MarkFailed(card.AcceleratorId, $"the {card.Key} failed its check: {e.Message}");
 		}
 		return 1;
 	}
@@ -227,7 +227,7 @@ status.SetAction(async (r, _) => {
 	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} ({(ai.Accelerator != null ? ai.Accelerator + ", " : "")}checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	IReadOnlyList<GpuAdapter> cards = GpuAdapters.List();
 	foreach (var f in AiStatus.Failures(cards))
-		Console.WriteLine($"Marked failed: {f.Name} ({f.Id}), skipped until {f.UntilUtc.ToLocalTime():t}{(f.By.Length > 0 ? ", by " + f.By : "")}: {f.Reason}");
+		Console.WriteLine($"Failed for Heiward: {f.Name} ({f.Id}) at {f.SinceUtc.ToLocalTime():t}, skipped until {f.UntilUtc.ToLocalTime():t}: {f.Reason}");
 	bool gpuSet = !string.IsNullOrWhiteSpace(cfg.Gpu);
 	if (cards.Count > 1 || gpuSet)
 		Console.WriteLine($"Graphics card: {(gpuSet ? cfg.Gpu : "Windows' default")}" +

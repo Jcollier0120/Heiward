@@ -215,7 +215,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 The same tools now run models on graphics cards and the processor as well (the manor's accelerators, in Manor's `docs/ACCELERATORS.md`), and Heiward takes part:
 - **A card has its own lock and line.** When AI matching runs on a graphics card, Heiward takes that card's lock for each batch, as it does the NPU's: the folder `gpu-<name>` beside the NPU's lock (`gpu-nvidia-geforce-rtx-4090`, the card's name in lowercase with each run of other characters a dash; a second card of the same name ends `-2`), and its line `gpu-<name>.queue`, with the same rules. Heiward takes only a card's first lock; other tools may serve a card more than once at a time. The processor has no lock from Heiward: its turns are the manor's processor model server's, which Heiward doesn't use.
 - **Auto without a working NPU uses a graphics card it has checked.** With `aiDevice` `auto`, AI matching runs on the NPU; with none (or one that's failing), on the graphics card in use once the GPU pack has run the model on it, with its current driver (`hei probe`, which the installer runs, and a scan or `hei setup` runs once for a card that hasn't been checked); otherwise on the processor.
-- **A device that fails is skipped for 10 minutes, by everyone.** When the NPU or a card can't run the model, Heiward writes `%USERPROFILE%\.npu-agent\accelerators\<id>.failed.json` (when, why, and that Heiward found it), runs the scan's AI on the processor instead, and says why in `heiward.log`, `hei status`, `hei status --json` (`lastFallback`) and the page's Settings. Auto leaves a device marked failed, by Heiward or another tool, alone until 10 minutes have passed; the next success on it removes the mark. Without `%USERPROFILE%\.npu-agent`, Heiward keeps its marks to itself, beside its AI components.
+- **A device that fails Heiward is left alone for 10 minutes.** When the NPU or a card can't run the model (its pack doesn't load, the model won't open, or it fails under a batch or a check), Heiward runs the scan's AI on the processor instead, notes the failure in its own `ai\accelerators\<id>.failed.json` beside its AI components (in the shared files' format), and says why in `heiward.log`, `hei status`, `hei status --json` (`lastFallback`) and the page's Settings. Auto leaves that device alone until 10 minutes have passed; the next success on it removes the note. These notes are Heiward's alone: the other tools' failure marks in `%USERPROFILE%\.npu-agent\accelerators` are about their model servers (GenieX, llama-server), not the runtimes Heiward runs in its own process, so Heiward neither reads nor writes them.
 - **Games first.** While a game keeps the scan's own graphics card busy (a quarter of a 3D engine or more), scans step back; a game on another card doesn't slow them.
 
 ## Settings
@@ -254,7 +254,7 @@ hei stop            stop the scan that's running
 hei pause           pause scheduled scans and stop the running one  [--minutes N] (without it: until resumed)
 hei resume          resume scheduled scans
 hei open            open the review page
-hei status          settings, where AI matching runs, devices marked failed, last scan, schedule, locks
+hei status          settings, where AI matching runs, devices that failed lately, last scan, schedule, locks
 hei status --json   the same essentials as one JSON object, for scripts and other tools (below)
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
@@ -283,7 +283,7 @@ hei uninstall       [--purge] [--dry-run]
 | `device` | Where AI matching last ran (the last scan, or the install's or `hei setup`'s check): `"npu"`, `"gpu"` or `"cpu"`; `null` when it's off or hasn't run |
 | `accelerator` | The same as the manor's tools name it: `"npu"`, `"cpu"`, or the card's `"gpu-<name>"` |
 | `card` | The graphics card's name as Windows lists it, when it ran on one; else `null` |
-| `lastFallback` | When that work was meant for another device, from where to where and why, in one line (`"NPU to GPU: the NPU was marked failed by reeve (…)"`), or that it stopped (`"GPU failed: …"`); `null` when it ran where it was meant to |
+| `lastFallback` | When that work was meant for another device, from where to where and why, in one line (`"NPU to GPU: the Qualcomm Hexagon NPU pack failed to load (…)"`), or that it stopped (`"GPU failed: …"`); `null` when it ran where it was meant to |
 
 Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans, and `hei serve --no-browser` to start its review page.
 
@@ -345,7 +345,7 @@ A `hei.exe` built in a checkout is a development build: a folder above it (up to
 - its review page is on port 28484, not 18484. A `port` in its own settings.json stands, unless it's the installed copy's 18484;
 - it has no scheduled tasks: it scans when you press Scan now, or run `hei scan`.
 
-The NPU lock is the same machine-wide one, and so are the graphics cards' locks and the failure marks. To try one without the installed tools seeing it, point `NPU_AGENT_NPU_LOCK` at a scratch folder's `locks\npu`: the cards' locks go beside it, and the marks to the `accelerators` folder beside `locks`. `HEIWARD_HOME` overrides the data folder as before, and then the port is 18484 unless settings.json says otherwise.
+The NPU lock is the same machine-wide one, and so are the graphics cards' locks. To try one without the installed tools seeing it, point `NPU_AGENT_NPU_LOCK` at a scratch folder's `locks\npu`: the cards' locks go beside it. Its failure notes are its own, in its `ai\accelerators`. `HEIWARD_HOME` overrides the data folder as before, and then the port is 18484 unless settings.json says otherwise.
 
 `hei install` and `hei uninstall` act on the installed copy, from a development build too: install copies the exe to `%LOCALAPPDATA%\Programs\Heiward`, and the settings, downloads, tasks and shortcuts it sets up are the installed copy's. To try development work as the real Heiward, build a release with `release.ps1` (below) and run it, as you would a download.
 

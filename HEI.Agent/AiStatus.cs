@@ -36,8 +36,8 @@ namespace HEI.Agent {
 	/// <param name="Accelerator">Where it ran as the manor names it (Manor's docs/ACCELERATORS.md): "npu", "cpu" or "gpu-…"; null when off.</param>
 	/// <param name="Card">On a graphics card, its name as Windows lists it (settings.json's gpu); otherwise null.</param>
 	/// <param name="Fallback">
-	/// When the work was meant for another device, from where to where and why, in one line ("NPU to GPU: the NPU was marked
-	/// failed by reeve (…)"), or that it stopped ("GPU failed: …"); null when it ran where it was meant to.
+	/// When the work was meant for another device, from where to where and why, in one line ("NPU to GPU: the Qualcomm
+	/// Hexagon NPU pack failed to load (…)"), or that it stopped ("GPU failed: …"); null when it ran where it was meant to.
 	/// </param>
 	sealed record AiStatus(string Device, string Source, DateTime CheckedAtUtc, string Setting,
 		string NpuVendor, string NpuName, string NpuDisplayName, bool NpuSupported, bool NpuInstalled,
@@ -75,7 +75,7 @@ namespace HEI.Agent {
 		internal sealed record MarkedFailed(string Id, string Name, DateTime SinceUtc, DateTime UntilUtc, string Reason, string By);
 
 		/// <summary>
-		/// This PC's accelerators that are marked failed now (by Heiward or another of the manor's programs), which Auto
+		/// This PC's accelerators Heiward has marked failed (its own markers, never the manor's shared ones), which Auto
 		/// skips until the marker's 10 minutes are up: the NPU when there is one, each graphics card, the CPU.
 		/// </summary>
 		internal static List<MarkedFailed> Failures(IReadOnlyList<GpuAdapter> cards, DateTime? nowUtc = null) {

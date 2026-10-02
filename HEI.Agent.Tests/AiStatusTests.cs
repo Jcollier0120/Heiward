@@ -51,9 +51,9 @@ public sealed class AiStatusTests {
 	public void After_a_fallback_it_says_why() {
 		string text = (Status("GPU", "Qualcomm") with {
 			Card = "Qualcomm(R) Adreno(TM) X2-90 GPU",
-			Fallback = "NPU to GPU: the NPU was marked failed by reeve (GenieX did not start within 30 s) until 14:12",
+			Fallback = "NPU to GPU: the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed), at 14:02 (tried again from 14:12)",
 		}).Describe();
-		Assert.StartsWith("AI matching runs on the GPU (Qualcomm(R) Adreno(TM) X2-90 GPU): it fell back, NPU to GPU: the NPU was marked failed by reeve", text);
+		Assert.StartsWith("AI matching runs on the GPU (Qualcomm(R) Adreno(TM) X2-90 GPU): it fell back, NPU to GPU: the Qualcomm Hexagon NPU pack failed to load", text);
 	}
 
 	[Fact]

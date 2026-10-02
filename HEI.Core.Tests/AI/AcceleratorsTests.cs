@@ -22,8 +22,8 @@ namespace HEI.Core.Tests.AI;
 
 /// <summary>
 /// The manor's accelerators (Manor's docs/ACCELERATORS.md), as Heiward takes part: the ids every program names them by,
-/// a card's lock and line beside the NPU's, the shared failure markers, the checks of a card, and Auto's choice without
-/// a working NPU. Every file goes to a scratch folder (NPU_AGENT_NPU_LOCK), never the real locks.
+/// a card's lock and line beside the NPU's, Heiward's own failure markers, the checks of a card, and Auto's choice without
+/// a working NPU. Every file goes to a scratch folder (NPU_AGENT_NPU_LOCK, and the markers' folder), never the real locks.
 /// </summary>
 [Collection("NpuLock")] // the lock location is a process-wide environment variable
 public sealed class AcceleratorsTests : IDisposable {
@@ -34,11 +34,13 @@ public sealed class AcceleratorsTests : IDisposable {
 		npuLock = Path.Combine(root, "locks", "npu");
 		Environment.SetEnvironmentVariable("NPU_AGENT_NPU_LOCK", npuLock);
 		GpuChecks.PathOverride = Path.Combine(root, "gpu-checks.json");
+		Accelerators.FolderOverride = Own;
 	}
 
 	public void Dispose() {
 		Environment.SetEnvironmentVariable("NPU_AGENT_NPU_LOCK", null);
 		GpuChecks.PathOverride = null;
+		Accelerators.FolderOverride = null;
 		try { Directory.Delete(root, true); } catch { }
 	}
 
@@ -156,19 +158,46 @@ public sealed class AcceleratorsTests : IDisposable {
 
 	// ---------------------------------------------------------------- failure markers
 
+	/// <summary>Where the manor's shared markers would be with this NPU_AGENT_NPU_LOCK: beside the locks.</summary>
 	string Shared => Path.Combine(root, "accelerators");
+	/// <summary>Heiward's own markers here (in use, its {ai}\accelerators).</summary>
+	string Own => Path.Combine(root, "ai", "accelerators");
 
 	[Fact]
-	public void TheSharedFolder_IsBesideTheLocks_MovedWithTheNpuLock() =>
-		Assert.Equal(Shared, Accelerators.Folder);
+	public void TheMarkers_AreHeiwardsOwn_BesideItsAiComponents_NotBesideTheLocks() {
+		Accelerators.FolderOverride = null;
+		try {
+			// Wherever NPU_AGENT_NPU_LOCK puts the shared locks, Heiward's markers stay in its own {ai}\accelerators.
+			Assert.Equal(Path.Combine(AiComponents.AiFolder, "accelerators"), Accelerators.Folder);
+			Assert.NotEqual(Shared, Accelerators.Folder);
+		}
+		finally { Accelerators.FolderOverride = Own; }
+	}
+
+	[Fact]
+	public void AnotherProgramsSharedMarker_IsNeitherRead_NorWritten_NorDeleted() {
+		// Reeve's marker in the shared folder beside the locks: about its model server (GenieX), not Heiward's runtime.
+		Directory.CreateDirectory(Shared);
+		string reeves = Path.Combine(Shared, "npu.failed.json");
+		string text = $$"""{ "since": "{{DateTime.UtcNow.AddMinutes(-3):yyyy-MM-ddTHH:mm:ss.fffZ}}", "reason": "GenieX did not start within 30 s", "by": "reeve" }""";
+		File.WriteAllText(reeves, text);
+		Assert.Null(Accelerators.FailureOf("npu"));
+		Assert.Equal(AiDevice.Npu, AcceleratorPlan.ChooseAuto(true, Accelerators.FailureOf("npu"), true, Card(), true, null).Device);
+
+		Accelerators.MarkFailed("npu", "the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed)");
+		Accelerators.Succeeded("npu");
+		Assert.Equal(text, File.ReadAllText(reeves)); // untouched either way
+		Assert.Equal(new[] { "npu.failed.json" }, Directory.GetFiles(Shared).Select(f => Path.GetFileName(f)));
+	}
 
 	[Fact]
 	public void AFailure_IsWrittenWhole_SkippedForTenMinutes_AndClearedByASuccess() {
 		DateTime now = DateTime.UtcNow;
 		Accelerators.MarkFailed("gpu-x", "DirectML could not open the model: 0x887A0005\n   at Microsoft.ML.OnnxRuntime...", now);
-		string file = Path.Combine(Shared, "gpu-x.failed.json");
+		string file = Path.Combine(Own, "gpu-x.failed.json");
 		Assert.True(File.Exists(file));
-		Assert.Empty(Directory.GetFiles(Shared, "*.tmp")); // written aside, then renamed
+		Assert.Empty(Directory.GetFiles(Own, "*.tmp")); // written aside, then renamed
+		Assert.False(Directory.Exists(Shared)); // nothing in the manor's shared folder
 		using (var doc = JsonDocument.Parse(File.ReadAllText(file))) {
 			JsonElement m = doc.RootElement;
 			Assert.Equal(new[] { "since", "reason", "by" }, m.EnumerateObject().Select(p => p.Name));
@@ -179,7 +208,7 @@ public sealed class AcceleratorsTests : IDisposable {
 		}
 
 		Assert.NotNull(Accelerators.FailureOf("gpu-x", now.AddMinutes(9.9)));
-		Assert.Null(Accelerators.FailureOf("gpu-x", now.AddMinutes(10))); // tried again after 10 minutes
+		Assert.Null(Accelerators.FailureOf("gpu-x", now.AddMinutes(10))); // exactly 10 minutes old: expired, tried again
 		Assert.Null(Accelerators.FailureOf("gpu-y", now));
 
 		Accelerators.Succeeded("gpu-x");
@@ -188,13 +217,13 @@ public sealed class AcceleratorsTests : IDisposable {
 	}
 
 	[Fact]
-	public void AnotherProgramsMarker_Counts() {
-		Directory.CreateDirectory(Shared);
-		File.WriteAllText(Path.Combine(Shared, "npu.failed.json"),
-			$$"""{ "since": "{{DateTime.UtcNow.AddMinutes(-3):yyyy-MM-ddTHH:mm:ss.fffZ}}", "reason": "GenieX did not start within 30 s", "by": "reeve" }""");
+	public void AMarkerInTheSharedFormat_ReadsBack() {
+		Directory.CreateDirectory(Own);
+		File.WriteAllText(Path.Combine(Own, "npu.failed.json"),
+			$$"""{ "since": "{{DateTime.UtcNow.AddMinutes(-3):yyyy-MM-ddTHH:mm:ss.fffZ}}", "reason": "the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed)", "by": "heiward" }""");
 		Accelerators.Failure f = Accelerators.FailureOf("npu")!;
-		Assert.Equal("reeve", f.By);
-		Assert.Equal("GenieX did not start within 30 s", f.Reason);
+		Assert.Equal("heiward", f.By);
+		Assert.Equal("the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed)", f.Reason);
 		Assert.InRange(f.UntilUtc - DateTime.UtcNow, TimeSpan.FromMinutes(6), TimeSpan.FromMinutes(8));
 	}
 
@@ -205,8 +234,8 @@ public sealed class AcceleratorsTests : IDisposable {
 	[InlineData("""{ "since": 12345, "reason": "x" }""")]
 	[InlineData("[]")]
 	public void AnUnreadableMarker_CountsAsAbsent(string contents) {
-		Directory.CreateDirectory(Shared);
-		File.WriteAllText(Path.Combine(Shared, "gpu-x.failed.json"), contents);
+		Directory.CreateDirectory(Own);
+		File.WriteAllText(Path.Combine(Own, "gpu-x.failed.json"), contents);
 		Assert.Null(Accelerators.FailureOf("gpu-x"));
 	}
 
@@ -241,7 +270,7 @@ public sealed class AcceleratorsTests : IDisposable {
 		Assert.NotNull(GpuChecks.Find(card));
 	}
 
-	static readonly Accelerators.Failure Failed = new(DateTime.UtcNow.AddMinutes(-2), "GenieX did not start within 30 s", "reeve");
+	static readonly Accelerators.Failure Failed = new(DateTime.UtcNow.AddMinutes(-2), "the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed)", "heiward");
 
 	[Fact]
 	public void Auto_WithAWorkingNpu_TakesIt() {
@@ -267,20 +296,21 @@ public sealed class AcceleratorsTests : IDisposable {
 	}
 
 	[Fact]
-	public void Auto_SkipsACardMarkedFailed_AndSaysWhy() {
+	public void Auto_SkipsACardThatFailedForHeiward_AndSaysWhy() {
 		AcceleratorPlan plan = AcceleratorPlan.ChooseAuto(npu: false, null, gpuPack: true, Card(), cardChecked: true,
-			new Accelerators.Failure(DateTime.UtcNow, "DirectML could not open the model", "heiward"));
+			new Accelerators.Failure(DateTime.UtcNow, "DirectML could not open the model on the NVIDIA GeForce RTX 4090: 0x887A0005", "heiward"));
 		Assert.Equal(AiDevice.Cpu, plan.Device);
 		Assert.Equal("GPU", plan.FellBackFrom);
-		Assert.Contains("the NVIDIA GeForce RTX 4090 was marked failed by heiward (DirectML could not open the model)", plan.Why);
+		Assert.StartsWith("DirectML could not open the model on the NVIDIA GeForce RTX 4090: 0x887A0005, at ", plan.Why);
+		Assert.Contains("(tried again from ", plan.Why);
 	}
 
 	[Fact]
-	public void Auto_WithTheNpuMarkedFailed_FallsBackToACheckedCard_ElseTheCpu() {
+	public void Auto_WithTheNpuFailedForHeiward_FallsBackToACheckedCard_ElseTheCpu() {
 		AcceleratorPlan gpu = AcceleratorPlan.ChooseAuto(npu: true, Failed, gpuPack: true, Card(), cardChecked: true, null);
 		Assert.Equal(AiDevice.Gpu, gpu.Device);
 		Assert.Equal("NPU", gpu.FellBackFrom);
-		Assert.Contains("the NPU was marked failed by reeve (GenieX did not start within 30 s)", gpu.Why);
+		Assert.StartsWith("the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed), at ", gpu.Why); // Heiward's own failure, named
 
 		AcceleratorPlan cpu = AcceleratorPlan.ChooseAuto(npu: true, Failed, gpuPack: true, Card(), cardChecked: false, null);
 		Assert.Equal(AiDevice.Cpu, cpu.Device);
@@ -288,12 +318,12 @@ public sealed class AcceleratorsTests : IDisposable {
 	}
 
 	[Fact]
-	public void Auto_ReadsTheMarkersAndChecks_ThroughTheSharedFiles() {
-		// The whole path, on files: a card checked and then marked failed by another program is skipped.
+	public void Auto_ReadsHeiwardsMarkersAndChecks_ThroughItsFiles() {
+		// The whole path, on files: a card checked, then failing for Heiward, is skipped until a success clears it.
 		GpuAdapter card = Card();
 		GpuChecks.Record(card, passed: true);
 		Assert.True(GpuChecks.Passed(card));
-		Accelerators.MarkFailed(card.AcceleratorId, "llama-server did not start within 30 s");
+		Accelerators.MarkFailed(card.AcceleratorId, "the NVIDIA GeForce RTX 4090 failed during a scan: 0x887A0006");
 		Assert.Equal(AiDevice.Cpu, AcceleratorPlan.ChooseAuto(false, Accelerators.FailureOf("npu"), true, card, GpuChecks.Passed(card), Accelerators.FailureOf(card.AcceleratorId)).Device);
 		Accelerators.Succeeded(card.AcceleratorId);
 		Assert.Equal(AiDevice.Gpu, AcceleratorPlan.ChooseAuto(false, Accelerators.FailureOf("npu"), true, card, GpuChecks.Passed(card), Accelerators.FailureOf(card.AcceleratorId)).Device);

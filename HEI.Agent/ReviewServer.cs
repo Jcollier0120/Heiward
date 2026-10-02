@@ -449,7 +449,7 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// For the page's Settings: the accelerator AI matching last ran on (as the manor names it), the card, why it fell
-		/// back, and the accelerators marked failed now, which Auto skips until their 10 minutes are up.
+		/// back, and the accelerators that failed for Heiward lately (its own markers), which Auto skips until their 10 minutes are up.
 		/// </summary>
 		static object AcceleratorView(AiStatus? ai) => new {
 			inUse = ai?.Kind == null ? null : ai.Accelerator,

@@ -143,8 +143,9 @@ namespace HEI.Core.AI {
 		/// The embedder for <paramref name="device"/> (<see cref="AcceleratorPlan.For"/>): the NPU when it is requested, or
 		/// Auto finds one that hasn't failed lately; the GPU (DirectML) when requested, or Auto finds no working NPU and the
 		/// card in use has passed a check; otherwise VDF's int8 model on the CPU. An accelerator that fails to open a session
-		/// is marked failed for the others (<see cref="Accelerators.MarkFailed"/>), and the work falls back to the CPU, so AI
-		/// matching never breaks because of it. <see cref="Fallback"/> says why it didn't run where it was meant to.
+		/// gets Heiward's own failure marker (<see cref="Accelerators.MarkFailed"/>), which Auto skips for 10 minutes, and the
+		/// work falls back to the CPU, so AI matching never breaks because of it. <see cref="Fallback"/> says why it didn't run
+		/// where it was meant to.
 		/// </summary>
 		internal static OnnxEmbedder Create(AiDevice device) {
 			AcceleratorPlan plan = AcceleratorPlan.For(device);
@@ -184,8 +185,9 @@ namespace HEI.Core.AI {
 					}
 				}
 				else {
-					// The pack is here but its plugin offers no NPU (a driver problem, say): the NPU can't work for now.
-					string none = $"the {NpuComponents.NpuName} pack found no NPU (see the log)";
+					// The pack is here but its plugin didn't load, or offers no NPU (a driver problem, say): the NPU can't work
+					// for Heiward now. Its own marker: the next scans go to a checked card instead, for 10 minutes.
+					string none = NpuComponents.UnavailableReason ?? $"the {NpuComponents.NpuName} pack found no NPU (see the log)";
 					Accelerators.MarkFailed(Accelerators.Npu, none);
 					Fell("NPU", none);
 				}
@@ -196,8 +198,8 @@ namespace HEI.Core.AI {
 		}
 
 		/// <summary>
-		/// Why an accelerator couldn't open its session, in one line. It's marked failed for the others too, unless it was
-		/// only a long wait for its turn (that's the line, not the accelerator).
+		/// Why an accelerator couldn't open its session, in one line. Heiward marks it failed for its own next scans, unless
+		/// it was only a long wait for its turn (that's the line, not the accelerator).
 		/// </summary>
 		static string Failure(Exception e, string id, string what) {
 			string why = $"{what}: {Accelerators.OneLine(e.Message)}";
@@ -358,7 +360,7 @@ namespace HEI.Core.AI {
 					Run(input, start, count, batch, sink);
 				}
 				catch (OnnxRuntimeException e) when (lockId != null) {
-					// The accelerator failed under the work (a DirectML error, the NPU's driver): the others skip it for a while.
+					// The accelerator failed under the work (a DirectML error, the NPU's driver): Heiward's next scans skip it for a while.
 					if (!markedFailed) {
 						markedFailed = true;
 						string message = Accelerators.OneLine(e.Message);

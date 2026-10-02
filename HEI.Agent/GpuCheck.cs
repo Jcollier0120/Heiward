@@ -22,7 +22,7 @@ namespace HEI.Agent {
 	/// Auto, with no working NPU, runs AI matching on the graphics card in use once that card has passed a check
 	/// (<see cref="GpuChecks"/>). A card the GPU pack hasn't been checked on yet, with its current driver, is checked
 	/// before a scan or by setup: <c>hei probe --device gpu</c> in its own process (a process loads one ONNX Runtime),
-	/// which records what it found, and marks the card failed for the manor's other programs when it can't.
+	/// which records what it found, and marks the card failed (Heiward's own marker) when it can't.
 	/// </summary>
 	static class GpuCheck {
 		/// <summary>

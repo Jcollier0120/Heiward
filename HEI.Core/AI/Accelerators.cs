@@ -23,11 +23,15 @@ using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
 	/// <summary>
-	/// The devices the manor's programs run their models on, as every one of them names and shares them (Manor's
+	/// The devices the manor's programs run their models on, as every one of them names them (Manor's
 	/// docs/ACCELERATORS.md): <c>npu</c>, <c>cpu</c>, or a graphics card, <c>gpu-</c> and its name slugged
-	/// (<see cref="GpuId"/>). Each has a lock and a line (<see cref="NpuLock"/>) and, in a shared folder beside the
-	/// locks, a failure marker (<c>&lt;id&gt;.failed.json</c>) whoever found it failing writes, and everyone skips
-	/// for 10 minutes; a success on it deletes it.
+	/// (<see cref="GpuId"/>). Each has a lock and a line every program shares (<see cref="NpuLock"/>).
+	/// <para>
+	/// Heiward's failure markers (<c>&lt;id&gt;.failed.json</c>, in the shared files' format) are its own, in
+	/// <c>{ai}\accelerators</c>: the manor's shared markers in <c>.npu-agent\accelerators</c> describe a model server
+	/// failing (GenieX, llama-server, npu-embed), and Heiward runs its model in its own process (QNN or DirectML), so
+	/// it neither writes nor reads nor deletes those. Its own it skips for 10 minutes; a success on it deletes it.
+	/// </para>
 	/// </summary>
 	public static partial class Accelerators {
 		public const string Npu = "npu", Cpu = "cpu";
@@ -35,7 +39,7 @@ namespace HEI.Core.AI {
 		public const string Who = "heiward";
 		/// <summary>A failed accelerator is skipped this long after its marker's <c>since</c>, then tried again.</summary>
 		public static readonly TimeSpan FailedFor = TimeSpan.FromMinutes(10);
-		/// <summary>A marker's reason is one line, this long at most (as the others write it).</summary>
+		/// <summary>A marker's reason is one line, this long at most (as the manor's shared markers have it).</summary>
 		const int ReasonMax = 300;
 
 		/// <summary>A card's id: <c>gpu-</c> and its name (<see cref="GpuAdapter.Key"/>) slugged, <c>gpu-graphics-card</c> for an empty one.</summary>
@@ -60,28 +64,18 @@ namespace HEI.Core.AI {
 		/// <summary>"npu", "gpu" or "cpu": the kind an id names.</summary>
 		public static string KindOf(string id) => id == Npu ? "npu" : id == Cpu ? "cpu" : "gpu";
 
-		/// <summary>Tests point the shared folder elsewhere.</summary>
+		/// <summary>Tests point the markers' folder elsewhere.</summary>
 		internal static string? FolderOverride;
 
 		/// <summary>
-		/// The shared files' folder: <c>accelerators</c> beside the lock folders' (<c>%USERPROFILE%\.npu-agent\accelerators</c>),
-		/// moved with them by NPU_AGENT_NPU_LOCK (the folder <c>accelerators</c> beside the lock folder's parent). On a PC where
-		/// no other program uses the locks (no npu-agent home), Heiward keeps its own markers in <c>{ai}\accelerators</c> instead:
-		/// it still skips what failed, and creating the npu-agent home would only make it take locks nobody else takes.
+		/// Heiward's own failure markers: <c>{ai}\accelerators</c>, beside its AI components. Never the manor's shared
+		/// <c>.npu-agent\accelerators</c>, whose markers are about model servers, not Heiward's in-process runtimes.
 		/// </summary>
-		public static string Folder {
-			get {
-				if (FolderOverride != null) return FolderOverride;
-				if (NpuLock.LockDirectory is { } npu && Path.GetDirectoryName(Path.GetFullPath(npu)) is { Length: > 0 } locks &&
-					Path.GetDirectoryName(locks) is { Length: > 0 } home)
-					return Path.Combine(home, "accelerators");
-				return Path.Combine(AiComponents.AiFolder, "accelerators");
-			}
-		}
+		public static string Folder => FolderOverride ?? Path.Combine(AiComponents.AiFolder, "accelerators");
 
 		public static string FailureFile(string id) => Path.Combine(Folder, id + ".failed.json");
 
-		/// <summary>A failure marker: when it was written (UTC), why, and by whom.</summary>
+		/// <summary>A failure marker: when it was written (UTC), why, and by whom (Heiward, in its own folder).</summary>
 		public sealed record Failure(DateTime SinceUtc, string Reason, string By) {
 			/// <summary>When it stops counting.</summary>
 			public DateTime UntilUtc => SinceUtc + FailedFor;
@@ -96,7 +90,7 @@ namespace HEI.Core.AI {
 			try {
 				string path = FailureFile(id);
 				if (!File.Exists(path)) return null;
-				// Shared read, write and delete: the writer renames over it, and a success deletes it, while we read.
+				// Shared read, write and delete: a scan's writer renames over it, and a success deletes it, while the page reads.
 				using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 				using JsonDocument doc = JsonDocument.Parse(file);
 				JsonElement root = doc.RootElement;
@@ -137,7 +131,7 @@ namespace HEI.Core.AI {
 			}
 		}
 
-		/// <summary>A success on the accelerator: its failure marker, whoever wrote it, goes.</summary>
+		/// <summary>A success on the accelerator: Heiward's failure marker for it goes.</summary>
 		public static void Succeeded(string id) {
 			if (!IsId(id)) return;
 			try {
@@ -271,7 +265,7 @@ namespace HEI.Core.AI {
 				case AiDevice.Cpu:
 					return new(AiDevice.Cpu, null, null, null);
 				case AiDevice.Gpu: {
-					// Asked for: tried whatever the markers say (a success clears them).
+					// Asked for: tried whatever Heiward's markers say (a success clears them).
 					GpuAdapter? card = GpuComponents.IsSupportedPlatform ? GpuAdapters.InUseNow() : null;
 					return GpuComponents.IsInstalled
 						? new(AiDevice.Gpu, card, null, null)
@@ -298,25 +292,26 @@ namespace HEI.Core.AI {
 			AiComponents.TestOverrideModelPath == null && NpuComponents.IsSupportedPlatform && NpuComponents.IsInstalled && AiComponents.IsReady;
 
 		/// <summary>
-		/// Auto: the NPU when there is one that hasn't failed in the last 10 minutes; else, with the GPU pack, the card in use
-		/// once it has passed a check (<see cref="GpuChecks"/>) and hasn't failed either; else the CPU. Leaving the NPU, or a
-		/// checked card, because it failed is a fallback, and says why.
+		/// Auto: the NPU when there is one that hasn't failed for Heiward in the last 10 minutes; else, with the GPU pack, the
+		/// card in use once it has passed a check (<see cref="GpuChecks"/>) and hasn't failed either; else the CPU. The failures
+		/// are Heiward's own markers only (<see cref="Accelerators.Folder"/>). Leaving the NPU, or a checked card, because it
+		/// failed is a fallback, and says why: the failure Heiward met.
 		/// </summary>
 		internal static AcceleratorPlan ChooseAuto(bool npu, Accelerators.Failure? npuFailed, bool gpuPack, GpuAdapter? card, bool cardChecked, Accelerators.Failure? cardFailed) {
 			if (npu && npuFailed == null)
 				return new(AiDevice.Npu, null, null, null);
-			string? npuWhy = npu ? "the NPU " + Failed(npuFailed!) : null;
+			string? npuWhy = npu ? Failed(npuFailed!) : null;
 			if (gpuPack && card != null && cardChecked) {
 				if (cardFailed == null)
 					return new(AiDevice.Gpu, card, npuWhy != null ? "NPU" : null, npuWhy);
-				string cardWhy = $"the {card.Key} " + Failed(cardFailed);
+				string cardWhy = Failed(cardFailed);
 				return npuWhy != null ? new(AiDevice.Cpu, null, "NPU", npuWhy + "; " + cardWhy) : new(AiDevice.Cpu, null, "GPU", cardWhy);
 			}
 			return new(AiDevice.Cpu, null, npuWhy != null ? "NPU" : null, npuWhy);
 		}
 
-		/// <summary>"was marked failed by reeve (GenieX did not start within 30 s)".</summary>
+		/// <summary>"the Qualcomm Hexagon NPU pack failed to load (…), at 15:18 (tried again from 15:28)": the failure as Heiward recorded it.</summary>
 		static string Failed(Accelerators.Failure f) =>
-			$"was marked failed{(f.By.Length > 0 ? " by " + f.By : "")} ({f.Reason}) until {f.UntilUtc.ToLocalTime():HH:mm}";
+			$"{f.Reason}, at {f.SinceUtc.ToLocalTime():HH:mm} (tried again from {f.UntilUtc.ToLocalTime():HH:mm})";
 	}
 }
