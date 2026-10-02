@@ -36,6 +36,8 @@ public class FfmpegFixture : IDisposable {
 	public string? HEVC_10bit { get; }
 	public string? VP9 { get; }
 	public string? H264_Different { get; }
+	/// <summary>4 s with one keyframe, at the start: a late position decodes ~100 packets forward.</summary>
+	public string? H264_OneKeyframe { get; }
 	public string? H264_Corrupted { get; }
 	/// <summary>Every packet byte corrupted — no frame recoverable at any position (#867 fast-fail).</summary>
 	public string? H264_FullyCorrupted { get; }
@@ -111,6 +113,10 @@ public class FfmpegFixture : IDisposable {
 		string diffPath = Path.Combine(TempDir, "h264_different.mp4");
 		if (TestVideoGenerator.GenerateH264_Different(ffmpegPath, diffPath))
 			H264_Different = diffPath;
+
+		string oneKeyframePath = Path.Combine(TempDir, "h264_one_keyframe.mp4");
+		if (TestVideoGenerator.GenerateH264_OneKeyframe(ffmpegPath, oneKeyframePath))
+			H264_OneKeyframe = oneKeyframePath;
 
 		// Corrupted H.264 fixture: re-encode the clean H.264 through bsf=noise so the
 		// native decoder will hit AVERROR_INVALIDDATA from av_read_frame /
