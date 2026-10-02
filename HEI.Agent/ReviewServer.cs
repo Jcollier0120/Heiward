@@ -319,7 +319,7 @@ namespace HEI.Agent {
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
-			RescanAfterUpdate();
+			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
 			return 0;
@@ -348,19 +348,30 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// A new build of Heiward (an update, from GitHub or the Store) sets the last report aside, since
-		/// its sets were judged by the old build's rules: a scan with this build finds them again. Not while
-		/// scans are paused, and not before the Store version's setup, which starts its own first scan.
+		/// The page starting (opened, reloaded after it exited, restarted) starts a scan only when one is due
+		/// by the schedule (<see cref="ScanWhenDue"/>): the last scan plus the interval between scans. A new
+		/// build of Heiward sets the last report aside, since its sets were judged by the old build's rules,
+		/// but no longer rescans at every start until one finishes: the next due scan, or Scan now, finds
+		/// them again. Not while scans are paused, and not before the Store version's setup, which starts its
+		/// own first scan.
 		/// </summary>
-		static void RescanAfterUpdate() {
-			if (!Report.IsStale() || AgentScanner.IsRunning() || StoreSetup.Needed || AgentPause.Load() != null) return;
-			AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {Report.LoadAny()?.Build ?? "an older build"}: scanning again");
+		static void ScanIfDue(AgentConfig cfg) {
+			if (AgentScanner.IsRunning() || StoreSetup.Needed || AgentPause.Load() != null) return;
+			Report? last = Report.LoadAny();
+			bool setAside = last != null && last.Build != AppBuild.Current;
+			if (ScanWhenDue.Due(last?.ScannedAtUtc, AgentScanner.LastStartedUtc(), cfg.ScanEveryMinutes, DateTime.UtcNow) is not { } why) {
+				if (setAside) AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {last!.Build ?? "an older build"}: the next scan finds the sets again");
+				return;
+			}
+			AgentPaths.AppendLog($"review page started: scanning, since {why}" + (setAside ? $" (and Heiward {AppBuild.Current} set aside the last report)" : ""));
 			StartDetached("scan");
 		}
 
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {
-			Report? report = Report.Load();
+			// The last report, whichever build made it, read once; the page shows this build's own (Report.Load).
+			Report? anyReport = Report.LoadAny();
+			Report? report = anyReport?.Build == AppBuild.Current ? anyReport : null;
 			ScanIndex? index = ScanIndex.Load();
 			var decisions = DecisionStore.Load();
 			DevReport? devReport = cfg.DeveloperModeOn ? DevReport.Load() : null;
@@ -389,8 +400,8 @@ namespace HEI.Agent {
 				report = report == null ? null : new {
 					report.ScannedAtUtc, report.DurationSec, report.Device, report.FilesScanned, report.Folders, report.ExcludedExtensions, report.Notes,
 				},
-				// The last report is another build's, set aside until a scan with this one (RescanAfterUpdate).
-				updated = report == null && Report.IsStale(),
+				// The last report is another build's, set aside until a scan with this one (ScanIfDue).
+				updated = report == null && anyReport != null,
 				pending,
 				done,
 				totals = new {
@@ -408,7 +419,11 @@ namespace HEI.Agent {
 				setup = StoreSetup.View(),
 				agent = AgentView(cfg),
 				ai = AiStatus.Load(),
-				schedule = new { next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes },
+				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
+				schedule = new {
+					next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes,
+					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), cfg.ScanEveryMinutes),
+				},
 				config = new {
 					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
 					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true),
