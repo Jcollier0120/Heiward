@@ -1731,8 +1731,11 @@ function driveProgress(d, st) {
     const othersBusy = st.drives.some((x) => !mine.includes(x) && x.done < x.total);
     const waiting = othersBusy ? ' · waiting for the other drives' : st.stage && !/^checking files$/i.test(st.stage) ? ' · ' + st.stage : '';
     if (!total) return ['No photos or videos to check' + waiting, 1];
-    if (done < total) return ['Checking files · ' + done.toLocaleString() + ' of ' + total.toLocaleString(), done / total];
-    return ['Checked ' + count(total, 'file', 'files') + waiting, 1];
+    // Folders on one drive share its count: their cards say whose it is.
+    const shared = mine.length === 1 && state.drives.filter((c) => c.scanned && overlaps(c.root, mine[0].root)).length > 1;
+    const where = shared ? ' on ' + mine[0].root : '';
+    if (done < total) return ['Checking files' + where + ' · ' + done.toLocaleString() + ' of ' + total.toLocaleString(), done / total];
+    return ['Checked ' + count(total, 'file', 'files') + where + waiting, 1];
   }
   if (st.phase === 'comparing') {
     const what = st.stage ? st.stage[0].toUpperCase() + st.stage.slice(1) : 'Comparing';
