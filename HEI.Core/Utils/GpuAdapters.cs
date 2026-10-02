@@ -90,6 +90,16 @@ namespace HEI.Core.Utils {
 		/// <summary>The card this process's GPU work runs on, or null for Windows' default.</summary>
 		public static GpuAdapter? Chosen { get; private set; }
 
+		/// <summary>The card the settings named at the last <see cref="Choose"/>, found or not; null when they named none.</summary>
+		public static string? Requested { get; private set; }
+
+		/// <summary>
+		/// For the scan's summary in heiward.log, which is what someone with two cards can send: "; GPU work on the
+		/// NVIDIA GeForce RTX 4070", or that the card named isn't on this PC now. Empty when the settings name none.
+		/// </summary>
+		public static string Describe() =>
+			Requested == null ? "" : Chosen != null ? $"; GPU work on the {Chosen.Key}" : $"; GPU work on Windows' default card ({Requested} isn't on this PC now)";
+
 		/// <summary>FFmpeg's device string for <see cref="Chosen"/> (its DXGI number), or null for the default.</summary>
 		internal static string? DeviceString => Chosen?.Index.ToString(CultureInfo.InvariantCulture);
 
@@ -103,8 +113,10 @@ namespace HEI.Core.Utils {
 		public static void Choose(string? key) {
 			if (string.IsNullOrWhiteSpace(key)) {
 				Chosen = null;
+				Requested = null;
 				return;
 			}
+			Requested = key.Trim();
 			IReadOnlyList<GpuAdapter> adapters = List();
 			Chosen = Find(key, adapters);
 			if (Chosen == null)

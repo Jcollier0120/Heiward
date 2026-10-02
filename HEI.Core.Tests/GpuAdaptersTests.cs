@@ -98,6 +98,7 @@ public class GpuAdaptersTests {
 		Assert.Null(GpuAdapters.Chosen);
 		Assert.Null(GpuAdapters.DeviceString); // FFmpeg's own default: DXGI's first
 		Assert.Equal(0, GpuAdapters.DirectMLDevice);
+		Assert.Equal("", GpuAdapters.Describe()); // heiward.log as before
 	}
 
 	[Fact]
@@ -106,6 +107,7 @@ public class GpuAdaptersTests {
 		try {
 			Assert.Null(GpuAdapters.Chosen);
 			Assert.Null(GpuAdapters.DeviceString);
+			Assert.Equal("; GPU work on Windows' default card (A graphics card this PC has never had isn't on this PC now)", GpuAdapters.Describe());
 		}
 		finally {
 			GpuAdapters.Choose(null);
@@ -129,6 +131,7 @@ public class GpuAdaptersTests {
 			Assert.Equal(cards[^1], GpuAdapters.Chosen);
 			Assert.Equal(cards[^1].Index.ToString(System.Globalization.CultureInfo.InvariantCulture), GpuAdapters.DeviceString);
 			Assert.Equal(cards[^1].Index, GpuAdapters.DirectMLDevice);
+			Assert.Equal("; GPU work on the " + cards[^1].Key, GpuAdapters.Describe()); // what someone with two cards sends in heiward.log
 		}
 		finally {
 			GpuAdapters.Choose(null);
