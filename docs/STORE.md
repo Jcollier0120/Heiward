@@ -121,7 +121,7 @@ Add-AppxPackage -Register artifacts\store\layout-x64\AppxManifest.xml
 Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`. Removing it deletes its storage (the AI components and the setup marker), so the next install runs setup again.
 
 - **A new build of an installed copy:** stop its processes and copy the files over the registered folder. It runs the new files at once.
-- **A changed manifest:** Windows re-registers it only under a higher version. Raise the fourth number in the registered copy's `AppxManifest.xml` (1.5.0.1 for 1.5.0). Store packages keep it at 0.
+- **A changed manifest:** Windows re-registers it only under a higher version. Raise the fourth number in the registered copy's `AppxManifest.xml` (1.6.0.1 for 1.6.0). Store packages keep it at 0.
 
 ## How the Store version runs
 

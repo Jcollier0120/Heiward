@@ -210,6 +210,14 @@ Other NPU tools on this PC can use the NPU at the same time. Heiward takes turns
 
 A tool that takes the lock without queueing, such as an older build, can still get in ahead of the line, but never at the same time as anyone else.
 
+### The graphics cards too
+
+The same tools now run models on graphics cards and the processor as well (the manor's accelerators, in Manor's `docs/ACCELERATORS.md`), and Heiward takes part:
+- **A card has its own lock and line.** When AI matching runs on a graphics card, Heiward takes that card's lock for each batch, as it does the NPU's: the folder `gpu-<name>` beside the NPU's lock (`gpu-nvidia-geforce-rtx-4090`, the card's name in lowercase with each run of other characters a dash; a second card of the same name ends `-2`), and its line `gpu-<name>.queue`, with the same rules. Heiward takes only a card's first lock; other tools may serve a card more than once at a time. The processor has no lock from Heiward: its turns are the manor's processor model server's, which Heiward doesn't use.
+- **Auto without a working NPU uses a graphics card it has checked.** With `aiDevice` `auto`, AI matching runs on the NPU; with none (or one that's failing), on the graphics card in use once the GPU pack has run the model on it, with its current driver (`hei probe`, which the installer runs, and a scan or `hei setup` runs once for a card that hasn't been checked); otherwise on the processor.
+- **A device that fails is skipped for 10 minutes, by everyone.** When the NPU or a card can't run the model, Heiward writes `%USERPROFILE%\.npu-agent\accelerators\<id>.failed.json` (when, why, and that Heiward found it), runs the scan's AI on the processor instead, and says why in `heiward.log`, `hei status`, `hei status --json` (`lastFallback`) and the page's Settings. Auto leaves a device marked failed, by Heiward or another tool, alone until 10 minutes have passed; the next success on it removes the mark. Without `%USERPROFILE%\.npu-agent`, Heiward keeps its marks to itself, beside its AI components.
+- **Games first.** While a game keeps the scan's own graphics card busy (a quarter of a 3D engine or more), scans step back; a game on another card doesn't slow them.
+
 ## Settings
 
 `%LOCALAPPDATA%\Heiward\settings.json` (a [development build](#development-builds)'s is in `%LOCALAPPDATA%\Heiward-dev`). Every field has a default.
@@ -221,7 +229,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 | `excludeFolders` | none | A path (`D:\Scans`), a folder name at any depth (`Backups`), or either with wildcards (`D:\Old\*`, `*.bak`). Wins over `folders` |
 | `onRequestDrives` | none | Drives scanned only when you ask (`D:\`): right-click a drive on the page, **Scan only when I ask**. Scheduled scans, the home page's Scan now, automatic cleanup and the developer check leave them alone, not reading them at all, so an archive disk can sleep. Their photos and videos as their last scan found them still count: their sets stay listed, and a copy of one elsewhere is still found. Scan one from its own page (**Scan this drive now**, or `hei scan --drive D:\`) |
 | `excludeExtensions` | none | e.g. `[".heic"]` |
-| `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
+| `aiDevice` | `auto` | `auto` (the NPU; without a working one, the graphics card once it has passed a check; else the CPU), `npu`, `gpu`, `cpu` |
 | `gpu` | `""` | With more than one graphics card, the one for GPU work, by name as Windows lists it (a second card of the same model: `NVIDIA GeForce RTX 4070 #2`). It runs AI matching on the GPU, and decodes videos and iPhone photos. Empty: Windows' default, the card driving the main display. The installer and the page's Settings set it; a scan reads it when it starts |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
@@ -246,7 +254,7 @@ hei stop            stop the scan that's running
 hei pause           pause scheduled scans and stop the running one  [--minutes N] (without it: until resumed)
 hei resume          resume scheduled scans
 hei open            open the review page
-hei status          settings, where AI matching runs, last scan, schedule, NPU lock
+hei status          settings, where AI matching runs, devices marked failed, last scan, schedule, locks
 hei status --json   the same essentials as one JSON object, for scripts and other tools (below)
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
@@ -272,6 +280,10 @@ hei uninstall       [--purge] [--dry-run]
 | `toReview` | Sets in that report you haven't decided on yet |
 | `page` | `url`: the review page's address; `up`: whether it answers now. Asking (`/api/ping`) doesn't keep an unused page running |
 | `summary` | One short sentence, e.g. "Scans every hour, next at 15:00. 3 sets to review." |
+| `device` | Where AI matching last ran (the last scan, or the install's or `hei setup`'s check): `"npu"`, `"gpu"` or `"cpu"`; `null` when it's off or hasn't run |
+| `accelerator` | The same as the manor's tools name it: `"npu"`, `"cpu"`, or the card's `"gpu-<name>"` |
+| `card` | The graphics card's name as Windows lists it, when it ran on one; else `null` |
+| `lastFallback` | When that work was meant for another device, from where to where and why, in one line (`"NPU to GPU: the NPU was marked failed by reeve (…)"`), or that it stopped (`"GPU failed: …"`); `null` when it ran where it was meant to |
 
 Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans, and `hei serve --no-browser` to start its review page.
 
@@ -333,7 +345,7 @@ A `hei.exe` built in a checkout is a development build: a folder above it (up to
 - its review page is on port 28484, not 18484. A `port` in its own settings.json stands, unless it's the installed copy's 18484;
 - it has no scheduled tasks: it scans when you press Scan now, or run `hei scan`.
 
-The NPU lock is the same machine-wide one. `HEIWARD_HOME` overrides the data folder as before, and then the port is 18484 unless settings.json says otherwise.
+The NPU lock is the same machine-wide one, and so are the graphics cards' locks and the failure marks. To try one without the installed tools seeing it, point `NPU_AGENT_NPU_LOCK` at a scratch folder's `locks\npu`: the cards' locks go beside it, and the marks to the `accelerators` folder beside `locks`. `HEIWARD_HOME` overrides the data folder as before, and then the port is 18484 unless settings.json says otherwise.
 
 `hei install` and `hei uninstall` act on the installed copy, from a development build too: install copies the exe to `%LOCALAPPDATA%\Programs\Heiward`, and the settings, downloads, tasks and shortcuts it sets up are the installed copy's. To try development work as the real Heiward, build a release with `release.ps1` (below) and run it, as you would a download.
 
