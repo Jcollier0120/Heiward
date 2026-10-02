@@ -556,6 +556,7 @@ function renderHome(s) {
     row.append(meter);
     row.title = h.folder;
     row.addEventListener('click', () => go(h.folder));
+    row.addEventListener('contextmenu', (e) => openFolderMenu(e, { name: h.folder.slice(h.folder.lastIndexOf(SEP) + 1), path: h.folder }));
     return row;
   }));
 
@@ -1406,6 +1407,7 @@ function groupPage(g) {
       const chip = el('span', 'chip quiet repo-chip');
       chip.append(el('span', null, r.name));
       chip.title = r.path;
+      chip.addEventListener('contextmenu', (e) => openPathMenu(e, { name: r.name, path: r.path, folder: true }));
       const x = el('button', 'chip-x', '×');
       x.title = 'Take ' + r.name + ' out of ' + g.name;
       x.setAttribute('aria-label', x.title);
@@ -1556,6 +1558,8 @@ function devRow(i, showRepo) {
   const where = el('div', 'folder muted small', i.location);
   where.title = i.location;
   main.append(where);
+  const places = i.paths || [];
+  if (places.length) row.addEventListener('contextmenu', (e) => openPathMenu(e, { name: i.name, path: places[0], folder: true, more: places.length - 1 }));
   // On a single repository's page, 'worktree of <it>' says nothing new.
   const facts = (i.detail || '').split(/, | · /).filter((f) => f && !(i.kind === 'worktrees' && !showRepo && f.startsWith('worktree of ')));
   if (facts.length) {
@@ -1882,6 +1886,7 @@ function renderDone(s) {
   const where = (folder) => {
     const w = el('span', 'where', nameOf(folder));
     w.title = folder;
+    w.addEventListener('contextmenu', (e) => openPathMenu(e, { name: nameOf(folder), path: folder, folder: true }));
     return w;
   };
   box.replaceChildren(historyBar(s), ...s.done.map((d) => {
@@ -2101,7 +2106,8 @@ function treeKeys(e, node) {
 // ---------------------------------------------------------------- folder menu (right-click)
 
 // Right-click a folder (or press the menu key on it) to include it in scans or leave it out, whichever it
-// isn't now. Saved to "folders" / "excludeFolders" in the settings; the next scan follows.
+// isn't now. Saved to "folders" / "excludeFolders" in the settings; the next scan follows. Right-click
+// any file or folder the page lists to show it in File Explorer, selected in its folder, or copy its path.
 let menuReturn = null;
 
 function closeFolderMenu(focusBack) {
@@ -2112,11 +2118,8 @@ function closeFolderMenu(focusBack) {
   menuReturn = null;
 }
 
-/** node: { name, path, exempt, drive } as the tree and the folder table have them. */
-function openFolderMenu(e, node) {
-  e.preventDefault();
-  e.stopPropagation();
-  const m = $('folder-menu');
+/** A right-click menu's items, in order: item(label, run) adds one; a reason instead of run greys it out. */
+function menuItems() {
   const items = [];
   const item = (label, run, why) => {
     const b = el('button', 'menu-item', label);
@@ -2127,10 +2130,66 @@ function openFolderMenu(e, node) {
     items.push(b);
     return b;
   };
+  return { items, item };
+}
+
+/** Shows the right-click menu: at the pointer, or from the keyboard under the row, its first item focused. */
+function showMenu(e, label, items, hint) {
+  e.preventDefault();
+  e.stopPropagation();
+  const m = $('folder-menu');
+  m.setAttribute('aria-label', label);
+  m.replaceChildren(el('div', 'menu-label', label), ...items);
+  if (hint) m.append(el('div', 'menu-hint', hint));
+  m.classList.remove('hidden');
+  const r = e.currentTarget.getBoundingClientRect();
+  const fromKeys = !e.clientX && !e.clientY;
+  const x = Math.max(8, Math.min(fromKeys ? r.left + 28 : e.clientX, window.innerWidth - m.offsetWidth - 8));
+  const y = Math.max(8, Math.min(fromKeys ? r.bottom : e.clientY, window.innerHeight - m.offsetHeight - 8));
+  m.style.left = x + 'px';
+  m.style.top = y + 'px';
+  menuReturn = e.currentTarget;
+  (items.find((b) => !b.disabled) || items[0]).focus();
+}
+
+/**
+ * File Explorer, from this PC's Heiward: shows the file or folder selected in the folder it's in, or with
+ * `open`, opens a folder itself. The server checks it's still there first.
+ */
+async function revealPath(path, open) {
+  try { await post('/api/reveal', { path, open: !!open }); }
+  catch (e) { showError(e.message); }
+}
+
+async function copyPath(path) {
+  try {
+    await navigator.clipboard.writeText(path);
+    showNotice('Copied ' + path);
+  } catch { showError('The path couldn\'t be copied: the browser didn\'t allow it.'); }
+}
+
+/**
+ * The right-click menu of a file or folder listed on the page (a copy in a set, a developer item, a
+ * folder in the history): show it in File Explorer, or copy its path. `more`: further places it covers.
+ */
+function openPathMenu(e, { name, path, folder, more }) {
+  const { items, item } = menuItems();
+  item('Show in File Explorer', () => revealPath(path, false));
+  if (folder) item('Open in File Explorer', () => revealPath(path, true));
+  item('Copy path', () => copyPath(path));
+  showMenu(e, name, items, more ? 'Also in ' + count(more, 'other place', 'other places') + '; File Explorer shows the first.' : null);
+}
+
+/** node: { name, path, exempt, drive } as the tree and the folder table have them. */
+function openFolderMenu(e, node) {
+  const { items, item } = menuItems();
   item('Open', () => go(node.path));
   const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
   let hint = null;
   const isDrive = card && sameFolder(card.root, node.path) && card.type !== 'folder';
+  // A drive opens in File Explorer; a folder can also be shown selected in the folder it's in.
+  item('Open in File Explorer', () => revealPath(node.path, true));
+  if (!isDrive) item('Show in File Explorer', () => revealPath(node.path, false));
   if (node.exempt) {
     item('Include in scans', () => overrideFolder(node.path, true));
     hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
@@ -2146,18 +2205,8 @@ function openFolderMenu(e, node) {
   } else {
     item('Leave out of scans', () => overrideFolder(node.path, false));
   }
-  m.replaceChildren(el('div', 'menu-label', node.name), ...items);
-  if (hint) m.append(el('div', 'menu-hint', hint));
-  m.classList.remove('hidden');
-  // At the pointer; from the keyboard, under the row.
-  const r = e.currentTarget.getBoundingClientRect();
-  const fromKeys = !e.clientX && !e.clientY;
-  const x = Math.max(8, Math.min(fromKeys ? r.left + 28 : e.clientX, window.innerWidth - m.offsetWidth - 8));
-  const y = Math.max(8, Math.min(fromKeys ? r.bottom : e.clientY, window.innerHeight - m.offsetHeight - 8));
-  m.style.left = x + 'px';
-  m.style.top = y + 'px';
-  menuReturn = e.currentTarget;
-  (items.find((b) => !b.disabled) || items[0]).focus();
+  item('Copy path', () => copyPath(node.path));
+  showMenu(e, node.name, items, hint);
 }
 
 function setupFolderMenu() {
@@ -2520,6 +2569,7 @@ function itemTile(g, item, index, folder) {
   const where = el('div', 'folder muted small', item.folder);
   where.title = item.path;
   body.append(where);
+  tile.addEventListener('contextmenu', (e) => openPathMenu(e, { name: item.name, path: item.path }));
   if (outside) body.append(el('div', 'elsewhere', 'In another folder'));
   const facts = [];
   if (item.width && item.height) facts.push(item.width + ' × ' + item.height);
