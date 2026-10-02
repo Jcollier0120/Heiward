@@ -442,16 +442,18 @@ function renderHeader(s) {
   renderAiBadge(s.ai);
 
   const running = s.scan.running;
+  // Just started: running from the click, though it can't be stopped until its process has begun.
+  const starting = !!s.scan.starting;
   const scanBtn = $('scan-now');
-  scanBtn.disabled = s.setup.needed || s.agent.stopping;
-  scanBtn.textContent = running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
+  scanBtn.disabled = s.setup.needed || s.agent.stopping || starting;
+  scanBtn.textContent = starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
   scanBtn.classList.toggle('secondary', running);
   renderAgent(s);
   // How the scan runs, above the drives; each drive's card shows how far it has got.
   const st = s.scan.status;
   const pace = $('scan-pace');
   pace.classList.toggle('hidden', !running);
-  pace.textContent = !running ? '' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
+  pace.textContent = !running ? '' : starting ? 'Starting the scan…' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
   pace.title = st ? (st.fullSpeed
     ? 'Full speed: every core but one, at normal priority.'
     : 'In the background: Windows\' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
@@ -1707,7 +1709,8 @@ function overlaps(a, b) {
 
 function scanReads(d) {
   if (!state.scan.running) return false;
-  const roots = state.scan.status && state.scan.status.roots;
+  // A scan still starting has no status yet; the server says what it will read.
+  const roots = (state.scan.status && state.scan.status.roots) || state.scan.roots;
   if (!roots) return !d.onRequest;
   return roots.some((r) => overlaps(d.root, r));
 }
@@ -2672,7 +2675,8 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    timer = setTimeout(refresh, s.setup.running ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
+    // Quickly while something is starting, so its progress shows as soon as it has some.
+    timer = setTimeout(refresh, s.setup.running || s.scan.starting ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
   } catch (e) {
     // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
     serverLost = true;
