@@ -187,6 +187,12 @@ namespace HEI.Agent {
 		public List<string> ExcludeExtensions { get; set; } = new();
 		/// <summary>auto (the NPU when there is one), cpu, or npu.</summary>
 		public string AiDevice { get; set; } = "auto";
+		/// <summary>
+		/// The graphics card for GPU work, by name (<see cref="HEI.Core.Utils.GpuAdapter.Key"/>), on a PC with more
+		/// than one: AI matching on the GPU, and decoding videos and iPhone photos. Empty: Windows' default, the
+		/// card driving the main display. Set by the installer and the page's Settings; a scan reads it at its start.
+		/// </summary>
+		public string Gpu { get; set; } = "";
 		/// <summary>Files decoded at once; 0 = automatic (<see cref="ParallelismFor"/>).</summary>
 		public int Parallelism { get; set; }
 		/// <summary>The most of the processor a background scan uses, in percent; 0 = automatic (<see cref="BackgroundCpuCap"/>).</summary>

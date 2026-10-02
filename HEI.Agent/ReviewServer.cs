@@ -19,13 +19,15 @@ using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using HEI.Core.Utils;
 
 namespace HEI.Agent {
 	/// <param name="Batch">Set when the page cleans a whole folder (<paramref name="Folder"/>) set by set: one History row for them all.</param>
 	sealed record RecycleRequest(List<string> Paths, string? Batch = null, string? Folder = null);
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
-	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null);
+	/// <param name="Gpu">The graphics card for GPU work, by name (<see cref="AgentConfig.Gpu"/>); "" for Windows' default.</param>
+	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null);
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
@@ -167,7 +169,19 @@ namespace HEI.Agent {
 			// The page's own settings: history on or off, and how hard scans work.
 			app.MapPost("/api/settings", (SettingsRequest request) => {
 				if (request.ScanSpeed != null && !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return Results.BadRequest(new { error = "Unknown scan speed." });
+				string? gpu = null;
+				if (request.Gpu != null) {
+					// A scan keeps the card it started on (its decoders and AI session are open on it): the next one would
+					// take the new one, but one starting now could go either way. So not while one runs or starts.
+					if (ScanBusy() || StoreSetup.Running) return Results.Conflict(new { error = GpuLockedText });
+					gpu = request.Gpu.Trim();
+					if (gpu.Length > 0 && GpuAdapters.Find(gpu, Gpus()) == null) return Results.BadRequest(new { error = "That graphics card isn't on this PC." });
+				}
 				AgentConfig saved = AgentConfig.Load();
+				if (gpu != null) {
+					saved.Gpu = cfg.Gpu = GpuAdapters.Find(gpu, Gpus())?.Key ?? "";
+					AgentPaths.AppendLog($"settings: GPU work on {(saved.Gpu.Length > 0 ? "the " + saved.Gpu : "Windows' default graphics card")}");
+				}
 				if (request.KeepHistory is bool keep) saved.KeepHistory = cfg.KeepHistory = keep;
 				if (request.ScanSpeed is string speed) saved.ScanSpeed = cfg.ScanSpeed = speed;
 				if (request.MoreMemory is bool more) saved.MoreMemory = cfg.MoreMemory = more;
@@ -176,7 +190,7 @@ namespace HEI.Agent {
 				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
 					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here") +
 					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}");
-				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn }, AgentConfig.Json);
+				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
 			app.MapPost("/api/setup", (SetupRequest request) => {
@@ -396,6 +410,43 @@ namespace HEI.Agent {
 		/// <summary>The scan and the developer check this page started, until each holds its lock (see <see cref="Launch"/>).</summary>
 		static readonly Launch ScanLaunch = new(), DevLaunch = new();
 
+		/// <summary>Why the graphics card can't change now; the page says the same next to its disabled choice.</summary>
+		internal const string GpuLockedText = "A scan is running on the graphics card. Let it finish, or stop it, to choose another one.";
+
+		static readonly object gpusLock = new();
+		static IReadOnlyList<GpuAdapter> gpus = Array.Empty<GpuAdapter>();
+		static long gpusAt = -1;
+
+		/// <summary>The graphics cards, looked up at most once a minute: the page asks on every poll, and cards rarely come or go.</summary>
+		static IReadOnlyList<GpuAdapter> Gpus() {
+			lock (gpusLock) {
+				if (gpusAt < 0 || Environment.TickCount64 - gpusAt > 60_000) {
+					gpus = GpuAdapters.List();
+					gpusAt = Environment.TickCount64;
+				}
+				return gpus;
+			}
+		}
+
+		/// <summary>
+		/// For the page: the cards (the one Windows uses by default first in DXGI's list), the one to suggest, and
+		/// whether the choice is locked (a scan running, or the Store version's setup).
+		/// </summary>
+		static object GpuView(AgentConfig cfg) {
+			IReadOnlyList<GpuAdapter> cards = Gpus();
+			string chosen = cfg.Gpu ?? "";
+			return new {
+				cards = cards.Select(g => new { key = g.Key, memory = (long)g.DedicatedMemory }),
+				windowsDefault = cards.Count > 0 ? cards.MinBy(g => g.Index)!.Key : null,
+				recommended = GpuAdapters.Recommended(cards)?.Key,
+				chosen,
+				// A card the settings name that isn't on this PC now: scans use Windows' default meanwhile.
+				missing = chosen.Length > 0 && GpuAdapters.Find(chosen, cards) == null,
+				locked = ScanBusy() || StoreSetup.Running,
+				lockedText = GpuLockedText,
+			};
+		}
+
 		/// <summary>A scan holds scan.lock, or one this page started is still starting.</summary>
 		static bool ScanBusy() {
 			bool locked = AgentScanner.IsRunning();
@@ -467,6 +518,7 @@ namespace HEI.Agent {
 				// Settings' About: this build ("1.5.0+<commit>") and where it came from.
 				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current },
 				ai = AiStatus.Load(),
+				gpu = GpuView(cfg),
 				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
 				schedule = new {
 					next = Scheduler.NextRun(), everyMinutes = ScanEveryMinutes(cfg),

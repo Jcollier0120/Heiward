@@ -226,6 +226,7 @@ namespace HEI.Agent {
 				IncludeSubDirectories = true,
 				UseAiMatching = true,
 				AiDevice = Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto,
+				Gpu = cfg.Gpu,
 				SkipCloudPlaceholders = true,
 				// The listing just saw every file; asking the disk about each one again could wake a sleeping drive.
 				ListingProvesExistence = true,

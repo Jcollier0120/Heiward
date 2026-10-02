@@ -158,18 +158,21 @@ var speedOpt = new Option<string?>("--scan-speed") { Description = "How hard sca
 speedOpt.AcceptOnlyFromAmong(AgentConfig.ScanSpeeds);
 var installNoBrowser = new Option<bool>("--no-browser") { Description = "Don't open the review page when done." };
 var removeGitHubOpt = new Option<bool>("--remove-github-copy") { Description = "The Store version: remove Heiward installed from GitHub (its shortcuts, Apps & Features entry and folder). Settings and history stay." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, removeGitHubOpt, reuseFrom };
+var gpuOpt = new Option<string?>("--gpu") { Description = "On a PC with more than one graphics card, the one for GPU work (AI matching on the GPU, decoding videos and iPhone photos): its number as the installer lists them, its name, or default (Windows' default). Default: ask; with --yes, the one with the most memory of its own." };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, removeGitHubOpt, reuseFrom, gpuOpt };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
 	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom), r.GetValue(speedOpt), openPage: !r.GetValue(installNoBrowser),
-	removeGitHubCopy: r.GetValue(removeGitHubOpt)));
+	removeGitHubCopy: r.GetValue(removeGitHubOpt), gpu: r.GetValue(gpuOpt)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime).
 var probeDevice = new Option<AiDevice>("--device") { Description = "npu, gpu or cpu.", DefaultValueFactory = _ => AiDevice.Auto };
-var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice };
+var probeGpu = new Option<string?>("--gpu") { Description = "The graphics card, by name (settings.json's gpu). Default: Windows' default." };
+var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice, probeGpu };
 probe.Hidden = true;
 probe.SetAction(r => {
 	AiDevice wanted = r.GetValue(probeDevice);
+	GpuAdapters.Choose(r.GetValue(probeGpu));
 	using var embedder = OnnxEmbedder.Create(wanted);
 	embedder.EmbedBatch(new[] { new byte[OnnxEmbedder.InputSide * OnnxEmbedder.InputSide * 3] });
 	Console.WriteLine($"The AI model runs on the {embedder.DeviceName}.");
@@ -200,6 +203,12 @@ status.SetAction(async (r, _) => {
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
 	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} (checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
+	IReadOnlyList<GpuAdapter> cards = GpuAdapters.List();
+	bool gpuSet = !string.IsNullOrWhiteSpace(cfg.Gpu);
+	if (cards.Count > 1 || gpuSet)
+		Console.WriteLine($"Graphics card: {(gpuSet ? cfg.Gpu : "Windows' default")}" +
+			(gpuSet && GpuAdapters.Find(cfg.Gpu, cards) == null ? " (not on this PC now: Windows' default instead)" : "") +
+			$"; this PC has {(cards.Count == 0 ? "none Windows lists" : string.Join(", ", cards.Select(c => c.Key)))}");
 	var report = Report.Load();
 	if (report == null) Console.WriteLine(Report.IsStale() ? "Heiward was updated: the next scan finds the sets again with this version ('hei scan')." : "No scan yet: run 'hei scan'.");
 	else {

@@ -527,7 +527,9 @@ button { font: inherit; color: inherit; }
 .auto-foot { padding: 12px 0; display: grid; gap: 6px; font-size: 13px; }
 .about a { color: var(--accent-text); }
 .auto-wait { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
-.auto-wait select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+.auto-wait select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; max-width: 100%; }
+.auto-wait select:disabled { opacity: 0.6; cursor: not-allowed; }
+.gpu-note { color: var(--warn); margin-top: 4px; }
 .auto-problems { margin-top: 4px; }
 .auto-problems summary { cursor: pointer; }
 .auto-problems ul { margin: 4px 0 0; padding-left: 18px; }

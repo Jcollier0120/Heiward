@@ -138,7 +138,8 @@ namespace HEI.Core {
 		long photoTicks, videoTicks;
 		/// <summary>
 		/// What decoding cost the last search, e.g. "Read 4,800 photos in 412 worker-s (86 ms each) and 210
-		/// videos in 96 worker-s (457 ms each)"; null when nothing was decoded. Worker-seconds add up the
+		/// videos in 96 worker-s (457 ms each)", and the graphics card when the settings name one
+		/// (<see cref="Utils.GpuAdapters.Describe"/>); null when nothing was decoded. Worker-seconds add up the
 		/// parallel workers' time, so they exceed the wall-clock time.
 		/// </summary>
 		public string? DecodeSummary {
@@ -148,7 +149,7 @@ namespace HEI.Core {
 					parts.Add($"{photosRead:N0} photos in {Seconds(photoTicks):N0} worker-s ({Seconds(photoTicks) * 1000 / photosRead:N0} ms each{FFTools.FFmpegNative.HeifHardwareLane.Describe()})");
 				if (videosRead > 0)
 					parts.Add($"{videosRead:N0} videos in {Seconds(videoTicks):N0} worker-s ({Seconds(videoTicks) * 1000 / videosRead:N0} ms each{FFTools.FFmpegNative.HardwareVideoDecode.Describe()})");
-				return parts.Count == 0 ? null : "Read " + string.Join(" and ", parts);
+				return parts.Count == 0 ? null : "Read " + string.Join(" and ", parts) + Utils.GpuAdapters.Describe();
 				static double Seconds(long ticks) => ticks / (double)Stopwatch.Frequency;
 			}
 		}
@@ -552,6 +553,8 @@ namespace HEI.Core {
 			AiSummary = null;
 			photosRead = videosRead = 0;
 			photoTicks = videoTicks = 0;
+			// Before anything opens a GPU device: the card the settings name, for this scan.
+			Utils.GpuAdapters.Choose(Settings.Gpu);
 			FFTools.FFmpegNative.HardwareVideoDecode.ResetForScan();
 			FFTools.FFmpegNative.HeifHardwareLane.ResetForScan();
 			ResetExcludedLogging();

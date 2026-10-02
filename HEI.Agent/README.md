@@ -28,6 +28,7 @@ A scan you start with **Scan now**, and a scheduled one while the review page is
 - **Memory.** Each video on the GPU holds up to half a gigabyte for a 4K one. With **Use more memory to scan faster** on (`moreMemory`, the default), a background scan decodes one video per 4 GB of memory at once, up to 8; off, two.
 - **Games.** While a game or another 3D program keeps the graphics chip busy, or anything runs full screen, a scan makes way: it runs in the background with less memory until that's closed, whatever the settings say. `heiward.log` says when.
 - **Driver crashes.** If a scan ever stops while the GPU decodes, the next one decodes on the processor from then on and says so in the log; delete `gpu-decoding-off.txt` in the database folder to try the GPU again.
+- **More than one graphics card.** A desktop with a graphics card and the processor's graphics, or two cards, uses one for all of this, and for AI matching when that runs on the GPU. The installer asks which one, suggesting the one with the most memory of its own. Settings on the page changes it at any time, except while a scan runs: a scan keeps the card it started on, so the choice waits until it finishes or you stop it. settings.json keeps the card by name (`gpu`). If that card is gone, scans use Windows' default card and the page says so.
 
 What a rescan reads from the disk:
 - **Only what changed, as the drive's change journal says.** NTFS records every file created, changed, renamed or deleted, and Heiward reads that record as a normal user. That tells it which folders changed since the last scan.
@@ -72,7 +73,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 
 **Opening or reloading the page doesn't scan.** When the page starts (opened, reopened after it exited, or restarted), it starts a scan only if one is due by the schedule: the last scan, finished or stopped, plus the interval between scans (`scanEveryMinutes`, at least 15). Otherwise it shows the last scan's results, and the title bar says when the next scan is due. A scan you stop isn't started again by the next reload. With scans only when you press Scan now (`scanEveryMinutes: 0`), the page never starts one. Paused scans and the Store version's setup start none either.
 
-Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, `--scan-speed background` or `full` for how hard scans work, and `--no-browser` to leave the browser alone: the first scan then starts without a window, and the page opens only when you open it). It asks nothing, and exits with 0 once installed, or with another code and the reason otherwise. Preview every step without changing anything: `hei install --dry-run`.
+Unattended: `hei install --yes --device gpu` (add `--on-demand` for no scheduled scans, `--scan-speed background` or `full` for how hard scans work, `--gpu` with a graphics card's number or name on a PC with more than one (without it, the one with the most memory of its own), and `--no-browser` to leave the browser alone: the first scan then starts without a window, and the page opens only when you open it). It asks nothing, and exits with 0 once installed, or with another code and the reason otherwise. Preview every step without changing anything: `hei install --dry-run`.
 
 Heiward does not change your browser's startup pages. Browsers protect those, and changing them is what browser hijackers do. The sign-in step opens a normal tab instead.
 
@@ -220,6 +221,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 | `onRequestDrives` | none | Drives scanned only when you ask (`D:\`): right-click a drive on the page, **Scan only when I ask**. Scheduled scans, the home page's Scan now, automatic cleanup and the developer check leave them alone, not reading them at all, so an archive disk can sleep. Their photos and videos as their last scan found them still count: their sets stay listed, and a copy of one elsewhere is still found. Scan one from its own page (**Scan this drive now**, or `hei scan --drive D:\`) |
 | `excludeExtensions` | none | e.g. `[".heic"]` |
 | `aiDevice` | `auto` | `auto` (NPU, else CPU), `npu`, `gpu`, `cpu` |
+| `gpu` | `""` | With more than one graphics card, the one for GPU work, by name as Windows lists it (a second card of the same model: `NVIDIA GeForce RTX 4070 #2`). It runs AI matching on the GPU, and decodes videos and iPhone photos. Empty: Windows' default, the card driving the main display. The installer and the page's Settings set it; a scan reads it when it starts |
 | `scanEveryMinutes` | 60 with an NPU, 360 on a GPU or CPU | `0`: no scheduled scans, only "Scan now". Only new and changed files are processed |
 | `scanOnBattery`, `minBatteryPercent` | true, 30 | |
 | `scanSpeed` | `auto` | `auto`: Scan now, and scheduled scans while the review page is open, at full speed; other scans in the background. `background`: every scan in the background. `full`: every scan at full speed, scheduled ones too |
@@ -250,7 +252,7 @@ hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators,
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
 hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--after-days N]
 hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
-hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
+hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--gpu <number|name|default>] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
 ```
 
