@@ -566,13 +566,30 @@ function renderHome(s) {
 
 // ---------------------------------------------------------------- settings
 
-// Every switch in one place: how hard scans work, automatic cleanup, the history. The rest of
-// settings.json (folders, file types, the AI device) is listed with where to change it.
+// Every switch in one place: how hard scans work, automatic cleanup, the history, developer mode. The
+// rest of settings.json (folders, file types, the AI device) is listed with where to change it.
 function renderSettings(s) {
   renderScanCard(s);
   renderAutoCard(s);
   renderHistoryCard(s);
+  renderDevModeCard(s);
   renderMoreCard(s);
+}
+
+/** Developer mode: the daily developer check, Developer cleanup on the home page, and its automatic cleanup, or none of it. */
+function renderDevModeCard(s) {
+  const on = s.dev.enabled;
+  const card = el('div', 'auto-card');
+  const row = el('div', 'auto-row');
+  row.append(toggleSwitch(on, 'Developer mode', settingsBusy, (next) => saveSettings({ developerMode: next })));
+  const what = 'build outputs and worktrees of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and branches already merged';
+  const text = el('div', 'auto-text');
+  text.append(el('div', 'auto-title', 'Developer mode'), el('div', 'muted small', on
+    ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. They\'re under Developer cleanup on the home page, and automatic cleanup can take them.'
+    : 'Off: nothing of it is checked or shown. For developers: also find what development tools recreate, ' + what + '.'));
+  row.append(text);
+  card.append(row);
+  $('devmode-card').replaceChildren(card);
 }
 
 function renderHistoryCard(s) {
@@ -2591,6 +2608,11 @@ function groupCard(g, folder) {
 async function renderRoute() {
   if (!state) return;
   if (state.setup.needed) { renderSetup(state); return; }
+  // Developer mode is off (Settings): its pages aren't there, so a link to one lands home.
+  if (route.view === 'dev' && !state.dev.enabled) {
+    history.replaceState(null, '', '#/');
+    route = parseRoute();
+  }
   renderCrumbs();
   const folder = route.view === 'folder';
   $('setup').classList.add('hidden');

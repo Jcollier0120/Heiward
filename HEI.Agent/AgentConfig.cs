@@ -169,10 +169,12 @@ namespace HEI.Agent {
 		public bool Toast { get; set; } = true;
 		/// <summary>
 		/// Developer mode: also look for build outputs, worktrees, caches, emulators and temp files that
-		/// tools recreate. "auto" checks once a day and shows the section when there's something to show;
-		/// "off" never checks.
+		/// tools recreate, once a day, and show them on the page. "on" or "off", the switch in the page's
+		/// Settings. Off, the page shows nothing of it and nothing is checked. Settings files from before
+		/// the switch say "auto", read as on only where automatic cleanup of developer leftovers is on, so
+		/// that keeps working (<see cref="Load"/>).
 		/// </summary>
-		public string DeveloperMode { get; set; } = "auto";
+		public string DeveloperMode { get; set; } = "off";
 		/// <summary>A project untouched this many days has its build outputs ticked for cleaning.</summary>
 		public int StaleProjectDays { get; set; } = 30;
 		/// <summary>Temp files untouched this many days are ticked for cleaning.</summary>
@@ -186,7 +188,7 @@ namespace HEI.Agent {
 		AutoCleanConfig autoClean = new();
 
 		[JsonIgnore]
-		public bool DeveloperModeOn => !string.Equals(DeveloperMode, "off", StringComparison.OrdinalIgnoreCase);
+		public bool DeveloperModeOn => string.Equals(DeveloperMode, "on", StringComparison.OrdinalIgnoreCase);
 
 		[JsonIgnore]
 		public bool AlwaysInBackground => string.Equals(ScanSpeed, "background", StringComparison.OrdinalIgnoreCase);
@@ -216,12 +218,21 @@ namespace HEI.Agent {
 		public static AgentConfig Load() {
 			try {
 				if (File.Exists(AgentPaths.Config))
-					return JsonSerializer.Deserialize<AgentConfig>(File.ReadAllText(AgentPaths.Config), Json) ?? new AgentConfig();
+					return FromJson(File.ReadAllText(AgentPaths.Config));
 			}
 			catch (Exception e) {
 				AgentPaths.AppendLog($"settings.json unreadable, using defaults: {e.Message}");
 			}
 			return new AgentConfig();
+		}
+
+		internal static AgentConfig FromJson(string json) {
+			AgentConfig cfg = JsonSerializer.Deserialize<AgentConfig>(json, Json) ?? new AgentConfig();
+			// Before the switch, "auto" checked every PC for developer leftovers. It stays on where it
+			// cleans them up by itself; elsewhere it's off until it's turned on.
+			if (string.Equals(cfg.DeveloperMode, "auto", StringComparison.OrdinalIgnoreCase))
+				cfg.DeveloperMode = cfg.AutoClean.Developer ? "on" : "off";
+			return cfg;
 		}
 
 		public void Save() => AgentPaths.WriteAtomic(AgentPaths.Config, JsonSerializer.Serialize(this, Json));

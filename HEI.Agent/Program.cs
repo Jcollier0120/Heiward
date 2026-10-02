@@ -253,6 +253,10 @@ dev.SetAction(r => {
 		foreach (PruneKept k in pruned.Kept) Console.WriteLine($"Kept {k.Branch}: {k.Reason}");
 		return 0;
 	}
+	if (!cfg.DeveloperModeOn) {
+		Console.Error.WriteLine("Developer mode is off: turn it on in the review page's Settings, or set \"developerMode\": \"on\" in " + AgentPaths.Config);
+		return 1;
+	}
 	DevReport? report = r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load();
 	if (report == null) {
 		Console.WriteLine("No developer check yet: run 'hei dev --scan'.");
