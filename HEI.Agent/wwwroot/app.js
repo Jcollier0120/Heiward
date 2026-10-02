@@ -447,19 +447,15 @@ function renderHeader(s) {
   scanBtn.textContent = running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
   scanBtn.classList.toggle('secondary', running);
   renderAgent(s);
-  $('progress').classList.toggle('hidden', !running);
+  // How the scan runs, above the drives; each drive's card shows how far it has got.
   const st = s.scan.status;
-  const pace = st ? (st.fullSpeed ? ' · full speed' : ' · in the background') : '';
-  if (running && st && st.max > 0) {
-    $('progress-bar').style.width = Math.min(100, (100 * st.position) / st.max) + '%';
-    $('progress-text').textContent = st.stage + ' ' + st.position.toLocaleString() + ' / ' + st.max.toLocaleString() + pace;
-  } else {
-    $('progress-bar').style.width = running ? '5%' : '0';
-    $('progress-text').textContent = running ? (st ? st.stage : 'Starting') + '…' + pace : '';
-  }
-  $('progress-text').title = st ? (st.fullSpeed
+  const pace = $('scan-pace');
+  pace.classList.toggle('hidden', !running);
+  pace.textContent = !running ? '' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
+  pace.title = st ? (st.fullSpeed
     ? 'Full speed: every core but one, at normal priority.'
     : 'In the background: Windows\' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
+  renderDriveProgress(s);
   $('notes').replaceChildren(...((r && r.notes) || []).map((n) => el('li', null, n)));
 }
 
@@ -570,13 +566,30 @@ function renderHome(s) {
 
 // ---------------------------------------------------------------- settings
 
-// Every switch in one place: how hard scans work, automatic cleanup, the history. The rest of
-// settings.json (folders, file types, the AI device) is listed with where to change it.
+// Every switch in one place: how hard scans work, automatic cleanup, the history, developer mode. The
+// rest of settings.json (folders, file types, the AI device) is listed with where to change it.
 function renderSettings(s) {
   renderScanCard(s);
   renderAutoCard(s);
   renderHistoryCard(s);
+  renderDevModeCard(s);
   renderMoreCard(s);
+}
+
+/** Developer mode: the daily developer check, Developer cleanup on the home page, and its automatic cleanup, or none of it. */
+function renderDevModeCard(s) {
+  const on = s.dev.enabled;
+  const card = el('div', 'auto-card');
+  const row = el('div', 'auto-row');
+  row.append(toggleSwitch(on, 'Developer mode', settingsBusy, (next) => saveSettings({ developerMode: next })));
+  const what = 'build outputs and worktrees of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and branches already merged';
+  const text = el('div', 'auto-text');
+  text.append(el('div', 'auto-title', 'Developer mode'), el('div', 'muted small', on
+    ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. They\'re under Developer cleanup on the home page, and automatic cleanup can take them.'
+    : 'Off: nothing of it is checked or shown. For developers: also find what development tools recreate, ' + what + '.'));
+  row.append(text);
+  card.append(row);
+  $('devmode-card').replaceChildren(card);
 }
 
 function renderHistoryCard(s) {
@@ -1683,13 +1696,85 @@ async function cleanDev(picked) {
  * The running scan reads this drive (or folder): its card waits for the scan's end. Until the scan says which
  * it reads, every drive but those scanned only when asked.
  */
+const normRoot = (p) => p.toLowerCase().replace(/\\+$/, '');
+
+/** The same folder, or one inside the other: a card's drive or folder, and what a scan reads on it. */
+function overlaps(a, b) {
+  a = normRoot(a);
+  b = normRoot(b);
+  return a === b || a.startsWith(b + '\\') || b.startsWith(a + '\\');
+}
+
 function scanReads(d) {
   if (!state.scan.running) return false;
   const roots = state.scan.status && state.scan.status.roots;
   if (!roots) return !d.onRequest;
-  const norm = (p) => p.toLowerCase().replace(/\\+$/, '');
-  const card = norm(d.root);
-  return roots.map(norm).some((r) => r === card || r.startsWith(card + '\\') || card.startsWith(r + '\\'));
+  return roots.some((r) => overlaps(d.root, r));
+}
+
+/**
+ * How far the scan has got on this card's drive: [what it's doing, fraction done], the fraction null
+ * while there's nothing to count (the bar then sweeps). A scan finds the files on every drive at once,
+ * checks each drive's new and changed files at that drive's own pace, then compares them all together.
+ */
+function driveProgress(d, st) {
+  if (!st) return ['Starting…', null];
+  if (st.phase === 'listing') {
+    const listed = new Set((st.listed || []).map(normRoot));
+    const roots = (st.roots || []).filter((r) => overlaps(d.root, r));
+    return roots.length && roots.every((r) => listed.has(normRoot(r))) ? ['Files found · waiting for the other drives', 0] : ['Finding photos and videos…', null];
+  }
+  if (st.phase === 'checking') {
+    if (!st.drives) return ['Getting ready to check the files…', null];
+    const mine = st.drives.filter((x) => overlaps(d.root, x.root));
+    const done = mine.reduce((n, x) => n + x.done, 0), total = mine.reduce((n, x) => n + x.total, 0);
+    const othersBusy = st.drives.some((x) => !mine.includes(x) && x.done < x.total);
+    const waiting = othersBusy ? ' · waiting for the other drives' : st.stage && !/^checking files$/i.test(st.stage) ? ' · ' + st.stage : '';
+    if (!total) return ['No photos or videos to check' + waiting, 1];
+    // Folders on one drive share its count: their cards say whose it is.
+    const shared = mine.length === 1 && state.drives.filter((c) => c.scanned && overlaps(c.root, mine[0].root)).length > 1;
+    const where = shared ? ' on ' + mine[0].root : '';
+    if (done < total) return ['Checking files' + where + ' · ' + done.toLocaleString() + ' of ' + total.toLocaleString(), done / total];
+    return ['Checked ' + count(total, 'file', 'files') + where + waiting, 1];
+  }
+  if (st.phase === 'comparing') {
+    const what = st.stage ? st.stage[0].toUpperCase() + st.stage.slice(1) : 'Comparing';
+    return st.max > 0 ? [what, st.position / st.max] : [what + '…', null];
+  }
+  return ['Finishing the report…', null];
+}
+
+const PHASE_TIPS = {
+  listing: 'Step 1 of 3: finding the photos and videos. Where the drive\'s change journal says what changed, only those folders are listed again.',
+  checking: 'Step 2 of 3: reading new and changed files, each drive at its own pace. Files checked before go by quickly.',
+  comparing: 'Step 3 of 3: comparing the files of every drive together, so this bar is the same on each.',
+  finishing: 'Step 3 of 3: making the report, with byte-for-byte checks of the copies.',
+};
+
+/** A card's progress: fills its box, or updates the one there in place so the bar glides. */
+function fillDriveProgress(box, d, st) {
+  const [text, fraction] = driveProgress(d, st);
+  if (!box.firstChild) {
+    const line = el('div', 'dp-line small');
+    line.append(el('span', 'dp-text'), el('span', 'dp-pct'));
+    const bar = el('div', 'dp-bar');
+    bar.append(el('div', 'dp-fill'));
+    box.append(line, bar);
+  }
+  const sweep = fraction === null;
+  box.title = (st && PHASE_TIPS[st.phase]) || '';
+  box.querySelector('.dp-text').textContent = text;
+  box.querySelector('.dp-pct').textContent = sweep || fraction === 0 ? '' : Math.floor(100 * Math.min(1, fraction)) + '%';
+  box.querySelector('.dp-bar').classList.toggle('sweep', sweep);
+  box.querySelector('.dp-fill').style.width = sweep ? '' : 100 * Math.min(1, fraction) + '%';
+}
+
+/** Every poll while a scan runs: the drive cards' progress, without rebuilding the cards. */
+function renderDriveProgress(s) {
+  for (const box of $('drives').querySelectorAll('.drive-progress')) {
+    const d = s.drives.find((x) => x.root === box.dataset.root);
+    if (d && s.scan.running) fillDriveProgress(box, d, s.scan.status);
+  }
 }
 
 function driveCard(d) {
@@ -1716,7 +1801,11 @@ function driveCard(d) {
 
   const scan = el('div', 'drive-scan');
   if (d.scanned && scanReads(d)) {
-    scan.append(el('div', 'muted small', 'Details appear once the scan is finished.'));
+    // Its details wait for the scan's end; meanwhile, how far the scan has got on it.
+    const box = el('div', 'drive-progress');
+    box.dataset.root = d.root;
+    fillDriveProgress(box, d, state.scan.status);
+    scan.append(box);
   } else if (d.scanned && d.scan) {
     const line = el('div', 'scan-line small');
     line.append(icon('check'));
@@ -2522,6 +2611,11 @@ function groupCard(g, folder) {
 async function renderRoute() {
   if (!state) return;
   if (state.setup.needed) { renderSetup(state); return; }
+  // Developer mode is off (Settings): its pages aren't there, so a link to one lands home.
+  if (route.view === 'dev' && !state.dev.enabled) {
+    history.replaceState(null, '', '#/');
+    route = parseRoute();
+  }
   renderCrumbs();
   const folder = route.view === 'folder';
   $('setup').classList.add('hidden');
@@ -2672,6 +2766,8 @@ $('nav-up').append(icon('up'));
 $('nav-back').addEventListener('click', () => history.back());
 $('nav-fwd').addEventListener('click', () => history.forward());
 $('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } else if (route.view === 'settings') go(null); });
+// Heiward's name in the title bar goes home, wherever the page is.
+$('brand').addEventListener('click', (e) => { e.preventDefault(); go(null); $('home').scrollTop = 0; });
 $('settings-btn').append(icon('gear'));
 $('settings-btn').addEventListener('click', () => { location.hash = route.view === 'settings' ? '#/' : '#/settings'; });
 $('dev-nav-toggle').addEventListener('click', () => {

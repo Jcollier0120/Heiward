@@ -25,7 +25,7 @@ namespace HEI.Agent {
 	sealed record RecycleRequest(List<string> Paths, string? Batch = null, string? Folder = null);
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
-	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null);
+	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null);
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
@@ -168,11 +168,12 @@ namespace HEI.Agent {
 				if (request.KeepHistory is bool keep) saved.KeepHistory = cfg.KeepHistory = keep;
 				if (request.ScanSpeed is string speed) saved.ScanSpeed = cfg.ScanSpeed = speed;
 				if (request.MoreMemory is bool more) saved.MoreMemory = cfg.MoreMemory = more;
+				if (request.DeveloperMode is bool dev) saved.DeveloperMode = cfg.DeveloperMode = dev ? "on" : "off";
 				saved.Save();
 				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
 					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here") +
-					(saved.MoreMemory ? ", with more memory" : ", with less memory"));
-				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory }, AgentConfig.Json);
+					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}");
+				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
 			app.MapPost("/api/setup", (SetupRequest request) => {
@@ -224,26 +225,29 @@ namespace HEI.Agent {
 				StartDetached("scan", "--drive", drive);
 				return Results.Accepted();
 			});
+			// Developer mode off (Settings): its part of the page is hidden, and its requests are refused.
+			var devApi = app.MapGroup("/api/dev").AddEndpointFilter(async (context, next) =>
+				cfg.DeveloperModeOn ? await next(context) : Results.Conflict(new { error = "Developer mode is off: turn it on in Settings." }));
 			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
-			app.MapGet("/api/dev", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
-			app.MapPost("/api/dev/projects", (List<DevProject> projects) => {
+			devApi.MapGet("", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
+			devApi.MapPost("/projects", (List<DevProject> projects) => {
 				var saved = AgentConfig.Load();
 				saved.DevProjects = DevProject.Normalize(projects);
 				saved.Save();
 				return Results.Json(saved.DevProjects, AgentConfig.Json);
 			});
-			app.MapPost("/api/dev/scan", () => {
+			devApi.MapPost("/scan", () => {
 				if (DevScan.IsRunning()) return Results.Conflict(new { error = "A developer check is already running." });
 				StartDetached("dev", "--scan");
 				return Results.Accepted();
 			});
-			app.MapPost("/api/dev/items/{id}/clean", (string id) => {
+			devApi.MapPost("/items/{id}/clean", (string id) => {
 				DevItem? item = DevReport.Load()?.Categories.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == id);
 				if (item == null) return Results.NotFound(new { error = "That item is no longer in the list; check again." });
 				if (item.Blocked != null) return Results.Conflict(new { error = item.Blocked });
 				return Guarded(() => Results.Json(actions.Clean(item), AgentConfig.Json));
 			});
-			app.MapPost("/api/dev/repos/{id}/prune", (string id) => {
+			devApi.MapPost("/repos/{id}/prune", (string id) => {
 				RepoBranches? repo = DevReport.Load()?.Repositories.FirstOrDefault(r => r.Id == id);
 				if (repo == null) return Results.NotFound(new { error = "That repository is no longer in the list; check again." });
 				return Guarded(() => Results.Json(actions.Prune(repo, null), AgentConfig.Json));

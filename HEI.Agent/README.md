@@ -114,7 +114,7 @@ A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a fil
 
 ## Automatic cleanup
 
-Once you trust what the page ticks, you can let Heiward clean it up by itself. The **Automatic cleanup** card in the review page's Settings (the gear in the title bar) has a switch for duplicates and one for developer leftovers, both off until you turn them on (or `hei auto --duplicates on --developer on`).
+Once you trust what the page ticks, you can let Heiward clean it up by itself. The **Automatic cleanup** card in the review page's Settings (the gear in the title bar) has a switch for duplicates and, in [developer mode](#developer-mode), one for developer leftovers, both off until you turn them on (or `hei auto --duplicates on --developer on`).
 
 - **When:** after each scan, once something has been listed for 3 days (`afterDays`), counted from when you turned it on at the earliest. Each set and item on the page says when it goes, with a **Leave it** button. Developer items go right after the daily developer check, so "untouched for 30 days" is that day's answer.
 - **Duplicates:** plain copies of photos (identical, or the same picture pixel for pixel) and byte-for-byte identical videos go to the Recycle Bin, through the same checks as the page's button. It leaves for you:
@@ -153,7 +153,9 @@ If a wider rule of yours covers it (`Old*`, or a folder above it), the page asks
 
 ## Developer mode
 
-Once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there, or turn on [automatic cleanup](#automatic-cleanup). Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
+Developer mode is off until you turn it on with the **Developer mode** switch in the review page's Settings (or `"developerMode": "on"`). Off, nothing of it is checked or shown: no Developer cleanup on the home page, and no developer leftovers in automatic cleanup. Settings from before the switch said `"auto"`, which checked every PC: it now stays on only where automatic cleanup of developer leftovers is on.
+
+On, once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them under **Developer cleanup** on the review page. Nothing is cleaned until you press the button there, or turn on [automatic cleanup](#automatic-cleanup). Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
 
 The page is organised by project:
 - **Each repository** has its own page, with a section per cleanup area: build outputs, worktrees and merged branches.
@@ -170,7 +172,7 @@ Tick items anywhere; a selection bar at the bottom cleans them all at once.
 | Android emulators and system images | the AVD folder and the SDK's `system-images` | system images no emulator uses. Emulators themselves aren't ticked, since they hold app data. Blocked while an emulator runs |
 | Temp files and crash dumps | `%TEMP%` entries untouched for 7 days (`tempOlderThanDays`), `%LOCALAPPDATA%\CrashDumps` | yes |
 
-Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `hei dev` shows the last check; `hei dev --scan` checks now. Set `"developerMode": "off"` to turn it off.
+Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `hei dev` shows the last check; `hei dev --scan` checks now (both in developer mode).
 
 **Merged branches.** Each repository with a remote gets a **Prune** button:
 - It fetches first (`git fetch --prune`), then deletes the local branches already merged into the remote's default branch (`origin/HEAD`, else `main` or `master`).
@@ -212,7 +214,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 | `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only) |
 | `toast` | true | A notification when a scan finds something new |
-| `developerMode` | `auto` | `off`: no developer cleanup. `auto`: check once a day |
+| `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
 | `autoClean` | off | [Automatic cleanup](#automatic-cleanup): `duplicates` and `developer` (true/false), `developerKinds` (`branches`, `temp`, `buildOutputs`, `worktrees`, `systemImages`), `afterDays` (3; 0 to 90) |
 
@@ -260,12 +262,15 @@ It's laid out like File Explorer, so you can go where you care most instead of s
   - A folder's cleanup, or its **Skip all**, is one line.
   - **Clear history** empties the list and forgets the file names in it. Sets you kept stay hidden, and "freed so far" stays.
   - **Keep a history** off (in Settings) lists nothing new.
+  - **While a scan runs,** each drive it reads shows how far it has got: finding the files, then checking them, which every drive does at its own pace ("Checking files · 1,234 of 5,678"), then comparing them all together. A line above the cards says whether it runs in the background or at full speed. Drives it leaves alone (nothing changed, or scanned only when you ask) keep their details.
 - **A folder:** the navigation tree on the left and the folder on the right:
   - Its subfolders in a details view you can sort by space to free, with only the duplicates that touch this folder below.
   - Copies and look-alikes are shown separately.
   - A copy kept in another folder is dimmed and says so.
   - One button moves every ticked copy in the folder to the Recycle Bin, keeping the kept file of each set.
 - **Exempt folders** (system, programs, games, code, other accounts) are greyed out with the reason. Many of them together fold into one row. Folders without photos or videos are hidden behind a "show" link.
+
+**Heiward's name** in the title bar goes back to This PC from anywhere.
 
 **Where AI matching runs:** a badge in the title bar. It's green ("NPU ready", then "Running on the NPU" once a scan has used it). Otherwise it names the device and why: "No NPU available", "Unsupported NPU" (an NPU this version can't drive yet), "NPU not set up" (its pack isn't downloaded), or "NPU fell back" (it couldn't run the model; `heiward.log` says why). The install, `hei setup` and every scan write this to `ai-status.json`, so the page reads one small file and is right from the first visit.
 
@@ -275,7 +280,7 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 - **Its scan task gone or turned off** in Task Scheduler: **Turn them back on** registers it again.
 - **Heiward not running** (it stopped, or the PC slept): the page stays as it was, says so, and offers **Start Heiward**, a `heiward://start` link the installer registers. Once Heiward is back, the page reloads by itself.
 
-**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, and **Keep a history** (with Clear history). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
+**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, **Keep a history** (with Clear history), and **Developer mode**. It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
 
 **Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser.
 

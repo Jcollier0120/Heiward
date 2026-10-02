@@ -304,14 +304,17 @@ button { font: inherit; color: inherit; }
   position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 10px 16px; background: var(--bg);
 }
-.brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+.brand {
+  display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px;
+  color: inherit; text-decoration: none; padding: 4px 8px; margin: -4px -8px; border-radius: 6px;
+}
+.brand:hover { background: var(--hover); }
+.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .brand-mark { width: 22px; height: 22px; }
 .bm-back { fill: var(--ok-bg); stroke: var(--ok); stroke-width: 1.6; stroke-linejoin: round; }
 .bm-front { fill: var(--ok); }
 .bm-vein { stroke: var(--ok-bg); stroke-width: 1.2; stroke-linecap: round; fill: none; }
 .scanstate { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
-.progress { width: 160px; height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
-.progress .bar { height: 100%; width: 0; background: var(--accent); transition: width 0.4s; }
 
 .commandbar {
   display: flex; align-items: center; gap: 10px;
@@ -416,6 +419,19 @@ button { font: inherit; color: inherit; }
 .usage .fill.low { background: var(--drive-low); }
 .drive-scan { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
 .scan-line { display: flex; align-items: center; gap: 6px; }
+/* A scan's progress on one drive: what it's doing, and a bar that sweeps while there's nothing to count. */
+.scan-pace { margin: -4px 0 10px; }
+.drive-progress { display: flex; flex-direction: column; gap: 5px; }
+.dp-line { display: flex; justify-content: space-between; gap: 8px; }
+.dp-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dp-pct { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.dp-bar { position: relative; height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+.dp-fill { height: 100%; width: 0; background: var(--accent); border-radius: 3px; transition: width 0.8s ease-out; }
+.dp-bar.sweep .dp-fill { position: absolute; width: 30%; transition: none; animation: dp-sweep 1.6s ease-in-out infinite; }
+@keyframes dp-sweep { from { left: -30%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .dp-bar.sweep .dp-fill { animation: none; left: 0; width: 100%; opacity: 0.35; }
+}
 .scan-line svg { width: 14px; height: 14px; flex: none; color: var(--ok); }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { font-size: 12px; padding: 2px 9px; border-radius: 999px; background: var(--line); color: var(--fg); white-space: nowrap; }

@@ -12,17 +12,15 @@
 </head>
 <body>
   <header class="titlebar">
-    <div class="brand">
+    <a class="brand" id="brand" href="#/" title="Home">
       <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
         <path class="bm-back" d="M12 2.5 20 5.4v6.1c0 4.9-3.3 8.6-8 10-4.7-1.4-8-5.1-8-10V5.4z"/>
         <path class="bm-front" d="M8.2 16.2c-.4-4.9 2.6-8.2 7.6-8.4.3 5-2.9 8.2-7.6 8.4z"/>
         <path class="bm-vein" d="M8.2 16.2 13 11.4"/>
       </svg>
       <span>Heiward</span>
-    </div>
+    </a>
     <div class="scanstate">
-      <div class="progress hidden" id="progress"><div class="bar" id="progress-bar"></div></div>
-      <span class="muted small" id="progress-text"></span>
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
       <div class="theme-picker">
         <button class="icon-btn" id="pause-btn" title="Pause scans" aria-label="Pause scans" aria-haspopup="menu" aria-expanded="false" aria-controls="pause-menu"></button>
@@ -67,6 +65,7 @@
 
     <section>
       <h2>Devices and drives</h2>
+      <p class="muted small scan-pace hidden" id="scan-pace" role="status"></p>
       <div class="drives" id="drives"></div>
     </section>
 
@@ -105,6 +104,11 @@
     <section>
       <h2>History</h2>
       <div id="history-card"></div>
+    </section>
+
+    <section>
+      <h2>Developer mode</h2>
+      <div id="devmode-card"></div>
     </section>
 
     <section>

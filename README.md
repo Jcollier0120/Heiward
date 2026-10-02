@@ -8,7 +8,7 @@ It lists what it finds, and stale developer files in developer mode, on a local 
 - **Light on power.** Scheduled scans run in Windows' efficiency mode, with a cap on the processor. Scan now, and any scan while the page is open, runs at full speed.
 - **The whole PC, minus what isn't yours.** Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded. Right-click a folder on the page to include it or leave it out, or a drive to scan it only when you ask, so an archive disk can sleep.
 - **Laid out like File Explorer.** A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you. Burst shots (`IMG_1234`, `IMG_1235`) and pictures less than 75% alike aren't offered as look-alikes, and a folder's look-alikes can be skipped all at once.
-- **Developer cleanup, project by project.** Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main.
+- **Developer cleanup, project by project.** Build outputs, finished worktrees, package caches, unused emulator images, old temp files, and a button that prunes local branches already merged into main. It's off until you turn on Developer mode in Settings.
 - **Automatic cleanup, when you're ready.** Two switches let it clean plain copies and developer leftovers by itself, a few days after listing them, with a "Leave it" button on each. Edits, look-alikes, cloud-synced copies and anything that looks like a backup always wait for you.
 - **Themes.** Match Windows, Light, Dark, and six colour themes.
 
