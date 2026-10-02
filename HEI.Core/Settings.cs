@@ -189,6 +189,11 @@ namespace HEI.Core {
 		/// </summary>
 		public AI.AiDevice AiDevice = AI.AiDevice.Auto;
 		/// <summary>
+		/// The graphics card for GPU work (AI matching on the GPU, and decoding videos and iPhone photos), by
+		/// <see cref="Utils.GpuAdapter.Key"/>; null or empty for Windows' default (<see cref="Utils.GpuAdapters"/>).
+		/// </summary>
+		public string? Gpu;
+		/// <summary>
 		/// Decode photos with Windows' own codecs (WIC) instead of FFmpeg: one in-process decode
 		/// at reduced size gives both the gray and the AI frame, and HEIC/WebP/AVIF/RAW work
 		/// through the codecs Windows has. Files WIC cannot read fall back to FFmpeg. Ignored

@@ -219,7 +219,8 @@ namespace HEI.Core.AI {
 			using var options = new SessionOptions();
 			options.EnableMemoryPattern = false;
 			options.ExecutionMode = ExecutionMode.ORT_SEQUENTIAL;
-			options.AppendExecutionProvider_DML(0);
+			// The card the settings name (DirectML numbers them as DXGI lists them), else Windows' default, the first.
+			options.AppendExecutionProvider_DML(Utils.GpuAdapters.DirectMLDevice);
 			return new InferenceSession(NpuComponents.ModelPath, options);
 		}
 

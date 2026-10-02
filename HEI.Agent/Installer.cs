@@ -62,13 +62,14 @@ namespace HEI.Agent {
 		/// <param name="scanSpeed">How hard scans work (<see cref="AgentConfig.ScanSpeed"/>); null: ask.</param>
 		/// <param name="openPage">Open the review page once the first scan starts (the page itself runs the Store version's setup).</param>
 		/// <param name="removeGitHubCopy">The Store version: remove a copy installed from GitHub (<see cref="RemoveGitHubCopy"/>).</param>
+		/// <param name="gpu">The graphics card for GPU work on a PC with more than one: its number as <see cref="AskGpu"/> lists them, or its name. Null: ask.</param>
 		/// <returns>0 once installed (or for a dry run); otherwise not 0, with the reason on stderr.</returns>
 		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null,
-			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false) {
+			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false, string? gpu = null) {
 			// A development build installs the installed copy: its settings, tasks and folders, not its own.
 			AgentPaths.ActAsInstalled();
 			try {
-				return await InstallStepsAsync(dryRun, assumeYes, device, ct, onDemand, reuseFrom, scanSpeed, openPage, removeGitHubCopy);
+				return await InstallStepsAsync(dryRun, assumeYes, device, ct, onDemand, reuseFrom, scanSpeed, openPage, removeGitHubCopy, gpu);
 			}
 			catch (Exception e) when (e is not OperationCanceledException) {
 				AgentPaths.AppendLog("install failed: " + e);
@@ -78,7 +79,7 @@ namespace HEI.Agent {
 		}
 
 		static async Task<int> InstallStepsAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand, IReadOnlyList<string>? reuseFrom,
-			string? scanSpeed, bool openPage, bool removeGitHubCopy) {
+			string? scanSpeed, bool openPage, bool removeGitHubCopy, string? gpu) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
 			if (StorePackage.InPackageFolder && !StorePackage.IsPackaged) {
@@ -89,6 +90,18 @@ namespace HEI.Agent {
 			if (!StorePackage.IsPackaged && !WrongBuildConfirmed(assumeYes)) {
 				Console.WriteLine("Nothing installed.");
 				return 3;
+			}
+			// The graphics cards, and --gpu checked against them before anything is downloaded.
+			IReadOnlyList<GpuAdapter> gpus = GpuAdapters.List();
+			string? gpuKey = null;
+			if (gpu != null) {
+				gpuKey = GpuArgument(gpu, gpus);
+				if (gpuKey == null) {
+					Console.WriteLine($"  No graphics card \"{gpu}\" on this PC." + (gpus.Count == 0 ? "" : " It has:"));
+					for (int i = 0; i < gpus.Count; i++) Console.WriteLine($"    {i + 1}. {gpus[i].Key}");
+					Console.WriteLine("Nothing installed.");
+					return 3;
+				}
 			}
 
 			if (!RunningInstalled) {
@@ -136,6 +149,15 @@ namespace HEI.Agent {
 				: $"This build does not support this PC's NPU yet ({NpuHardware.Name}).");
 			var cfg = File.Exists(AgentPaths.Config) ? AgentConfig.Load() : new AgentConfig();
 			cfg.AiDevice = "auto";
+			// With more than one graphics card, which one does the GPU work: asked once, before the GPU check, which runs on it.
+			bool gpuPicked = false;
+			void PickGpu(bool forAi) {
+				if (gpuPicked) return;
+				gpuPicked = true;
+				cfg.Gpu = gpuKey ?? AskGpu(gpus, cfg.Gpu, assumeYes, forAi);
+				if (gpus.Count > 1 || cfg.Gpu.Length > 0)
+					Step($"Graphics card: {(cfg.Gpu.Length > 0 ? "the " + cfg.Gpu : "Windows' default")}.");
+			}
 			if (!npu) {
 				AiDevice choice = device is AiDevice.Gpu or AiDevice.Cpu ? device.Value : AskDevice(assumeYes);
 				if (choice == AiDevice.Auto) {
@@ -143,19 +165,20 @@ namespace HEI.Agent {
 					return 3;
 				}
 				if (choice == AiDevice.Gpu) {
+					PickGpu(forAi: true);
 					Step("GPU pack: ONNX Runtime DirectML + DirectML");
 					if (dryRun && ComponentReuse.Find(ComponentReuse.GpuPack, sources) is string gpuFrom)
 						Console.WriteLine($"  would be copied from {gpuFrom}");
 					if (!dryRun) {
 						// A process loads one ONNX Runtime, so the GPU check runs in its own process.
 						string? from = GpuComponents.IsInstalled ? null : await ComponentReuse.TryCopyAsync(ComponentReuse.GpuPack, sources, CoreUtils.StateFolder,
-							async () => GpuComponents.IsInstalled && await ProbeDeviceAsync("gpu", ct));
+							async () => GpuComponents.IsInstalled && await ProbeDeviceAsync("gpu", ct, cfg.Gpu));
 						if (from != null)
 							Console.WriteLine($"  copied from {from}");
 						else {
 							Console.WriteLine("  downloading (~215 MB)...");
 							await GpuComponents.DownloadAsync(null, ct);
-							if (!await ProbeDeviceAsync("gpu", ct)) {
+							if (!await ProbeDeviceAsync("gpu", ct, cfg.Gpu)) {
 								Console.WriteLine("  The GPU could not run the model here; using the CPU instead.");
 								choice = AiDevice.Cpu;
 							}
@@ -171,6 +194,8 @@ namespace HEI.Agent {
 			else if (onDemand == true) {
 				cfg.ScanEveryMinutes = 0;
 			}
+			// On the NPU or the CPU, the graphics card still decodes videos and iPhone photos.
+			PickGpu(forAi: false);
 			cfg.ScanSpeed = scanSpeed ?? AskSpeed(assumeYes, cfg.ScanSpeed);
 			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}, {SpeedText(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
 			if (!dryRun) {
@@ -443,6 +468,42 @@ namespace HEI.Agent {
 			return answer.StartsWith('n') ? AiDevice.Auto : answer.StartsWith('c') ? AiDevice.Cpu : AiDevice.Gpu;
 		}
 
+		/// <summary>
+		/// With more than one graphics card, which one does the GPU work: its <see cref="GpuAdapter.Key"/>. Suggested: the one
+		/// <paramref name="current"/> names, else the one with the most memory of its own, which --yes (and no console) takes.
+		/// One card or none: "", Windows' default.
+		/// </summary>
+		/// <param name="forAi">The AI runs on the graphics card too, not only the decoding.</param>
+		internal static string AskGpu(IReadOnlyList<GpuAdapter> gpus, string? current, bool assumeYes, bool forAi) {
+			if (gpus.Count < 2) return "";
+			GpuAdapter recommended = GpuAdapters.Recommended(gpus)!;
+			GpuAdapter suggested = GpuAdapters.Find(current, gpus) ?? recommended;
+			if (assumeYes || Console.IsInputRedirected) return suggested.Key;
+			Console.WriteLine($"  This PC has {gpus.Count} graphics cards. Which should Heiward use {(forAi ? "for AI matching, and " : "")}to decode videos and iPhone photos?");
+			for (int i = 0; i < gpus.Count; i++)
+				Console.WriteLine($"    [{i + 1}] {GpuText(gpus[i])}{(gpus[i] == recommended ? " (recommended)" : "")}");
+			Console.WriteLine("  You can choose another one later, in Settings on the review page.");
+			int number = gpus.ToList().IndexOf(suggested) + 1;
+			Console.Write($"  Your choice [{number}]: ");
+			string answer = Console.ReadLine()?.Trim() ?? "";
+			return int.TryParse(answer, out int n) && n >= 1 && n <= gpus.Count ? gpus[n - 1].Key : suggested.Key;
+		}
+
+		/// <summary>"NVIDIA GeForce RTX 4070, 12 GB of its own memory", or "..., shares the PC's memory" for a graphics chip.</summary>
+		internal static string GpuText(GpuAdapter gpu) =>
+			gpu.Key + (gpu.DedicatedMemory >= 512UL << 20 ? $", {Format.Bytes((long)gpu.DedicatedMemory)} of its own memory" : ", shares the PC's memory");
+
+		/// <summary>
+		/// install --gpu: a card's number as <see cref="AskGpu"/> lists them, or its name (<see cref="GpuAdapter.Key"/>, any case);
+		/// "default" for Windows' default (""). Null when this PC has no such card.
+		/// </summary>
+		internal static string? GpuArgument(string value, IReadOnlyList<GpuAdapter> gpus) {
+			value = value.Trim();
+			if (value.Equals("default", StringComparison.OrdinalIgnoreCase)) return "";
+			if (int.TryParse(value, out int n)) return n >= 1 && n <= gpus.Count ? gpus[n - 1].Key : null;
+			return GpuAdapters.Find(value, gpus)?.Key;
+		}
+
 		/// <summary>Without an NPU: scheduled scans every 6 hours, or only on demand. --yes picks the schedule.</summary>
 		static bool AskOnDemand(bool assumeYes) {
 			if (assumeYes || Console.IsInputRedirected) return false;
@@ -528,11 +589,16 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>Runs "hei probe --device {device}" in its own process: true when the model runs there.</summary>
-		static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct) {
+		/// <param name="gpu">The graphics card to check, by name; null or empty: Windows' default.</param>
+		static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct, string? gpu = null) {
 			var psi = new ProcessStartInfo(CurrentExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.ArgumentList.Add("probe");
 			psi.ArgumentList.Add("--device");
 			psi.ArgumentList.Add(device);
+			if (!string.IsNullOrEmpty(gpu)) {
+				psi.ArgumentList.Add("--gpu");
+				psi.ArgumentList.Add(gpu);
+			}
 			using var p = Process.Start(psi)!;
 			// ONNX Runtime writes its warnings to stderr: they go to the log when the probe fails, not the window.
 			Task<string> errors = p.StandardError.ReadToEndAsync(ct);

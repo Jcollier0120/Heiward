@@ -16,13 +16,15 @@
 
 using System.Diagnostics;
 using HEI.Core.AI;
+using HEI.Core.Utils;
 
 namespace HEI.Agent {
 	/// <param name="Device">npu, gpu or cpu; null lets the installer pick (the NPU when there is one).</param>
 	/// <param name="OnDemand">No scheduled scans (asked when the AI runs on the GPU or CPU).</param>
 	/// <param name="ScanSpeed">background, full or auto (<see cref="AgentConfig.ScanSpeed"/>).</param>
 	/// <param name="RemoveGitHubCopy">Remove Heiward installed from GitHub, when there is one.</param>
-	sealed record SetupRequest(string? Device, bool OnDemand, string? ScanSpeed, bool RemoveGitHubCopy = false);
+	/// <param name="Gpu">The graphics card for GPU work, on a PC with more than one (<see cref="AgentConfig.Gpu"/>); null lets the installer pick.</param>
+	sealed record SetupRequest(string? Device, bool OnDemand, string? ScanSpeed, bool RemoveGitHubCopy = false, string? Gpu = null);
 
 	/// <summary>
 	/// The Store version's first run, which has no console: the review page asks what the GitHub exe asks
@@ -45,6 +47,7 @@ namespace HEI.Agent {
 		public static object View() {
 			bool needed = Needed;
 			bool npu = needed && NpuComponents.IsSupportedPlatform;
+			IReadOnlyList<GpuAdapter>? cards = needed ? GpuAdapters.List() : null;
 			lock (gate) {
 				return new {
 					needed,
@@ -57,6 +60,9 @@ namespace HEI.Agent {
 					// An NPU this version can't use yet, named so the page can say why the AI runs elsewhere.
 					unsupportedNpu = needed && !npu && NpuHardware.Vendor != NpuVendor.None ? HardwareName(NpuHardware.Name) : "",
 					gitHubCopy = needed && !running ? Installer.GitHubCopyVersion() : null,
+					// More than one graphics card: the page asks which one does the GPU work, suggesting the recommended one.
+					gpus = cards?.Select(g => new { key = g.Key, memory = (long)g.DedicatedMemory }).ToList(),
+					recommendedGpu = cards != null ? GpuAdapters.Recommended(cards)?.Key : null,
 				};
 			}
 		}
@@ -99,13 +105,18 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>The install's command line for the page's answers, or null when they aren't valid.</summary>
-		internal static List<string>? Arguments(SetupRequest request) {
+		/// <param name="gpus">The cards the answer may name; null: this PC's.</param>
+		internal static List<string>? Arguments(SetupRequest request, IReadOnlyList<GpuAdapter>? gpus = null) {
 			if (request.ScanSpeed is null || !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return null;
 			if (request.Device is not (null or "npu" or "gpu" or "cpu")) return null;
 			var args = new List<string> { "install", "--yes", "--no-browser", "--scan-speed", request.ScanSpeed };
 			if (request.Device != null) args.AddRange(new[] { "--device", request.Device });
 			if (request.OnDemand) args.Add("--on-demand");
 			if (request.RemoveGitHubCopy) args.Add("--remove-github-copy");
+			if (!string.IsNullOrWhiteSpace(request.Gpu)) {
+				if (GpuAdapters.Find(request.Gpu, gpus ?? GpuAdapters.List()) is not { } card) return null;
+				args.AddRange(new[] { "--gpu", card.Key });
+			}
 			return args;
 		}
 	}

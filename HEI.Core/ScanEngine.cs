@@ -552,6 +552,8 @@ namespace HEI.Core {
 			AiSummary = null;
 			photosRead = videosRead = 0;
 			photoTicks = videoTicks = 0;
+			// Before anything opens a GPU device: the card the settings name, for this scan.
+			Utils.GpuAdapters.Choose(Settings.Gpu);
 			FFTools.FFmpegNative.HardwareVideoDecode.ResetForScan();
 			FFTools.FFmpegNative.HeifHardwareLane.ResetForScan();
 			ResetExcludedLogging();

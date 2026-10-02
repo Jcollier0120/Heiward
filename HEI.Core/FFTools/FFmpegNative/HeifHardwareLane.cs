@@ -215,9 +215,10 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				if (!OperatingSystem.IsWindows())
 					return false;
 				AVBufferRef* created = null;
-				int ret = ffmpeg.av_hwdevice_ctx_create(&created, AVHWDeviceType.AV_HWDEVICE_TYPE_D3D12VA, null, null, 0);
+				// On the card the settings name (GpuAdapters.Chosen), else Windows' default; it stays for the process.
+				int ret = ffmpeg.av_hwdevice_ctx_create(&created, AVHWDeviceType.AV_HWDEVICE_TYPE_D3D12VA, Utils.GpuAdapters.DeviceString, null, 0);
 				if (ret < 0 || created == null) {
-					Utils.Logger.Instance.Info($"HEIF hardware decoding unavailable (no D3D12 video device, error {ret}); photos decode on the CPU.");
+					Utils.Logger.Instance.Info($"HEIF hardware decoding unavailable (no D3D12 video device{(Utils.GpuAdapters.Chosen is { } gpu ? " on the " + gpu.Key : "")}, error {ret}); photos decode on the CPU.");
 					return false;
 				}
 				device = created;

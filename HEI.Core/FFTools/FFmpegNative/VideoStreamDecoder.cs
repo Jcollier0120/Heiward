@@ -75,7 +75,10 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				throw new FFInvalidExitCodeException("Failed to allocate AVCodecContext.");
 			bool onGpu = false;
 			if (HWDeviceType != AVHWDeviceType.AV_HWDEVICE_TYPE_NONE)
-				ffmpeg.av_hwdevice_ctx_create(&_pCodecContext->hw_device_ctx, HWDeviceType, null, null, 0).ThrowExceptionIfError();
+				// D3D11VA and D3D12VA number the cards as DXGI does: the one the settings name. The others count their own way.
+				ffmpeg.av_hwdevice_ctx_create(&_pCodecContext->hw_device_ctx, HWDeviceType,
+					HWDeviceType is AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA or AVHWDeviceType.AV_HWDEVICE_TYPE_D3D12VA ? Utils.GpuAdapters.DeviceString : null,
+					null, 0).ThrowExceptionIfError();
 			else if (gpuLane && HardwareVideoDecode.TryEnter(codec, url)) {
 				_gpuSlotFor = url;
 				onGpu = true;

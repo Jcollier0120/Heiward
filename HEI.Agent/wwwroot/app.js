@@ -745,7 +745,10 @@ function renderMoreCard(s) {
       : c.folders.join('; ') || 'Nothing: add folders in the settings file.',
       'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
     ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', 'excludeExtensions in the settings file.'],
-    ['Where AI matching runs', c.aiDevice === 'auto' ? 'On the NPU when there is one, otherwise as set up.' : 'On the ' + c.aiDevice.toUpperCase() + '.', 'aiDevice in the settings file: auto, npu, gpu or cpu.'],
+    ['Where AI matching runs', c.aiDevice === 'auto' ? 'On the NPU when there is one, otherwise as set up.'
+      : 'On the ' + c.aiDevice.toUpperCase() + (c.aiDevice === 'gpu' && s.gpu && (s.gpu.chosen || s.gpu.windowsDefault)
+        ? ': the ' + (s.gpu.missing ? s.gpu.windowsDefault : s.gpu.chosen || s.gpu.windowsDefault) : '') + '.',
+      'aiDevice in the settings file: auto, npu, gpu or cpu.'],
   ];
   for (const [title, value, how] of rows) {
     const r = el('div', 'auto-row');
@@ -816,12 +819,60 @@ function renderScanCard(s) {
     el('div', 'muted small', 'While a game or another 3D program runs, or anything full screen, scans make way: they run in the background with less memory until it\'s closed.'));
   memory.append(memoryText);
   card.append(memory);
+  const gpu = gpuSetting(s);
+  if (gpu) card.append(gpu);
   const foot = el('div', 'auto-foot');
   foot.append(el('div', 'muted small', s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
     : s.schedule.everyMinutes === 0 ? 'No scheduled scans: scans run when you press Scan now.'
       : 'Scheduled scans aren\'t set up on this PC: run "hei install".'));
   card.append(foot);
   $('scan-card').replaceChildren(card);
+}
+
+/** "12 GB of its own memory", or "shares the PC's memory" for graphics built into the processor. */
+function gpuMemory(memory) {
+  return memory >= 512 * 1024 * 1024 ? bytes(memory) + ' of its own memory' : 'shares the PC\'s memory';
+}
+
+/**
+ * Which graphics card does the GPU work (GpuAdapters): decoding videos and iPhone photos, and AI matching when
+ * it runs on the GPU. Only on a PC with more than one, or when the settings name one that's gone. A scan keeps
+ * the card it started on, so the choice is locked while one runs, and a change applies from the next scan.
+ */
+function gpuSetting(s) {
+  const g = s.gpu;
+  if (!g || (g.cards.length < 2 && !g.chosen)) return null;
+  const row = el('div', 'auto-row');
+  const text = el('div', 'auto-text');
+  const head = el('div', 'auto-wait');
+  const label = el('label', 'auto-title', 'Graphics card');
+  label.htmlFor = 'gpu-pick';
+  const pick = el('select');
+  pick.id = 'gpu-pick';
+  const options = [['', 'Windows\' default' + (g.windowsDefault ? ' (' + g.windowsDefault + ')' : '')]];
+  for (const c of g.cards) {
+    options.push([c.key, c.key + ', ' + (c.memory >= 512 * 1024 * 1024 ? bytes(c.memory) : 'shared memory') +
+      (c.key === g.recommended ? ' (recommended)' : '')]);
+  }
+  if (g.missing) options.push([g.chosen, g.chosen + ' (not on this PC now)']);
+  for (const [value, name] of options) {
+    const o = el('option', null, name);
+    o.value = value;
+    o.selected = value === g.chosen;
+    pick.append(o);
+  }
+  pick.disabled = settingsBusy || g.locked;
+  pick.addEventListener('change', () => saveSettings({ gpu: pick.value }));
+  head.append(label, pick);
+  const ai = s.ai && ['NPU', 'GPU', 'CPU'].includes(s.ai.device) ? s.ai.device : null;
+  text.append(head, el('div', 'muted small', s.config.aiDevice === 'gpu' || ai === 'GPU'
+    ? 'It runs AI matching, and decodes videos and iPhone photos.'
+    : 'It decodes videos and iPhone photos' + (ai ? '; AI matching runs on the ' + ai + '.' : '.')));
+  if (g.locked) text.append(el('div', 'small gpu-note', g.lockedText));
+  else if (g.missing) text.append(el('div', 'small gpu-note', g.chosen + ' isn\'t on this PC now, so scans use Windows\' default until it\'s back, or you choose another.'));
+  else text.append(el('div', 'muted small', 'A scan keeps the card it started on: a change applies from the next scan.'));
+  row.append(text);
+  return row;
 }
 
 // ---------------------------------------------------------------- the Store version's first run
@@ -831,7 +882,7 @@ function renderScanCard(s) {
 // against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to
 // remove a copy installed from GitHub. The answers survive the page's polls; the install's output shows
 // while it runs.
-const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true };
+const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true, gpu: null };
 let setupRetry = false;
 let setupShown = null; // 'form' or 'progress': the form is only built once, so a poll doesn't reset it
 
@@ -874,6 +925,7 @@ async function startSetup(button) {
       onDemand: setupAnswers.device !== 'npu' && setupAnswers.onDemand,
       scanSpeed: setupAnswers.scanSpeed,
       removeGitHubCopy: !!state.setup.gitHubCopy && setupAnswers.removeGitHubCopy,
+      gpu: state.setup.gpus && state.setup.gpus.length > 1 ? setupAnswers.gpu : null,
     });
     setupRetry = false;
     refresh(true);
@@ -935,6 +987,18 @@ function renderSetup(s) {
   where.append(advice);
   sync();
   parts.push(where, when);
+
+  // More than one graphics card: which one does the GPU work (the GitHub exe asks the same, Installer.AskGpu).
+  if (setup.gpus && setup.gpus.length > 1) {
+    if (setupAnswers.gpu == null) setupAnswers.gpu = setup.recommendedGpu;
+    const cards = setupChoice('Which graphics card should Heiward use?', 'setup-gpu', setup.gpus.map((c) => {
+      const memory = gpuMemory(c.memory);
+      return [c.key, c.key + (c.key === setup.recommendedGpu ? ' (recommended)' : ''), memory[0].toUpperCase() + memory.slice(1) + '.'];
+    }), setupAnswers.gpu, (v) => { setupAnswers.gpu = v; });
+    cards.append(el('p', 'muted small', 'It decodes videos and iPhone photos, and runs the AI when that\'s on the graphics card. ' +
+      'You can choose another one later, in Settings.'));
+    parts.push(cards);
+  }
 
   parts.push(setupChoice('How hard should scans work?', 'setup-speed', [
     ['background', 'In the background (recommended)', 'Low power: Windows\' efficiency mode and low priority. Scans take longer.'],

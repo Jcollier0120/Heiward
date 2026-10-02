@@ -234,9 +234,10 @@ namespace HEI.Core.FFTools.FFmpegNative {
 					return device != null;
 				deviceTried = true;
 				AVBufferRef* created = null;
-				int ret = ffmpeg.av_hwdevice_ctx_create(&created, DeviceType, null, null, 0);
+				// On the card the settings name (GpuAdapters.Chosen), else Windows' default; it stays for the process.
+				int ret = ffmpeg.av_hwdevice_ctx_create(&created, DeviceType, GpuAdapters.DeviceString, null, 0);
 				if (ret < 0 || created == null) {
-					Logger.Instance.Info($"GPU video decoding unavailable (no {DeviceType} device, error {ret}); videos decode on the CPU.");
+					Logger.Instance.Info($"GPU video decoding unavailable (no {DeviceType} device{(GpuAdapters.Chosen is { } gpu ? " on the " + gpu.Key : "")}, error {ret}); videos decode on the CPU.");
 					return false;
 				}
 				device = created;
