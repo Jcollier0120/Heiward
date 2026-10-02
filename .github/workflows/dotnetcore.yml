@@ -1,5 +1,8 @@
 name: Windows 64-bit
 
+# Every pull request, on an x64 PC (Heiward is developed on an ARM64 one): build hei.exe the
+# way release.ps1 does, for both architectures it ships, and run the suites that cover it.
+# The GUI, CLI and Web apps from VDF aren't built or tested here: Heiward doesn't ship them.
 on: [pull_request]
 
 jobs:
@@ -13,33 +16,19 @@ jobs:
       uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '10.0.x'
-    - name: Build GUI
-      run: dotnet publish HEI.GUI/HEI.GUI.csproj -c Release -v q --self-contained -r win-x64
-    - name: Build CLI
-      run: dotnet publish HEI.CLI/HEI.CLI.csproj -c Release -v q --self-contained -r win-x64
-    - name: Build Web
+    - name: Build Heiward (x64)
+      run: dotnet publish HEI.Agent/HEI.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -nologo -v q
+    - name: Build Heiward (arm64)
       id: build
-      run: dotnet publish HEI.Web/HEI.Web.csproj -c Release -v q --self-contained -r win-x64
+      run: dotnet publish HEI.Agent/HEI.Agent.csproj -c Release -r win-arm64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -nologo -v q
     # Every suite reports, also when one before it failed. None runs when the build
-    # failed (a skipped Build Web means an earlier build step failed).
+    # failed (a skipped arm64 build means the x64 one failed).
     - name: Run Unit Tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.Core.Tests/HEI.Core.Tests.csproj -c Release -v q
     - name: Run Heiward Tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q
-    - name: Run CLI Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: dotnet test HEI.CLI.Tests/HEI.CLI.Tests.csproj -c Release -v q
-    - name: Run GUI Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: dotnet test HEI.GUI.Tests/HEI.GUI.Tests.csproj -c Release -v q
-    - name: Run GUI Headless Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: dotnet test HEI.GUI.HeadlessTests/HEI.GUI.HeadlessTests.csproj -c Release -v q
-    - name: Run Web Tests
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: dotnet test HEI.Web.Tests/HEI.Web.Tests.csproj -c Release -v q
     - name: Install FFmpeg
       id: ffmpeg
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
