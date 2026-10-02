@@ -68,7 +68,7 @@ const ICONS = {
     ['circle', '5,7.2,1', 'fill'], ['circle', '7.4,4.6,1', 'fill'], ['circle', '10.6,5.3,1', 'fill'], ['circle', '5.3,10.5,1', 'fill']],
 };
 
-// Developer cleanup's mark: code brackets on an accent tile.
+// The Developer area's mark: code brackets on an accent tile.
 function devIcon(cls) {
   return svg('0 0 40 40', [
     ['rect', '4,6,32,28,6', 'fill', 'var(--accent)'],
@@ -506,7 +506,7 @@ function renderCrumbs() {
     const li = el('li');
     li.append(icon('sep', 'sep'));
     const b = el('button', 'crumb');
-    b.append(icon('code'), el('span', null, 'Developer cleanup'));
+    b.append(icon('code'), el('span', null, 'Developer area'));
     b.addEventListener('click', () => { location.hash = '#/dev'; });
     li.append(b);
     items.push(li);
@@ -597,7 +597,7 @@ function share(part, whole) {
 const GLANCE_TIPS = {
   videos: 'Videos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
   photos: 'Photos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
-  developer: 'What development tools recreate: build outputs, worktrees, package caches, emulators (Developer cleanup).',
+  developer: 'What development tools recreate: build outputs, worktrees, package caches, emulators (Developer area).',
   bin: 'Files in the Recycle Bin take their space until it\'s emptied, the copies Heiward recycled too.',
   other: 'Windows, apps, games, documents and everything else Heiward doesn\'t sort.',
 };
@@ -690,7 +690,7 @@ function renderGlance(g) {
   }
   const r = g.reclaim;
   if (r.duplicates) list.append(el('li', null, bytes(r.duplicates) + ' in copies to review (Where the duplicates are, below).'));
-  if (r.developer) list.append(el('li', null, bytes(r.developer) + ' of developer files ticked to clean (Developer cleanup).'));
+  if (r.developer) list.append(el('li', null, bytes(r.developer) + ' of developer files ticked to clean (Developer area).'));
   if (r.recycleBin) list.append(el('li', null, bytes(r.recycleBin) + ' in the Recycle Bin: empty it to get that space back.'));
   if (!list.childElementCount) list.append(el('li', 'muted', 'No drive is nearly full, and there\'s nothing to free right now.'));
   notes.append(list);
@@ -748,7 +748,7 @@ function renderAboutCard(s) {
   $('about-card').replaceChildren(card);
 }
 
-/** Developer mode: the daily developer check, Developer cleanup on the home page, and its automatic cleanup, or none of it. */
+/** Developer mode: the daily developer check, the Developer area (from the home page), and its automatic cleanup, or none of it. */
 function renderDevModeCard(s) {
   const on = s.dev.enabled;
   const card = el('div', 'auto-card');
@@ -757,8 +757,8 @@ function renderDevModeCard(s) {
   const what = 'build outputs and worktrees of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and branches already merged';
   const text = el('div', 'auto-text');
   text.append(el('div', 'auto-title', 'Developer mode'), el('div', 'muted small', on
-    ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. They\'re under Developer cleanup on the home page, and automatic cleanup can take them.'
-    : 'Off: nothing of it is checked or shown. For developers: also find what development tools recreate, ' + what + '.'));
+    ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. The Developer area, from the home page, shows them beside your repositories\' open pull requests, and automatic cleanup can take them.'
+    : 'Off: nothing of it is checked or shown. For developers: a Developer area with your repositories\' open pull requests, and what development tools recreate: ' + what + '.'));
   row.append(text);
   card.append(row);
   $('devmode-card').replaceChildren(card);
@@ -1264,7 +1264,7 @@ function autoLine(e, target, dueLabel) {
   return line;
 }
 
-// ---------------------------------------------------------------- developer cleanup
+// ---------------------------------------------------------------- developer area
 
 let devReport = null;         // /api/dev
 const devTicks = new Set();   // ticked item ids
@@ -1519,7 +1519,7 @@ function renderDevContent() {
   const frag = document.createDocumentFragment();
   const dev = state.dev;
   if (!devReport || !devReport.scannedAtUtc) {
-    frag.append(devHeader(devIcon(), 'Developer cleanup', 'Build outputs, git worktrees, merged branches, package caches and emulators that your tools recreate when needed.', []));
+    frag.append(devHeader(devIcon(), 'Developer area', 'Your repositories\' open pull requests, and the build outputs, git worktrees, merged branches, package caches and emulators that your tools recreate when needed.', []));
     const empty = el('div', 'empty-state');
     empty.append(el('div', null, dev.running ? 'Checking… this takes a minute or so.' : 'Not checked yet.'));
     if (!dev.running) {
@@ -1548,16 +1548,36 @@ function renderDevContent() {
 
 // ---- overview
 
+// What the overview shows of each repository; its own page shows the rest.
+const OVERVIEW_PULLS = 5, OVERVIEW_ITEMS = 4;
+
+/**
+ * Every repository at once: a panel each, its open pull requests beside its cleanup, those waiting to be merged or
+ * reviewed first. Repositories with nothing open and nothing to clean share one line; machine-wide things come last.
+ */
 function devOverview(dev) {
   const total = devSize(devItems());
+  const groups = devGroups();
   const again = el('button', 'link small', dev.running ? 'Checking…' : 'Check again');
   again.disabled = dev.running;
   again.addEventListener('click', startDevCheck);
-  const out = [devHeader(devIcon(), 'Developer cleanup',
-    'Your repositories, one by one: their open pull requests, then what your development tools recreate when they need them. Cleaning deletes it permanently, not to the Recycle Bin: tools rebuild or download it again, so the next build takes longer.',
-    [el('span', 'chip', bytes(total) + ' in all'), el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)), again])];
+  const chips = [];
+  if (devPulls) {
+    const pulls = groups.flatMap((g) => g.pulls);
+    const merge = pulls.filter((p) => p.waits === 'merge').length, review = pulls.filter((p) => p.waits === 'review').length;
+    chips.push(el('span', 'chip', count(groups.reduce((a, g) => a + g.open, 0), 'open pull request', 'open pull requests')));
+    if (merge) chips.push(el('span', 'chip good', merge + ' ready to merge'));
+    if (review) chips.push(el('span', 'chip accent', review + ' to review'));
+  }
+  chips.push(el('span', 'chip', bytes(total) + ' tools can recreate'), el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)), again);
+  const pullsAgain = el('button', 'link small', devPullsLoading ? 'Asking for pull requests…' : 'Refresh pull requests');
+  pullsAgain.disabled = devPullsLoading;
+  pullsAgain.addEventListener('click', () => loadDevPulls(true));
+  chips.push(pullsAgain);
+  const out = [devHeader(devIcon(), 'Developer area',
+    'All your repositories in one place: their open pull requests, and what your development tools recreate when they need them. Pull requests open on their host, to merge or review them. Cleaning deletes permanently, not to the Recycle Bin: tools rebuild or download it again, so the next build takes longer.',
+    chips)];
 
-  const groups = devGroups();
   // Why a host's pull requests couldn't be read (a sign-in, mostly), once each.
   const problems = [...new Set(Object.values((devPulls && devPulls.repos) || {}).map((r) => r.error).filter(Boolean))];
   for (const p of problems.slice(0, 3)) out.push(el('div', 'dev-banner warn', 'Pull requests: ' + p));
@@ -1568,11 +1588,27 @@ function devOverview(dev) {
     toggle.addEventListener('click', () => { groupMode = !groupMode; groupPick.clear(); renderDev(); });
     head.append(toggle);
     out.push(head);
-    if (groupMode) out.push(el('p', 'muted small', 'Tick the repositories that belong together (an app and its backend, a monorepo split in two), then name the project.'));
-    const grid = el('div', 'cat-grid');
-    const biggest = Math.max(1, ...groups.map((g) => g.bytes));
-    for (const g of groups) grid.append(projectCard(g, biggest));
-    out.push(grid);
+    if (groupMode) {
+      // Picking is easier on small cards.
+      out.push(el('p', 'muted small', 'Tick the repositories that belong together (an app and its backend, a monorepo split in two), then name the project.'));
+      const grid = el('div', 'cat-grid');
+      const biggest = Math.max(1, ...groups.map((g) => g.bytes));
+      for (const g of groups) grid.append(projectCard(g, biggest));
+      out.push(grid);
+    } else {
+      const quiet = groups.filter(isQuiet);
+      for (const g of groups) if (!quiet.includes(g)) out.push(repoPanel(g));
+      if (quiet.length) {
+        const line = el('div', 'quiet-repos');
+        line.append(el('span', 'muted small', 'No open pull requests and nothing to clean:'));
+        for (const g of quiet) {
+          const a = el('a', 'chip quiet chip-link', g.name);
+          a.href = '#/dev/g/' + encodeURIComponent(g.id);
+          line.append(a);
+        }
+        out.push(line);
+      }
+    }
   }
   const shared = devReport.categories.filter((c) => SHARED.includes(c.key));
   if (shared.length) {
@@ -1587,6 +1623,85 @@ function devOverview(dev) {
   }
   if (!groups.length && !shared.length) out.push(el('div', 'empty-state', 'Nothing to clean up.'));
   return out;
+}
+
+// A repository whose host may have pull requests: git, with a remote.
+const hostedRepo = (r) => !!(r.source && r.source.vcs === 'git' && r.source.remote);
+
+/** Nothing to clean, and no pull requests open, failed or still being asked for. */
+function isQuiet(g) {
+  if (g.items.length || g.merged || g.open) return false;
+  return g.repos.every((r) => pullsOf(r) ? !pullsOf(r).error : !(hostedRepo(r) && (devPullsLoading || !devPulls)));
+}
+
+function repoPanel(g) {
+  const multi = g.repos.length > 1;
+  const box = el('section', 'dev-section repo-panel');
+  const head = el('div', 'dev-section-head');
+  const glyph = el('span', 'cat-icon');
+  glyph.append(icon(g.project ? 'stack' : 'branch'));
+  head.append(glyph);
+  const title = el('div', 'dev-section-title');
+  const name = el('a', 'repo-name', g.name);
+  name.href = '#/dev/g/' + encodeURIComponent(g.id);
+  const src = g.repos[0].source;
+  title.append(name, el('span', 'muted', g.project ? ' · ' + count(g.repos.length, 'repository', 'repositories')
+    : src ? ' · ' + (src.remote ? shortRemote(src.remote) : VCS_NAMES[src.vcs] || src.vcs) : ''));
+  head.append(title);
+  box.append(head);
+  name.title = g.repos.map((r) => r.path).join('\n');
+  const cols = el('div', 'repo-cols');
+  cols.append(pullColumn(g, multi), cleanColumn(g, multi));
+  box.append(cols);
+  return box;
+}
+
+function colHead(glyph, title, extra) {
+  const head = el('div', 'repo-col-head');
+  head.append(icon(glyph), el('span', null, title));
+  if (extra) head.append(el('span', 'muted', '· ' + extra));
+  return head;
+}
+
+/** The overview's pull requests of a repository: the first few, waiting on you first; its page has them all. */
+function pullColumn(g, multi) {
+  const col = el('div', 'repo-col');
+  const known = g.repos.map((r) => [r, pullsOf(r)]).filter(([, p]) => p);
+  col.append(colHead('pull', 'Pull requests', known.length ? known.reduce((a, [, p]) => a + p.total, 0) + ' open' : ''));
+  if (known.length) col.append(...pullList(known, multi, OVERVIEW_PULLS, g));
+  else if (!devPulls) col.append(el('div', 'muted small', !g.repos.some(hostedRepo) ? 'No remote to ask.' : devPullsLoading ? 'Asking its host…' : 'Not asked yet: Refresh pull requests asks.'));
+  else {
+    const remote = g.repos.map((r) => r.source && r.source.remote).find(Boolean);
+    col.append(el('div', 'muted small', remote ? shortRemote(remote) + ' isn\'t a host Heiward reads pull requests from.' : 'No remote to ask.'));
+  }
+  return col;
+}
+
+/** The overview's cleanup of a repository: ticked and biggest first, then its merged branches with their Prune button. */
+function cleanColumn(g, multi) {
+  const col = el('div', 'repo-col');
+  col.append(colHead('layers', 'Cleanup', g.bytes ? bytes(g.bytes) : ''));
+  const on = (i) => devTicks.has(i.id) && !i.blocked;
+  const items = [...g.items].sort((a, b) => on(b) - on(a) || !!a.blocked - !!b.blocked || b.bytes - a.bytes);
+  const branches = g.branches.filter((r) => r.merged.length);
+  if (!items.length && !branches.length) {
+    col.append(el('div', 'muted small', 'Nothing to clean.'));
+    return col;
+  }
+  const list = el('div', 'dev-list');
+  for (const i of items.slice(0, OVERVIEW_ITEMS)) list.append(devRow(i, multi, true));
+  for (const r of branches) list.append(branchRow(r, true, multi));
+  col.append(list);
+  const rest = items.slice(OVERVIEW_ITEMS);
+  if (rest.length) col.append(pageLink(g, 'And ' + count(rest.length, 'more to clean', 'more to clean') + ', ' + bytes(devSize(rest))));
+  return col;
+}
+
+/** A link to a repository's (or a project's) own page. */
+function pageLink(g, text) {
+  const a = el('a', 'link small', text);
+  a.href = '#/dev/g/' + encodeURIComponent(g.id);
+  return a;
 }
 
 function projectCard(g, biggest) {
@@ -1754,9 +1869,8 @@ function shortRemote(url) {
  * a review first. Each opens on its host, where it's merged or reviewed. Null for a repository without a known host.
  */
 function pullSection(g, multi) {
-  const hosted = g.repos.filter((r) => r.source && r.source.vcs === 'git' && r.source.remote);
   const known = g.repos.map((r) => [r, pullsOf(r)]).filter(([, p]) => p);
-  if (!known.length && !(devPullsLoading && hosted.length)) return null;
+  if (!known.length && !(devPullsLoading && g.repos.some(hostedRepo))) return null;
   const box = el('section', 'dev-section');
   const head = el('div', 'dev-section-head');
   const glyph = el('span', 'cat-icon');
@@ -1774,23 +1888,34 @@ function pullSection(g, multi) {
   const hosts = [...new Set(known.map(([, p]) => p.host))];
   box.append(el('p', 'muted small', !known.length ? 'Asking where it\'s hosted…'
     : 'On ' + hosts.join(' and ') + (devPulls ? ', as of ' + ago(devPulls.fetchedUtc) : '') + '. Each opens there, to merge or review it.'));
-  for (const [r, p] of known) if (p.error) box.append(el('div', 'result small bad', (multi ? r.name + ': ' : '') + p.error));
+  box.append(...pullList(known, multi, Infinity, null));
+  return box;
+}
+
+/**
+ * Why a host couldn't be asked, then the pull requests (those ready to merge or waiting for a review first) up to
+ * limit, then where the rest are: on the page of g past the limit, on the host past what it sent.
+ */
+function pullList(known, multi, limit, g) {
+  const out = [];
+  for (const [r, p] of known) if (p.error) out.push(el('div', 'result small bad', (multi ? r.name + ': ' : '') + p.error));
   const rows = known.flatMap(([r, p]) => p.pulls.map((pr) => [r, p, pr]))
     .sort((a, b) => WAIT_ORDER.indexOf(a[2].waits) - WAIT_ORDER.indexOf(b[2].waits) || (b[2].asksYou - a[2].asksYou) || String(b[2].updatedUtc).localeCompare(String(a[2].updatedUtc)));
   if (rows.length) {
     const list = el('div', 'dev-list');
-    for (const [r, p, pr] of rows) list.append(pullRow(pr, p.host, multi ? r.name : null));
-    box.append(list);
-  } else if (known.some(([, p]) => !p.error)) box.append(el('div', 'muted small', 'No open pull requests.'));
+    for (const [r, p, pr] of rows.slice(0, limit)) list.append(pullRow(pr, p.host, multi ? r.name : null));
+    out.push(list);
+  } else if (known.some(([, p]) => !p.error)) out.push(el('div', 'muted small', 'No open pull requests.'));
+  if (rows.length > limit) out.push(pageLink(g, 'And ' + (rows.length - limit) + ' more'));
   for (const [r, p] of known)
     if (p.total > p.pulls.length) {
       const more = el('a', 'link small', 'And ' + (p.total - p.pulls.length) + ' more on ' + p.host + (multi ? ' (' + r.name + ')' : ''));
       more.href = p.web;
       more.target = '_blank';
       more.rel = 'noopener noreferrer';
-      box.append(more);
+      out.push(more);
     }
-  return box;
+  return out;
 }
 
 function pullRow(p, host, repoName) {
@@ -1875,37 +2000,44 @@ function branchSection(branches) {
   box.append(head);
   box.append(el('p', 'muted small', DEV_META.repos.blurb + ' Prune fetches first; hover it to see why it\'s safe.'));
   const list = el('div', 'dev-list');
-  for (const r of branches) {
-    const row = el('div', 'dev-item repo-item');
-    const main = el('div', 'dev-item-main');
-    main.append(el('div', 'dev-item-name', r.name));
-    main.append(el('div', 'muted small', r.default
-      ? count(r.localBranches, 'local branch', 'local branches') + ' · compared with ' + r.default
-      : r.note || ''));
-    if (r.merged.length) {
-      const chips = el('div', 'chips');
-      for (const b of r.merged.slice(0, 12)) chips.append(el('span', 'chip quiet', b));
-      if (r.merged.length > 12) chips.append(el('span', 'chip quiet', '+' + (r.merged.length - 12) + ' more'));
-      main.append(chips);
-    }
-    if (r.checkedOut.length) main.append(el('div', 'muted small', 'Kept, checked out in a worktree: ' + r.checkedOut.join(', ')));
-    const auto = state.auto.repos[r.id];
-    if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'b:' + r.id, 'Merged branches are deleted automatically, the first ' + dueText(auto.dueUtc, true) + '.'));
-    if (pruneResults.has(r.id)) {
-      const [ok, msg] = pruneResults.get(r.id);
-      main.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
-    }
-    row.append(main);
-    const side = el('div', 'dev-item-side');
-    const btn = el('button', r.merged.length ? 'btn' : 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'Nothing to prune');
-    btn.disabled = !r.merged.length || devBusy;
-    btn.addEventListener('click', () => pruneRepo(r));
-    side.append(pruneTip(r, btn));
-    row.append(side);
-    list.append(row);
-  }
+  for (const r of branches) list.append(branchRow(r));
   box.append(list);
   return box;
+}
+
+/**
+ * A repository's merged branches, and the Prune button that deletes them. On the overview, among build outputs and
+ * worktrees, it says what they are (and in which repository, for a project) and names fewer.
+ */
+function branchRow(r, overview, multi) {
+  const row = el('div', 'dev-item repo-item');
+  const main = el('div', 'dev-item-main');
+  const names = overview ? 6 : 12;
+  main.append(el('div', 'dev-item-name', !overview ? r.name : count(r.merged.length, 'merged branch', 'merged branches') + (multi ? ' in ' + r.name : '')));
+  main.append(el('div', 'muted small', r.default
+    ? count(r.localBranches, 'local branch', 'local branches') + ' · compared with ' + r.default
+    : r.note || ''));
+  if (r.merged.length) {
+    const chips = el('div', 'chips');
+    for (const b of r.merged.slice(0, names)) chips.append(el('span', 'chip quiet', b));
+    if (r.merged.length > names) chips.append(el('span', 'chip quiet', '+' + (r.merged.length - names) + ' more'));
+    main.append(chips);
+  }
+  if (r.checkedOut.length) main.append(el('div', 'muted small', 'Kept, checked out in a worktree: ' + r.checkedOut.join(', ')));
+  const auto = state.auto.repos[r.id];
+  if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'b:' + r.id, 'Merged branches are deleted automatically, the first ' + dueText(auto.dueUtc, true) + '.'));
+  if (pruneResults.has(r.id)) {
+    const [ok, msg] = pruneResults.get(r.id);
+    main.append(el('div', 'result small ' + (ok ? 'ok' : 'bad'), msg));
+  }
+  row.append(main);
+  const side = el('div', 'dev-item-side');
+  const btn = el('button', r.merged.length ? 'btn' : 'btn secondary', r.merged.length ? 'Prune ' + r.merged.length : 'Nothing to prune');
+  btn.disabled = !r.merged.length || devBusy;
+  btn.addEventListener('click', () => pruneRepo(r));
+  side.append(pruneTip(r, btn));
+  row.append(side);
+  return row;
 }
 
 // ---- a shared category's page
@@ -1918,7 +2050,8 @@ function categoryPage(c) {
   return [devHeader(bigIcon(DEV_META[c.key].icon), c.title, c.explain, chips), devSection(c.key, items, false)];
 }
 
-function devRow(i, showRepo) {
+/** One thing to clean, with its tick box. Compact (the overview): its facts on one line, its folder on hover. */
+function devRow(i, showRepo, compact) {
   const row = el('label', 'dev-item' + (i.blocked ? ' blocked' : '') + (devTicks.has(i.id) && !i.blocked ? ' on' : ''));
   const box = el('input');
   box.type = 'checkbox';
@@ -1935,14 +2068,18 @@ function devRow(i, showRepo) {
   main.append(name);
   const auto = state.auto.devItems[i.id];
   if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'd:' + i.id, 'Deleted automatically ' + dueText(auto.dueUtc, true) + '.'));
-  const where = el('div', 'folder muted small', i.location);
-  where.title = i.location;
-  main.append(where);
+  if (compact) row.title = i.location;
+  else {
+    const where = el('div', 'folder muted small', i.location);
+    where.title = i.location;
+    main.append(where);
+  }
   const places = i.paths || [];
   if (places.length) row.addEventListener('contextmenu', (e) => openPathMenu(e, { name: i.name, path: places[0], folder: true, more: places.length - 1 }));
   // On a single repository's page, 'worktree of <it>' says nothing new.
   const facts = (i.detail || '').split(/, | · /).filter((f) => f && !(i.kind === 'worktrees' && !showRepo && f.startsWith('worktree of ')));
-  if (facts.length) {
+  if (facts.length && compact) main.append(el('div', 'muted small', facts.join(' · ')));
+  else if (facts.length) {
     const chips = el('div', 'chips');
     for (const f of facts) chips.append(el('span', 'chip quiet', f));
     main.append(chips);
