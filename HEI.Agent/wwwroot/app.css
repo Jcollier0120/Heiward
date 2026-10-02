@@ -525,6 +525,7 @@ button { font: inherit; color: inherit; }
 .auto-kinds { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 8px; }
 .auto-kinds label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
 .auto-foot { padding: 12px 0; display: grid; gap: 6px; font-size: 13px; }
+.about a { color: var(--accent-text); }
 .auto-wait { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
 .auto-wait select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
 .auto-problems { margin-top: 4px; }
@@ -685,8 +686,6 @@ button { font: inherit; color: inherit; }
 .ctx-menu .menu-hint { font-size: 12px; color: var(--muted); padding: 2px 10px 6px; }
 footer { margin-top: 28px; }
 footer code { font-size: 12px; }
-footer .about { margin-top: 10px; }
-footer a { color: var(--accent-text); }
 
 /* ---- Folder view: navigation pane + content ---- */
 .split { display: grid; grid-template-columns: minmax(240px, 300px) 1fr; overflow: hidden; }
