@@ -436,10 +436,13 @@ namespace HEI.Agent {
 						new Decision("branches-pruned", DateTime.UtcNow, new[] { repo.Name }.Concat(result.Deleted).ToList(), 0, automatic));
 				if (BranchPruner.Inspect(repo.Path) is { } now) DevReport.UpdateRepository(now);
 			}
+			// With a history, the repository and each branch by name, one per line.
+			string counts = $"deleted {result.Deleted.Count}, kept {result.Kept.Count}" + (result.Fetched ? "" : "; fetch failed");
 			AgentPaths.AppendLog(cfg.KeepHistory
-				? $"pruned branches{(automatic ? " (automatic)" : "")} in {repo.Path}: deleted {string.Join(", ", result.Deleted)}" +
-					(result.Kept.Count > 0 ? $"; kept {string.Join(", ", result.Kept.Select(k => $"{k.Branch} ({k.Reason})"))}" : "") + (result.Fetched ? "" : "; fetch failed")
-				: $"pruned branches{(automatic ? " (automatic)" : "")}: deleted {result.Deleted.Count}, kept {result.Kept.Count}" + (result.Fetched ? "" : "; fetch failed"));
+				? $"pruned branches{(automatic ? " (automatic)" : "")} in {repo.Path}: {counts}" +
+					string.Concat(result.Deleted.Select(b => Environment.NewLine + "    deleted: " + b)) +
+					string.Concat(result.Kept.Select(k => Environment.NewLine + $"    kept: {k.Branch} ({k.Reason})"))
+				: $"pruned branches{(automatic ? " (automatic)" : "")}: {counts}");
 			return result;
 		}
 	}

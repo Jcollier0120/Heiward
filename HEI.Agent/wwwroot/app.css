@@ -589,7 +589,10 @@ button { font: inherit; color: inherit; }
 .dev-section-head { display: flex; align-items: center; gap: 10px; }
 .dev-section-title { flex: 1; font-weight: 600; font-size: 15px; }
 .dev-section > p { margin: 6px 0 10px; }
-.dev-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+/* Rounded by its first and last rows rather than overflow: hidden, which would clip a Prune button's tooltip. */
+.dev-list { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 8px; }
+.dev-list > :first-child { border-top-left-radius: 7px; border-top-right-radius: 7px; }
+.dev-list > :last-child { border-bottom-left-radius: 7px; border-bottom-right-radius: 7px; }
 .dev-item {
   display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: start;
   padding: 10px 12px; background: var(--surface-2); border-bottom: 1px solid var(--line); cursor: pointer;
@@ -624,6 +627,7 @@ button { font: inherit; color: inherit; }
 .dev-banner.ok { background: var(--ok-bg); color: var(--ok); }
 .dev-banner.bad { background: var(--alert-bg); color: var(--alert); }
 .dev-banner.warn { background: var(--warn-bg); color: var(--warn); }
+.dev-banner ul { margin: 4px 0 0; padding-left: 18px; overflow-wrap: anywhere; }
 /* Open pull requests: the title opens it on its host; the tag says what it waits for. */
 .pull-item { cursor: default; grid-template-columns: 1fr auto; }
 .pull-item:hover { background: var(--surface-2); }
@@ -814,6 +818,7 @@ footer code { font-size: 12px; }
 .result { margin-top: 8px; }
 .result.ok { color: var(--ok); }
 .result.bad { color: var(--alert); }
+.result ul { margin: 2px 0 4px; padding-left: 18px; }
 .empty-state { padding: 22px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 8px; margin-top: 10px; }
 .more { margin-top: 6px; }
 

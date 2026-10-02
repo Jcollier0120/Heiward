@@ -289,7 +289,8 @@ dev.SetAction(r => {
 		PruneResult pruned = BranchPruner.Prune(Path.GetFullPath(repoPath));
 		if (pruned.Error != null) { Console.Error.WriteLine(pruned.Error); return 1; }
 		if (!pruned.Fetched) Console.WriteLine("Couldn't fetch; used the last fetched state.");
-		Console.WriteLine(pruned.Deleted.Count == 0 ? "No merged branches to delete." : $"Deleted {pruned.Deleted.Count}: {string.Join(", ", pruned.Deleted)}");
+		Console.WriteLine(pruned.Deleted.Count == 0 ? "No merged branches to delete." : $"Deleted {pruned.Deleted.Count} {(pruned.Deleted.Count == 1 ? "branch" : "branches")}:");
+		foreach (string b in pruned.Deleted) Console.WriteLine("  " + b);
 		foreach (PruneKept k in pruned.Kept) Console.WriteLine($"Kept {k.Branch}: {k.Reason}");
 		return 0;
 	}
