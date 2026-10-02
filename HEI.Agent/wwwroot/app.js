@@ -425,6 +425,16 @@ function renderAiBadge(ai) {
   badge.className = 'ai-badge ' + tone;
 }
 
+/**
+ * When the next scan is due by the last one and the interval ("in 20 min"), as the page starting checks
+ * before it scans; null when scans run only when asked or there's been none.
+ */
+function scanDueIn(schedule) {
+  if (!schedule || !schedule.dueUtc) return null;
+  const min = Math.round((Date.parse(schedule.dueUtc) - Date.now()) / 60000);
+  return min <= 1 ? 'now' : min < 90 ? 'in ' + min + ' min' : 'in about ' + Math.round(min / 60) + ' hours';
+}
+
 function renderHeader(s) {
   const r = s.report;
   const parts = [];
@@ -432,12 +442,15 @@ function renderHeader(s) {
     parts.push('Last scan ' + ago(r.scannedAtUtc));
     parts.push(r.device === 'off' ? 'AI matching off' : 'AI on the ' + r.device);
   } else {
-    // A new build set the last report aside: its sets were judged by the old rules.
-    parts.push(s.updated ? 'Heiward was updated: finding the sets again with this version' : 'No scan yet');
+    // A new build set the last report aside: its sets were judged by the old rules. The next due scan
+    // (or Scan now) finds them again; opening or reloading the page doesn't start one before it's due.
+    parts.push(!s.updated ? 'No scan yet' : s.scan.running ? 'Heiward was updated: finding the sets again with this version'
+      : 'Heiward was updated: the next scan finds the sets again');
   }
   if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
+  else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
   $('subtitle').textContent = parts.join(' · ');
   renderAiBadge(s.ai);
 
@@ -2562,7 +2575,8 @@ function duplicatesSection(path) {
 
   if (!here.length) {
     box.append(el('div', 'empty-state', state.report ? 'No duplicates in this folder.'
-      : state.updated ? 'Heiward was updated. Its next scan finds the sets again with this version\'s rules' + (state.scan.running ? ': it\'s running now.' : ': press "Scan now".')
+      : state.updated ? 'Heiward was updated. Its next scan finds the sets again with this version\'s rules' + (state.scan.running ? ': it\'s running now.'
+        : scanDueIn(state.schedule) ? ' (due ' + scanDueIn(state.schedule) + '), or press "Scan now".' : ': press "Scan now".')
       : 'No scan yet: press "Scan now".'));
     return box;
   }
