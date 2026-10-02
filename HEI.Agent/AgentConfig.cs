@@ -123,7 +123,7 @@ namespace HEI.Agent {
 		}
 	}
 
-	/// <summary>Several repositories shown as one project in Developer cleanup.</summary>
+	/// <summary>Several repositories shown as one project in the Developer area.</summary>
 	sealed record DevProject(string Name, List<string> Repos) {
 		/// <summary>
 		/// What the page sent, made consistent: names trimmed and unique, each repository (a full path) in
