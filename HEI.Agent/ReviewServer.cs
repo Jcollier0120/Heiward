@@ -31,6 +31,8 @@ namespace HEI.Agent {
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
 	/// <param name="OnRequest">Scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>), or automatically again.</param>
 	sealed record DriveRequest(string Root, bool OnRequest = false);
+	/// <param name="Open">For a folder: open it, rather than show it selected in the folder it's in.</param>
+	sealed record RevealRequest(string? Path, bool Open = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
 
@@ -216,6 +218,15 @@ namespace HEI.Agent {
 						: "scanned automatically again, from the next scan.",
 				});
 			});
+			// "Show in File Explorer" on a file or folder the page lists (right-click): see Reveal.
+			app.MapPost("/api/reveal", (RevealRequest request) => {
+				if (Reveal.Check(request.Path) is string error) return Results.BadRequest(new { error });
+				try { Reveal.Show(request.Path!, request.Open); }
+				catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) {
+					return Results.Problem("File Explorer didn't start: " + e.Message);
+				}
+				return Results.Ok();
+			});
 			// "Scan this drive now", on the page of a drive scanned only when asked.
 			app.MapPost("/api/scan/drive", (DriveRequest request) => {
 				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
@@ -392,6 +403,11 @@ namespace HEI.Agent {
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
+			var drives = ExplorerView.Drives(cfg, index, pending);
+			// This PC's drives at a glance, from what's here already (DiskGlance).
+			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
+			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
+				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives));
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
 				.Where(d => !d.Value.Unlisted)
@@ -427,7 +443,8 @@ namespace HEI.Agent {
 				},
 				dev = DevSummary(cfg, devReport),
 				auto = AutoView(report, devReport, decisions),
-				drives = ExplorerView.Drives(cfg, index, pending),
+				drives,
+				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = ScanView(),
 				setup = StoreSetup.View(),
