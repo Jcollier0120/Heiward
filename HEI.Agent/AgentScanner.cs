@@ -105,22 +105,25 @@ namespace HEI.Agent {
 			int files = 0;
 			string phase = ScanPhase.Listing;
 			ScanProgressSnapshot? latest = null;
-			IReadOnlyList<DriveCheck>? checks = null;
+			// The drives' last counts, kept after the checking (the snapshots that follow have none): its
+			// last snapshot, all done, can come and go between two writes.
+			DriveProgress[]? driveCounts = null;
 			engine.Progress += (_, e) => {
 				if (phase == ScanPhase.Checking) files = Math.Max(files, e.MaxPosition);
 				latest = e;
+				if (e.Drives != null) driveCounts = e.Drives;
 			};
 			engine.FilesEnumerated += (_, _) => { latest = null; phase = ScanPhase.Checking; };
 			// Once a second, whether or not a file finished: the listing reports nothing, and a drive's
-			// last files can take minutes. The drives keep their last counts after the checking.
+			// last files can take minutes.
 			void Write() {
 				ScanProgressSnapshot? e = latest;
-				if (e?.Drives is { } d) checks = d.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList();
 				string stage = !string.IsNullOrEmpty(e?.CurrentStage) ? e.CurrentStage : phase switch {
 					ScanPhase.Listing => "Finding files", ScanPhase.Checking => "Checking files", ScanPhase.Comparing => "Comparing", _ => "Finishing",
 				};
 				WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? 0, e?.MaxPosition ?? 0, fullSpeed, reading,
-					phase, phase == ScanPhase.Listing ? engine.ListingTimes.Keys.ToList() : null, checks));
+					phase, phase == ScanPhase.Listing ? engine.ListingTimes.Keys.ToList() : null,
+					driveCounts?.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList()));
 			}
 			await using var status = new StatusFile(Write);
 			try {
