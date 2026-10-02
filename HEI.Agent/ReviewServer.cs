@@ -98,7 +98,8 @@ namespace HEI.Agent {
 				return Results.Content(Asset("favicon.svg"), "image/svg+xml");
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
-			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward", store = StorePackage.IsPackaged }));
+			// exe: whose page this is. Every copy's page uses the same port, so the installer asks another copy's to close (/api/quit).
+			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath }));
 			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
 			app.MapGet("/api/state", (bool? seen) => {
 				if (seen == true) ScanPace.MarkPageSeen();
@@ -313,6 +314,14 @@ namespace HEI.Agent {
 				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
+				return Results.Accepted();
+			});
+			// Another copy's installer wants the port for its own page (AskToCloseAsync). Only the page closes: scans
+			// run in processes of their own. Not during the Store version's setup, whose progress only this page shows.
+			app.MapPost("/api/quit", () => {
+				if (StoreSetup.Running) return Results.Conflict(new { error = "Setting Heiward up." });
+				AgentPaths.AppendLog("review page asked to close");
+				app.Lifetime.StopApplication();
 				return Results.Accepted();
 			});
 
@@ -530,6 +539,44 @@ namespace HEI.Agent {
 			}
 			catch { return false; }
 		}
+
+		/// <summary>
+		/// The exe serving the Heiward page on <paramref name="port"/>: "" from a build whose ping doesn't say, null
+		/// when no Heiward page answers.
+		/// </summary>
+		public static async Task<string?> PageExeAsync(int port) {
+			try {
+				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+				using var ping = System.Text.Json.JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping"));
+				if (!ping.RootElement.TryGetProperty("app", out var app) || app.ValueKind != System.Text.Json.JsonValueKind.String || app.GetString() != "heiward") return null;
+				return ping.RootElement.TryGetProperty("exe", out var exe) && exe.ValueKind == System.Text.Json.JsonValueKind.String ? exe.GetString() ?? "" : "";
+			}
+			catch { return null; }
+		}
+
+		/// <summary>
+		/// Asks the page on <paramref name="port"/> to close (/api/quit), with the token from the page it serves, as
+		/// its own buttons would. A program on this PC can read that page; another web page can't (the Host and
+		/// Origin checks).
+		/// </summary>
+		/// <returns>True once it said it would: false from a build without /api/quit, or during the Store version's setup.</returns>
+		public static async Task<bool> AskToCloseAsync(int port) {
+			try {
+				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+				if (TokenIn(await http.GetStringAsync($"http://127.0.0.1:{port}/")) is not string token) return false;
+				using var quit = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}/api/quit");
+				quit.Headers.Add("X-Agent-Token", token);
+				using HttpResponseMessage answer = await http.SendAsync(quit);
+				return answer.IsSuccessStatusCode;
+			}
+			catch { return false; }
+		}
+
+		/// <summary>The token in a page this server served (index.html's agent-token), or null.</summary>
+		internal static string? TokenIn(string page) =>
+			PageToken.Match(page) is { Success: true } m ? m.Groups[1].Value : null;
+
+		static readonly Regex PageToken = new("<meta name=\"agent-token\" content=\"([0-9a-f]+)\">", RegexOptions.CultureInvariant);
 
 		/// <summary>Starts the review page in its own process (no window) unless it is already up.</summary>
 		public static void EnsureRunningInBackground(AgentConfig cfg) {

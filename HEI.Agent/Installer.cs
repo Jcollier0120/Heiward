@@ -190,6 +190,8 @@ namespace HEI.Agent {
 			}
 
 			if (dryRun) return 0;
+			// Opening another copy's page would show that copy's report as this one's.
+			if (openPage && !fromStore && !await MakeWayForPageAsync(cfg.Port, ct)) openPage = false;
 			Console.WriteLine();
 			Console.WriteLine(openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
@@ -326,21 +328,46 @@ namespace HEI.Agent {
 		internal static string DeleteFolderLater(string folder) =>
 			$"/d /c for /l %i in (1,1,15) do @(if exist \"{folder}\" (ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{folder}\" 2>nul))";
 
-		/// <summary>Stops every process whose program is in <paramref name="folder"/>, but this one.</summary>
-		static void StopProcessesIn(string folder) {
-			string inside = Path.TrimEndingDirectorySeparator(folder) + Path.DirectorySeparatorChar;
-			foreach (Process p in Process.GetProcesses()) {
-				using (p) {
+		/// <summary>
+		/// Stops every process whose program is in <paramref name="folder"/> (only those named <paramref name="name"/>,
+		/// when given), but this one. Which they are goes by where their exe is (<see cref="RunningFrom"/>).
+		/// </summary>
+		static void StopProcessesIn(string folder, string? name = null) {
+			Process[] running = name == null ? Process.GetProcesses() : Process.GetProcessesByName(name);
+			try {
+				var byId = running.ToDictionary(p => p.Id);
+				foreach (var (id, exe) in RunningFrom(running.Select(p => (p.Id, ImagePathOrNull(p))), folder, Environment.ProcessId)) {
 					try {
-						if (p.Id == Environment.ProcessId || p.MainModule?.FileName is not string exe ||
-							!exe.StartsWith(inside, StringComparison.OrdinalIgnoreCase)) continue;
-						Log($"uninstall: stopping {Path.GetFileName(exe)} ({p.Id})");
-						p.Kill(entireProcessTree: true);
-						p.WaitForExit(5000);
+						Log($"uninstall: stopping {Path.GetFileName(exe)} ({id})");
+						byId[id].Kill(entireProcessTree: true);
+						byId[id].WaitForExit(5000);
 					}
 					catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
 				}
 			}
+			finally {
+				foreach (Process p in running) p.Dispose();
+			}
+		}
+
+		/// <summary>
+		/// The processes in <paramref name="processes"/> (id, exe) whose exe is in <paramref name="folder"/>, or a folder
+		/// inside it, but <paramref name="self"/>. One whose exe can't be read (null) isn't: it can't be shown to be the
+		/// installed copy's.
+		/// </summary>
+		internal static IEnumerable<(int Id, string Exe)> RunningFrom(IEnumerable<(int Id, string? Exe)> processes, string folder, int self) {
+			foreach (var (id, exe) in processes)
+				if (id != self && RunsFrom(exe, folder)) yield return (id, exe!);
+		}
+
+		/// <summary>True when <paramref name="exe"/> is in <paramref name="folder"/>, or a folder inside it.</summary>
+		internal static bool RunsFrom(string? exe, string folder) {
+			if (string.IsNullOrEmpty(exe)) return false;
+			try {
+				string inside = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)) + Path.DirectorySeparatorChar;
+				return Path.GetFullPath(exe).StartsWith(inside, StringComparison.OrdinalIgnoreCase);
+			}
+			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
 		}
 
 		/// <summary>
@@ -570,6 +597,12 @@ namespace HEI.Agent {
 			return QueryFullProcessImageName(p.Handle, 0, name, ref size) ? name.ToString() : null;
 		}
 
+		/// <summary><see cref="ImagePath"/>, or null for a process this one may not look at, or that has exited.</summary>
+		static string? ImagePathOrNull(Process p) {
+			try { return ImagePath(p); }
+			catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { return null; }
+		}
+
 		/// <summary>The GitHub copy's version ("1.2.2") when one is installed, else null.</summary>
 		public static string? GitHubCopyVersion() {
 			if (!File.Exists(InstalledExe)) return null;
@@ -577,12 +610,38 @@ namespace HEI.Agent {
 			catch { return ""; }
 		}
 
-		/// <summary>Stops other hei processes (a review page or a scan) so the exe can be replaced or removed.</summary>
-		static void StopRunningAgents() {
-			foreach (var p in Process.GetProcessesByName("hei").Where(p => p.Id != Environment.ProcessId)) {
-				try { p.Kill(entireProcessTree: true); p.WaitForExit(5000); } catch { }
-				p.Dispose();
+		/// <summary>
+		/// Stops the installed copy's hei processes (its review page or a scan) so its exe can be replaced or removed.
+		/// Only those whose exe is in <see cref="InstallDir"/>: a hei.exe run from anywhere else (a USB drive, an
+		/// unzipped release, a test build with its own HEIWARD_HOME) is another copy, and stopping it would lose
+		/// its scan. That copy's review page can still hold the port; <see cref="MakeWayForPageAsync"/> sees to that.
+		/// </summary>
+		static void StopRunningAgents() => StopProcessesIn(InstallDir, "hei");
+
+		/// <summary>
+		/// Every copy's review page uses the same port (<see cref="AgentConfig.Port"/>), and "open" opens whatever
+		/// Heiward page answers there: another copy's (one run from elsewhere, or the Store version) would stand in for
+		/// the installed copy's, with that copy's report. That page is asked to close, as its own page would ask
+		/// (<see cref="ReviewServer.AskToCloseAsync"/>). Only the page closes: its copy's scans run in processes of
+		/// their own, and carry on.
+		/// </summary>
+		/// <returns>True when the port is free, or the installed copy's page has it.</returns>
+		static async Task<bool> MakeWayForPageAsync(int port, CancellationToken ct) {
+			string? exe = await ReviewServer.PageExeAsync(port);
+			if (exe == null || RunsFrom(exe, InstallDir)) return true;
+			string whose = exe.Length > 0 ? exe : "another copy of Heiward";
+			if (await ReviewServer.AskToCloseAsync(port)) {
+				AgentPaths.AppendLog($"install: asked the review page of {whose} to close, for this copy's on port {port}");
+				for (int i = 0; i < 20; i++) {
+					if (!await ReviewServer.IsUpAsync(port)) return true;
+					await Task.Delay(250, ct);
+				}
 			}
+			// A build from before /api/quit, or one that's busy with the Store version's setup.
+			Console.WriteLine($"  The review page on port {port} is {whose}'s: it closes once it's been unused for a while.");
+			Console.WriteLine("  Then the Heiward shortcut opens this copy's.");
+			AgentPaths.AppendLog($"install: the review page of {whose} kept port {port}");
+			return false;
 		}
 
 		/// <summary>Writes the mark's picture next to the installed exe (from the page's files, which are compiled in); null if it can't.</summary>
