@@ -370,13 +370,16 @@ namespace HEI.Agent {
 			if (ScanBusy() || StoreSetup.Needed || AgentPause.Load() != null) return;
 			Report? last = Report.LoadAny();
 			bool setAside = last != null && last.Build != AppBuild.Current;
-			if (ScanWhenDue.Due(last?.ScannedAtUtc, AgentScanner.LastStartedUtc(), cfg.ScanEveryMinutes, DateTime.UtcNow) is not { } why) {
+			if (ScanWhenDue.Due(last?.ScannedAtUtc, AgentScanner.LastStartedUtc(), ScanEveryMinutes(cfg), DateTime.UtcNow) is not { } why) {
 				if (setAside) AgentPaths.AppendLog($"Heiward {AppBuild.Current} set aside the report of {last!.Build ?? "an older build"}: the next scan finds the sets again");
 				return;
 			}
 			AgentPaths.AppendLog($"review page started: scanning, since {why}" + (setAside ? $" (and Heiward {AppBuild.Current} set aside the last report)" : ""));
 			ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
 		}
+
+		/// <summary>The minutes between scheduled scans; 0 in a development build, which scans only when asked (it has no scan task).</summary>
+		static int ScanEveryMinutes(AgentConfig cfg) => DevBuild.Current ? 0 : cfg.ScanEveryMinutes;
 
 		/// <summary>The scan and the developer check this page started, until each holds its lock (see <see cref="Launch"/>).</summary>
 		static readonly Launch ScanLaunch = new(), DevLaunch = new();
@@ -452,8 +455,8 @@ namespace HEI.Agent {
 				ai = AiStatus.Load(),
 				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
 				schedule = new {
-					next = Scheduler.NextRun(), everyMinutes = cfg.ScanEveryMinutes,
-					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), cfg.ScanEveryMinutes),
+					next = Scheduler.NextRun(), everyMinutes = ScanEveryMinutes(cfg),
+					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), ScanEveryMinutes(cfg)),
 				},
 				config = new {
 					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
@@ -466,7 +469,8 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// Whether Heiward scans on its own: paused (and until when), or with its scan task gone or disabled in
-		/// Task Scheduler although settings.json asks for scheduled scans.
+		/// Task Scheduler although settings.json asks for scheduled scans. A development build has no scan task:
+		/// the page says so instead.
 		/// </summary>
 		static object AgentView(AgentConfig cfg) {
 			DateTime now = DateTime.UtcNow;
@@ -475,7 +479,8 @@ namespace HEI.Agent {
 				paused = pause != null,
 				pausedUntilUtc = pause?.UntilUtc,
 				pausedText = pause?.Describe(now),
-				scheduleMissing = cfg.ScanEveryMinutes > 0 && Scheduler.NextRun() == null,
+				dev = DevBuild.Current,
+				scheduleMissing = !DevBuild.Current && cfg.ScanEveryMinutes > 0 && Scheduler.NextRun() == null,
 				stopping = AgentScanner.IsRunning() && ScanStop.Requested(AgentScanner.ReadStatus()?.StartedUtc ?? DateTime.MinValue),
 			};
 		}
@@ -556,6 +561,7 @@ namespace HEI.Agent {
 		static Process? StartDetached(params string[] args) {
 			var psi = new ProcessStartInfo(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
+			Installer.KeepStdHandlesToSelf(); // it outlives this process, or may
 			return Process.Start(psi);
 		}
 

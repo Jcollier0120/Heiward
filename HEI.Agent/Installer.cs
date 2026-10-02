@@ -62,8 +62,23 @@ namespace HEI.Agent {
 		/// <param name="scanSpeed">How hard scans work (<see cref="AgentConfig.ScanSpeed"/>); null: ask.</param>
 		/// <param name="openPage">Open the review page once the first scan starts (the page itself runs the Store version's setup).</param>
 		/// <param name="removeGitHubCopy">The Store version: remove a copy installed from GitHub (<see cref="RemoveGitHubCopy"/>).</param>
+		/// <returns>0 once installed (or for a dry run); otherwise not 0, with the reason on stderr.</returns>
 		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null,
 			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false) {
+			// A development build installs the installed copy: its settings, tasks and folders, not its own.
+			AgentPaths.ActAsInstalled();
+			try {
+				return await InstallStepsAsync(dryRun, assumeYes, device, ct, onDemand, reuseFrom, scanSpeed, openPage, removeGitHubCopy);
+			}
+			catch (Exception e) when (e is not OperationCanceledException) {
+				AgentPaths.AppendLog("install failed: " + e);
+				Console.Error.WriteLine($"Heiward couldn't finish installing: {e.Message}");
+				return 1;
+			}
+		}
+
+		static async Task<int> InstallStepsAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand, IReadOnlyList<string>? reuseFrom,
+			string? scanSpeed, bool openPage, bool removeGitHubCopy) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
 			if (StorePackage.InPackageFolder && !StorePackage.IsPackaged) {
@@ -90,7 +105,15 @@ namespace HEI.Agent {
 					// The installed copy starts empty: it can copy what the folder it came from already has.
 					psi.ArgumentList.Add("--reuse-from");
 					psi.ArgumentList.Add(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!);
+					// Unattended (--yes, or run by a script or another program): its input is closed, so no question can
+					// wait for an answer, and without a window here it gets none either. Its output is this one's.
+					bool windowless = GetConsoleWindow() == IntPtr.Zero;
+					if (assumeYes || windowless || Console.IsInputRedirected) {
+						psi.RedirectStandardInput = true;
+						psi.CreateNoWindow = windowless;
+					}
 					using var p = Process.Start(psi)!;
+					if (psi.RedirectStandardInput) p.StandardInput.Close();
 					await p.WaitForExitAsync(ct);
 					return p.ExitCode;
 				}
@@ -101,8 +124,9 @@ namespace HEI.Agent {
 			// The Store version brings FFmpeg along, and can copy the rest from a GitHub copy's folder.
 			var sources = StorePackage.IsPackaged ? ComponentReuse.Sources((reuseFrom ?? Array.Empty<string>()).Append(InstallDir), CoreUtils.StateFolder)
 				: ComponentReuse.Sources(RunningInstalled ? reuseFrom : (reuseFrom ?? Array.Empty<string>()).Append(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!), InstallDir);
-			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? $", {NpuComponents.NpuName} pack" : ""));
-			await EnsurePrerequisitesAsync(sources, dryRun, ct);
+			Step("Prerequisites: FFmpeg, ONNX Runtime + DINOv2 model" + (NpuComponents.IsSupportedPlatform ? $", {NpuComponents.NpuName} pack" : "") +
+				(dryRun && !RunningInstalled ? $", in {InstallDir}" : ""));
+			await EnsurePrerequisitesAsync(sources, dryRun, ct, RunningInstalled ? null : InstallDir);
 
 			bool npu = device is null or AiDevice.Auto or AiDevice.Npu && (!dryRun ? NpuComponents.WillUseNpu(AiDevice.Auto) : NpuComponents.IsSupportedPlatform);
 			Step(npu ? $"NPU found: AI matching runs on the {NpuComponents.NpuName}."
@@ -169,7 +193,7 @@ namespace HEI.Agent {
 				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, TaskExe, fromStore));
 				Console.WriteLine(Scheduler.OpenXml(TaskExe, fromStore));
 			}
-			else RegisterTasks(cfg);
+			else if (RegisterTasks(cfg) is string why) throw new InvalidOperationException(why);
 
 			if (fromStore) {
 				Step("Start menu, notifications and Apps & Features: the Store package's own");
@@ -205,6 +229,8 @@ namespace HEI.Agent {
 		/// read (a first build's uninstall closed at once, and left no trace of why it did nothing).
 		/// </summary>
 		public static int Uninstall(bool purge, bool dryRun) {
+			// From a development build too, it's the installed copy that goes, with its data; the build's own stays.
+			AgentPaths.ActAsInstalled();
 			bool ownWindow = !Console.IsInputRedirected && !Console.IsOutputRedirected;
 			uninstallLog = !dryRun;
 			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath}{(StorePackage.Identity is string id ? $", with the package identity {id}" : "")})");
@@ -243,8 +269,11 @@ namespace HEI.Agent {
 		/// </summary>
 		/// <returns>False when Task Scheduler wouldn't: then the uninstall goes ahead here.</returns>
 		static bool HandOver(bool purge) {
+			// A development build's uninstall hands over to the installed copy's: no task ever runs a development build.
+			string exe = DevBuild.Current ? InstalledExe : Environment.ProcessPath ?? InstalledExe;
+			if (!File.Exists(exe)) return false;
 			try {
-				Scheduler.Register(Scheduler.UninstallTask, Scheduler.UninstallXml(Environment.ProcessPath ?? InstalledExe, purge));
+				Scheduler.Register(Scheduler.UninstallTask, Scheduler.UninstallXml(exe, purge));
 				if (Scheduler.RunNow(Scheduler.UninstallTask)) {
 					Log("uninstall: handed over to Task Scheduler");
 					return true;
@@ -350,6 +379,8 @@ namespace HEI.Agent {
 		/// </summary>
 		/// <returns>Why they can't be registered, or null.</returns>
 		public static string? RegisterTasks(AgentConfig cfg) {
+			// The tasks are the installed copy's, with its settings: a development build's own aren't those.
+			if (DevBuild.Current) return "A development build has no scheduled scans: build a release and install it to try them.";
 			// A copy run from Downloads has nothing a task could run once it's gone: install it first.
 			if (!StorePackage.IsPackaged && !File.Exists(InstalledExe)) return "Heiward isn't installed on this PC: run the downloaded Heiward once to install it.";
 			bool fromStore = StorePackage.IsPackaged;
@@ -414,11 +445,12 @@ namespace HEI.Agent {
 		/// <see cref="ComponentReuse"/>), otherwise downloaded. Downloads are SHA-256 pinned. Shared by
 		/// install and setup.
 		/// </summary>
-		internal static async Task EnsurePrerequisitesAsync(IReadOnlyList<string> sources, bool dryRun, CancellationToken ct) {
+		/// <param name="dryRunTarget">A dry run's folder they'd go to, when that isn't this exe's (the installed copy's).</param>
+		internal static async Task EnsurePrerequisitesAsync(IReadOnlyList<string> sources, bool dryRun, CancellationToken ct, string? dryRunTarget = null) {
 			if (dryRun) {
 				var parts = new List<ComponentReuse.Part> { ComponentReuse.AiRuntime };
 				// The Store version brings FFmpeg along.
-				if (!File.Exists(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe"))) parts.Insert(0, ComponentReuse.Ffmpeg);
+				if (!File.Exists(Path.Combine(dryRunTarget ?? CoreUtils.CurrentFolder, "bin", "ffmpeg.exe"))) parts.Insert(0, ComponentReuse.Ffmpeg);
 				if (NpuComponents.IsSupportedPlatform) parts.Add(ComponentReuse.NpuPack);
 				foreach (var part in parts)
 					Console.WriteLine(ComponentReuse.Find(part, sources) is string from ? $"  {Capital(part.Name)}: would be copied from {from}" : $"  {Capital(part.Name)}: would be downloaded, unless already here");
@@ -577,10 +609,21 @@ namespace HEI.Agent {
 			catch { return ""; }
 		}
 
-		/// <summary>Stops other hei processes (a review page or a scan) so the exe can be replaced or removed.</summary>
+		/// <summary>
+		/// Stops other hei processes (a review page or a scan) so the exe can be replaced or removed. Not a
+		/// development build's: it has its own data and port, and runs on beside the installed copy.
+		/// </summary>
 		static void StopRunningAgents() {
 			foreach (var p in Process.GetProcessesByName("hei").Where(p => p.Id != Environment.ProcessId)) {
-				try { p.Kill(entireProcessTree: true); p.WaitForExit(5000); } catch { }
+				try {
+					bool devBuild = ImagePath(p) is string exe && !string.Equals(exe, InstalledExe, StringComparison.OrdinalIgnoreCase) &&
+						DevBuild.IsCheckout(Path.GetDirectoryName(exe)!);
+					if (!devBuild) {
+						p.Kill(entireProcessTree: true);
+						p.WaitForExit(5000);
+					}
+				}
+				catch { }
 				p.Dispose();
 			}
 		}
@@ -665,7 +708,31 @@ namespace HEI.Agent {
 			string exe = !StorePackage.IsPackaged && File.Exists(InstalledExe) ? InstalledExe : CurrentExe;
 			var psi = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
+			KeepStdHandlesToSelf();
 			Process.Start(psi);
+		}
+
+		[DllImport("kernel32.dll")]
+		static extern IntPtr GetConsoleWindow();
+
+		[DllImport("kernel32.dll")]
+		static extern IntPtr GetStdHandle(int which);
+
+		[DllImport("kernel32.dll")]
+		static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
+
+		/// <summary>
+		/// A process started here inherits every handle this one lets it, its input and output among them. A scan
+		/// outlives the install that starts it: holding the install's output open, it would keep whatever reads that
+		/// (a script, another program) waiting for the end of a first scan, which takes a while.
+		/// </summary>
+		internal static void KeepStdHandlesToSelf() {
+			const int StdInput = -10, StdOutput = -11, StdError = -12;
+			const uint HandleFlagInherit = 1;
+			foreach (int which in new[] { StdInput, StdOutput, StdError }) {
+				IntPtr handle = GetStdHandle(which);
+				if (handle != IntPtr.Zero && handle != new IntPtr(-1)) SetHandleInformation(handle, HandleFlagInherit, 0);
+			}
 		}
 	}
 }
