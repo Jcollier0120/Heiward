@@ -199,6 +199,8 @@ namespace HEI.Agent {
 						continue;
 					}
 					if (depth >= 6 || d.Name is ".vs" or ".idea" || ScanScope.RepositoryMarkers.Contains(d.Name, StringComparer.OrdinalIgnoreCase) || IsRepository(d.FullName)) continue;
+					// Worktrees, and what removing one left behind, are listed as worktrees.
+					if (string.Equals(d.FullName, AgentWorktrees(repo), StringComparison.OrdinalIgnoreCase)) continue;
 					stack.Push((d.FullName, depth + 1));
 				}
 			}
@@ -261,10 +263,10 @@ namespace HEI.Agent {
 
 		// ------------------------------------------------------------------ worktrees
 
-		static IEnumerable<DevItem> WorktreeItems(string repo, DateTime staleBefore, CancellationToken ct) {
+		internal static IEnumerable<DevItem> WorktreeItems(string repo, DateTime staleBefore, CancellationToken ct) {
 			string meta = Path.Combine(repo, ".git", "worktrees");
-			if (!Directory.Exists(meta)) yield break;
-			foreach (string w in Directory.EnumerateDirectories(meta)) {
+			var records = Directory.Exists(meta) ? Directory.EnumerateDirectories(meta).ToList() : [];
+			foreach (string w in records) {
 				if (ct.IsCancellationRequested) yield break;
 				string? path = WorktreePath(w);
 				if (path == null || !Directory.Exists(path)) continue; // a deleted worktree's record takes no space
@@ -279,6 +281,52 @@ namespace HEI.Agent {
 					lastUsed == DateTime.MinValue ? null : lastUsed, lastUsed < staleBefore && blocked == null, blocked,
 					$"branch {branch} · worktree of {Path.GetFileName(repo)}", repo);
 			}
+			foreach (string path in LeftoverWorktrees(repo)) {
+				if (ct.IsCancellationRequested) yield break;
+				DateTime lastUsed = LastUsed(path, null);
+				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, Measure(path).Bytes,
+					lastUsed == DateTime.MinValue ? null : lastUsed, true, null,
+					$"left over from a removal · worktree of {Path.GetFileName(repo)}", repo);
+			}
+		}
+
+		/// <summary>Where Claude Code keeps a repository's worktrees.</summary>
+		static string AgentWorktrees(string repo) => Path.Combine(repo, ".claude", "worktrees");
+
+		/// <summary>
+		/// What a worktree removal that stopped partway left behind: git lets go of the worktree, then deletes its
+		/// folder, .git and all, until a file stops it (one in use, or a path too long without core.longpaths). Folders
+		/// in the repository's .claude\worktrees with no .git that git doesn't list: nothing in them can be committed any more.
+		/// </summary>
+		static List<string> LeftoverWorktrees(string repo) {
+			List<string> candidates;
+			try {
+				candidates = Directory.Exists(AgentWorktrees(repo))
+					? Directory.EnumerateDirectories(AgentWorktrees(repo)).Where(p => !Path.Exists(Path.Combine(p, ".git"))).ToList()
+					: [];
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
+			if (candidates.Count == 0) return candidates;
+			// By name: git may write the same folder another way (a short name, through a link).
+			var listed = WorktreeFolders(repo);
+			return listed == null ? [] : candidates.Where(p => !listed.Any(w => string.Equals(Path.GetFileName(w), Path.GetFileName(p), StringComparison.OrdinalIgnoreCase))).ToList();
+		}
+
+		internal static bool IsLeftoverWorktree(string repo, string path) {
+			string full = Path.GetFullPath(path).TrimEnd('\\');
+			return LeftoverWorktrees(repo).Any(p => string.Equals(Path.GetFullPath(p).TrimEnd('\\'), full, StringComparison.OrdinalIgnoreCase));
+		}
+
+		/// <summary>The folders git lists as the repository's worktrees; null when git can't say.</summary>
+		internal static HashSet<string>? WorktreeFolders(string repo) {
+			var (code, text) = Git.Run(repo, "worktree", "list", "--porcelain");
+			if (code != 0) return null;
+			var folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach (string line in text.Split('\n').Select(l => l.Trim()).Where(l => l.StartsWith("worktree ", StringComparison.Ordinal))) {
+				try { folders.Add(Path.GetFullPath(line["worktree ".Length..]).TrimEnd('\\')); }
+				catch (ArgumentException) { return null; } // a path that can't be read: no telling what isn't listed
+			}
+			return folders;
 		}
 
 		/// <summary>
@@ -639,6 +687,10 @@ namespace HEI.Agent {
 			if (Exe == null) return (-1, "");
 			var psi = new ProcessStartInfo(Exe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.Environment["GIT_TERMINAL_PROMPT"] = "0"; // a fetch that needs a password fails instead of waiting forever
+			// Git for Windows stops at 260 characters otherwise ("Filename too long"), and a worktree's node_modules
+			// goes deeper: removing it failed partway, after git had already let go of the worktree.
+			psi.ArgumentList.Add("-c");
+			psi.ArgumentList.Add("core.longpaths=true");
 			psi.ArgumentList.Add("-C");
 			psi.ArgumentList.Add(workingDir);
 			foreach (string a in args) psi.ArgumentList.Add(a);
@@ -678,11 +730,23 @@ namespace HEI.Agent {
 				}
 				case DevScanner.Worktrees: {
 					if (item.Repo == null) return new CleanResult(0, 0, "Unknown repository");
+					if (DevScanner.IsLeftoverWorktree(item.Repo, item.Location)) {
+						var rest = SafeDelete.Tree(item.Location);
+						return new CleanResult(rest.Bytes, rest.Left, null);
+					}
 					if (DevScanner.WorktreeBlocker(item.Location) is { } why) return new CleanResult(0, 0, why);
 					long before = DevScanner.Measure(item.Location).Bytes;
+					string? record = DevScanner.GitDirOf(item.Location); // <repo>\.git\worktrees\<id>
 					// Without --force git refuses a worktree with changes, a second guard behind the check above.
 					var (code, output) = Git.Run(item.Repo, "worktree", "remove", item.Location);
-					return code == 0 ? new CleanResult(before, 0, null) : new CleanResult(0, 0, "git: " + output.Trim());
+					if (code == 0) return new CleanResult(before, 0, null);
+					// Git found nothing uncommitted and let go of the worktree (its record is gone), then a file stopped
+					// it partway: the rest goes too.
+					if (record != null && !Directory.Exists(record)) {
+						var rest = SafeDelete.Tree(item.Location);
+						return new CleanResult(before - DevScanner.Measure(item.Location).Bytes, rest.Left, null);
+					}
+					return new CleanResult(0, 0, "git: " + output.Trim());
 				}
 				case DevScanner.Caches: {
 					var def = item.Name;
