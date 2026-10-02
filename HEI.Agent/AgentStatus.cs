@@ -44,12 +44,13 @@ namespace HEI.Agent {
 		public static async Task<AgentStatus> NowAsync(AgentConfig cfg) {
 			Task<bool> pageUp = ReviewServer.IsUpAsync(cfg.Port);
 			string? nextRun = Scheduler.NextRun();
-			return Build(cfg, DateTime.UtcNow, await pageUp, nextRun);
+			return Build(cfg, DateTime.UtcNow, await pageUp, nextRun, DevBuild.Current);
 		}
 
 		/// <param name="pageUp">The review page answers (<see cref="ReviewServer.IsUpAsync"/>).</param>
 		/// <param name="nextRun">What <see cref="Scheduler.NextRun"/> gave.</param>
-		public static AgentStatus Build(AgentConfig cfg, DateTime nowUtc, bool pageUp, string? nextRun) {
+		/// <param name="devBuild">A development build (<see cref="DevBuild"/>), which has no scan task.</param>
+		public static AgentStatus Build(AgentConfig cfg, DateTime nowUtc, bool pageUp, string? nextRun, bool devBuild = false) {
 			AgentPause? pause = AgentPause.Load(nowUtc);
 			Report? report = Report.Load();
 			int toReview = 0;
@@ -59,7 +60,7 @@ namespace HEI.Agent {
 			}
 			bool scheduled = cfg.ScanEveryMinutes > 0 && nextRun != null;
 			bool scanning = AgentScanner.IsRunning();
-			string summary = Summarize(cfg, nowUtc, pause, scheduled, nextRun, scanning, report, toReview);
+			string summary = Summarize(cfg, nowUtc, pause, scheduled, nextRun, scanning, report, toReview, devBuild);
 			return new AgentStatus("heiward", pause == null, Utc(pause?.SinceUtc), Utc(pause?.UntilUtc), scheduled, nextRun,
 				scanning, Utc(report?.ScannedAtUtc), toReview, new StatusPage(ReviewServer.PageUrl(cfg.Port), pageUp), summary);
 		}
@@ -70,9 +71,10 @@ namespace HEI.Agent {
 		static readonly JsonSerializerOptions Json = new(AgentConfig.Json) { WriteIndented = false };
 
 		/// <summary>"Scans every hour, next at 15:00. 3 sets to review.", "Paused until you resume. Nothing to review."</summary>
-		static string Summarize(AgentConfig cfg, DateTime nowUtc, AgentPause? pause, bool scheduled, string? nextRun, bool scanning, Report? report, int toReview) {
+		static string Summarize(AgentConfig cfg, DateTime nowUtc, AgentPause? pause, bool scheduled, string? nextRun, bool scanning, Report? report, int toReview, bool devBuild) {
 			string schedule = Scheduler.Describe(cfg);
 			string duty = pause != null ? "Paused " + pause.Describe(nowUtc)
+				: cfg.ScanEveryMinutes > 0 && !scheduled && devBuild ? "No scheduled scans: a development build has none"
 				: cfg.ScanEveryMinutes > 0 && !scheduled ? "No scheduled scans: the scan task is missing or turned off"
 				: char.ToUpperInvariant(schedule[0]) + schedule[1..] + (scheduled && NextAt(nextRun, nowUtc) is { } at ? ", next " + at : "");
 			string review = report == null ? (Report.IsStale() ? "Heiward was updated: the next scan lists the sets again" : "No scan yet")
