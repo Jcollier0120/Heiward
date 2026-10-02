@@ -41,4 +41,23 @@ public sealed class AiStatusTests {
 	[Fact]
 	public void Without_the_AI_components_it_is_off() =>
 		Assert.Contains("hei setup", Status("off").Describe());
+
+	[Fact]
+	public void On_a_card_it_names_it() =>
+		Assert.Equal("AI matching runs on the GPU (NVIDIA GeForce RTX 4090): no NPU on this PC.",
+			(Status("GPU", "None", setting: "auto") with { Accelerator = "gpu-nvidia-geforce-rtx-4090", Card = "NVIDIA GeForce RTX 4090" }).Describe());
+
+	[Fact]
+	public void After_a_fallback_it_says_why() {
+		string text = (Status("GPU", "Qualcomm") with {
+			Card = "Qualcomm(R) Adreno(TM) X2-90 GPU",
+			Fallback = "NPU to GPU: the NPU was marked failed by reeve (GenieX did not start within 30 s) until 14:12",
+		}).Describe();
+		Assert.StartsWith("AI matching runs on the GPU (Qualcomm(R) Adreno(TM) X2-90 GPU): it fell back, NPU to GPU: the NPU was marked failed by reeve", text);
+	}
+
+	[Fact]
+	public void A_scan_that_stopped_on_the_NPU_says_so() =>
+		Assert.Equal("AI matching runs on the Intel AI Boost NPU (NPU failed: device lost during a scan; AI matching stopped for the files left).",
+			(Status("NPU") with { Fallback = "NPU failed: device lost during a scan; AI matching stopped for the files left" }).Describe());
 }

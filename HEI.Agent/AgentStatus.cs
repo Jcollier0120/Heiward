@@ -34,8 +34,13 @@ namespace HEI.Agent {
 	/// <param name="LastScan">When this build's last report was made (<see cref="Report.Load"/>).</param>
 	/// <param name="ToReview">Sets in that report with no decision yet, as <c>hei status</c> counts them.</param>
 	/// <param name="Summary">The same in one short sentence, for people.</param>
+	/// <param name="Device">Where AI matching last ran (the last scan's, or the install's or setup's check): "npu", "gpu" or "cpu"; null when it's off or nothing has run yet.</param>
+	/// <param name="Accelerator">The same as the manor names it (Manor's docs/ACCELERATORS.md): "npu", "cpu" or "gpu-…".</param>
+	/// <param name="Card">The graphics card's name when it ran on one, else null.</param>
+	/// <param name="LastFallback">When that work was meant for another device, from where to where and why, in one line; null when it ran where it was meant to.</param>
 	sealed record AgentStatus(string App, bool Running, DateTime? StoppedSince, DateTime? PausedUntil, bool Scheduled, string? NextScan,
-		bool Scanning, DateTime? LastScan, int ToReview, StatusPage Page, string Summary) {
+		bool Scanning, DateTime? LastScan, int ToReview, StatusPage Page, string Summary,
+		string? Device = null, string? Accelerator = null, string? Card = null, string? LastFallback = null) {
 
 		/// <summary>
 		/// The status now. The two slow questions run side by side: Task Scheduler for the next run, and the
@@ -61,8 +66,13 @@ namespace HEI.Agent {
 			bool scheduled = cfg.ScanEveryMinutes > 0 && nextRun != null;
 			bool scanning = AgentScanner.IsRunning();
 			string summary = Summarize(cfg, nowUtc, pause, scheduled, nextRun, scanning, report, toReview, devBuild);
+			// Where the AI ran, from the one small file the last scan (or the install, or setup) wrote: nothing is loaded to guess.
+			AiStatus? ai = AiStatus.Load();
+			string? device = ai?.Kind;
 			return new AgentStatus("heiward", pause == null, Utc(pause?.SinceUtc), Utc(pause?.UntilUtc), scheduled, nextRun,
-				scanning, Utc(report?.ScannedAtUtc), toReview, new StatusPage(ReviewServer.PageUrl(cfg.Port), pageUp), summary);
+				scanning, Utc(report?.ScannedAtUtc), toReview, new StatusPage(ReviewServer.PageUrl(cfg.Port), pageUp), summary,
+				device, device == null ? null : ai!.Accelerator ?? device switch { "gpu" => HEI.Core.AI.Accelerators.GpuId(ai.Card ?? ""), _ => device },
+				device == "gpu" ? ai!.Card : null, device == null ? null : ai!.Fallback);
 		}
 
 		/// <summary>One line, for a pipe: camelCase, nulls written out, anything but ASCII escaped.</summary>

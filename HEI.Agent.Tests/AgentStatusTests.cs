@@ -120,9 +120,14 @@ public sealed class AgentStatusTests : IDisposable {
 
 		using var doc = JsonDocument.Parse(json);
 		JsonElement root = doc.RootElement;
+		// Only ever added to, at the end: Manor and others parse the first ones.
 		Assert.Equal(
-			new[] { "app", "running", "stoppedSince", "pausedUntil", "scheduled", "nextScan", "scanning", "lastScan", "toReview", "page", "summary" },
+			new[] { "app", "running", "stoppedSince", "pausedUntil", "scheduled", "nextScan", "scanning", "lastScan", "toReview", "page", "summary",
+				"device", "accelerator", "card", "lastFallback" },
 			root.EnumerateObject().Select(p => p.Name));
+		// Nothing has run AI matching yet.
+		foreach (string name in new[] { "device", "accelerator", "card", "lastFallback" })
+			Assert.Equal(JsonValueKind.Null, root.GetProperty(name).ValueKind);
 		Assert.Equal("heiward", root.GetProperty("app").GetString());
 		Assert.False(root.GetProperty("running").GetBoolean());
 		Assert.Equal("2026-09-30T12:00:00Z", root.GetProperty("stoppedSince").GetString());
@@ -134,6 +139,49 @@ public sealed class AgentStatusTests : IDisposable {
 		Assert.Equal(new[] { "url", "up" }, page.EnumerateObject().Select(p => p.Name));
 		Assert.Equal("http://heiward.localhost:18484/", page.GetProperty("url").GetString());
 		Assert.False(page.GetProperty("up").GetBoolean());
+	}
+
+	[Fact]
+	public void TheJson_SaysWhichDeviceAndCard_AndWhyItFellBack() {
+		var cfg = new AgentConfig { AiDevice = "auto" };
+		AiStatus.Record(cfg, "GPU", "scan", "gpu-qualcomm-r-adreno-tm-x2-90-gpu", "Qualcomm(R) Adreno(TM) X2-90 GPU",
+			"NPU to GPU: the NPU was marked failed by reeve (GenieX did not start within 30 s) until 14:12");
+		using (var doc = JsonDocument.Parse(Build().ToJson())) {
+			JsonElement root = doc.RootElement;
+			Assert.Equal("gpu", root.GetProperty("device").GetString());
+			Assert.Equal("gpu-qualcomm-r-adreno-tm-x2-90-gpu", root.GetProperty("accelerator").GetString());
+			Assert.Equal("Qualcomm(R) Adreno(TM) X2-90 GPU", root.GetProperty("card").GetString());
+			Assert.StartsWith("NPU to GPU: the NPU was marked failed by reeve", root.GetProperty("lastFallback").GetString());
+		}
+		// The fallback is in heiward.log too.
+		Assert.Contains("AI fell back (scan): NPU to GPU", File.ReadAllText(AgentPaths.Log));
+
+		AiStatus.Record(cfg, "NPU", "scan");
+		using (var doc = JsonDocument.Parse(Build().ToJson())) {
+			JsonElement root = doc.RootElement;
+			Assert.Equal("npu", root.GetProperty("device").GetString());
+			Assert.Equal("npu", root.GetProperty("accelerator").GetString());
+			Assert.Equal(JsonValueKind.Null, root.GetProperty("card").ValueKind);
+			Assert.Equal(JsonValueKind.Null, root.GetProperty("lastFallback").ValueKind);
+		}
+
+		AiStatus.Record(cfg, "off", "scan");
+		Assert.Null(Build().Device);
+		Assert.Null(Build().Accelerator);
+	}
+
+	[Fact]
+	public void AnOlderAiStatusFile_StillReads() {
+		// As 1.5.0 wrote it: no accelerator, card or fallback.
+		File.WriteAllText(Path.Combine(AgentPaths.Home, "ai-status.json"), """
+			{ "device": "CPU", "source": "scan", "checkedAtUtc": "2026-09-30T12:00:00Z", "setting": "auto", "npuVendor": "None",
+			  "npuName": "", "npuDisplayName": "", "npuSupported": false, "npuInstalled": false }
+			""");
+		AgentStatus s = Build();
+		Assert.Equal("cpu", s.Device);
+		Assert.Equal("cpu", s.Accelerator);
+		Assert.Null(s.Card);
+		Assert.Null(s.LastFallback);
 	}
 
 	[Fact]

@@ -447,6 +447,17 @@ namespace HEI.Agent {
 			};
 		}
 
+		/// <summary>
+		/// For the page's Settings: the accelerator AI matching last ran on (as the manor names it), the card, why it fell
+		/// back, and the accelerators marked failed now, which Auto skips until their 10 minutes are up.
+		/// </summary>
+		static object AcceleratorView(AiStatus? ai) => new {
+			inUse = ai?.Kind == null ? null : ai.Accelerator,
+			card = ai?.Kind == "gpu" ? ai.Card : null,
+			fallback = ai?.Kind == null ? null : ai.Fallback,
+			failed = AiStatus.Failures(Gpus()).Select(f => new { id = f.Id, name = f.Name, sinceUtc = f.SinceUtc, untilUtc = f.UntilUtc, reason = f.Reason, by = f.By }),
+		};
+
 		/// <summary>A scan holds scan.lock, or one this page started is still starting.</summary>
 		static bool ScanBusy() {
 			bool locked = AgentScanner.IsRunning();
@@ -474,6 +485,7 @@ namespace HEI.Agent {
 			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
 			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
 				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives));
+			AiStatus? ai = AiStatus.Load();
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
 				.Where(d => !d.Value.Unlisted)
@@ -515,9 +527,10 @@ namespace HEI.Agent {
 				scan = ScanView(),
 				setup = StoreSetup.View(),
 				agent = AgentView(cfg),
-				// Settings' About: this build ("1.5.0+<commit>") and where it came from.
+				// Settings' About: this build ("1.6.0+<commit>") and where it came from.
 				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current },
-				ai = AiStatus.Load(),
+				ai,
+				accelerators = AcceleratorView(ai),
 				gpu = GpuView(cfg),
 				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
 				schedule = new {
