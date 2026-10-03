@@ -33,7 +33,7 @@ namespace HEI.Agent {
 	/// <param name="NpuDisplayName">What Heiward calls it when this build can drive it ("Intel AI Boost NPU"), else "".</param>
 	/// <param name="NpuSupported">This build has a pack for it.</param>
 	/// <param name="NpuInstalled">That pack is downloaded.</param>
-	/// <param name="Accelerator">Where it ran as the manor names it (Manor's docs/ACCELERATORS.md): "npu", "cpu" or "gpu-…"; null when off.</param>
+	/// <param name="Accelerator">Where it ran as the manor names it (the Steward's kit: kit\spec\ACCELERATORS.md): "npu", "cpu" or "gpu-…"; null when off.</param>
 	/// <param name="Card">On a graphics card, its name as Windows lists it (settings.json's gpu); otherwise null.</param>
 	/// <param name="Fallback">
 	/// When the work was meant for another device, from where to where and why, in one line ("NPU to GPU: the Qualcomm

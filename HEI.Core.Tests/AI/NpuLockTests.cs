@@ -67,8 +67,8 @@ public sealed class NpuLockTests : IDisposable {
 
 	// ---------------------------------------------------------------- the NPU queue
 
-	/// <summary>The cases every implementation of the queue runs unchanged (a copy of the shared npu-queue-vectors.json).</summary>
-	static readonly JsonElement Vectors = JsonDocument.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "TestAssets", "npu-queue-vectors.json"))).RootElement;
+	/// <summary>The cases every implementation of the queue runs unchanged: the kit's spec\npu-queue-vectors.json, at the version kit.json pins.</summary>
+	static JsonElement Vectors => KitSpec.QueueVectors;
 
 	[Fact]
 	public void OrdersTheLineLikeEveryOtherImplementation() {

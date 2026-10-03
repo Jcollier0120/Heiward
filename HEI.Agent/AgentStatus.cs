@@ -35,7 +35,7 @@ namespace HEI.Agent {
 	/// <param name="ToReview">Sets in that report with no decision yet, as <c>hei status</c> counts them.</param>
 	/// <param name="Summary">The same in one short sentence, for people.</param>
 	/// <param name="Device">Where AI matching last ran (the last scan's, or the install's or setup's check): "npu", "gpu" or "cpu"; null when it's off or nothing has run yet.</param>
-	/// <param name="Accelerator">The same as the manor names it (Manor's docs/ACCELERATORS.md): "npu", "cpu" or "gpu-…".</param>
+	/// <param name="Accelerator">The same as the manor names it (the Steward's kit: kit\spec\ACCELERATORS.md): "npu", "cpu" or "gpu-…".</param>
 	/// <param name="Card">The graphics card's name when it ran on one, else null.</param>
 	/// <param name="LastFallback">When that work was meant for another device, from where to where and why, in one line; null when it ran where it was meant to.</param>
 	sealed record AgentStatus(string App, bool Running, DateTime? StoppedSince, DateTime? PausedUntil, bool Scheduled, string? NextScan,

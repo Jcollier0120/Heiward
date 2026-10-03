@@ -37,7 +37,7 @@ namespace HEI.Core.AI {
 	/// ahead of it, but never ahead of a scan that has waited two minutes.
 	/// </para>
 	/// <para>
-	/// The same lock and line, unchanged, serve every accelerator (Manor's docs/ACCELERATORS.md): a graphics
+	/// The same lock and line, unchanged, serve every accelerator (the Steward's kit: kit\spec\ACCELERATORS.md): a graphics
 	/// card's first slot is the folder <c>&lt;locks&gt;\gpu-&lt;name&gt;</c> beside the NPU's (<see cref="LockDirectoryFor"/>),
 	/// its line <c>gpu-&lt;name&gt;.queue</c>. Other tools may serve a card with more slots (<c>&lt;id&gt;.2</c>, …);
 	/// Heiward knows nothing of them and only ever takes the first, through the same line, which they honour.

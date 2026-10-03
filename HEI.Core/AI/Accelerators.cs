@@ -23,8 +23,8 @@ using HEI.Core.Utils;
 
 namespace HEI.Core.AI {
 	/// <summary>
-	/// The devices the manor's programs run their models on, as every one of them names them (Manor's
-	/// docs/ACCELERATORS.md): <c>npu</c>, <c>cpu</c>, or a graphics card, <c>gpu-</c> and its name slugged
+	/// The devices the manor's programs run their models on, as every one of them names them (the Steward's
+	/// kit: kit\spec\ACCELERATORS.md): <c>npu</c>, <c>cpu</c>, or a graphics card, <c>gpu-</c> and its name slugged
 	/// (<see cref="GpuId"/>). Each has a lock and a line every program shares (<see cref="NpuLock"/>).
 	/// <para>
 	/// Heiward's failure markers (<c>&lt;id&gt;.failed.json</c>, in the shared files' format) are its own, in

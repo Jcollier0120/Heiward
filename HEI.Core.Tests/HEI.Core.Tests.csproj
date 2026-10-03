@@ -32,4 +32,14 @@
   <ItemGroup>
     <None Include="TestAssets\**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+
+  <!-- The Steward's kit, which tools\kit.ps1 fills into kit\ at the repository root (HEI.Agent\README.md, "The kit"):
+       its spec part holds the cases every implementation of the NPU queue runs, which NpuLockTests and
+       AcceleratorsTests read beside the tests, in kit\spec. Without it the build stops and says to run tools\kit.ps1. -->
+  <ItemGroup>
+    <StewardKitPart Include="spec" />
+    <None Include="..\kit\spec\**" LinkBase="kit\spec" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <Import Project="..\tools\kit.targets" />
 </Project>

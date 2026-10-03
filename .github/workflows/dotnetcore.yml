@@ -16,6 +16,10 @@ jobs:
       uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '10.0.x'
+    # The Steward's kit at the version kit.json pins, from its public release (HEI.Agent/README.md, "The kit"):
+    # the tests run the NPU queue's shared cases from it. In Windows PowerShell, as on the PCs that build Heiward.
+    - name: Fill the Steward's kit
+      run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\kit.ps1
     - name: Build Heiward (x64)
       run: dotnet publish HEI.Agent/HEI.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -nologo -v q
     - name: Build Heiward (arm64)

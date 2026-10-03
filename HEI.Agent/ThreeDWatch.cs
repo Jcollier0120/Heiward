@@ -27,7 +27,7 @@ namespace HEI.Agent {
 	/// performance counters (as Task Manager's GPU column), matched to the card by its LUID: a game on
 	/// another card leaves this one to the scan. The desktop's own compositor (dwm) and Heiward don't
 	/// count. A scan steps back while it lasts (<see cref="AgentScanner"/>). The manor's other programs
-	/// judge a card busy the same way (Manor's docs/ACCELERATORS.md, "Games").
+	/// judge a card busy the same way (the Steward's kit: kit\spec\ACCELERATORS.md, "Games").
 	/// </summary>
 	sealed partial class ThreeDWatch : IDisposable {
 		/// <summary>Share of a GPU 3D engine another program must keep busy to count: a game takes most of it, a browser or a video a few percent. The manor's 25%.</summary>

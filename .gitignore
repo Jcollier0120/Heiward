@@ -265,3 +265,6 @@ __pycache__/
 # BenchmarkDotNet output (HTML/CSV/MD/JSON reports + intermediate build dirs)
 BenchmarkDotNet.Artifacts/
 BenchmarkLogs/
+
+# The Steward's kit: filled by tools\kit.ps1 at the version kit.json pins. Never edit it here.
+/kit/
