@@ -3374,30 +3374,65 @@ function swatch(colors) {
   return s;
 }
 
+// With Manor installed, Manor chooses the theme for every page in the manor: Heiward served the page with it
+// on <html> (data-theme, unless it's Match Windows), with Manor's name and page (data-manor, data-manor-url).
+function manorTheme() {
+  const root = document.documentElement;
+  if (!root.hasAttribute('data-manor')) return null;
+  return { name: root.dataset.manor || 'Manor', url: root.dataset.manorUrl || '' };
+}
+
+function themeItem(t, tag) {
+  const item = el(tag, 'theme-item');
+  item.setAttribute('role', 'menuitemradio');
+  item.setAttribute('aria-checked', String(t.name === currentTheme()));
+  item.dataset.theme = t.name;
+  const text = el('span', 'ti-text');
+  text.append(el('span', 'ti-label', t.label), el('span', 'ti-desc', t.description));
+  item.append(swatch(t.swatch), text, icon('check', 'ti-check'));
+  return item;
+}
+
 function setupThemeMenu() {
   const btn = $('theme-btn');
   const menu = $('theme-menu');
   btn.append(icon('palette'));
-  const labels = { windows: 'Windows', colour: 'Colour themes' };
-  let group = null;
-  for (const t of window.heiwardThemes || []) {
-    if (t.group !== group) {
-      group = t.group;
-      menu.append(el('div', 'menu-label', labels[group] || ''));
+  const manor = manorTheme();
+  if (manor) {
+    // Manor's theme, shown, not chosen here: the menu says so and links to Manor, where it's changed.
+    const label = `Theme (${manor.name}'s)`;
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    menu.append(el('div', 'menu-label', 'Theme'));
+    const themes = window.heiwardThemes || [];
+    const current = themes.find((t) => t.name === currentTheme()) || themes[0];
+    if (current) {
+      const item = themeItem(current, 'div');
+      item.setAttribute('aria-disabled', 'true');
+      menu.append(item);
     }
-    const item = el('button', 'theme-item');
-    item.type = 'button';
-    item.setAttribute('role', 'menuitemradio');
-    item.setAttribute('aria-checked', String(t.name === currentTheme()));
-    item.dataset.theme = t.name;
-    const text = el('span', 'ti-text');
-    text.append(el('span', 'ti-label', t.label), el('span', 'ti-desc', t.description));
-    item.append(swatch(t.swatch), text, icon('check', 'ti-check'));
-    // The menu stays open, so themes can be tried one after another.
-    item.addEventListener('click', () => setTheme(t.name));
-    menu.append(item);
+    menu.append(el('p', 'menu-note', `${manor.name} chooses the theme, for every page in the manor.`));
+    const link = el('a', 'menu-link', `Change it in ${manor.name}`);
+    link.href = manor.url;
+    link.setAttribute('role', 'menuitem');
+    menu.append(link);
+  } else {
+    const labels = { windows: 'Windows', colour: 'Colour themes' };
+    let group = null;
+    for (const t of window.heiwardThemes || []) {
+      if (t.group !== group) {
+        group = t.group;
+        menu.append(el('div', 'menu-label', labels[group] || ''));
+      }
+      const item = themeItem(t, 'button');
+      item.type = 'button';
+      // The menu stays open, so themes can be tried one after another.
+      item.addEventListener('click', () => setTheme(t.name));
+      menu.append(item);
+    }
   }
-  const items = () => [...menu.querySelectorAll('.theme-item')];
+  // What the keyboard moves between: the themes, or with Manor's, the link to Manor.
+  const items = () => [...menu.querySelectorAll(manor ? '.menu-link' : 'button.theme-item')];
   const show = (open) => {
     menu.classList.toggle('hidden', !open);
     btn.setAttribute('aria-expanded', String(open));

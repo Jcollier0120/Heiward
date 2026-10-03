@@ -15,6 +15,9 @@
     { name: 'quest', label: 'Quest', description: 'An old map in ink and parchment.', swatch: ['#ece0c4', '#284078', '#2c2014'], group: 'colour' },
   ];
   window.heiwardThemes = themes;
+  // With Manor installed, Manor chooses the theme for every page in the manor: Heiward served this page with
+  // it on <html> (data-manor, and data-theme unless it's Match Windows), and the browser's own choice waits.
+  if (document.documentElement.hasAttribute('data-manor')) return;
   try {
     var saved = localStorage.getItem('heiward:theme');
     for (var i = 1; i < themes.length; i++) if (themes[i].name === saved) document.documentElement.dataset.theme = saved;
