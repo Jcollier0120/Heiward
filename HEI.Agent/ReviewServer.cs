@@ -88,7 +88,11 @@ namespace HEI.Agent {
 				await next();
 			});
 
-			app.MapGet("/", () => Results.Content(Asset("index.html").Replace("__AGENT_TOKEN__", token), "text/html; charset=utf-8"));
+			// With Manor installed, "Back to <manor>" and Manor's theme, read fresh so a change there shows on the next load: see Manor.
+			app.MapGet("/", (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-cache";
+				return Results.Content(Manor.Stamp(Asset("index.html").Replace("__AGENT_TOKEN__", token), Manor.Load()), "text/html; charset=utf-8");
+			});
 			// Revalidated on every load, so an updated agent's page never runs yesterday's script.
 			app.MapGet("/app.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/app.css", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("app.css"), "text/css; charset=utf-8"); });
@@ -97,6 +101,12 @@ namespace HEI.Agent {
 				ctx.Response.Headers.CacheControl = "no-cache";
 				ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'";
 				return Results.Content(Asset("favicon.svg"), "image/svg+xml");
+			});
+			// Manor's icon, for "Back to <manor>" (ManorIcon): an SVG with nothing in it that runs, and its own policy as the tab icon has.
+			app.MapGet("/manor-icon.svg", async (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-cache";
+				ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+				return Results.Content(await ManorIcon.GetAsync(), "image/svg+xml");
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));

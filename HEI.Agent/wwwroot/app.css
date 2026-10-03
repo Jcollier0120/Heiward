@@ -90,7 +90,7 @@
   color-scheme: dark;
 }
 
-/* ---- Colour themes. The Theme menu sets <html data-theme>; with none, the page follows Windows.
+/* ---- Colour themes. The Theme menu sets <html data-theme> (with Manor installed, the page comes with Manor's); with none, the page follows Windows.
    These six are Gamer Nexus's premium themes (@gamernexus/theme), mapped onto this page's tokens.
    Badge tints are 20% of their colour over --surface-2, thinned where that left text under 4.5:1. */
 /* Arcade: Neon retro, 90s arcade. */
@@ -315,6 +315,22 @@ button { font: inherit; color: inherit; }
 .bm-front { fill: var(--ok); }
 .bm-vein { stroke: var(--ok-bg); stroke-width: 1.2; stroke-linecap: round; fill: none; }
 .scanstate { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+/* Back to the manor, first in the title bar when Manor is installed: Manor's icon and its name, as on every
+   agent's page (the Steward's kit 2.3.0); the icon alone in a narrow window. */
+.manor-back {
+  display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 6px; margin-left: -6px; border-radius: 6px; min-width: 0; max-width: 300px;
+  color: var(--muted); font-size: 12px; font-weight: 600; text-decoration: none; white-space: nowrap;
+}
+.manor-back:hover { background: var(--hover); color: var(--fg); }
+.manor-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.manor-back img { flex: none; }
+.manor-back span { overflow: hidden; text-overflow: ellipsis; }
+.manor-sep { width: 1px; height: 24px; background: var(--line); flex: none; }
+.manor-sep ~ .scanstate { margin-left: auto; }
+@media (max-width: 640px) {
+  .manor-back { padding: 4px 6px; }
+  .manor-back span { display: none; }
+}
 
 .commandbar {
   display: flex; align-items: center; gap: 10px;
@@ -361,6 +377,13 @@ button { font: inherit; color: inherit; }
 .theme-item .ti-desc { font-size: 12px; color: var(--muted); }
 .theme-item .ti-check { width: 16px; height: 16px; flex: none; color: var(--accent-text); visibility: hidden; }
 .theme-item[aria-checked="true"] .ti-check { visibility: visible; }
+/* With Manor installed, Manor chooses the theme: the menu shows it, says so, and links to Manor. */
+.theme-item[aria-disabled="true"] { cursor: default; }
+.theme-menu .menu-note { font-size: 12px; color: var(--muted); padding: 8px 10px 4px; margin: 0; white-space: normal; overflow-wrap: anywhere; }
+.theme-menu .menu-link {
+  display: block; padding: 6px 10px; border-radius: 6px; font-size: 13px; color: var(--accent-text); text-decoration: none; overflow-wrap: anywhere;
+}
+.theme-menu .menu-link:hover, .theme-menu .menu-link:focus-visible { background: var(--hover); outline: none; }
 /* The swatch: the theme's page colour, its accent as a wedge, its text colour as a bar. */
 .swatch { position: relative; flex: none; width: 22px; height: 22px; border-radius: 50%; overflow: hidden; border: 1px solid var(--line); }
 .swatch span { position: absolute; inset: 0; }

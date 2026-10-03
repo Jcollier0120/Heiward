@@ -314,6 +314,8 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 
 **Heiward's name** in the title bar goes back to This PC from anywhere.
 
+**Back to the manor:** with Manor installed (its `settings.json` and `app` folder in `%USERPROFILE%\.manor`, or `MANOR_HOME`), the title bar starts with Manor's icon and "Back to" its name, a link to Manor's page, as on every agent's page in the manor; a narrow window shows the icon alone. Heiward serves the icon from its own address: the one Manor's page shows (kept for ten minutes), else the one in Manor's app folder, else a plain house, and never an SVG with anything in it that runs. Without Manor, the title bar is as it was.
+
 **Where AI matching runs:** a badge in the title bar. It's green ("NPU ready", then "Running on the NPU" once a scan has used it). Otherwise it names the device and why: "No NPU available", "Unsupported NPU" (an NPU this version can't drive yet), "NPU not set up" (its pack isn't downloaded), or "NPU fell back" (it couldn't run the model; `heiward.log` says why). The install, `hei setup` and every scan write this to `ai-status.json`, so the page reads one small file and is right from the first visit.
 
 **Scanning on its own:** the title bar has the controls, and a banner says when Heiward isn't scanning by itself.
@@ -324,7 +326,7 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 
 **Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, **Keep a history** (with Clear history), and **Developer mode**. It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
 
-**Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser.
+**Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser. With Manor installed, Manor chooses the theme for every page in the manor, Heiward's too: the page follows the `theme` in Manor's `settings.json` from its next load, and the palette shows it, with a link to change it in Manor.
 
 Folder names are read live from disk; counts come from the last scan (`index.json` next to the report).
 
@@ -334,6 +336,7 @@ Folder names are read live from disk; counts come from the last scan (`index.jso
 - Every button needs a token that exists only inside the page it served, plus a same-origin Origin header.
 - Thumbnails are served only for files in the current report.
 - It stays up, as every agent's page does: the sign-in task starts it, and each scheduled scan and each install start it again if it has gone. Pausing stops scans, not the page.
+- With Manor installed, it asks Manor's page on this PC (127.0.0.1) for Manor's icon, and serves it only when nothing in it runs.
 
 ## Build
 
