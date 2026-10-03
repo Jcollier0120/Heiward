@@ -287,6 +287,15 @@ hei uninstall       [--purge] [--dry-run]
 
 Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans (its page stays up either way), and `hei open --no-browser` to make sure its review page is up.
 
+While the review page is up, its `GET /api/ping` answers `{"app":"heiward","store":…,"exe":…}` and its scans at a glance, the same four fields the Steward's kit gives the other agents, for Manor's employee cards. Times are UTC or `null`; it reads only small files Heiward keeps, and asks Task Scheduler at most once a minute:
+
+| Field | |
+|---|---|
+| `lastRunAt` | When the last scan ended, whoever started it (`last-scan.json`, which each scan writes as it ends). A scheduled scan that skipped itself (paused, on battery) or found another running didn't run. Before any scan wrote that file: when the last report was written; `null` before the first scan |
+| `lastRunOk` | Whether that scan went through: a fresh report, or nothing new to scan. `false` when it failed, found none of its folders, or was stopped; `null` when unknown |
+| `nextRunAt` | The scan task's next run, from Task Scheduler (a time already past moves on by the interval); `null` while paused, with scans only when asked, with no scan task (a development build has none), or when Task Scheduler's wording isn't a time this PC reads |
+| `runningSince` | When the scan under way started; `null` when none is |
+
 ## The review page
 
 It's laid out like File Explorer, so you can go where you care most instead of scrolling every duplicate on the PC:

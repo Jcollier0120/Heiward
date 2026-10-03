@@ -90,6 +90,8 @@ namespace HEI.Agent {
 		public static string ScanStatus => Path.Combine(Home, "scan-status.json");
 		/// <summary>When the last scan started, finished or not: opening the page doesn't start another before it's due.</summary>
 		public static string ScanStarted => Path.Combine(Home, "scan-started.txt");
+		/// <summary>How the last scan ended (<see cref="HEI.Agent.LastScan"/>): what /api/ping gives Manor as the last run.</summary>
+		public static string LastScan => Path.Combine(Home, "last-scan.json");
 		public static string ScanLock => Path.Combine(Home, "scan.lock");
 		public static string Database => Path.Combine(Home, "db");
 		public static string Thumbnails => Path.Combine(Home, "thumbs");
