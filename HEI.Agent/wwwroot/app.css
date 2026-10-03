@@ -549,6 +549,9 @@ button { font: inherit; color: inherit; }
 .auto-kinds label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
 .auto-foot { padding: 12px 0; display: grid; gap: 6px; font-size: 13px; }
 .about a { color: var(--accent-text); }
+/* With Manor's Developer options set, they decide developer mode: which way, and a link to change it in Manor, in place of the switch. */
+.manor-decides { margin: 2px 0 4px; overflow-wrap: anywhere; }
+.manor-decides a { color: var(--accent-text); }
 .auto-wait { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
 .auto-wait select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; max-width: 100%; }
 .auto-wait select:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -727,6 +730,8 @@ button { font: inherit; color: inherit; }
 .ctx-menu .menu-hint { font-size: 12px; color: var(--muted); padding: 2px 10px 6px; }
 footer { margin-top: 28px; }
 footer code { font-size: 12px; }
+/* The settings file's path, which can be long with no space to break at: it wraps rather than scroll the page sideways. */
+footer code, .auto-foot code { overflow-wrap: anywhere; }
 
 /* ---- Folder view: navigation pane + content ---- */
 .split { display: grid; grid-template-columns: minmax(240px, 300px) 1fr; overflow: hidden; }

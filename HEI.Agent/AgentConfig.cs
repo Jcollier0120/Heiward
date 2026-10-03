@@ -237,7 +237,8 @@ namespace HEI.Agent {
 		/// tools recreate, once a day, and show them on the page. "on" or "off", the switch in the page's
 		/// Settings. Off, the page shows nothing of it and nothing is checked. Settings files from before
 		/// the switch say "auto", read as on only where automatic cleanup of developer leftovers is on, so
-		/// that keeps working (<see cref="Load"/>).
+		/// that keeps working (<see cref="Load"/>). This is Heiward's own switch: with Manor installed and its
+		/// Developer options set, they decide instead, and this is kept for when they don't (<see cref="DevMode"/>).
 		/// </summary>
 		public string DeveloperMode { get; set; } = "off";
 		/// <summary>A project untouched this many days has its build outputs ticked for cleaning.</summary>
@@ -252,6 +253,7 @@ namespace HEI.Agent {
 		public AutoCleanConfig AutoClean { get => autoClean; set => autoClean = value ?? new(); }
 		AutoCleanConfig autoClean = new();
 
+		/// <summary>Heiward's own switch is on. Whether developer mode is on now, Manor's Developer options counted, is <see cref="DevMode.Now"/>.</summary>
 		[JsonIgnore]
 		public bool DeveloperModeOn => string.Equals(DeveloperMode, "on", StringComparison.OrdinalIgnoreCase);
 

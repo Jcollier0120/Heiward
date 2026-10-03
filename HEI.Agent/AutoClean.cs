@@ -352,13 +352,16 @@ namespace HEI.Agent {
 			return run;
 		}
 
-		/// <summary>After a scan: runs automatic cleanup on the saved reports, holding the cleanup lock throughout.</summary>
-		public static AutoRun? RunAndSave(AgentConfig cfg, bool devChecked, IAutoActions actions) {
+		/// <summary>
+		/// After a scan: runs automatic cleanup on the saved reports, holding the cleanup lock throughout. Developer
+		/// leftovers only with developer mode on (<paramref name="devMode"/>: Manor's Developer options, or Heiward's own switch).
+		/// </summary>
+		public static AutoRun? RunAndSave(AgentConfig cfg, DevMode devMode, bool devChecked, IAutoActions actions) {
 			bool on = cfg.AutoClean.Duplicates || cfg.AutoClean.Developer;
 			if (!on && !File.Exists(AutoCleanState.FilePath)) return null; // never turned on: nothing to keep
 			using (CleanLock.Acquire(TimeSpan.FromMinutes(10))) {
 				AutoCleanState s = AutoCleanState.Load();
-				AutoRun? run = Run(cfg, Report.Load(), cfg.DeveloperModeOn ? DevReport.Load() : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions);
+				AutoRun? run = Run(cfg, Report.Load(), devMode.On ? DevReport.Load() : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions);
 				s.Save();
 				if (run != null && (run.DidSomething || run.Problems.Count > 0))
 					AgentPaths.AppendLog("automatic cleanup: " + run.Describe() + string.Concat(run.Problems.Select(p => Environment.NewLine + "    left alone: " + p)));

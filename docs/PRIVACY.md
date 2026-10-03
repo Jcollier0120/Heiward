@@ -40,7 +40,7 @@ These downloads are ordinary web requests. Like any, they show your IP address t
 
 ## Pull requests, in developer mode
 
-Developer mode is off until you turn it on in Settings. On, the developer page lists your code repositories and, for those hosted on GitHub, Azure DevOps (or Azure DevOps Server and TFS), GitLab, Bitbucket, Gitea or Forgejo, their open pull requests.
+Developer mode is off until you turn it on in Settings (or, with Manor installed, in Manor's Developer options, which then decide it). On, the developer page lists your code repositories and, for those hosted on GitHub, Azure DevOps (or Azure DevOps Server and TFS), GitLab, Bitbucket, Gitea or Forgejo, their open pull requests.
 
 To list them, Heiward asks each host while the developer page is open:
 - **What it sends:** the names of your repositories hosted there, as their remotes in git name them, and nothing else about you or your files.

@@ -639,9 +639,12 @@ namespace HEI.Agent {
 	static class DevScan {
 		static string LockPath => Path.Combine(AgentPaths.Home, "dev-scan.lock");
 
-		/// <summary>After a scheduled scan: at most once a day, so the caches aren't measured every hour.</summary>
-		public static bool Due(AgentConfig cfg) =>
-			cfg.DeveloperModeOn && (DevReport.Load() is not { } last || DateTime.UtcNow - last.ScannedAtUtc > TimeSpan.FromHours(20));
+		/// <summary>
+		/// After a scheduled scan, with developer mode on (Manor's Developer options, or Heiward's own switch): at most
+		/// once a day, so the caches aren't measured every hour.
+		/// </summary>
+		public static bool Due(DevMode mode) =>
+			mode.On && (DevReport.Load() is not { } last || DateTime.UtcNow - last.ScannedAtUtc > TimeSpan.FromHours(20));
 
 		public static DevReport? RunAndSave(AgentConfig cfg, CancellationToken ct = default) {
 			Directory.CreateDirectory(AgentPaths.Home);

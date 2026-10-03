@@ -175,9 +175,12 @@ namespace HEI.Agent {
 				AgentPaths.AppendLog($"history cleared ({cleared} entries)");
 				return Results.Json(new { cleared });
 			}));
-			// The page's own settings: history on or off, and how hard scans work.
+			// The page's own settings: history on or off, how hard scans work, and developer mode, unless Manor's Developer options decide it.
 			app.MapPost("/api/settings", (SettingsRequest request) => {
 				if (request.ScanSpeed != null && !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return Results.BadRequest(new { error = "Unknown scan speed." });
+				DevMode devMode = DevMode.Now(cfg);
+				// Heiward's own switch waits while Manor decides: it's changed in Manor, and Heiward's own stays as the user left it.
+				if (request.DeveloperMode != null && devMode.ByManor) return Results.Conflict(new { error = devMode.ManorDecidesText });
 				string? gpu = null;
 				if (request.Gpu != null) {
 					// A scan keeps the card it started on (its decoders and AI session are open on it): the next one would
@@ -198,7 +201,8 @@ namespace HEI.Agent {
 				saved.Save();
 				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
 					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here") +
-					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}");
+					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}" +
+					(devMode.ByManor ? $" (but {devMode.Manor.Name}'s Developer options turn it {(devMode.On ? "on" : "off")})" : ""));
 				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
@@ -260,9 +264,10 @@ namespace HEI.Agent {
 				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
 				return Results.Accepted();
 			});
-			// Developer mode off (Settings): its part of the page is hidden, and its requests are refused.
+			// Developer mode off (Settings, or Manor's Developer options, read fresh for each request): its part of the page is
+			// hidden, and its requests are refused.
 			var devApi = app.MapGroup("/api/dev").AddEndpointFilter(async (context, next) =>
-				cfg.DeveloperModeOn ? await next(context) : Results.Conflict(new { error = "Developer mode is off: turn it on in Settings." }));
+				DevMode.Now(cfg) is { On: false } off ? Results.Conflict(new { error = off.PageOffText }) : await next(context));
 			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
 			devApi.MapGet("", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
 			devApi.MapPost("/projects", (List<DevProject> projects) => {
@@ -501,7 +506,9 @@ namespace HEI.Agent {
 			Report? report = anyReport?.Build == AppBuild.Current ? anyReport : null;
 			ScanIndex? index = ScanIndex.Load();
 			var decisions = DecisionStore.Load();
-			DevReport? devReport = cfg.DeveloperModeOn ? DevReport.Load() : null;
+			// Manor's Developer options, or Heiward's own switch: read on every poll, so the page follows a change in Manor.
+			DevMode devMode = DevMode.Now(cfg);
+			DevReport? devReport = devMode.On ? DevReport.Load() : null;
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
@@ -544,7 +551,7 @@ namespace HEI.Agent {
 					recycledBytes = decisions.Values.Sum(d => d.RecycledBytes),
 					decisions = decisions.Count,
 				},
-				dev = DevSummary(cfg, devReport),
+				dev = DevSummary(devMode, devReport),
 				auto = AutoView(report, devReport, decisions),
 				drives,
 				glance,
@@ -590,11 +597,16 @@ namespace HEI.Agent {
 			};
 		}
 
-		/// <summary>The home page's developer card: totals per category of the last check.</summary>
-		static object DevSummary(AgentConfig cfg, DevReport? r) {
+		/// <summary>
+		/// The home page's developer card: totals per category of the last check. And for Settings, whether developer mode
+		/// is on, and with <c>manor</c>, that Manor's Developer options decide it: the page shows which way, with a link to
+		/// Manor's page, in place of its switch.
+		/// </summary>
+		static object DevSummary(DevMode mode, DevReport? r) {
 			return new {
-				enabled = cfg.DeveloperModeOn,
-				running = cfg.DeveloperModeOn && DevBusy(),
+				enabled = mode.On,
+				manor = mode.ByManor ? new { name = mode.Manor.Name, url = mode.Manor.Url, note = mode.ManorNote } : null,
+				running = mode.On && DevBusy(),
 				scannedAtUtc = r?.ScannedAtUtc,
 				totalBytes = r?.Categories.SelectMany(c => c.Items).Sum(i => i.Bytes) ?? 0,
 				suggestedBytes = r?.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes) ?? 0,

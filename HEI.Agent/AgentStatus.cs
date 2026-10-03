@@ -38,9 +38,12 @@ namespace HEI.Agent {
 	/// <param name="Accelerator">The same as the manor names it (the Steward's kit: kit\spec\ACCELERATORS.md): "npu", "cpu" or "gpu-…".</param>
 	/// <param name="Card">The graphics card's name when it ran on one, else null.</param>
 	/// <param name="LastFallback">When that work was meant for another device, from where to where and why, in one line; null when it ran where it was meant to.</param>
+	/// <param name="DeveloperMode">Developer mode is on now: Manor's Developer options when they decide it, else Heiward's own switch (<see cref="DevMode"/>).</param>
+	/// <param name="DeveloperModeBy">"manor" when Manor's Developer options decide it, "heiward" when Heiward's own switch does.</param>
 	sealed record AgentStatus(string App, bool Running, DateTime? StoppedSince, DateTime? PausedUntil, bool Scheduled, string? NextScan,
 		bool Scanning, DateTime? LastScan, int ToReview, StatusPage Page, string Summary,
-		string? Device = null, string? Accelerator = null, string? Card = null, string? LastFallback = null) {
+		string? Device = null, string? Accelerator = null, string? Card = null, string? LastFallback = null,
+		bool DeveloperMode = false, string DeveloperModeBy = "heiward") {
 
 		/// <summary>
 		/// The status now. The two slow questions run side by side: Task Scheduler for the next run, and the
@@ -69,10 +72,13 @@ namespace HEI.Agent {
 			// Where the AI ran, from the one small file the last scan (or the install, or setup) wrote: nothing is loaded to guess.
 			AiStatus? ai = AiStatus.Load();
 			string? device = ai?.Kind;
+			// Manor's settings.json, read fresh as for the page.
+			DevMode devMode = DevMode.Now(cfg);
 			return new AgentStatus("heiward", pause == null, Utc(pause?.SinceUtc), Utc(pause?.UntilUtc), scheduled, nextRun,
 				scanning, Utc(report?.ScannedAtUtc), toReview, new StatusPage(ReviewServer.PageUrl(cfg.Port), pageUp), summary,
 				device, device == null ? null : ai!.Accelerator ?? device switch { "gpu" => HEI.Core.AI.Accelerators.GpuId(ai.Card ?? ""), _ => device },
-				device == "gpu" ? ai!.Card : null, device == null ? null : ai!.Fallback);
+				device == "gpu" ? ai!.Card : null, device == null ? null : ai!.Fallback,
+				devMode.On, devMode.ByManor ? "manor" : "heiward");
 		}
 
 		/// <summary>One line, for a pipe: camelCase, nulls written out, anything but ASCII escaped.</summary>
