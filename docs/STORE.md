@@ -21,9 +21,9 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
   - Any other `heiward:` link opens the page.
 - **The `hei` command** in a terminal, as an app execution alias. The alias's path, `%LOCALAPPDATA%\Microsoft\WindowsApps\hei.exe`, stays the same across updates while the package's own folder changes with every version. That makes it the path for the scheduled tasks.
 - **FFmpeg** in `bin\`, where Heiward looks for it first. The Store signs it with the rest of the package, so Smart App Control lets it load, and nothing is downloaded after install. Its licenses and build notes are in `licenses\FFmpeg`.
-  - It's the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), pinned by release and SHA-256.
-  - **arm64:** `n8.1.3-2`, the same one the GitHub exe downloads.
-  - **x64:** `n8.1.3-3`, the same configuration built for x64.
+  - It's the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), pinned by release and SHA-256: `n8.1.3-4`, for both arm64 and x64.
+  - **arm64** is the same one the GitHub exe downloads; **x64** is the same configuration built for x64.
+  - `n8.1.3-4` adds Media Foundation's encoders (`hevc_mf`, `h264_mf`, `av1_mf`), which reach the PC's hardware video encoder. Heiward only decodes, but other apps that find this FFmpeg can encode with it.
 - **Logos** in `Store\Assets`, rendered from `wwwroot\favicon.svg` by `make-icon.ps1`, and a `resources.pri` that lets Windows pick one per size.
 
 ## Partner Center
