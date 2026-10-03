@@ -26,7 +26,7 @@ namespace HEI.Core.Utils {
 	/// <param name="Luid">Its LUID as Windows' GPU Engine counters name it ("0x00000000_0x0000c6b1"), lowercase; "" when unknown. It changes from boot to boot.</param>
 	/// <param name="Driver">Its driver's version ("32.0.101.6127"), "" when DXGI doesn't say.</param>
 	public sealed record GpuAdapter(int Index, string Key, string Name, ulong DedicatedMemory, uint VendorId, string Luid = "", string Driver = "") {
-		/// <summary>The manor's id for it (Manor's docs/ACCELERATORS.md): "gpu-" and its <see cref="Key"/> slugged.</summary>
+		/// <summary>The manor's id for it (the Steward's kit: kit\spec\ACCELERATORS.md): "gpu-" and its <see cref="Key"/> slugged.</summary>
 		public string AcceleratorId => AI.Accelerators.GpuId(Key);
 	}
 

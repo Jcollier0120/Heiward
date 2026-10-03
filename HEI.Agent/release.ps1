@@ -1,6 +1,7 @@
 # Builds Heiward's release files: one self-contained exe per architecture
 # (Heiward-<version>-x64.exe, Heiward-<version>-arm64.exe) and SHA256SUMS.txt, in artifacts\heiward.
 # With -Publish it then creates the GitHub release v<version> at the commit it built, and uploads every file.
+# It fills the Steward's kit first (tools\kit.ps1), at the version kit.json pins.
 # Needs the .NET 10 SDK on PATH, and for -Publish the GitHub CLI (gh), signed in.
 #
 #   powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1              build only
@@ -25,6 +26,12 @@ if ($Publish) {
 	if (git -C $PSScriptRoot status --porcelain) { throw 'The working tree has uncommitted changes. Commit them (or build without -Publish) first.' }
 }
 
+# The Steward's kit, at exactly the version kit.json pins: never a kit tree from -From or STEWARD_KIT (HEI.Agent\README.md, "The kit").
+$root = Split-Path $PSScriptRoot -Parent
+& (Join-Path $root 'tools\kit.ps1') -ForRelease
+if ($LASTEXITCODE -ne 0) { throw "tools\kit.ps1 couldn't fill the Steward's kit (above)." }
+$kit = (Get-Content (Join-Path $root 'kit\VERSION') -Raw).Trim()
+
 $project = Join-Path $PSScriptRoot 'HEI.Agent.csproj'
 $version = ([xml](Get-Content $project -Raw)).Project.PropertyGroup.VersionPrefix | Where-Object { $_ } | Select-Object -First 1
 if (-not $version) { throw "No VersionPrefix in $project." }
@@ -32,7 +39,7 @@ $tag = "v$version"
 
 $commit = git -C $PSScriptRoot rev-parse HEAD
 if (git -C $PSScriptRoot status --porcelain) { Write-Warning 'The working tree has uncommitted changes, and the build includes them.' }
-Write-Host "Heiward $version from commit $($commit.Substring(0, 7))"
+Write-Host "Heiward $version from commit $($commit.Substring(0, 7)), with the Steward's kit $kit"
 if ($Publish) {
 	# gh reports "release not found" on stderr, which Windows PowerShell would turn into a stopping error.
 	$ErrorActionPreference = 'Continue'

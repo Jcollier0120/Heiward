@@ -709,6 +709,7 @@ function renderGlance(g) {
 // rest of settings.json (folders, file types, the AI device) is listed with where to change it.
 function renderSettings(s) {
   renderScanCard(s);
+  renderWhereCard(s);
   renderAutoCard(s);
   renderHistoryCard(s);
   renderDevModeCard(s);
@@ -792,6 +793,66 @@ function acceleratorNotes(a) {
       until(f.sinceUtc) + ', so Heiward leaves it until ' + until(f.untilUtc) + ': ' + f.reason));
   }
   return notes;
+}
+
+/** Where AI matching runs on this PC, in a sentence, from ai-status.json as the title bar's badge reads it. */
+function modelHere(ai) {
+  if (!ai) return '';
+  if (ai.device === 'off') return 'On this PC it\'s off: its components aren\'t installed ("hei setup" installs them).';
+  const where = ai.device === 'NPU' ? 'the ' + (ai.npuDisplayName || ai.npuName || 'NPU')
+    : ai.device === 'GPU' ? 'the graphics card' + (ai.card ? ', the ' + ai.card : '') : 'the processor';
+  const why = ai.device === 'NPU' ? ''
+    : ai.npuVendor === 'None' ? ', as this PC has no NPU'
+      : !ai.npuSupported ? ', as this version doesn\'t support its NPU yet'
+        : !ai.npuInstalled ? ', as its NPU isn\'t set up ("hei setup")'
+          : ai.setting === 'gpu' || ai.setting === 'cpu' ? ', as the settings file asks (aiDevice)'
+            : ', as the NPU couldn\'t run the model (heiward.log says why)';
+  return 'On this PC it ' + (ai.source === 'scan' ? 'ran' : 'runs') + ' on ' + where + why + '.';
+}
+
+/**
+ * Where its work runs, in plain words, so processor and graphics use that comes and goes needs no explaining: the model
+ * (on this PC, as the badge says), video frames, files, when scans run and how hard, the turns on the NPU, and why the
+ * meters move. Every agent at the manor has this section; its facts are Heiward's own (OnnxEmbedder, HardwareVideoDecode,
+ * ReportBuilder.ContentHashes, Scheduler, ScanPace, NpuLock).
+ */
+function renderWhereCard(s) {
+  const c = s.config;
+  const speed = c.scanSpeed === 'background' || c.scanSpeed === 'full' ? c.scanSpeed : 'auto';
+  const background = 'in Windows\' efficiency mode, at low priority and at most ' + c.backgroundCpuPercent + '% of the processor';
+  const fast = 'at full speed, on ' + count(c.fullSpeedCores, 'core', 'cores');
+  const when = !s.schedule.everyMinutes
+    ? (s.about.dev ? 'A development build has no scheduled scans: it scans when you press Scan now.' : 'It scans only when you press Scan now.')
+    : 'Heiward ' + (s.schedule.text || 'scans every ' + s.schedule.everyMinutes + ' min') + '; a scan with nothing new is a quick look at the folders.';
+  const pace = {
+    background: 'Every scan runs ' + background + '.',
+    auto: s.schedule.everyMinutes ? 'Scheduled scans run ' + background + '. Scan now, and any scan while this page is open, runs ' + fast + '.'
+      : 'Scan now runs ' + fast + '.',
+    full: 'Every scan runs ' + fast + (s.schedule.everyMinutes ? ', scheduled ones too.' : '.'),
+  }[speed];
+  const rows = [
+    ['The model', 'AI matching compares pictures and video frames with DINOv2, a vision model. It runs on the NPU, through its maker\'s runtime ' +
+      '(Qualcomm\'s QNN, Intel\'s OpenVINO or AMD\'s Vitis AI, with Windows ML); without an NPU that works, on a graphics card through DirectML; otherwise on the processor. ' + modelHere(s.ai)],
+    ['Video frames', 'FFmpeg decodes the frames Heiward samples from each video. A few videos at a time go to the graphics chip\'s video decoder, ' +
+      'which costs the processor little; the rest, and any it can\'t decode, are decoded on the processor. iPhone photos use that decoder too, beside the processor.'],
+    ['Files', 'Listing folders, reading files and hashing them is processor and disk work. A rescan reads only new and changed files. ' +
+      'Files of the same size are hashed whole, once, to find exact copies; photos are decoded, and the sound of videos fingerprinted, on the processor.'],
+    ['When it runs', when + ' ' + pace + ' While a game or anything full screen runs, scans make way.'],
+    ['Taking turns', 'On the NPU, the model takes its turn in the queue the manor\'s agents on this PC share: Heiward holds the NPU for at most 2 seconds, ' +
+      'then joins the back of the line, and work someone is waiting on goes first. On a graphics card it takes that card\'s turn the same way.'],
+    ['Why the processor and graphics come and go', 'A scan comes in bursts: the folders, then decoding and comparing what\'s new, then hashing, and between ' +
+      'scans Heiward does nothing. The graphics chip is busy only while it decodes videos or runs the model, the NPU in short turns. ' +
+      'A scan in the background stays under its cap; one at full speed can fill the processor until it finishes.'],
+  ];
+  const card = el('div', 'auto-card');
+  for (const [title, value] of rows) {
+    const r = el('div', 'auto-row');
+    const text = el('div', 'auto-text');
+    text.append(el('div', 'auto-title', title), el('div', 'muted small', value));
+    r.append(text);
+    card.append(r);
+  }
+  $('where-card').replaceChildren(card);
 }
 
 /** What the page has no switch for: where it's set, and what it's set to now. */

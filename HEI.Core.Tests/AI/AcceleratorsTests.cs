@@ -21,7 +21,7 @@ using HEI.Core.Utils;
 namespace HEI.Core.Tests.AI;
 
 /// <summary>
-/// The manor's accelerators (Manor's docs/ACCELERATORS.md), as Heiward takes part: the ids every program names them by,
+/// The manor's accelerators (the Steward's kit: kit\spec\ACCELERATORS.md), as Heiward takes part: the ids every program names them by,
 /// a card's lock and line beside the NPU's, Heiward's own failure markers, the checks of a card, and Auto's choice without
 /// a working NPU. Every file goes to a scratch folder (NPU_AGENT_NPU_LOCK, and the markers' folder), never the real locks.
 /// </summary>
@@ -96,6 +96,28 @@ public sealed class AcceleratorsTests : IDisposable {
 		Assert.Equal(npuLock, NpuLock.LockDirectoryFor("npu"));
 		Assert.Equal(Path.Combine(root, "locks", "gpu-x"), NpuLock.LockDirectoryFor("gpu-x"));
 		Assert.Throws<ArgumentException>(() => NpuLock.LockDirectoryFor("..\\elsewhere"));
+	}
+
+	/// <summary>
+	/// The shared cases for each accelerator's lock folders and line (the kit's spec\npu-queue-vectors.json, "slots"). Heiward
+	/// knows nothing of slots and takes the first only: its folder and line must be the ones every other program uses, and
+	/// the other slots' folders are the lock's, never an accelerator Heiward would name.
+	/// </summary>
+	[Fact]
+	public void AnAcceleratorsFirstSlotAndLine_AreTheSharedOnes() {
+		if (!OperatingSystem.IsWindows()) return;
+		string locks = Path.Combine(root, "locks");
+		JsonElement[] cases = KitSpec.QueueVectors.GetProperty("slots").EnumerateArray().ToArray();
+		Assert.NotEmpty(cases);
+		foreach (JsonElement c in cases) {
+			string what = c.GetProperty("case").GetString()!, id = c.GetProperty("id").GetString()!;
+			string[] folders = c.GetProperty("folders").EnumerateArray().Select(f => f.GetString()!).ToArray();
+			Assert.True(Accelerators.IsId(id), what);
+			string first = NpuLock.LockDirectoryFor(id)!;
+			Assert.Equal(Path.Combine(locks, folders[0]), first);
+			Assert.Equal(Path.Combine(locks, c.GetProperty("queue").GetString()!), NpuLock.QueueDirectoryFor(first));
+			foreach (string other in folders.Skip(1)) Assert.False(Accelerators.IsId(other), $"{what}: {other}");
+		}
 	}
 
 	[Fact]

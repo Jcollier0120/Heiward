@@ -1,0 +1,30 @@
+<Project>
+
+  <!--
+    The Steward's kit in a build. kit\ at the repository root holds the kit's parts at the version kit.json pins:
+    tools\kit.ps1 fills it, and git ignores it. A project that uses the kit lists the parts it needs as
+    StewardKitPart items, and imports this file. Its build then stops before compiling, with an error that says to
+    run tools\kit.ps1, while kit\ isn't filled, lacks one of those parts, or holds another version than kit.json pins.
+    A kit tree filled with tools\kit.ps1 -From (kit\FROM says from where) is for development, and only warned about.
+  -->
+
+  <PropertyGroup>
+    <StewardKitRoot>$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\'))</StewardKitRoot>
+    <StewardKitDir>$(StewardKitRoot)kit\</StewardKitDir>
+  </PropertyGroup>
+
+  <Target Name="StewardKitCheck" BeforeTargets="BeforeBuild" Condition="'@(StewardKitPart)' != ''">
+    <PropertyGroup>
+      <_StewardKitFill>run tools\kit.ps1 at the repository root (powershell -NoProfile -File tools\kit.ps1), then build again</_StewardKitFill>
+      <_StewardKitPin Condition="Exists('$(StewardKitRoot)kit.json')">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(StewardKitRoot)kit.json')), '(?&lt;="kit"\s*:\s*")[^"]*'))</_StewardKitPin>
+      <_StewardKitVersion Condition="Exists('$(StewardKitDir)VERSION')">$([System.IO.File]::ReadAllText('$(StewardKitDir)VERSION').Trim())</_StewardKitVersion>
+      <_StewardKitFrom Condition="Exists('$(StewardKitDir)FROM')">$([System.IO.File]::ReadAllText('$(StewardKitDir)FROM').Trim())</_StewardKitFrom>
+    </PropertyGroup>
+    <Error Condition="'$(_StewardKitPin)' == ''" Text="$(StewardKitRoot)kit.json pins no kit: it needs {&quot;kit&quot;: &quot;&lt;version&gt;&quot;, &quot;parts&quot;: [&quot;spec&quot;]}." />
+    <Error Condition="'$(_StewardKitVersion)' == ''" Text="The Steward's kit isn't filled: $(_StewardKitFill)." />
+    <Error Condition="!Exists('$(StewardKitDir)%(StewardKitPart.Identity)')" Text="kit\ has no %(StewardKitPart.Identity) part, which $(MSBuildProjectName) needs: kit.json must take it (&quot;parts&quot;), then $(_StewardKitFill)." />
+    <Error Condition="'$(_StewardKitVersion)' != '$(_StewardKitPin)' and '$(_StewardKitFrom)' == ''" Text="kit\ holds the Steward's kit $(_StewardKitVersion), but kit.json pins $(_StewardKitPin): $(_StewardKitFill)." />
+    <Warning Condition="'$(_StewardKitVersion)' != '$(_StewardKitPin)' and '$(_StewardKitFrom)' != ''" Text="kit\ holds the Steward's kit $(_StewardKitVersion), from $(_StewardKitFrom), while kit.json pins $(_StewardKitPin): for development only (a release refuses it)." />
+  </Target>
+
+</Project>

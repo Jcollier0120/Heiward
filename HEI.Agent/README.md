@@ -212,7 +212,7 @@ A tool that takes the lock without queueing, such as an older build, can still g
 
 ### The graphics cards too
 
-The same tools now run models on graphics cards and the processor as well (the manor's accelerators, in Manor's `docs/ACCELERATORS.md`), and Heiward takes part:
+The same tools now run models on graphics cards and the processor as well (the manor's accelerators, in the Steward's kit: `kit\spec\ACCELERATORS.md`), and Heiward takes part:
 - **A card has its own lock and line.** When AI matching runs on a graphics card, Heiward takes that card's lock for each batch, as it does the NPU's: the folder `gpu-<name>` beside the NPU's lock (`gpu-nvidia-geforce-rtx-4090`, the card's name in lowercase with each run of other characters a dash; a second card of the same name ends `-2`), and its line `gpu-<name>.queue`, with the same rules. Heiward takes only a card's first lock; other tools may serve a card more than once at a time. The processor has no lock from Heiward: its turns are the manor's processor model server's, which Heiward doesn't use.
 - **Auto without a working NPU uses a graphics card it has checked.** With `aiDevice` `auto`, AI matching runs on the NPU; with none (or one that's failing), on the graphics card in use once the GPU pack has run the model on it, with its current driver (`hei probe`, which the installer runs, and a scan or `hei setup` runs once for a card that hasn't been checked); otherwise on the processor.
 - **A device that fails Heiward is left alone for 10 minutes.** When the NPU or a card can't run the model (its pack doesn't load, the model won't open, or it fails under a batch or a check), Heiward runs the scan's AI on the processor instead, notes the failure in its own `ai\accelerators\<id>.failed.json` beside its AI components (in the shared files' format), and says why in `heiward.log`, `hei status`, `hei status --json` (`lastFallback`) and the page's Settings. Auto leaves that device alone until 10 minutes have passed; the next success on it removes the note. These notes are Heiward's alone: the other tools' failure marks in `%USERPROFILE%\.npu-agent\accelerators` are about their model servers (GenieX, llama-server), not the runtimes Heiward runs in its own process, so Heiward neither reads nor writes them.
@@ -329,7 +329,9 @@ Folder names are read live from disk; counts come from the last scan (`index.jso
 ## Build
 
 ```
+powershell -ExecutionPolicy Bypass -File tools\kit.ps1
 dotnet build HEI.Agent -c Release
+dotnet test HEI.Core.Tests -c Release
 dotnet test HEI.Agent.Tests -c Release
 dotnet publish HEI.Agent -c Release -r win-arm64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
 ```
@@ -337,6 +339,14 @@ dotnet publish HEI.Agent -c Release -r win-arm64 --self-contained -p:PublishSing
 Use `-r win-x64` for Intel and AMD PCs. The single file (`hei.exe`) is about 50 MB. Set `HEIWARD_HOME` to keep a test copy's settings and report somewhere else.
 
 The icon (`heiward.ico`, and `wwwroot\heiward.png` for notifications) is rendered from `wwwroot\favicon.svg` by `make-icon.ps1`; run it again after changing the mark.
+
+### The kit
+
+Heiward shares the manor's kit, which the [Steward](https://github.com/Jcollier0120/Steward) keeps and rolls out to every agent. `kit.json` pins its version and the parts Heiward takes: for now the `spec` part, the rules Heiward keeps with every program that takes turns on the NPU and the graphics cards (`NPU-QUEUE.md` and `ACCELERATORS.md`), and the cases each of them runs unchanged (`npu-queue-vectors.json`, which `NpuLockTests` and `AcceleratorsTests` run).
+
+`tools\kit.ps1` fills the git-ignored `kit\` with them, at the pinned version (`kit\spec\…`), and does nothing when they're already there. It takes the first of: `-From <dir>` or `STEWARD_KIT`, a kit tree such as a Steward checkout's `kit\`, for development; `..\Steward\kit` at that version; `%USERPROFILE%\.steward\kits`, the cache every agent on the PC shares; then the kit release `kit-v<version>` on GitHub, over HTTPS with no sign-in, checked against its `SHA256SUMS.txt`. Until it has run, HEI.Core.Tests doesn't build, and says so. `release.ps1`, `store.ps1` and the pull-request build run it first, and a release takes only the pinned kit.
+
+Never edit `kit\`: the kit changes in the Steward, as a new kit version. The Steward's `bump` then moves the pin in a PR of its own, with Heiward's version raised, after running `tools\kit.ps1` and `dotnet test HEI.Core.Tests`. New or changed cases fail here until the C# follows them.
 
 ### Development builds
 
@@ -359,6 +369,7 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1 -Publish
 
 It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, writes `SHA256SUMS.txt`, then creates the release `v<version>` at the commit it built and uploads all three. The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
 
+- It fills the kit first (`tools\kit.ps1`, above), at the version `kit.json` pins, and refuses a kit tree from `STEWARD_KIT`.
 - Without `-Publish` it only builds.
 - `-Notes <text or file>` replaces the default release notes, which say which file to download and how to get past the unsigned-build warning.
 

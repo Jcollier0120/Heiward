@@ -1,6 +1,7 @@
 # Builds Heiward's Microsoft Store package: Heiward-<version>.msixbundle (x64 and arm64) in artifacts\store,
 # the file to upload in Partner Center. The Store signs it after certification, so no certificate is needed here.
 # Each architecture's unpacked package stays next to it in layout-<arch>, for trying it out locally (docs\STORE.md).
+# It fills the Steward's kit first (tools\kit.ps1), at the version kit.json pins.
 # Needs the .NET 10 SDK on PATH. MakeAppx and MakePri come from the Windows SDK build tools NuGet package,
 # and FFmpeg from the pinned build below, both downloaded once into artifacts\tools: no Windows SDK install needed.
 #
@@ -48,6 +49,11 @@ foreach ($a in $Arch) {
 	if (-not $ffmpegBuilds[$a]) { throw "No FFmpeg build is pinned for $a yet (`$ffmpegBuilds in store.ps1)." }
 }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+# The Steward's kit, at exactly the version kit.json pins, as for a GitHub release (HEI.Agent\README.md, "The kit").
+& (Join-Path $root 'tools\kit.ps1') -ForRelease
+if ($LASTEXITCODE -ne 0) { throw "tools\kit.ps1 couldn't fill the Steward's kit (above)." }
+$kit = (Get-Content (Join-Path $root 'kit\VERSION') -Raw).Trim()
 
 $project = Join-Path $PSScriptRoot 'HEI.Agent.csproj'
 $version = ([xml](Get-Content $project -Raw)).Project.PropertyGroup.VersionPrefix | Where-Object { $_ } | Select-Object -First 1
@@ -136,7 +142,7 @@ $makePri = Get-BuildTool 'makepri'
 
 $commit = git -C $PSScriptRoot rev-parse HEAD
 if (git -C $PSScriptRoot status --porcelain) { Write-Warning 'The working tree has uncommitted changes, and the build includes them.' }
-Write-Host "Heiward $version (package $packageVersion) from commit $($commit.Substring(0, 7))"
+Write-Host "Heiward $version (package $packageVersion) from commit $($commit.Substring(0, 7)), with the Steward's kit $kit"
 
 New-Item -ItemType Directory -Force $Out | Out-Null
 $bundle = Join-Path $Out "Heiward-$version.msixbundle"
