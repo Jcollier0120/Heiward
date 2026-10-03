@@ -208,15 +208,17 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// What runs on its own clock after every scheduled scan, whether the scan had anything to do: the
-		/// developer check when it's due, and automatic cleanup of what has waited its days.
+		/// developer check when it's due, and automatic cleanup of what has waited its days. Developer mode is read once
+		/// for both, fresh: Manor's Developer options may have changed since the last scan (<see cref="DevMode"/>).
 		/// </summary>
 		static AutoRun? Housekeeping(AgentConfig cfg, CancellationToken ct) {
 			bool devChecked = false;
-			if (DevScan.Due(cfg)) {
+			DevMode devMode = DevMode.Now(cfg);
+			if (DevScan.Due(devMode)) {
 				try { devChecked = DevScan.RunAndSave(cfg, ct) != null; }
 				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("developer check failed: " + e.Message); }
 			}
-			try { return AutoCleaner.RunAndSave(cfg, devChecked, new CleanupActions(cfg, automatic: true)); }
+			try { return AutoCleaner.RunAndSave(cfg, devMode, devChecked, new CleanupActions(cfg, automatic: true)); }
 			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("automatic cleanup failed: " + e.Message); }
 			return null;
 		}

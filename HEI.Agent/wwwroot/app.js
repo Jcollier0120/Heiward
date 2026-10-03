@@ -752,15 +752,28 @@ function renderAboutCard(s) {
   $('about-card').replaceChildren(card);
 }
 
-/** Developer mode: the daily developer check, the Developer area (from the home page), and its automatic cleanup, or none of it. */
+/**
+ * Developer mode: the daily developer check, the Developer area (from the home page), and its automatic cleanup, or none of it.
+ * With Manor installed and its Developer options set, they decide, for every agent in the manor: the card says which way, with a
+ * link to change it in Manor, in place of the switch, as the Theme menu does for Manor's theme.
+ */
 function renderDevModeCard(s) {
   const on = s.dev.enabled;
+  const manor = s.dev.manor;
   const card = el('div', 'auto-card');
   const row = el('div', 'auto-row');
-  row.append(toggleSwitch(on, 'Developer mode', settingsBusy, (next) => saveSettings({ developerMode: next })));
+  if (!manor) row.append(toggleSwitch(on, 'Developer mode', settingsBusy, (next) => saveSettings({ developerMode: next })));
   const what = 'build outputs and worktrees of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and branches already merged';
   const text = el('div', 'auto-text');
-  text.append(el('div', 'auto-title', 'Developer mode'), el('div', 'muted small', on
+  text.append(el('div', 'auto-title', 'Developer mode'));
+  if (manor) {
+    const note = el('div', 'manor-decides small', manor.note + '. ');
+    const link = el('a', null, `Change it in ${manor.name}`);
+    link.href = manor.url;
+    note.append(link);
+    text.append(note);
+  }
+  text.append(el('div', 'muted small', on
     ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. The Developer area, from the home page, shows them beside your repositories\' open pull requests, and automatic cleanup can take them.'
     : 'Off: nothing of it is checked or shown. For developers: a Developer area with your repositories\' open pull requests, and what development tools recreate: ' + what + '.'));
   row.append(text);
@@ -3325,6 +3338,8 @@ async function refresh(force) {
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
       JSON.stringify(s.scan.status && s.scan.status.roots) !== JSON.stringify(state.scan.status && state.scan.status.roots) ||
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc || s.updated !== state.updated ||
+      // Developer mode turned on or off, here or in Manor's Developer options.
+      s.dev.enabled !== state.dev.enabled || JSON.stringify(s.dev.manor) !== JSON.stringify(state.dev.manor) ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
     showError('');

@@ -24,12 +24,17 @@ namespace HEI.Agent {
 	/// node/manor.ts); and Manor chooses the theme for every page in the manor, Heiward's too: the page is served with
 	/// Manor's theme on its &lt;html&gt; (<see cref="Stamp"/>), so it's right from the first paint, and its Theme menu
 	/// says Manor chooses it, with a link there. Without Manor, the page is as it always was: no link, and Heiward's own
-	/// Theme menu picks the theme, kept in the browser.
+	/// Theme menu picks the theme, kept in the browser. Manor's Developer options decide developer mode too, when its
+	/// settings say (<see cref="DevMode"/>).
 	/// </summary>
 	/// <param name="Name">What Manor is called on this PC: its settings.json's "name", "Manor" when it has none.</param>
 	/// <param name="Port">Manor's page's port: its settings.json's "port", 18585 when it has none.</param>
 	/// <param name="Theme">One of <see cref="Themes"/>; null for Match Windows.</param>
-	sealed record Manor(string Name, int Port, string? Theme) {
+	/// <param name="DeveloperOptions">
+	/// Manor's Developer options: its settings.json's "developerOptions", true or false; null when it has none, or
+	/// something else there, and then Heiward's own switch decides.
+	/// </param>
+	sealed record Manor(string Name, int Port, string? Theme, bool? DeveloperOptions = null) {
 		/// <summary>The themes Manor can choose besides Match Windows ("system"): the same as theme.js and app.css have.</summary>
 		public static readonly IReadOnlyList<string> Themes = ["light", "dark", "arcade", "onyx", "carbon", "tinsel", "rosegold", "quest"];
 
@@ -71,6 +76,7 @@ namespace HEI.Agent {
 			string name = DefaultName;
 			int port = DefaultPort;
 			string? theme = null;
+			bool? developerOptions = null;
 			try {
 				using JsonDocument doc = JsonDocument.Parse((json ?? "").TrimStart('\uFEFF'));
 				JsonElement root = doc.RootElement;
@@ -83,10 +89,13 @@ namespace HEI.Agent {
 						port = (int)d;
 					if (root.TryGetProperty("theme", out JsonElement t) && t.ValueKind == JsonValueKind.String && t.GetString() is string chosen && Themes.Contains(chosen))
 						theme = chosen;
+					// Only true or false: anything else ("on", 1, null) says nothing, as if it weren't there.
+					if (root.TryGetProperty("developerOptions", out JsonElement dev) && dev.ValueKind is JsonValueKind.True or JsonValueKind.False)
+						developerOptions = dev.GetBoolean();
 				}
 			}
 			catch (JsonException) { /* not JSON: Manor's defaults */ }
-			return new Manor(name, port, theme);
+			return new Manor(name, port, theme, developerOptions);
 		}
 
 		/// <summary>At most <paramref name="max"/> characters of <paramref name="text"/>, never half of an emoji's pair.</summary>
