@@ -376,6 +376,12 @@ namespace HEI.Agent {
 			AutoPlan plan = Plan(cfg, report, null, decisions, s, now);
 			return pending.Where(g => !(plan.Groups.TryGetValue(g.Key, out AutoPlanEntry? e) && e.DueUtc != null)).ToList();
 		}
+
+		/// <summary>
+		/// A set waiting for the user that calls for them: a notification, the page opening at sign-in.
+		/// Duplicates do; look-alikes don't (Heiward calls out duplicates), they're on the page whenever it's opened.
+		/// </summary>
+		public static bool Announced(ReportGroup g) => g.Kind != "similar";
 	}
 
 	/// <summary>The cleaning actions, for the page's buttons and automatic cleanup alike.</summary>

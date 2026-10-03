@@ -344,6 +344,17 @@ public sealed class AutoCleanTests : IDisposable {
 	}
 
 	[Fact]
+	public void Look_alikes_wait_without_a_notification() {
+		ReportGroup copy = PlainCopy("copy"), lookalike = Group("look", Item(@"C:\P\x.jpg", "keep"), Item(@"C:\P\y.jpg", "variant"));
+		Report report = ReportOf(copy, lookalike);
+		AutoCleanState s = State(("g:copy", Now), ("g:look", Now));
+		Assert.Equal("similar", lookalike.Kind);
+		Assert.Equal(new[] { "copy" }, AutoCleaner.WaitingForUser(Config(duplicates: false), report, NoDecisions, s, Now).Where(AutoCleaner.Announced).Select(g => g.Key));
+		// With automatic cleanup taking the copies, nothing is left to announce.
+		Assert.DoesNotContain(AutoCleaner.WaitingForUser(Config(), report, NoDecisions, s, Now), AutoCleaner.Announced);
+	}
+
+	[Fact]
 	public void The_cleanup_lock_is_one_at_a_time_and_reentrant_on_a_thread() {
 		string? home = Environment.GetEnvironmentVariable("HEIWARD_HOME");
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", dir);

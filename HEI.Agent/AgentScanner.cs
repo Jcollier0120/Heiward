@@ -192,7 +192,7 @@ namespace HEI.Agent {
 			Console.Error.WriteLine("Scan done: " + summary);
 			if (auto is { DidSomething: true }) Console.Error.WriteLine("Automatic cleanup: " + auto.Describe("; "));
 			foreach (string n in notes) Console.Error.WriteLine("  note: " + n);
-			await NotifyAsync(cfg, notify, auto, fresh);
+			await NotifyAsync(cfg, notify, auto, fresh.Where(AutoCleaner.Announced).ToList());
 			return 0;
 		}
 
@@ -211,7 +211,7 @@ namespace HEI.Agent {
 			return null;
 		}
 
-		/// <summary>The notifications: what automatic cleanup did, and new sets to review. Nothing new, nothing shown.</summary>
+		/// <summary>The notifications: what automatic cleanup did, and new duplicates to review (look-alikes go unannounced). Nothing new, nothing shown.</summary>
 		static async Task NotifyAsync(AgentConfig cfg, bool notify, AutoRun? auto, List<ReportGroup> fresh) {
 			// The review page this may start outlives the scan.
 			Power.LiftCpuCap();
