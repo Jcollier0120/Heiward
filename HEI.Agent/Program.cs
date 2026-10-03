@@ -233,6 +233,7 @@ status.SetAction(async (r, _) => {
 	Console.WriteLine($"Scans: {string.Join("; ", ScanScope.Roots(cfg))}{(cfg.ScanAllDrives ? " (every fixed drive, minus system, app and game folders: 'hei scope')" : "")}");
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
+	Console.WriteLine($"Developer mode: {DevMode.Now(cfg).Describe()}");
 	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} ({(ai.Accelerator != null ? ai.Accelerator + ", " : "")}checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	IReadOnlyList<GpuAdapter> cards = GpuAdapters.List();
 	foreach (var f in AiStatus.Failures(cards))
@@ -303,8 +304,9 @@ dev.SetAction(r => {
 		foreach (PruneKept k in pruned.Kept) Console.WriteLine($"Kept {k.Branch}: {k.Reason}");
 		return 0;
 	}
-	if (!cfg.DeveloperModeOn) {
-		Console.Error.WriteLine("Developer mode is off: turn it on in the review page's Settings, or set \"developerMode\": \"on\" in " + AgentPaths.Config);
+	// Manor's Developer options, when Manor is installed and they say; else Heiward's own switch.
+	if (DevMode.Now(cfg) is { On: false } off) {
+		Console.Error.WriteLine(off.CommandOffText);
 		return 1;
 	}
 	DevReport? report = r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load();
@@ -417,7 +419,7 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 		$"things wait {a.AfterDays} day(s) after they're first listed");
 	DateTime now = DateTime.UtcNow;
 	Report? report = Report.Load();
-	DevReport? dev = cfg.DeveloperModeOn ? DevReport.Load() : null;
+	DevReport? dev = DevMode.Now(cfg).On ? DevReport.Load() : null;
 	var decisions = DecisionStore.Load();
 	AutoCleanState s = AutoCleanState.Load();
 	AutoPlan plan = AutoCleaner.Plan(cfg, report, dev, decisions, s, now);

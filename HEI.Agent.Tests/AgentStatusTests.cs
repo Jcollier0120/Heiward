@@ -23,14 +23,17 @@ namespace HEI.Agent.Tests;
 public sealed class AgentStatusTests : IDisposable {
 	readonly string dir = Path.Combine(Path.GetTempPath(), "hei-status-" + Guid.NewGuid().ToString("N"));
 	readonly string? home = Environment.GetEnvironmentVariable("HEIWARD_HOME");
+	readonly string? manorHome = Environment.GetEnvironmentVariable("MANOR_HOME");
 
 	public AgentStatusTests() {
 		Directory.CreateDirectory(dir);
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", dir);
+		Environment.SetEnvironmentVariable("MANOR_HOME", Path.Combine(dir, "no-manor")); // not the real Manor's Developer options
 	}
 
 	public void Dispose() {
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", home);
+		Environment.SetEnvironmentVariable("MANOR_HOME", manorHome);
 		try { Directory.Delete(dir, true); } catch { }
 	}
 
@@ -123,8 +126,11 @@ public sealed class AgentStatusTests : IDisposable {
 		// Only ever added to, at the end: Manor and others parse the first ones.
 		Assert.Equal(
 			new[] { "app", "running", "stoppedSince", "pausedUntil", "scheduled", "nextScan", "scanning", "lastScan", "toReview", "page", "summary",
-				"device", "accelerator", "card", "lastFallback" },
+				"device", "accelerator", "card", "lastFallback", "developerMode", "developerModeBy" },
 			root.EnumerateObject().Select(p => p.Name));
+		// Developer mode off, by Heiward's own switch: no Manor here (ManorDeveloperOptionsTests has Manor's).
+		Assert.False(root.GetProperty("developerMode").GetBoolean());
+		Assert.Equal("heiward", root.GetProperty("developerModeBy").GetString());
 		// Nothing has run AI matching yet.
 		foreach (string name in new[] { "device", "accelerator", "card", "lastFallback" })
 			Assert.Equal(JsonValueKind.Null, root.GetProperty(name).ValueKind);

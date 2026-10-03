@@ -158,6 +158,8 @@ If a wider rule of yours covers it (`Old*`, or a folder above it), the page asks
 
 Developer mode is off until you turn it on with the **Developer mode** switch in the review page's Settings (or `"developerMode": "on"`). Off, nothing of it is checked or shown: no Developer area on the home page, and no developer leftovers in automatic cleanup. Settings from before the switch said `"auto"`, which checked every PC: it now stays on only where automatic cleanup of developer leftovers is on.
 
+**With Manor:** Manor's **Developer options** turn developer features on or off for every agent in the manor, Heiward's too. With Manor installed (its `settings.json` and `app` folder in `%USERPROFILE%\.manor`, or `MANOR_HOME`) and its `settings.json` saying `"developerOptions": true` or `false`, that decides developer mode everywhere: the Developer area, the daily check, automatic cleanup of developer leftovers, the page's developer requests, `hei dev` and `hei status`. Settings shows which way in place of the switch ("Manor's Developer options turn this on", in Manor's own name), with a link to change it in Manor. Heiward reads it fresh on every page load and poll, every scan and every command, so an open page follows a change at its next poll (15 seconds at most). Heiward's own `developerMode` stays as you left it: without Manor, or once Manor's settings don't say, the switch is back and decides again. Heiward keeps its place at the manor either way: only its developer features follow Manor's Developer options.
+
 On, once a day, after a scheduled scan, it also looks for what development tools leave behind and recreate when needed. It lists them in the **Developer area** of the review page, beside your repositories' open pull requests. Nothing is cleaned until you press the button there, or turn on [automatic cleanup](#automatic-cleanup). Cleaning deletes permanently, not to the Recycle Bin, because tools rebuild or download it all again.
 
 The page is organised by repository:
@@ -241,7 +243,7 @@ The same tools now run models on graphics cards and the processor as well (the m
 | `openPageAtSignIn` | true | Opens the page in the browser at sign-in: once a day, only when duplicates wait for review, not look-alikes (with automatic cleanup of duplicates on: only new sets it leaves to you). The page itself starts at sign-in either way |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only). A development build's is 28484 |
 | `toast` | true | A notification when a scan finds new duplicates, or automatic cleanup cleans some up. New look-alikes get none: they're on the page the next time you open it |
-| `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on |
+| `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on. With Manor installed and its `developerOptions` true or false, Manor's Developer options decide instead and this waits, kept for when they don't |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
 | `autoClean` | off | [Automatic cleanup](#automatic-cleanup): `duplicates` and `developer` (true/false), `developerKinds` (`branches`, `temp`, `buildOutputs`, `worktrees`, `systemImages`), `afterDays` (3; 0 to 90) |
 
@@ -284,6 +286,8 @@ hei uninstall       [--purge] [--dry-run]
 | `accelerator` | The same as the manor's tools name it: `"npu"`, `"cpu"`, or the card's `"gpu-<name>"` |
 | `card` | The graphics card's name as Windows lists it, when it ran on one; else `null` |
 | `lastFallback` | When that work was meant for another device, from where to where and why, in one line (`"NPU to GPU: the Qualcomm Hexagon NPU pack failed to load (…)"`), or that it stopped (`"GPU failed: …"`); `null` when it ran where it was meant to |
+| `developerMode` | Whether [developer mode](#developer-mode) is on now |
+| `developerModeBy` | Who decides it: `"manor"` (Manor's Developer options) or `"heiward"` (Heiward's own switch) |
 
 Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans (its page stays up either way), and `hei open --no-browser` to make sure its review page is up.
 
@@ -324,7 +328,7 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 - **Its scan task gone or turned off** in Task Scheduler: **Turn them back on** registers it again.
 - **Heiward not running** (it stopped, or the PC slept): the page stays as it was, says so, and offers **Start Heiward**, a `heiward://start` link the installer registers. Once Heiward is back, the page reloads by itself.
 
-**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, **Keep a history** (with Clear history), and **Developer mode**. It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
+**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, **Keep a history** (with Clear history), and **Developer mode** (with Manor installed, Manor's Developer options decide that one: [Developer mode](#developer-mode)). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
 
 **Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser. With Manor installed, Manor chooses the theme for every page in the manor, Heiward's too: the page follows the `theme` in Manor's `settings.json` from its next load, and the palette shows it, with a link to change it in Manor.
 
