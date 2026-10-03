@@ -62,7 +62,17 @@ namespace HEI.Agent {
 			}
 			var started = DateTime.UtcNow;
 			try { AgentPaths.WriteAtomic(AgentPaths.ScanStarted, started.ToString("O")); }
-			catch { /* only the page's scan-when-due check reads it */ }
+			catch { /* only the page's scan-when-due check and /api/ping's runningSince read it */ }
+			// How it ended, written before scan.lock is let go: /api/ping's last run (RunTimes).
+			int? code = null;
+			Exception? error = null;
+			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, started, ct)).Value; }
+			catch (Exception e) { error = e; throw; }
+			finally { LastScan.Record(started, DateTime.UtcNow, code, error); }
+		}
+
+		/// <summary>The scan itself, holding scan.lock since <paramref name="started"/>.</summary>
+		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, DateTime started, CancellationToken ct) {
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
 			bool fullSpeed = ScanPace.FullSpeed(cfg, scheduled);
