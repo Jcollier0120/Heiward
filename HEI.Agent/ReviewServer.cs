@@ -533,8 +533,9 @@ namespace HEI.Agent {
 				accelerators = AcceleratorView(ai),
 				gpu = GpuView(cfg),
 				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
+				// text: "scans every 6 hours on AC power", for Settings' "Where its work runs".
 				schedule = new {
-					next = Scheduler.NextRun(), everyMinutes = ScanEveryMinutes(cfg),
+					next = Scheduler.NextRun(), everyMinutes = ScanEveryMinutes(cfg), text = Scheduler.Describe(cfg),
 					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), ScanEveryMinutes(cfg)),
 				},
 				config = new {

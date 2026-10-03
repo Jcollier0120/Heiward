@@ -48,6 +48,17 @@ To remove it, uninstall **Heiward** in Settings > Apps. Its window says when it'
 
 To build it yourself, see [Build](HEI.Agent/README.md#build). Settings, commands and how it decides what to tick are in [HEI.Agent/README.md](HEI.Agent/README.md).
 
+## Where its work runs
+
+The review page's Settings says the same, for the PC it runs on: where the model runs there, the schedule, and how hard scans work.
+
+- **The model.** AI matching compares pictures and video frames with DINOv2, a vision model. It runs on the NPU, through its maker's runtime (Qualcomm's QNN, Intel's OpenVINO or AMD's Vitis AI, with Windows ML); without an NPU that works, on a graphics card through DirectML; otherwise on the processor. The badge in the title bar says which.
+- **Video frames.** FFmpeg decodes the frames Heiward samples from each video. A few videos at a time go to the graphics chip's video decoder, which costs the processor little; the rest, and any it can't decode, are decoded on the processor. iPhone photos use that decoder too, beside the processor.
+- **Files.** Listing folders, reading files and hashing them is processor and disk work. A rescan reads only new and changed files. Files of the same size are hashed whole, once, to find exact copies; photos are decoded, and the sound of videos fingerprinted, on the processor.
+- **When it runs.** Every hour on a PC with an NPU; without one, every 6 hours on AC power, or only when you press Scan now, as you chose when installing. A scan with nothing new is a quick look at the folders. In the background, a scan runs in Windows' efficiency mode, at low priority and at most a quarter of the processor (two cores' worth at most); at full speed it uses every core but one. Settings' "Scans run" picks which: with "at full speed when you're here", Scan now and any scan while the review page is open run at full speed, and scheduled ones in the background. While a game or anything full screen runs, scans make way.
+- **Taking turns.** On the NPU, the model takes its turn in the queue the manor's agents on the PC share: Heiward holds the NPU for at most 2 seconds, then joins the back of the line, and work someone is waiting on goes first. On a graphics card it takes that card's turn the same way.
+- **Why the processor and graphics come and go.** A scan comes in bursts: the folders, then decoding and comparing what's new, then hashing, and between scans Heiward does nothing. The graphics chip is busy only while it decodes videos or runs the model, the NPU in short turns. A scan in the background stays under its cap; one at full speed can fill the processor until it finishes.
+
 # License
 Heiward is free software under the GNU AGPL v3 ([LICENSE](LICENSE)).
 
