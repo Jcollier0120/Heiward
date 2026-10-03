@@ -60,6 +60,9 @@ var scan = new Command("scan", "Scan the configured folders now and update the r
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
+		// The page stays up, paused or not: should it have gone (a crash, a stopped install), it's back within a
+		// scan's interval. Before the scan sets its pace, so the page doesn't start capped or at a low priority.
+		ReviewServer.EnsureRunningInBackground(cfg);
 		if (AgentPause.Load() is { } pause) {
 			AgentPaths.AppendLog("scheduled scan skipped: scans are paused " + pause.Describe(DateTime.UtcNow));
 			return 0;
@@ -108,20 +111,26 @@ stopCmd.SetAction(_ => {
 root.Subcommands.Add(stopCmd);
 
 var noBrowser = new Option<bool>("--no-browser") { Description = "Don't open a browser tab." };
-var serve = new Command("serve", "Serve the review page on 127.0.0.1 until it sits unused.") { noBrowser };
+var serve = new Command("serve", "Serve the review page on 127.0.0.1, in this window (what open starts in the background).") { noBrowser };
 serve.SetAction((r, ct) => ReviewServer.RunAsync(AgentConfig.Load(), !r.GetValue(noBrowser), ct));
 root.Subcommands.Add(serve);
 
-var ifPending = new Option<bool>("--if-pending") { Description = "Only when duplicates wait for review (look-alikes don't count)." };
-var onceADay = new Option<bool>("--once-a-day") { Description = "At most once per day (the sign-in task uses this)." };
-var openCmd = new Command("open", "Open the review page in the default browser (starting it if needed).") { ifPending, onceADay };
+var ifPending = new Option<bool>("--if-pending") { Description = "Open the browser only when duplicates wait for review (look-alikes don't count)." };
+var onceADay = new Option<bool>("--once-a-day") { Description = "Open the browser at most once per day (the sign-in task uses this)." };
+var openNoBrowser = new Option<bool>("--no-browser") { Description = "Only make sure the page is up." };
+var openCmd = new Command("open", "Make sure the review page is up, and open it in the default browser.") { ifPending, onceADay, openNoBrowser };
 openCmd.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	string stamp = Path.Combine(AgentPaths.Home, "last-opened.txt");
-	if (r.GetValue(ifPending) && PendingCount(stamp) == 0) return 0;
 	string today = DateTime.Now.ToString("yyyy-MM-dd");
-	if (r.GetValue(onceADay)) {
-		try { if (File.Exists(stamp) && File.ReadAllText(stamp).Trim() == today) return 0; } catch { }
+	bool browser = !r.GetValue(openNoBrowser) && !(r.GetValue(ifPending) && PendingCount(stamp) == 0);
+	if (browser && r.GetValue(onceADay)) {
+		try { if (File.Exists(stamp) && File.ReadAllText(stamp).Trim() == today) browser = false; } catch { }
+	}
+	// The page is up whether or not the browser opens: the sign-in task is how it comes back after a restart.
+	if (!browser) {
+		await EnsurePageUpAsync(cfg, ct);
+		return 0;
 	}
 	await OpenReviewPageAsync(cfg, ct);
 	try { AgentPaths.WriteAtomic(stamp, today); } catch { }
@@ -452,6 +461,12 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 
 /// <summary>Starts the review page in the background if needed, waits until it answers, opens it.</summary>
 static async Task OpenReviewPageAsync(AgentConfig cfg, CancellationToken ct) {
+	await EnsurePageUpAsync(cfg, ct);
+	ReviewServer.OpenBrowser(cfg.Port);
+}
+
+/// <summary>Starts the review page in the background if needed, and waits until it answers.</summary>
+static async Task EnsurePageUpAsync(AgentConfig cfg, CancellationToken ct) {
 	// Both versions use the same port: a GitHub copy's page there would stand in for the Store version's own
 	// (and its setup), so the Store version stops it first.
 	if (StorePackage.IsPackaged && await ReviewServer.IsUpAsync(cfg.Port) && !await ReviewServer.IsUpAsync(cfg.Port, fromStore: true)) {
@@ -461,7 +476,6 @@ static async Task OpenReviewPageAsync(AgentConfig cfg, CancellationToken ct) {
 	ReviewServer.EnsureRunningInBackground(cfg);
 	for (int i = 0; i < 40 && !await ReviewServer.IsUpAsync(cfg.Port); i++)
 		await Task.Delay(250, ct);
-	ReviewServer.OpenBrowser(cfg.Port);
 }
 
 namespace HEI.Agent {

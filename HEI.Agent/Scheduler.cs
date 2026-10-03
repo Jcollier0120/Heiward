@@ -25,8 +25,8 @@ namespace HEI.Agent {
 	/// <item><see cref="ScanTask"/>: a scan every <see cref="AgentConfig.ScanEveryMinutes"/> minutes, catching
 	/// up after the PC was off. On battery it runs only if allowed, and the scan itself steps aside in
 	/// Battery Saver or below <see cref="AgentConfig.MinBatteryPercent"/>.</item>
-	/// <item><see cref="OpenTask"/>: at sign-in, opens the review page in the default browser, at most once a
-	/// day and only when something waits for review.</item>
+	/// <item><see cref="OpenTask"/>: at sign-in, starts the review page, which stays up; and opens it in the default
+	/// browser, at most once a day and only when something waits for review (<see cref="AgentConfig.OpenPageAtSignIn"/>).</item>
 	/// </list>
 	/// Both run through conhost --headless: the console app gets its console, the user no window.
 	/// </summary>
@@ -67,8 +67,11 @@ namespace HEI.Agent {
 				Action(ScanTask, agentExe, "scan --notify --scheduled", removeWhenGone));
 		}
 
-		public static string OpenXml(string agentExe, bool removeWhenGone = false) => Task(
-			"Opens the duplicate review page once a day at sign-in when something waits for review.",
+		/// <param name="openBrowser"><see cref="AgentConfig.OpenPageAtSignIn"/>: also open the browser, once a day, when something waits for review.</param>
+		public static string OpenXml(string agentExe, bool openBrowser = true, bool removeWhenGone = false) => Task(
+			openBrowser
+				? "Starts Heiward's review page at sign-in, and opens it once a day when something waits for review."
+				: "Starts Heiward's review page at sign-in.",
 			$"""
 			    <LogonTrigger>
 			      <UserId>{X(Environment.UserDomainName + "\\" + Environment.UserName)}</UserId>
@@ -80,7 +83,7 @@ namespace HEI.Agent {
 			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
 			    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
 			""",
-			Action(OpenTask, agentExe, "open --if-pending --once-a-day", removeWhenGone));
+			Action(OpenTask, agentExe, openBrowser ? "open --if-pending --once-a-day" : "open --no-browser", removeWhenGone));
 
 		/// <summary>
 		/// <c>hei uninstall</c> in a window, run once by <see cref="RunNow"/>: Task Scheduler starts it outside the

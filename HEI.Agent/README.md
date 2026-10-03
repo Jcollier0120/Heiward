@@ -62,7 +62,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 4. schedules scans with Task Scheduler (per user):
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
-5. opens the review page in your browser once a day at sign-in, and only when duplicates wait for review (look-alikes wait on the page without calling you to it);
+5. starts the review page at sign-in; it stays up, scans paused or not. It opens the page in your browser once a day at sign-in, and only when duplicates wait for review (look-alikes wait on the page without calling you to it);
 6. adds **Heiward** shortcuts to the Start menu and the desktop (they open the review page in your default browser: a new tab if it's open, a new window if not, starting Heiward if needed), registers the name and icon its notifications show and `heiward:` links (the review page's "Start Heiward"), and adds an entry in Apps & Features so Windows can uninstall it.
 
 </details>
@@ -238,7 +238,7 @@ The same tools now run models on graphics cards and the processor as well (the m
 | `backgroundCpuPercent` | 0 | The most of the processor a background scan uses, in percent, the FFmpeg it starts included; 0: a quarter, and at most two cores' worth |
 | `moreMemory` | true | The page's **Use more memory to scan faster**: in the background, the graphics chip decodes one video per 4 GB of memory at once (up to 8, about half a gigabyte each); `false`: two. Scans use less while a game or another 3D program runs either way |
 | `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
-| `openPageAtSignIn` | true | Once a day, only when duplicates wait for review, not look-alikes (with automatic cleanup of duplicates on: only new sets it leaves to you) |
+| `openPageAtSignIn` | true | Opens the page in the browser at sign-in: once a day, only when duplicates wait for review, not look-alikes (with automatic cleanup of duplicates on: only new sets it leaves to you). The page itself starts at sign-in either way |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only). A development build's is 28484 |
 | `toast` | true | A notification when a scan finds new duplicates, or automatic cleanup cleans some up. New look-alikes get none: they're on the page the next time you open it |
 | `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on |
@@ -253,7 +253,7 @@ hei scan [--open]   scan now
 hei stop            stop the scan that's running
 hei pause           pause scheduled scans and stop the running one  [--minutes N] (without it: until resumed)
 hei resume          resume scheduled scans
-hei open            open the review page
+hei open            make sure the review page is up, and open it  [--no-browser]
 hei status          settings, where AI matching runs, devices that failed lately, last scan, schedule, locks
 hei status --json   the same essentials as one JSON object, for scripts and other tools (below)
 hei scope [--count] what a scan looks at and leaves out
@@ -278,14 +278,14 @@ hei uninstall       [--purge] [--dry-run]
 | `scanning` | A scan is running now |
 | `lastScan` | When the last report was made; `null` before the first scan with this version |
 | `toReview` | Sets in that report you haven't decided on yet |
-| `page` | `url`: the review page's address; `up`: whether it answers now. Asking (`/api/ping`) doesn't keep an unused page running |
+| `page` | `url`: the review page's address; `up`: whether it answers now |
 | `summary` | One short sentence, e.g. "Scans every hour, next at 15:00. 3 sets to review." |
 | `device` | Where AI matching last ran (the last scan, or the install's or `hei setup`'s check): `"npu"`, `"gpu"` or `"cpu"`; `null` when it's off or hasn't run |
 | `accelerator` | The same as the manor's tools name it: `"npu"`, `"cpu"`, or the card's `"gpu-<name>"` |
 | `card` | The graphics card's name as Windows lists it, when it ran on one; else `null` |
 | `lastFallback` | When that work was meant for another device, from where to where and why, in one line (`"NPU to GPU: the Qualcomm Hexagon NPU pack failed to load (…)"`), or that it stopped (`"GPU failed: …"`); `null` when it ran where it was meant to |
 
-Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans, and `hei serve --no-browser` to start its review page.
+Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans (its page stays up either way), and `hei open --no-browser` to make sure its review page is up.
 
 ## The review page
 
@@ -324,7 +324,7 @@ Folder names are read live from disk; counts come from the last scan (`index.jso
 - It listens on 127.0.0.1 and answers only its own names (`heiward.localhost`, `127.0.0.1`, `localhost`), so a DNS-rebinding page can't reach it. Browsers resolve every `*.localhost` name to this PC themselves, so `heiward.localhost` needs no hosts file and can't be pointed elsewhere.
 - Every button needs a token that exists only inside the page it served, plus a same-origin Origin header.
 - Thumbnails are served only for files in the current report.
-- It stops after an hour unused.
+- It stays up, as every agent's page does: the sign-in task starts it, and each scheduled scan and each install start it again if it has gone. Pausing stops scans, not the page.
 
 ## Build
 
