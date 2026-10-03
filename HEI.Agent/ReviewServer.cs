@@ -100,8 +100,7 @@ namespace HEI.Agent {
 				return Results.Content(Asset("favicon.svg"), "image/svg+xml");
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
-			// exe: whose page this is. Copies share a port (all but a development build), so the installer asks another copy's to close (/api/quit).
-			app.MapGet("/api/ping", () => Results.Json(new { app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath }));
+			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));
 			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
 			app.MapGet("/api/state", (bool? seen) => {
 				if (seen == true) ScanPace.MarkPageSeen();
@@ -368,6 +367,22 @@ namespace HEI.Agent {
 		/// forever. The open page polls /api/state, so it still does.
 		/// </summary>
 		internal static bool KeepsPageUp(PathString path) => !path.StartsWithSegments("/api/ping", StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>
+		/// /api/ping's answer. exe: whose page this is. Copies share a port (all but a development build), so the
+		/// installer asks another copy's to close (/api/quit). Then the scans at a glance, for Manor's employee cards
+		/// (<see cref="RunTimes"/>): lastRunAt, lastRunOk, nextRunAt and runningSince, UTC times or null.
+		/// </summary>
+		internal static object Ping(AgentConfig cfg) {
+			RunTimes runs;
+			// The ping says the page is up whatever else fails (and isn't logged: it's asked every few seconds).
+			try { runs = RunTimes.Now(cfg); }
+			catch { runs = new RunTimes(null, null, null, null); }
+			return new {
+				app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath,
+				lastRunAt = runs.LastRunAt, lastRunOk = runs.LastRunOk, nextRunAt = runs.NextRunAt, runningSince = runs.RunningSince,
+			};
+		}
 
 		/// <summary>A set, developer item or repository automatic cleanup can be told to leave (see <see cref="AutoCleanState.Held"/>).</summary>
 		static readonly Regex AutoTarget = new("^[gdb]:[0-9a-f]{16}$", RegexOptions.CultureInvariant);
