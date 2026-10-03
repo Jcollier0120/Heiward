@@ -216,7 +216,7 @@ namespace HEI.Agent {
 			bool fromStore = StorePackage.IsPackaged;
 			if (dryRun) {
 				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, TaskExe, fromStore));
-				Console.WriteLine(Scheduler.OpenXml(TaskExe, fromStore));
+				Console.WriteLine(Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
 			}
 			else if (RegisterTasks(cfg) is string why) throw new InvalidOperationException(why);
 
@@ -240,12 +240,18 @@ namespace HEI.Agent {
 
 			if (dryRun) return 0;
 			// Opening another copy's page would show that copy's report as this one's.
-			if (openPage && !fromStore && !await MakeWayForPageAsync(cfg.Port, ct)) openPage = false;
+			bool pageFree = fromStore || await MakeWayForPageAsync(cfg.Port, ct);
+			if (!pageFree) openPage = false;
 			Console.WriteLine();
 			Console.WriteLine(openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
 			if (openPage) StartDetached("scan", "--open");
-			else StartDetached("scan");
+			else {
+				// The page stays up, browser or not: an update (which stopped the old copy's) or an unattended install
+				// mustn't leave Heiward without one until the next sign-in.
+				if (pageFree) StartDetached("serve", "--no-browser");
+				StartDetached("scan");
+			}
 			return 0;
 		}
 
@@ -438,7 +444,8 @@ namespace HEI.Agent {
 			bool fromStore = StorePackage.IsPackaged;
 			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
 			else Scheduler.Remove(Scheduler.ScanTask);
-			if (cfg.OpenPageAtSignIn) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, fromStore));
+			// Always: it's what brings the page back after a restart. The setting decides only whether the browser opens.
+			Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
 			Scheduler.Forget();
 			return null;
 		}
@@ -741,8 +748,8 @@ namespace HEI.Agent {
 				}
 			}
 			// A build from before /api/quit, or one that's busy with the Store version's setup.
-			Console.WriteLine($"  The review page on port {port} is {whose}'s: it closes once it's been unused for a while.");
-			Console.WriteLine("  Then the Heiward shortcut opens this copy's.");
+			Console.WriteLine($"  The review page on port {port} is {whose}'s, and it stays up.");
+			Console.WriteLine("  Close that copy (end its hei.exe in Task Manager); then the Heiward shortcut opens this copy's.");
 			AgentPaths.AppendLog($"install: the review page of {whose} kept port {port}");
 			return false;
 		}

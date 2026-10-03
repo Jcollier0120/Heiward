@@ -82,6 +82,15 @@ public sealed class SchedulerTests {
 			@"else "".+\\schtasks\.exe"" /Delete /TN ""Heiward\\Scan"" /F$", action);
 	}
 
+	[Theory]
+	[InlineData(true, "<Arguments>--headless &quot;C:\\x\\hei.exe&quot; open --if-pending --once-a-day</Arguments>")]
+	[InlineData(false, "<Arguments>--headless &quot;C:\\x\\hei.exe&quot; open --no-browser</Arguments>")]
+	public void SignInTask_StartsThePage_WhetherOrNotTheBrowserOpens(bool openBrowser, string arguments) {
+		string xml = Scheduler.OpenXml(@"C:\x\hei.exe", openBrowser);
+		Assert.Contains(arguments, xml);
+		Assert.Contains("<LogonTrigger>", xml);
+	}
+
 	[Fact]
 	public void TaskXml_OfTheStoreVersion_EscapesTheAction() {
 		string xml = Scheduler.OpenXml(@"C:\a&b\hei.exe", removeWhenGone: true);

@@ -224,12 +224,13 @@ namespace HEI.Agent {
 		/// <summary>Let scheduled scans run on battery (they skip themselves in Battery Saver or below <see cref="MinBatteryPercent"/>).</summary>
 		public bool ScanOnBattery { get; set; } = true;
 		public int MinBatteryPercent { get; set; } = 30;
-		/// <summary>Open the review page in the default browser once a day at sign-in, when something waits for review.</summary>
+		/// <summary>
+		/// Open the review page in the default browser once a day at sign-in, when something waits for review.
+		/// Either way the page itself starts at sign-in, in the background.
+		/// </summary>
 		public bool OpenPageAtSignIn { get; set; } = true;
 		/// <summary>The review page's port on 127.0.0.1: 18484, a development build's 28484 (<see cref="AgentPaths.DefaultPort"/>).</summary>
 		public int Port { get; set; } = AgentPaths.DefaultPort;
-		/// <summary>Minutes the review page stays up with nobody using it.</summary>
-		public int ServerIdleMinutes { get; set; } = 60;
 		/// <summary>A Windows notification when a scan finds something new.</summary>
 		public bool Toast { get; set; } = true;
 		/// <summary>

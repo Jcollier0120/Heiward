@@ -47,8 +47,9 @@ namespace HEI.Agent {
 	/// and a same-origin Origin header, so no other web page can press a button.</item>
 	/// <item>Thumbnails are served only for files in the current report — never for an arbitrary path.</item>
 	/// </list>
-	/// It exits after <see cref="AgentConfig.ServerIdleMinutes"/> without a request (the open page polls; a ping
-	/// asking whether it's up doesn't count: <see cref="KeepsPageUp"/>).
+	/// It stays up, as every agent's page does: it's how Heiward is reached, scans or no scans ('hei pause' stops
+	/// those, not the page). Only another copy's installer (/api/quit) or stopping this copy's processes ends it;
+	/// the sign-in task, each scheduled scan and each install start it again (<see cref="EnsureRunningInBackground"/>).
 	/// </summary>
 	static class ReviewServer {
 		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct) {
@@ -68,14 +69,12 @@ namespace HEI.Agent {
 			builder.Logging.ClearProviders();
 			builder.WebHost.UseKestrel(o => o.Listen(IPAddress.Loopback, port));
 			var app = builder.Build();
-			long lastSeen = Environment.TickCount64;
 
 			app.Use(async (ctx, next) => {
 				if (!hosts.Contains(ctx.Request.Host.Value ?? "")) {
 					ctx.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
 					return;
 				}
-				if (KeepsPageUp(ctx.Request.Path)) Interlocked.Exchange(ref lastSeen, Environment.TickCount64);
 				if (HttpMethods.IsPost(ctx.Request.Method)) {
 					string? origin = ctx.Request.Headers.Origin;
 					bool sameOrigin = origin == null || hosts.Any(h => origin.Equals("http://" + h, StringComparison.OrdinalIgnoreCase));
@@ -356,17 +355,6 @@ namespace HEI.Agent {
 				return Results.Accepted();
 			});
 
-			var lifetime = app.Lifetime;
-			_ = Task.Run(async () => {
-				while (!lifetime.ApplicationStopping.IsCancellationRequested) {
-					await Task.Delay(TimeSpan.FromSeconds(30), CancellationToken.None);
-					if (Environment.TickCount64 - Interlocked.Read(ref lastSeen) > cfg.ServerIdleMinutes * 60_000L && !AgentScanner.IsRunning() && !StoreSetup.Running) {
-						AgentPaths.AppendLog("review page idle, stopping");
-						lifetime.StopApplication();
-					}
-				}
-			}, CancellationToken.None);
-
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
@@ -375,13 +363,6 @@ namespace HEI.Agent {
 			await app.WaitForShutdownAsync(ct);
 			return 0;
 		}
-
-		/// <summary>
-		/// A request that counts as use, putting off the idle exit. Not /api/ping: it's how scripts, other tools
-		/// and <c>hei status --json</c> ask whether the page is up, and asking mustn't keep an unused page up
-		/// forever. The open page polls /api/state, so it still does.
-		/// </summary>
-		internal static bool KeepsPageUp(PathString path) => !path.StartsWithSegments("/api/ping", StringComparison.OrdinalIgnoreCase);
 
 		/// <summary>
 		/// /api/ping's answer. exe: whose page this is. Copies share a port (all but a development build), so the
