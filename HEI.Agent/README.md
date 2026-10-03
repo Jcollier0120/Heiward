@@ -62,7 +62,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 4. schedules scans with Task Scheduler (per user):
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
-5. opens the review page in your browser once a day at sign-in, and only when something waits for review;
+5. opens the review page in your browser once a day at sign-in, and only when duplicates wait for review (look-alikes wait on the page without calling you to it);
 6. adds **Heiward** shortcuts to the Start menu and the desktop (they open the review page in your default browser: a new tab if it's open, a new window if not, starting Heiward if needed), registers the name and icon its notifications show and `heiward:` links (the review page's "Start Heiward"), and adds an entry in Apps & Features so Windows can uninstall it.
 
 </details>
@@ -238,9 +238,9 @@ The same tools now run models on graphics cards and the processor as well (the m
 | `backgroundCpuPercent` | 0 | The most of the processor a background scan uses, in percent, the FFmpeg it starts included; 0: a quarter, and at most two cores' worth |
 | `moreMemory` | true | The page's **Use more memory to scan faster**: in the background, the graphics chip decodes one video per 4 GB of memory at once (up to 8, about half a gigabyte each); `false`: two. Scans use less while a game or another 3D program runs either way |
 | `keepHistory` | true | `false`: the page's History lists nothing new and keeps no file names; `heiward.log` leaves out developer paths and branch names too |
-| `openPageAtSignIn` | true | Once a day, only when something waits for review (with automatic cleanup of duplicates on: only new sets it leaves to you) |
+| `openPageAtSignIn` | true | Once a day, only when duplicates wait for review, not look-alikes (with automatic cleanup of duplicates on: only new sets it leaves to you) |
 | `port` | 18484 | The review page, at `http://heiward.localhost:18484/` (this PC only). A development build's is 28484 |
-| `toast` | true | A notification when a scan finds something new |
+| `toast` | true | A notification when a scan finds new duplicates, or automatic cleanup cleans some up. New look-alikes get none: they're on the page the next time you open it |
 | `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
 | `autoClean` | off | [Automatic cleanup](#automatic-cleanup): `duplicates` and `developer` (true/false), `developerKinds` (`branches`, `temp`, `buildOutputs`, `worktrees`, `systemImages`), `afterDays` (3; 0 to 90) |

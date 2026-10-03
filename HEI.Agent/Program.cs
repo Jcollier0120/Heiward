@@ -112,7 +112,7 @@ var serve = new Command("serve", "Serve the review page on 127.0.0.1 until it si
 serve.SetAction((r, ct) => ReviewServer.RunAsync(AgentConfig.Load(), !r.GetValue(noBrowser), ct));
 root.Subcommands.Add(serve);
 
-var ifPending = new Option<bool>("--if-pending") { Description = "Only when something waits for review." };
+var ifPending = new Option<bool>("--if-pending") { Description = "Only when duplicates wait for review (look-alikes don't count)." };
 var onceADay = new Option<bool>("--once-a-day") { Description = "At most once per day (the sign-in task uses this)." };
 var openCmd = new Command("open", "Open the review page in the default browser (starting it if needed).") { ifPending, onceADay };
 openCmd.SetAction(async (r, ct) => {
@@ -382,15 +382,16 @@ root.Subcommands.Add(scope);
 return await root.Parse(args).InvokeAsync();
 
 /// <summary>
-/// Sets that wait for the user. With automatic cleanup of duplicates on, only those listed since the page
-/// last opened this way: the sign-in page shouldn't open every day for look-alikes the user leaves for later.
+/// Sets that wait for the user and call for them (<see cref="AutoCleaner.Announced"/>: not look-alikes). With
+/// automatic cleanup of duplicates on, only those listed since the page last opened this way: the sign-in page
+/// shouldn't open every day for sets the user leaves for later.
 /// </summary>
 static int PendingCount(string stamp) {
 	var report = Report.Load();
 	if (report == null) return 0;
 	var cfg = AgentConfig.Load();
 	var s = AutoCleanState.Load();
-	var waiting = AutoCleaner.WaitingForUser(cfg, report, DecisionStore.Load(), s, DateTime.UtcNow);
+	var waiting = AutoCleaner.WaitingForUser(cfg, report, DecisionStore.Load(), s, DateTime.UtcNow).Where(AutoCleaner.Announced).ToList();
 	if (!cfg.AutoClean.Duplicates || !File.Exists(stamp)) return waiting.Count;
 	DateTime lastOpened = File.GetLastWriteTimeUtc(stamp);
 	return waiting.Count(g => !s.FirstSeenUtc.TryGetValue("g:" + g.Key, out DateTime seen) || seen > lastOpened);
