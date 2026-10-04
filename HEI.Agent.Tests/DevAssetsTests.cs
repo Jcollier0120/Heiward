@@ -348,4 +348,166 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Equal(30, DevCleaner.Clean(item, new AgentConfig()).FreedBytes);
 		Assert.False(Directory.Exists(Path.Combine(app, "node_modules")));
 	}
+
+	[Fact]
+	public void SafeDelete_SaysWhatIsLeft_Why_AndWhatHoldsIt() {
+		string dir = Dir("held");
+		string open = Path.Combine(dir, "open.log");
+		Touch(open, 10);
+		using (new FileStream(open, FileMode.Open, FileAccess.Read, FileShare.None)) {
+			SafeDelete.Result r = SafeDelete.Tree(dir);
+			Assert.Equal(1, r.Left);
+			Assert.Equal(new[] { open }, r.LeftPaths);
+			Assert.Contains("being used by another process", r.Reason);
+			Assert.DoesNotContain(open, r.Reason); // the path is in LeftPaths, and a log without history keeps no names
+
+			CleanResult c = CleanResult.Of(r, dir, new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new()));
+			Assert.Equal(1, c.LeftInUse);
+			Assert.Equal(open, c.LeftPath);
+			// Windows' Restart Manager names the process with the file open: this one.
+			Assert.Contains($"(process {Environment.ProcessId}) has a file open", c.HeldBy);
+			Assert.Contains(open, c.Describe(withPath: true));
+			Assert.DoesNotContain(open, c.Describe(withPath: false));
+			Assert.StartsWith("1 left in use (", c.Describe(withPath: false));
+		}
+		Assert.Null(CleanResult.Of(SafeDelete.Tree(dir), dir, new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new())).Describe(true));
+	}
+
+	[Fact]
+	public void SafeDelete_RemovesPathsLongerThanWindowsLimit_AndNamesItsUsualPathsCantSay() {
+		string leftover = Dir("leftover");
+		string deep = SafeDelete.Extended(Path.Combine(leftover, new string('a', 120), new string('b', 120), new string('c', 40)));
+		Directory.CreateDirectory(deep);
+		File.WriteAllBytes(Path.Combine(deep, "index.js"), new byte[20]);
+		Assert.True(deep.Length > 300);
+		// What git or WSL can leave: names ending in a dot or a space, which a path without \\?\ loses.
+		File.WriteAllBytes(SafeDelete.Extended(leftover) + @"\trailing dot.", new byte[5]);
+		Directory.CreateDirectory(SafeDelete.Extended(leftover) + @"\trailing space \inner");
+
+		SafeDelete.Result r = SafeDelete.Tree(leftover);
+		Assert.Equal(0, r.Left);
+		Assert.Null(r.Reason);
+		Assert.Equal(25, r.Bytes);
+		Assert.False(Directory.Exists(leftover));
+	}
+
+	[Theory]
+	[InlineData(@"C:\Projects\x", @"\\?\C:\Projects\x")]
+	[InlineData(@"\\server\share\x", @"\\?\UNC\server\share\x")]
+	[InlineData(@"\\?\C:\x", @"\\?\C:\x")]
+	public void SafeDelete_UsesExtendedPaths_AndSaysThemAsUsual(string path, string extended) {
+		Assert.Equal(extended, SafeDelete.Extended(path));
+		Assert.Equal(path.StartsWith(@"\\?\") ? @"C:\x" : path, SafeDelete.Plain(extended));
+	}
+
+	[Fact]
+	public void ALeftoverAProcessWorksIn_IsntOffered_AndCleaningItSaysWhatHoldsIt() {
+		if (Git.Exe == null || !Environment.Is64BitProcess) return; // needs git
+		var (repo, wt, item) = AgentWorktree("held");
+		File.Delete(Path.Combine(wt, ".git"));
+		G(repo, "worktree", "prune");
+		string noClaude = Dir("no-claude");
+		// A shell left working in it: Windows won't remove the folder, so it was offered, and failed, every day.
+		using var shell = Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 60 127.0.0.1 >nul") { WorkingDirectory = wt, CreateNoWindow = true, UseShellExecute = false })!;
+		try {
+			DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(-30), default, new FolderUse(DateTime.UtcNow, claudeHome: noClaude)), i => i.Location == wt);
+			Assert.False(listed.Suggested);
+			Assert.StartsWith("In use: ", listed.Blocked);
+			Assert.Contains("works in it", listed.Blocked);
+			// Cleaning checks again, and leaves it.
+			Assert.StartsWith("In use: ", DevCleaner.Clean(item, new AgentConfig()).Error);
+			Assert.True(Directory.Exists(wt));
+
+			// What a deletion makes of it: the folder left, with Windows' reason and the process that holds it.
+			SafeDelete.Result r = SafeDelete.Tree(wt);
+			Assert.Equal(1, r.Left);
+			Assert.Equal(new[] { wt }, r.LeftPaths);
+			Assert.NotNull(r.Reason);
+			CleanResult c = CleanResult.Of(r, wt, new FolderUse(DateTime.UtcNow, claudeHome: noClaude));
+			Assert.Contains("works in it", c.HeldBy);
+		}
+		finally {
+			try { shell.Kill(entireProcessTree: true); } catch { }
+			shell.WaitForExit();
+		}
+		// Let go of, it's offered again.
+		DevItem free = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(-30), default, new FolderUse(DateTime.UtcNow, claudeHome: noClaude)), i => i.Location == wt);
+		Assert.Null(free.Blocked);
+		Assert.True(free.Suggested);
+	}
+
+	[Fact]
+	public void AWorktreeAClaudeCodeSessionUsedToday_IsntOffered() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, _) = AgentWorktree("recent");
+		string claude = Dir("claude");
+		string transcripts = Path.Combine(claude, "projects", ClaudeSessions.Slug(wt));
+		Touch(Path.Combine(transcripts, Guid.NewGuid() + ".jsonl"));
+		DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(1), default, new FolderUse(DateTime.UtcNow, claudeHome: claude, processes: () => new())));
+		Assert.False(listed.Suggested);
+		Assert.StartsWith("A Claude Code session used it", listed.Blocked);
+
+		// Two days on, the session doesn't keep it. (Something else may: the temp folder is in app data, a tool's home.)
+		foreach (string t in Directory.EnumerateFiles(transcripts)) File.SetLastWriteTimeUtc(t, DateTime.UtcNow.AddDays(-2));
+		listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(1), default, new FolderUse(DateTime.UtcNow, claudeHome: claude, processes: () => new())));
+		Assert.False(listed.Blocked?.StartsWith("A Claude Code session") ?? false);
+		Assert.Equal(listed.Blocked == null, listed.Suggested);
+		G(repo, "worktree", "remove", wt);
+	}
+
+	[Fact]
+	public void BuildOutputs_WithNoProjectBeside_AreListedForReview_WhenGitKeepsNothingInThem() {
+		if (Git.Exe == null) return; // needs git
+		string repo = Dir("orphans");
+		G(repo, "init");
+		File.WriteAllText(Path.Combine(repo, ".gitignore"), "bin/\nobj/\n");
+		// A project as it is: its bin is its build output.
+		Touch(Path.Combine(repo, "HEI.Core", "HEI.Core.csproj"));
+		Touch(Path.Combine(repo, "HEI.Core", "bin", "Debug", "HEI.Core.dll"), 2 << 20);
+		// The same project before it was renamed: its bin and obj stayed behind.
+		Touch(Path.Combine(repo, "VDF.Core", "bin", "Release", "VDF.Core.dll"), 2 << 20);
+		Touch(Path.Combine(repo, "VDF.Core", "obj", "project.assets.json"), 1000);
+		// A build's bin that git keeps: not Heiward's to offer.
+		Touch(Path.Combine(repo, "Vendor", "bin", "Release", "tool.dll"), 2 << 20);
+		// A bin that merely has the name: scripts, no Debug or Release in it.
+		Touch(Path.Combine(repo, "scripts", "bin", "run.cmd"), 2 << 20);
+		G(repo, "add", ".gitignore", "HEI.Core/HEI.Core.csproj");
+		G(repo, "add", "-f", "Vendor/bin/Release/tool.dll");
+		G(repo, "commit", "-m", "one");
+
+		var (outputs, orphans) = DevScanner.WalkBuildOutputs(repo);
+		Assert.Equal(new[] { @"HEI.Core\bin" }, outputs.Select(o => Path.GetRelativePath(repo, o.Path)));
+		Assert.Equal(new[] { @"VDF.Core\bin", @"VDF.Core\obj", @"Vendor\bin" }.Order(StringComparer.OrdinalIgnoreCase),
+			orphans.Select(o => Path.GetRelativePath(repo, o)).Order(StringComparer.OrdinalIgnoreCase));
+
+		DevItem item = Assert.Single(DevScanner.OrphanItems(repo, orphans));
+		Assert.Equal(DevScanner.Orphans, item.Kind);
+		Assert.Equal("VDF.Core", item.Name);
+		Assert.Equal(repo, item.Repo);
+		Assert.Equal(new[] { Path.Combine(repo, "VDF.Core", "bin"), Path.Combine(repo, "VDF.Core", "obj") }, item.Paths);
+		Assert.False(item.Suggested); // low confidence: never ticked
+		Assert.Null(item.Blocked);
+		Assert.StartsWith("bin, obj · no project file beside them", item.Detail);
+
+		// Never cleaned automatically, whatever kinds automatic cleanup takes.
+		Assert.Null(AutoCleaner.KindOf(item));
+		var cfg = new AgentConfig { AutoClean = new AutoCleanConfig { Developer = true, AfterDays = 0, DeveloperKinds = AutoCleaner.DeveloperKinds.ToList() } };
+		var dev = new DevReport { ScannedAtUtc = DateTime.UtcNow, Categories = { new DevCategory(DevScanner.Orphans, "", "", new() { item }) } };
+		AutoPlanEntry planned = AutoCleaner.Plan(cfg, null, dev, new Dictionary<string, Decision>(),
+			new AutoCleanState { DeveloperSinceUtc = DateTime.UtcNow.AddDays(-60) }, DateTime.UtcNow).DevItems[item.Id];
+		Assert.Null(planned.DueUtc);
+		Assert.Contains("always your call", planned.Reason);
+
+		// Cleaning checks again: with a project file back beside it, it's that project's, and left alone.
+		Touch(Path.Combine(repo, "VDF.Core", "VDF.Core.csproj"));
+		Assert.Equal(0, DevCleaner.Clean(item, new AgentConfig()).FreedBytes);
+		File.Delete(Path.Combine(repo, "VDF.Core", "VDF.Core.csproj"));
+		CleanResult cleaned = DevCleaner.Clean(item, new AgentConfig());
+		Assert.Equal((2 << 20) + 1000, cleaned.FreedBytes);
+		Assert.Equal(0, cleaned.LeftInUse);
+		Assert.False(Directory.Exists(Path.Combine(repo, "VDF.Core", "bin")));
+		Assert.False(Directory.Exists(Path.Combine(repo, "VDF.Core", "obj")));
+		Assert.True(File.Exists(Path.Combine(repo, "Vendor", "bin", "Release", "tool.dll")));
+		Assert.True(File.Exists(Path.Combine(repo, "HEI.Core", "bin", "Debug", "HEI.Core.dll")));
+	}
 }

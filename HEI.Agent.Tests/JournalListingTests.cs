@@ -142,6 +142,37 @@ public sealed class JournalListingTests : IDisposable {
 	}
 
 	[Fact]
+	public void TheListingsKey_IsTheSettingsAndTheListingFormat_NotTheBuild() {
+		string text = ListingPlan.ListingKeyText(Settings());
+		Assert.DoesNotContain(AppBuild.Current, text);
+		Assert.StartsWith("listing " + ListingPlan.ListingFormat + "\n", text);
+		Assert.Equal(ListingPlan.ListingKey(Settings()), ListingPlan.ListingKey(Settings()));
+		Assert.NotEqual(ListingPlan.ListingKey(Settings()), ListingPlan.ListingKey(Settings(), ListingPlan.ListingFormat + 1));
+	}
+
+	[Fact]
+	public void ANewBuild_KeepsTheListing_ButANewListingFormatWalks() {
+		if (!HasJournal(dir)) return;
+		Photo("a.png");
+		Scanned(Plan());
+		string index = Path.Combine(home, "listing", "index.json");
+		string saved = File.ReadAllText(index);
+		// The listing is kept under a key a new build of the same format makes too: the next build's first scan
+		// lists only what changed, where it used to walk every drive.
+		Assert.Contains(ListingPlan.ListingKey(Settings()), saved);
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode);
+
+		// A listing from an older format: walked once, then trusted again.
+		File.WriteAllText(index, saved.Replace(ListingPlan.ListingKey(Settings()), ListingPlan.ListingKey(Settings(), ListingPlan.ListingFormat - 1)));
+		ListingPlan older = Plan();
+		RootPlan r = Assert.Single(older.Roots);
+		Assert.Equal(ListingMode.Walk, r.Mode);
+		Assert.Equal("settings changed, or how Heiward lists", r.Why);
+		Scanned(older);
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode);
+	}
+
+	[Fact]
 	public void ASkippedScan_MovesTheJournalOn_AndTheSameSettingsAreTheSameScan() {
 		if (!HasJournal(dir)) return;
 		Photo("a.png");

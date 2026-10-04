@@ -1492,7 +1492,8 @@ function lastUsed(iso) {
 // and a selection bar that appears once something is ticked.
 const DEV_META = {
   projects: { short: 'Build outputs', icon: 'layers', blurb: 'node_modules, bin and obj, Gradle and Cargo build folders, Python environments. The next install or build recreates them.' },
-  worktrees: { short: 'Worktrees', icon: 'branch', blurb: 'Extra working folders; git removes one only when it has no uncommitted changes, and the branch stays.' },
+  orphans: { short: 'Build outputs without a project', icon: 'layers', blurb: 'bin and obj folders whose project file is gone (a project renamed or moved, usually), with nothing in them that git keeps. Nothing proves a build made them, so they\'re never ticked and never cleaned automatically: look at each first.' },
+  worktrees: { short: 'Worktrees', icon: 'branch', blurb: 'Extra working folders; git removes one only when it has no uncommitted changes, and the branch stays. One a program or a Claude Code session works in waits.' },
   repos: { short: 'Merged branches', icon: 'merge', blurb: 'Local branches already merged into the remote\'s main or master.' },
   caches: { short: 'Package caches', icon: 'db' },
   android: { short: 'Emulators', icon: 'phone' },
@@ -1526,11 +1527,12 @@ function devGroups() {
   const repos = new Map();
   const repoOf = (path) => {
     const k = rkey(path);
-    if (!repos.has(k)) repos.set(k, { key: k, name: path.replace(/\\+$/, '').split(SEP).pop(), path, outputs: [], worktrees: [], branches: null, source: sources.get(k) || null });
+    if (!repos.has(k)) repos.set(k, { key: k, name: path.replace(/\\+$/, '').split(SEP).pop(), path, outputs: [], orphans: [], worktrees: [], branches: null, source: sources.get(k) || null });
     return repos.get(k);
   };
   for (const c of devReport.categories) {
     if (c.key === 'projects') for (const i of c.items) repoOf(i.location).outputs.push(i);
+    if (c.key === 'orphans') for (const i of c.items) repoOf(i.repo || i.location).orphans.push(i);
     if (c.key === 'worktrees') for (const i of c.items) repoOf(i.repo || i.location).worktrees.push(i);
   }
   for (const r of devReport.repositories || []) repoOf(r.path).branches = r;
@@ -1545,9 +1547,10 @@ function devGroups() {
   for (const r of repos.values()) if (!used.has(r.key)) groups.push({ id: 'r:' + r.key, name: r.name, project: null, repos: [r] });
   for (const g of groups) {
     g.outputs = g.repos.flatMap((r) => r.outputs);
+    g.orphans = g.repos.flatMap((r) => r.orphans);
     g.worktrees = g.repos.flatMap((r) => r.worktrees);
     g.branches = g.repos.map((r) => r.branches).filter(Boolean);
-    g.items = [...g.outputs, ...g.worktrees];
+    g.items = [...g.outputs, ...g.orphans, ...g.worktrees];
     g.bytes = devSize(g.items);
     g.merged = g.branches.reduce((a, b) => a + b.merged.length, 0);
     g.pulls = g.repos.flatMap((r) => (pullsOf(r) || { pulls: [] }).pulls);
@@ -1849,6 +1852,7 @@ function projectCard(g, biggest) {
   if (g.project) parts.push(count(g.repos.length, 'repository', 'repositories'));
   else if (g.repos[0].source && g.repos[0].source.vcs !== 'git') parts.push(VCS_NAMES[g.repos[0].source.vcs] || g.repos[0].source.vcs);
   if (g.outputs.length) parts.push('build outputs');
+  if (g.orphans.length) parts.push('build outputs without a project');
   if (g.worktrees.length) parts.push(count(g.worktrees.length, 'worktree', 'worktrees'));
   if (g.merged) parts.push(count(g.merged, 'merged branch', 'merged branches'));
   card.append(el('div', 'muted small', parts.join(' · ') || 'Nothing to clean'));
@@ -1959,9 +1963,10 @@ function groupPage(g) {
   const pulls = pullSection(g, multi);
   if (pulls) out.push(pulls);
   if (g.outputs.length) out.push(devSection('projects', g.outputs, multi));
+  if (g.orphans.length) out.push(devSection('orphans', g.orphans, multi));
   if (g.worktrees.length) out.push(devSection('worktrees', g.worktrees, multi));
   if (g.branches.length) out.push(branchSection(g.branches));
-  if (!g.outputs.length && !g.worktrees.length && !g.branches.length) out.push(el('div', 'empty-state', 'Nothing to clean in this ' + (g.project ? 'project.' : 'repository.')));
+  if (!g.items.length && !g.branches.length) out.push(el('div', 'empty-state', 'Nothing to clean in this ' + (g.project ? 'project.' : 'repository.')));
   return out;
 }
 
@@ -2279,7 +2284,7 @@ function selectionBar() {
   const text = el('div', 'sel-text');
   const where = [...new Set(picked.map((i) => {
     if (i.kind === 'projects') return i.name;
-    if (i.kind === 'worktrees') return (i.repo || '').split(SEP).pop();
+    if (i.kind === 'worktrees' || i.kind === 'orphans') return (i.repo || '').split(SEP).pop();
     const c = devReport.categories.find((x) => x.items.includes(i));
     return c ? DEV_META[c.key].short : '';
   }))].filter(Boolean);
@@ -2306,12 +2311,14 @@ async function cleanDev(picked) {
   const worktrees = picked.filter((i) => i.kind === 'worktrees').length;
   if (worktrees) lines.push(count(worktrees, 'worktree folder is', 'worktree folders are') + ' removed by git; the branches stay.');
   if (picked.some((i) => i.kind === 'avd')) lines.push('Deleting an emulator deletes the apps and data inside it.');
+  const orphans = picked.filter((i) => i.kind === 'orphans').length;
+  if (orphans) lines.push(count(orphans, 'folder has', 'folders have') + ' bin and obj with no project beside them: be sure nothing in them is yours to keep.');
   if (!confirm(lines.join('\n\n'))) return;
   devBusy = true;
   devResult = null;
   renderDev();
   let freed = 0, left = 0;
-  const failed = [];
+  const failed = [], held = [];
   for (const [n, i] of picked.entries()) {
     devProgress = i.name + ' (' + (n + 1) + ' of ' + picked.length + ')';
     const status = $('dev-status');
@@ -2321,6 +2328,9 @@ async function cleanDev(picked) {
       freed += r.freedBytes;
       left += r.leftInUse;
       if (r.error) failed.push(i.name + ' (' + r.error + ')');
+      // What was left, and what holds it: a program working in the folder, one with a file open, or Windows' reason.
+      if (r.leftInUse) held.push(i.name + ': ' + count(r.leftInUse, 'item', 'items') + ' left in use' +
+        (r.leftPath ? ', ' + r.leftPath : '') + (r.heldBy ? ' (' + r.heldBy + ')' : ''));
       devTicks.delete(i.id);
     } catch (e) {
       failed.push(i.name + ' (' + e.message + ')');
@@ -2328,8 +2338,8 @@ async function cleanDev(picked) {
   }
   devBusy = false;
   devProgress = '';
-  devResult = [!failed.length, 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file was', 'files were') + ' in use and left alone.' : '') +
-    (failed.length ? ' Not cleaned:' : ''), failed];
+  devResult = [!failed.length, 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file or folder was', 'files or folders were') + ' in use and left alone.' : '') +
+    (failed.length ? ' Not cleaned:' : ''), [...failed, ...held]];
   await loadDevReport();
   renderDev();
   refresh(true);
