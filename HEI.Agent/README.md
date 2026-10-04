@@ -39,7 +39,7 @@ What a rescan reads from the disk:
     - the first scan;
     - drives without a journal (FAT, exFAT, network drives);
     - a journal made again, or overwritten past the last scan (a PC off for a long time, or a very busy drive);
-    - changed settings or a new build of Heiward;
+    - changed settings, or a Heiward that lists differently (a new build alone keeps the listing: only one that changes how drives are listed walks them once);
     - folders added, moved or deleted where scans look;
     - once a week regardless.
   - **A walk** goes one disk at a time per physical disk, so a hard disk never serves two walks at once.
@@ -187,12 +187,13 @@ Tick items anywhere; a selection bar at the bottom cleans them all at once.
 | What | Recognised by | Ticked for you |
 |---|---|---|
 | Build outputs: `node_modules`, `bin`/`obj`, Gradle `build`/`.gradle`/`.cxx`, `target`, `.venv`, `.next` | the project file beside it (`package.json`, a `.csproj`, `build.gradle`, `Cargo.toml`, ...), so a folder that merely has the name is left alone | in projects untouched for 30 days (`staleProjectDays`), judged by git's own files and the project's top level |
-| Git worktrees | the repository's `.git\worktrees` | untouched for 30 days, no uncommitted changes, and every commit already on a remote. Git removes it (`git worktree remove`, which refuses a worktree with changes), and the branch stays. Worktrees in a tool's home (a dot-folder such as `~\.<tool>\...`, or app data) or used by a scheduled task are never offered |
+| Build outputs with no project beside them: `bin`/`obj` | a `Debug` or `Release` folder inside (or `obj`'s `project.assets.json`), no `.csproj` beside it, and nothing in it that git tracks (untracked or ignored): what's left when a project is renamed or moved. Git repositories only | never, and never cleaned automatically: nothing proves a build made them, so each waits for you to look |
+| Git worktrees | the repository's `.git\worktrees` | untouched for 30 days, no uncommitted changes, and every commit already on a remote. Git removes it (`git worktree remove`, which refuses a worktree with changes), and the branch stays. Never offered while it's in use: a running program works in it (its current folder is inside), a Claude Code session running now works in it (`%USERPROFILE%\.claude\sessions`), or a Claude Code session wrote its transcript in the last 24 hours (`%USERPROFILE%\.claude\projects`). Nor are worktrees in a tool's home (a dot-folder such as `~\.<tool>\...`, or app data) or used by a scheduled task. What a removal that stopped partway left is offered too, unless something works in it |
 | Package caches: Gradle, NuGet, npm, Yarn, pnpm, pip, Maven, Cargo, Go | the tools' own cache folders | never. Blocked while the tool runs (Java for Gradle, dotnet or Visual Studio for NuGet) |
 | Android emulators and system images | the AVD folder and the SDK's `system-images` | system images no emulator uses. Emulators themselves aren't ticked, since they hold app data. Blocked while an emulator runs |
 | Temp files and crash dumps | `%TEMP%` entries untouched for 7 days (`tempOlderThanDays`), `%LOCALAPPDATA%\CrashDumps` | yes |
 
-Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. `hei dev` shows the last check; `hei dev --scan` checks now (both in developer mode).
+Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. It uses Windows' extended paths (`\\?\`), so folders deeper than 260 characters and names ending in a dot or a space go too. What it has to leave, it says: the page and `heiward.log` name the first file or folder left in use and what holds it, a program working in the folder or one with a file open (as Windows' Restart Manager says), or else Windows' own reason. `hei dev` shows the last check; `hei dev --scan` checks now (both in developer mode).
 
 **Merged branches.** Each repository with a remote gets a **Prune** button:
 - It fetches first (`git fetch --prune`), then deletes the local branches already merged into the remote's default branch (`origin/HEAD`, else `main` or `master`).

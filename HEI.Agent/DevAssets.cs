@@ -19,6 +19,7 @@ using System.IO.Enumeration;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace HEI.Agent {
 	/// <summary>
@@ -93,7 +94,7 @@ namespace HEI.Agent {
 	/// build.gradle), caches are the tools' own documented folders, and links are never followed.
 	/// </summary>
 	static class DevScanner {
-		public const string Projects = "projects", Worktrees = "worktrees", Caches = "caches", Android = "android", Temp = "temp";
+		public const string Projects = "projects", Orphans = "orphans", Worktrees = "worktrees", Caches = "caches", Android = "android", Temp = "temp";
 
 		static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 		static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
@@ -104,18 +105,28 @@ namespace HEI.Agent {
 			DateTime staleBefore = DateTime.UtcNow.AddDays(-cfg.StaleProjectDays);
 			// Not on a drive scanned only when asked: looking for projects would wake it.
 			List<string> repos = FindRepositories(ScanScope.Roots(cfg).Where(r => !cfg.IsOnRequest(r)).ToList(), ScanScope.ExclusionRules(cfg), ct);
+			var use = new FolderUse(DateTime.UtcNow);
+
+			// Main checkouts and other version control (a git worktree is listed as a worktree), each walked once.
+			var walks = repos.Where(r => Directory.Exists(Path.Combine(r, ".git")) || !Path.Exists(Path.Combine(r, ".git")))
+				.Select(r => (Repo: r, Walk: WalkBuildOutputs(r, ct))).ToList();
 
 			report.Categories.Add(new DevCategory(Projects, "Build outputs and dependencies in your projects",
 				"node_modules, bin and obj, Gradle build folders, target, Python virtual environments. The next install or build recreates them. " +
 				$"Ticked in projects untouched for {cfg.StaleProjectDays} days.",
-				repos.Where(r => Directory.Exists(Path.Combine(r, ".git")) || !Path.Exists(Path.Combine(r, ".git")))
-					.Select(r => ProjectItem(r, staleBefore, ct)).Where(i => i != null).Select(i => i!)
+				walks.Select(w => ProjectItem(w.Repo, w.Walk.Outputs, staleBefore)).Where(i => i != null).Select(i => i!)
 					.OrderByDescending(i => i.Bytes).ToList()));
+
+			report.Categories.Add(new DevCategory(Orphans, "Build outputs with no project beside them",
+				"bin and obj folders whose project file is gone (a project renamed or moved, usually), with nothing in them that git keeps. " +
+				"Nothing proves a build made them, so they're never ticked and never cleaned automatically: look at each before you clean it.",
+				walks.Where(w => w.Walk.Orphans.Count > 0 && Directory.Exists(Path.Combine(w.Repo, ".git")))
+					.SelectMany(w => OrphanItems(w.Repo, w.Walk.Orphans, ct)).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Worktrees, "Git worktrees",
 				"Extra working folders of a repository; AI coding agents leave many behind. Git removes one only when it has no uncommitted changes, " +
-				"and it's offered only when its commits are pushed. The branch stays.",
-				repos.SelectMany(r => WorktreeItems(r, staleBefore, ct)).OrderByDescending(i => i.Bytes).ToList()));
+				"and it's offered only when its commits are pushed and nothing works in it (a program, or a Claude Code session in the last day). The branch stays.",
+				repos.SelectMany(r => WorktreeItems(r, staleBefore, ct, use)).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Caches, "Package and build caches",
 				"Downloads that Gradle, NuGet, npm and other tools keep. They're downloaded again when a build needs them, so the next build is slower. " +
@@ -170,8 +181,7 @@ namespace HEI.Agent {
 
 		static bool IsRepository(string folder) => ScanScope.RepositoryMarkers.Any(m => Path.Exists(Path.Combine(folder, m)));
 
-		static DevItem? ProjectItem(string repo, DateTime staleBefore, CancellationToken ct) {
-			var outputs = FindBuildOutputs(repo, ct);
+		static DevItem? ProjectItem(string repo, List<(string Path, string Label)> outputs, DateTime staleBefore) {
 			if (outputs.Count == 0) return null;
 			long bytes = outputs.Sum(o => Measure(o.Path).Bytes);
 			if (bytes < 1 << 20) return null; // under 1 MB: not worth a row
@@ -183,8 +193,16 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>Build outputs inside a repository, each recognised by the project file beside it. Nested repositories are their own.</summary>
-		internal static List<(string Path, string Label)> FindBuildOutputs(string repo, CancellationToken ct = default) {
+		internal static List<(string Path, string Label)> FindBuildOutputs(string repo, CancellationToken ct = default) => WalkBuildOutputs(repo, ct).Outputs;
+
+		/// <summary>
+		/// One walk of a repository for its build outputs (<see cref="FindBuildOutputs"/>), and the bin and obj folders
+		/// that look like a .NET build's but have no project file beside them (<see cref="LooksLikeOrphanBuildOutput"/>):
+		/// what's left when a project is renamed or moved. Neither is walked into.
+		/// </summary>
+		internal static (List<(string Path, string Label)> Outputs, List<string> Orphans) WalkBuildOutputs(string repo, CancellationToken ct = default) {
 			var found = new List<(string, string)>();
+			var orphans = new List<string>();
 			var stack = new Stack<(string Dir, int Depth)>();
 			stack.Push((repo, 0));
 			while (stack.Count > 0 && !ct.IsCancellationRequested) {
@@ -198,13 +216,68 @@ namespace HEI.Agent {
 						found.Add((d.FullName, label));
 						continue;
 					}
+					if (LooksLikeOrphanBuildOutput(d)) {
+						orphans.Add(d.FullName);
+						continue;
+					}
 					if (depth >= 6 || d.Name is ".vs" or ".idea" || ScanScope.RepositoryMarkers.Contains(d.Name, StringComparer.OrdinalIgnoreCase) || IsRepository(d.FullName)) continue;
 					// Worktrees, and what removing one left behind, are listed as worktrees.
 					if (string.Equals(d.FullName, AgentWorktrees(repo), StringComparison.OrdinalIgnoreCase)) continue;
 					stack.Push((d.FullName, depth + 1));
 				}
 			}
-			return found;
+			return (found, orphans);
+		}
+
+		/// <summary>
+		/// A bin or obj folder with no project file beside it that looks like a .NET build's: a Debug or Release folder in
+		/// it, or obj's project.assets.json. A folder that merely has the name (a tool's bin of scripts) has neither.
+		/// Whether git keeps anything in it is <see cref="UntrackedOrIgnored"/>'s to say.
+		/// </summary>
+		internal static bool LooksLikeOrphanBuildOutput(DirectoryInfo folder) {
+			if (folder.Name.ToLowerInvariant() is not ("bin" or "obj")) return false;
+			if ((folder.Attributes & FileAttributes.ReparsePoint) != 0 || BuildOutputLabel(folder) != null) return false;
+			try {
+				return Directory.Exists(Path.Combine(folder.FullName, "Debug")) || Directory.Exists(Path.Combine(folder.FullName, "Release"))
+					|| File.Exists(Path.Combine(folder.FullName, "project.assets.json"));
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+		}
+
+		/// <summary>Of <paramref name="folders"/> inside <paramref name="repo"/>, those holding nothing git tracks (untracked, or ignored); none when git can't say.</summary>
+		internal static List<string> UntrackedOrIgnored(string repo, IReadOnlyList<string> folders) {
+			var kept = new List<string>();
+			if (Git.Exe == null) return kept;
+			foreach (var batch in folders.Chunk(50)) {
+				var rel = batch.Select(f => Path.GetRelativePath(repo, f).Replace('\\', '/')).ToArray();
+				if (rel.Any(r => r.StartsWith("..", StringComparison.Ordinal) || Path.IsPathRooted(r))) continue; // not inside: no telling
+				var (code, tracked) = Git.Run(repo, new[] { "ls-files", "-z", "--" }.Concat(rel.Select(r => ":(literal)" + r)).ToArray());
+				if (code != 0) continue;
+				var files = tracked.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+				for (int i = 0; i < batch.Length; i++)
+					if (!files.Any(f => f.StartsWith(rel[i] + "/", StringComparison.OrdinalIgnoreCase) || f.Equals(rel[i], StringComparison.OrdinalIgnoreCase)))
+						kept.Add(batch[i]);
+			}
+			return kept;
+		}
+
+		/// <summary>
+		/// The bin and obj folders with no project beside them that git keeps nothing of, one item per folder that holds
+		/// them (VDF.Agent: bin, obj). Never ticked: the user looks first.
+		/// </summary>
+		internal static IEnumerable<DevItem> OrphanItems(string repo, List<string> candidates, CancellationToken ct = default) {
+			foreach (var folder in UntrackedOrIgnored(repo, candidates).GroupBy(p => Path.GetDirectoryName(p)!, StringComparer.OrdinalIgnoreCase)) {
+				if (ct.IsCancellationRequested) yield break;
+				var paths = folder.Order(StringComparer.OrdinalIgnoreCase).ToList();
+				var sizes = paths.Select(Measure).ToList();
+				long bytes = sizes.Sum(s => s.Bytes);
+				if (bytes < 1 << 20) continue; // under 1 MB: not worth a row
+				DateTime newest = sizes.Max(s => s.NewestUtc);
+				string rel = Path.GetRelativePath(repo, folder.Key);
+				yield return new DevItem(IdOf(Orphans, folder.Key), Orphans, rel == "." ? Path.GetFileName(repo) : rel, folder.Key, paths, bytes,
+					newest == DateTime.MinValue ? null : newest, false, null,
+					string.Join(", ", paths.Select(p => Path.GetFileName(p)!.ToLowerInvariant())) + " · no project file beside them · nothing in git", repo);
+			}
 		}
 
 		/// <summary>What a folder is, when a build tool made it: judged by the project file in the folder above.</summary>
@@ -263,7 +336,9 @@ namespace HEI.Agent {
 
 		// ------------------------------------------------------------------ worktrees
 
-		internal static IEnumerable<DevItem> WorktreeItems(string repo, DateTime staleBefore, CancellationToken ct) {
+		/// <param name="use">What works in a folder now (<see cref="FolderUse"/>): a worktree in use isn't offered, nor what a removal left of one.</param>
+		internal static IEnumerable<DevItem> WorktreeItems(string repo, DateTime staleBefore, CancellationToken ct, FolderUse? use = null) {
+			use ??= new FolderUse(DateTime.UtcNow);
 			string meta = Path.Combine(repo, ".git", "worktrees");
 			var records = Directory.Exists(meta) ? Directory.EnumerateDirectories(meta).ToList() : [];
 			foreach (string w in records) {
@@ -273,7 +348,9 @@ namespace HEI.Agent {
 				long bytes = Measure(path).Bytes;
 				DateTime lastUsed = LastUsed(path, w);
 				string branch = BranchOf(w) ?? "detached";
+				// In use first: it says what to close, where the others say why it stays for good.
 				string? blocked = File.Exists(Path.Combine(w, "locked")) ? "Locked in git"
+					: use.Why(path) is { } busy ? busy
 					: ToolHome(path) is { } tool ? $"Kept for the tool that made it ({tool})"
 					: ScheduledTasksText.Value.Contains(path, StringComparison.OrdinalIgnoreCase) ? "A scheduled task uses it"
 					: WorktreeBlocker(path);
@@ -284,8 +361,11 @@ namespace HEI.Agent {
 			foreach (string path in LeftoverWorktrees(repo)) {
 				if (ct.IsCancellationRequested) yield break;
 				DateTime lastUsed = LastUsed(path, null);
+				// A removal that stopped at the folder itself: Windows keeps a folder a process works in. It waits for that
+				// process, rather than being offered, and failing, every day.
+				string? blocked = use.Why(path);
 				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, Measure(path).Bytes,
-					lastUsed == DateTime.MinValue ? null : lastUsed, true, null,
+					lastUsed == DateTime.MinValue ? null : lastUsed, blocked == null, blocked,
 					$"left over from a removal · worktree of {Path.GetFileName(repo)}", repo);
 			}
 		}
@@ -710,33 +790,62 @@ namespace HEI.Agent {
 		}
 	}
 
-	sealed record CleanResult(long FreedBytes, int LeftInUse, string? Error);
+	/// <param name="LeftInUse">How many files and folders were left, in use or refused.</param>
+	/// <param name="LeftPath">The first of them.</param>
+	/// <param name="HeldBy">
+	/// Why they're left: the processes that hold them when Windows says ("Code (process 1234) works in it", "dotnet (process 99)
+	/// has a file open"), otherwise Windows' own reason ("Access to the path is denied.").
+	/// </param>
+	sealed record CleanResult(long FreedBytes, int LeftInUse, string? Error, string? LeftPath = null, string? HeldBy = null) {
+		/// <summary>A deletion's result, with what holds what it left (<paramref name="root"/>: the folder it was deleting).</summary>
+		internal static CleanResult Of(SafeDelete.Result r, string root, FolderUse use, long? freed = null) {
+			if (r.Left == 0) return new CleanResult(freed ?? r.Bytes, 0, null);
+			var left = r.LeftPaths ?? [];
+			var holders = use.Holders(root, left);
+			return new CleanResult(freed ?? r.Bytes, r.Left, null, left.FirstOrDefault(),
+				holders.Count > 0 ? string.Join("; ", holders) : r.Reason ?? "Windows didn't say why");
+		}
+
+		/// <summary>
+		/// For the log: "1 left in use (C:\...\wt: claude (process 1348) works in it)"; without <paramref name="withPath"/>
+		/// (no history kept), only what holds it, which names no file.
+		/// </summary>
+		public string? Describe(bool withPath) => LeftInUse == 0 ? null
+			: $"{LeftInUse:N0} left in use (" + (withPath && LeftPath != null ? LeftPath + ": " : "") + (HeldBy ?? "Windows didn't say why") + ")";
+	}
 
 	/// <summary>
 	/// Cleans one developer-mode item, re-checking it first. Deletion is permanent (tools recreate all of
-	/// it), removes links without touching what they point to, and leaves files in use alone.
+	/// it), removes links without touching what they point to, and leaves files in use alone, saying what holds them.
 	/// </summary>
 	static class DevCleaner {
 		public static CleanResult Clean(DevItem item, AgentConfig cfg) {
+			var use = new FolderUse(DateTime.UtcNow);
 			switch (item.Kind) {
 				case DevScanner.Projects: {
-					long freed = 0;
-					int left = 0;
+					var r = new SafeDelete.Result(0, 0);
 					foreach (string p in item.Paths) {
 						var dir = new DirectoryInfo(p);
 						if (!dir.Exists || DevScanner.BuildOutputLabel(dir) == null) continue; // no longer what it was
-						var r = SafeDelete.Tree(p);
-						freed += r.Bytes;
-						left += r.Left;
+						r = r.Add(SafeDelete.Tree(p));
 					}
-					return new CleanResult(freed, left, null);
+					return CleanResult.Of(r, item.Location, use);
+				}
+				case DevScanner.Orphans: {
+					var r = new SafeDelete.Result(0, 0);
+					foreach (string p in item.Paths) {
+						var dir = new DirectoryInfo(p);
+						// Still a build output with no project beside it, and still nothing git keeps: otherwise it's let be.
+						if (!dir.Exists || item.Repo == null || !DevScanner.LooksLikeOrphanBuildOutput(dir) || DevScanner.UntrackedOrIgnored(item.Repo, new[] { p }).Count == 0) continue;
+						r = r.Add(SafeDelete.Tree(p));
+					}
+					return CleanResult.Of(r, item.Location, use);
 				}
 				case DevScanner.Worktrees: {
 					if (item.Repo == null) return new CleanResult(0, 0, "Unknown repository");
-					if (DevScanner.IsLeftoverWorktree(item.Repo, item.Location)) {
-						var rest = SafeDelete.Tree(item.Location);
-						return new CleanResult(rest.Bytes, rest.Left, null);
-					}
+					if (use.Why(item.Location) is { } busy) return new CleanResult(0, 0, busy);
+					if (DevScanner.IsLeftoverWorktree(item.Repo, item.Location))
+						return CleanResult.Of(SafeDelete.Tree(item.Location), item.Location, use);
 					if (DevScanner.WorktreeBlocker(item.Location) is { } why) return new CleanResult(0, 0, why);
 					long before = DevScanner.Measure(item.Location).Bytes;
 					string? record = DevScanner.GitDirOf(item.Location); // <repo>\.git\worktrees\<id>
@@ -747,7 +856,7 @@ namespace HEI.Agent {
 					// it partway: the rest goes too.
 					if (record != null && !Directory.Exists(record)) {
 						var rest = SafeDelete.Tree(item.Location);
-						return new CleanResult(before - DevScanner.Measure(item.Location).Bytes, rest.Left, null);
+						return CleanResult.Of(rest, item.Location, use, before - DevScanner.Measure(item.Location).Bytes);
 					}
 					return new CleanResult(0, 0, "git: " + output.Trim());
 				}
@@ -755,49 +864,33 @@ namespace HEI.Agent {
 					var def = item.Name;
 					string? blocked = DevScanner.CacheBlocker(ProcessesFor(def));
 					if (blocked != null) return new CleanResult(0, 0, blocked);
-					long freed = 0;
-					int left = 0;
-					foreach (string p in item.Paths.Where(Directory.Exists)) {
-						var r = SafeDelete.Tree(p, keepRoot: true);
-						freed += r.Bytes;
-						left += r.Left;
-					}
-					return new CleanResult(freed, left, null);
+					var r = new SafeDelete.Result(0, 0);
+					foreach (string p in item.Paths.Where(Directory.Exists))
+						r = r.Add(SafeDelete.Tree(p, keepRoot: true));
+					return CleanResult.Of(r, item.Location, use);
 				}
 				case "avd":
 				case "sysimage": {
 					if (DevScanner.EmulatorRunning()) return new CleanResult(0, 0, "An emulator is running");
-					long freed = 0;
-					int left = 0;
-					foreach (string p in item.Paths) {
-						var r = File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p);
-						freed += r.Bytes;
-						left += r.Left;
-					}
-					return new CleanResult(freed, left, null);
+					var r = new SafeDelete.Result(0, 0);
+					foreach (string p in item.Paths)
+						r = r.Add(File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p));
+					return CleanResult.Of(r, item.Location, use);
 				}
 				case "temp": {
 					// Only entries still untouched for the whole period, as they were when listed.
 					var still = DevScanner.OldTempEntries(item.Location, cfg.TempOlderThanDays).Select(e => e.Path)
 						.ToHashSet(StringComparer.OrdinalIgnoreCase);
-					long freed = 0;
-					int left = 0;
-					foreach (string p in item.Paths.Where(still.Contains)) {
-						var r = File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p);
-						freed += r.Bytes;
-						left += r.Left;
-					}
-					return new CleanResult(freed, left, null);
+					var r = new SafeDelete.Result(0, 0);
+					foreach (string p in item.Paths.Where(still.Contains))
+						r = r.Add(File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p));
+					return CleanResult.Of(r, item.Location, use);
 				}
 				case "dumps": {
-					long freed = 0;
-					int left = 0;
-					foreach (string p in item.Paths.Where(p => p.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase))) {
-						var r = SafeDelete.File(p);
-						freed += r.Bytes;
-						left += r.Left;
-					}
-					return new CleanResult(freed, left, null);
+					var r = new SafeDelete.Result(0, 0);
+					foreach (string p in item.Paths.Where(p => p.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase)))
+						r = r.Add(SafeDelete.File(p));
+					return CleanResult.Of(r, item.Location, use);
 				}
 				default:
 					return new CleanResult(0, 0, "Unknown item");
@@ -814,13 +907,47 @@ namespace HEI.Agent {
 		};
 	}
 
-	/// <summary>Permanent deletion that removes links (junctions, symbolic links) without following them.</summary>
+	/// <summary>
+	/// Permanent deletion that removes links (junctions, symbolic links) without following them. Paths are used in
+	/// their extended form (\\?\C:\...), so a tree deeper than 260 characters, or a name Windows' usual paths can't
+	/// say (one ending in a dot or a space), is deleted as well. What it can't delete it says, and why.
+	/// </summary>
 	static class SafeDelete {
-		public readonly record struct Result(long Bytes, int Left);
+		/// <param name="Left">How many files and folders are left (in use, or refused).</param>
+		/// <param name="Reason">Why the first of them is left, as Windows said it.</param>
+		/// <param name="LeftPaths">The first of them (<see cref="PathsKept"/> at most), in their usual form.</param>
+		public readonly record struct Result(long Bytes, int Left, string? Reason = null, IReadOnlyList<string>? LeftPaths = null) {
+			/// <summary>One path left, and why (Windows' message without the path, which <see cref="LeftPaths"/> has).</summary>
+			public static Result Failed(string path, Exception e) =>
+				new(0, 1, Regex.Replace(e.Message, @"\s*'[^']*'", "").Trim(), new[] { Plain(path) });
+
+			public Result Add(Result other) => new(Bytes + other.Bytes, Left + other.Left, Reason ?? other.Reason,
+				other.LeftPaths is not { Count: > 0 } ? LeftPaths
+				: LeftPaths is not { Count: > 0 } ? other.LeftPaths
+				: LeftPaths.Count >= PathsKept ? LeftPaths
+				: LeftPaths.Concat(other.LeftPaths).Take(PathsKept).ToList());
+		}
+
+		/// <summary>How many of the paths left a result keeps: enough to say what held them.</summary>
+		const int PathsKept = 20;
+
+		/// <summary>The extended form of a full path: \\?\C:\... or \\?\UNC\server\share\...</summary>
+		internal static string Extended(string path) {
+			if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+			string full = Path.GetFullPath(path);
+			return full.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + full[2..] : @"\\?\" + full;
+		}
+
+		/// <summary>The usual form of a path <see cref="Extended"/> made, for the page and the log.</summary>
+		internal static string Plain(string path) =>
+			path.StartsWith(@"\\?\UNC\", StringComparison.Ordinal) ? @"\\" + path[8..]
+			: path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path[4..]
+			: path;
 
 		public static Result File(string path) {
+			string at = Extended(path);
 			try {
-				var f = new FileInfo(path);
+				var f = new FileInfo(at);
 				if (!f.Exists) return new Result(0, 0);
 				long length = (f.Attributes & FileAttributes.ReparsePoint) != 0 ? 0 : f.Length;
 				if (f.IsReadOnly) f.IsReadOnly = false;
@@ -828,39 +955,39 @@ namespace HEI.Agent {
 				return new Result(length, 0);
 			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
-				return new Result(0, 1);
+				return Result.Failed(at, e);
 			}
 		}
 
 		/// <param name="keepRoot">Empty the folder but keep it (a tool's cache folder).</param>
 		public static Result Tree(string path, bool keepRoot = false) {
-			var root = new DirectoryInfo(path);
+			if (new DirectoryInfo(Plain(path)).Parent == null) throw new InvalidOperationException("Refusing to delete a drive root");
+			var root = new DirectoryInfo(Extended(path));
 			if (!root.Exists) return new Result(0, 0);
-			if (root.Parent == null) throw new InvalidOperationException("Refusing to delete a drive root");
 			if ((root.Attributes & FileAttributes.ReparsePoint) != 0)
 				return RemoveLink(root);
-			long bytes = 0;
-			int left = 0;
+			var result = new Result(0, 0);
 			IEnumerable<FileSystemInfo> entries;
-			try { entries = root.EnumerateFileSystemInfos("*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 }).ToList(); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new Result(0, 1); }
+			// Nothing is skipped: what can't be read is left, and said so, rather than silently keeping the folder.
+			try { entries = root.EnumerateFileSystemInfos("*", new EnumerationOptions { IgnoreInaccessible = false, AttributesToSkip = 0 }).ToList(); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return Result.Failed(root.FullName, e); }
 			foreach (FileSystemInfo e in entries) {
-				Result r = e switch {
+				result = result.Add(e switch {
 					DirectoryInfo d when (d.Attributes & FileAttributes.ReparsePoint) != 0 => RemoveLink(d),
 					DirectoryInfo d => Tree(d.FullName),
 					_ => File(e.FullName),
-				};
-				bytes += r.Bytes;
-				left += r.Left;
+				});
 			}
-			if (!keepRoot && left == 0) {
+			if (!keepRoot && result.Left == 0) {
 				try {
 					if ((root.Attributes & FileAttributes.ReadOnly) != 0) root.Attributes &= ~FileAttributes.ReadOnly;
 					root.Delete(recursive: false);
 				}
-				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { left++; }
+				// Nothing left inside, yet it stays: a process works in it (Windows says access is denied), or something
+				// was added meanwhile.
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { result = result.Add(Result.Failed(root.FullName, e)); }
 			}
-			return new Result(bytes, left);
+			return result;
 		}
 
 		/// <summary>Removes the link itself; the folder it points to is untouched.</summary>
@@ -870,7 +997,7 @@ namespace HEI.Agent {
 				return new Result(0, 0);
 			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
-				return new Result(0, 1);
+				return Result.Failed(link.FullName, e);
 			}
 		}
 	}

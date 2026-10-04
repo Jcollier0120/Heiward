@@ -58,12 +58,25 @@ namespace HEI.Agent {
 	///
 	/// A drive is walked as before when its journal can't vouch for the last listing: the first scan, no
 	/// journal (FAT, exFAT, network drives), a journal made again or overwritten past the last scan
-	/// (the PC was off a long time, or the drive very busy), settings or Heiward's build changed, folders
+	/// (the PC was off a long time, or the drive very busy), settings changed or Heiward lists differently
+	/// (<see cref="ListingPlan.ListingFormat"/>; a new build alone doesn't), folders
 	/// were added, moved or deleted where scans look, and once a week regardless.
 	/// </summary>
 	sealed class ListingPlan {
 		/// <summary>A drive the journal has vouched for this long is walked anyway.</summary>
 		internal static readonly TimeSpan FullWalkEvery = TimeSpan.FromDays(7);
+
+		/// <summary>
+		/// How a listing is made and what it means, as a version: part of every listing's key, so raising it walks
+		/// every drive once. Raise it when a build lists differently with the same settings: the listing files'
+		/// format (<see cref="StoredListing"/>), which files a walk lists (FileUtils.GetFilesRecursive), which
+		/// folders it walks into beyond the settings (<see cref="ScanScope.ExemptReason"/>'s own checks), or how
+		/// a change in the journal is placed (<see cref="Decide"/>). Nothing else: the key once held the build, and
+		/// every new build walked every drive (six full walks of C:\, 58 to 96 s each, in a day of builds). The
+		/// settings that decide a listing are in the key already, the built-in exclusions among them
+		/// (Settings.SubfolderBlackList).
+		/// </summary>
+		internal const int ListingFormat = 1;
 
 		const uint FileCreate = 0x100, FileDelete = 0x200, BasicInfoChange = 0x8000, RenameOldName = 0x1000, RenameNewName = 0x2000, ReparsePointChange = 0x100000;
 		/// <summary>A folder created, deleted, moved, or made hidden or a link: what's below it changes for a scan.</summary>
@@ -147,7 +160,7 @@ namespace HEI.Agent {
 			r.Mode = ListingMode.Walk;
 			if (last == null) { r.Why = "no listing from the journal yet"; return; }
 			r.FullWalkUtc = last.FullWalkUtc;
-			if (last.Key != key) { r.Why = "settings or Heiward changed"; return; }
+			if (last.Key != key) { r.Why = "settings changed, or how Heiward lists"; return; }
 			if (last.JournalId != volume.Journal.Id) { r.Why = "the drive's journal was made again"; return; }
 			if (nowUtc - last.FullWalkUtc > FullWalkEvery) { r.Why = "a week since the last full listing"; return; }
 			if (volume.RecordsFrom(last.Usn) is not { } records) { r.Why = "the journal no longer reaches back to the last scan"; return; }
@@ -256,11 +269,17 @@ namespace HEI.Agent {
 			stored.Save();
 		}
 
-		/// <summary>The settings that decide what a listing holds, and the build (a new one may list by new rules).</summary>
-		static string ListingKey(Settings s) => Hash(string.Join("\n",
-			AppBuild.Current, string.Join("|", s.BlackList.Order()), string.Join("|", s.SubfolderBlackList.Order()), string.Join("|", s.ExcludedExtensions.Order()),
+		/// <summary>
+		/// The settings that decide what a listing holds, and how Heiward lists (<see cref="ListingFormat"/>), but not
+		/// the build: a listing stays good across builds that list the same way.
+		/// </summary>
+		internal static string ListingKey(Settings s, int format = ListingFormat) => Hash(ListingKeyText(s, format));
+
+		/// <summary>What <see cref="ListingKey"/> hashes.</summary>
+		internal static string ListingKeyText(Settings s, int format = ListingFormat) => string.Join("\n",
+			"listing " + format, string.Join("|", s.BlackList.Order()), string.Join("|", s.SubfolderBlackList.Order()), string.Join("|", s.ExcludedExtensions.Order()),
 			string.Join("|", s.SkipFoldersContaining.Order()), s.IgnoreReadOnlyFolders, s.IgnoreReparsePoints, s.SkipFolderLinks, s.SkipCloudPlaceholders,
-			s.IncludeImages, s.IncludeSubDirectories));
+			s.IncludeImages, s.IncludeSubDirectories);
 
 		/// <summary>Everything that decides a report, but not how fast a scan runs.</summary>
 		static string ScanKey(Settings s) {

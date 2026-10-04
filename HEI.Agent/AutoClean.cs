@@ -130,7 +130,10 @@ namespace HEI.Agent {
 		static readonly TimeSpan RetryAfter = TimeSpan.FromDays(1);
 		const int RunsKept = 20;
 
-		/// <summary>The automatic-cleanup kind of a developer item; null for package caches and emulators, which it never takes.</summary>
+		/// <summary>
+		/// The automatic-cleanup kind of a developer item; null for package caches, emulators and build outputs with no
+		/// project beside them, which it never takes.
+		/// </summary>
 		internal static string? KindOf(DevItem item) => item.Kind switch {
 			DevScanner.Projects => BuildOutputs,
 			DevScanner.Worktrees => Worktrees,
@@ -217,7 +220,11 @@ namespace HEI.Agent {
 					string key = "d:" + i.Id;
 					string? kind = KindOf(i);
 					string? reason =
-						kind == null ? (i.Kind == DevScanner.Caches ? "Package caches are always your call" : "Emulators hold apps and data: always your call") :
+						kind == null ? i.Kind switch {
+							DevScanner.Caches => "Package caches are always your call",
+							DevScanner.Orphans => "Build outputs with no project beside them are always your call",
+							_ => "Emulators hold apps and data: always your call",
+						} :
 						!auto.DeveloperKinds.Contains(kind) ? $"Automatic cleanup is off for {Label(kind)}" :
 						i.Blocked ?? (i.Suggested ? null : kind is BuildOutputs or Worktrees ? $"Used in the last {cfg.StaleProjectDays} days" : "Not ticked for you");
 					bool held = s.Held.Contains(key);
@@ -336,6 +343,7 @@ namespace HEI.Agent {
 						devBytes += r.FreedBytes;
 					}
 					if (r.Error != null) problems.Add($"{i.Name}: {r.Error}");
+					else if (r.Describe(withPath: false) is { } left) problems.Add($"{i.Name}: {left}");
 				}
 				foreach (var (repoId, due) in plan.BranchesDue) {
 					RepoBranches repo = dev.Repositories.First(r => r.Id == repoId);
@@ -432,7 +440,7 @@ namespace HEI.Agent {
 			}
 			// Without a history, the log keeps no names either.
 			AgentPaths.AppendLog($"developer clean{(automatic ? " (automatic)" : "")}: {item.Kind}{(cfg.KeepHistory ? " " + item.Location : "")}: freed {Format.Bytes(result.FreedBytes)}" +
-				(result.LeftInUse > 0 ? $", {result.LeftInUse} in use left" : "") + (result.Error != null ? $", {result.Error}" : ""));
+				(result.Describe(cfg.KeepHistory) is { } left ? ", " + left : "") + (result.Error != null ? $", {result.Error}" : ""));
 			return result;
 		}
 

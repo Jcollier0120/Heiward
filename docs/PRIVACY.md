@@ -10,6 +10,8 @@ To find duplicate photos and videos, and stale developer files, Heiward reads th
 
 It reads them on your PC, including the AI matching, which runs on your PC's NPU, graphics card or processor.
 
+In developer mode, so as not to offer a worktree you're still using, it also looks at which folder each of your running programs works in, which programs have a file open that a cleanup couldn't delete (as Windows' Restart Manager tells installers), and, if you use Claude Code, which folders its sessions work in (`%USERPROFILE%\.claude\sessions`) and when their transcripts were last written (`%USERPROFILE%\.claude\projects`; only the date, never what's in them). None of it is kept or sent anywhere.
+
 ## What Heiward keeps, and where
 
 Everything it keeps stays on your PC, in `%LOCALAPPDATA%\Heiward`:

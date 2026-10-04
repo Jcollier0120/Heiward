@@ -1,6 +1,11 @@
 name: Docker (Web UI)
 
-on: [push]
+# The image of the web app Heiward inherited from Video Duplicate Finder, which Heiward doesn't ship (it
+# ships hei.exe through HEI.Agent/release.ps1). It used to build for linux amd64 and arm64 under QEMU on
+# every push to every branch. Now it runs only when started by hand (Actions > Docker (Web UI) > Run
+# workflow). The file stays because docker-compose.yml names the image it publishes.
+on:
+  workflow_dispatch:
 
 jobs:
   build-and-push:

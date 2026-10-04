@@ -1,16 +1,21 @@
 name: Build releases
 
+# Video Duplicate Finder's GUI, CLI and Web apps, which Heiward inherited and doesn't ship. Heiward
+# ships hei.exe through HEI.Agent/release.ps1, and dotnetcore.yml builds and tests it on every pull
+# request. So this runs only when started by hand (Actions > Build releases > Run workflow). It used to
+# build six platforms with Native AOT on every push to master and on every v* tag, Heiward's own
+# release tags included. The file stays because VersionConsistencyTests reads its rolling tag_name and
+# Directory.Build.props names it.
+#
 # Two kinds of release:
-#   - every push to master rebuilds the rolling 4.1.x release, its assets replaced in place;
-#   - pushing a tag like v4.1.1 publishes a release of that commit whose assets are never
+#   - started from a branch, it rebuilds the rolling 4.1.x release, its assets replaced in place;
+#   - started from a tag like v4.1.1, it publishes a release of that commit whose assets are never
 #     replaced, so package managers (winget) can pin them by hash. The tag's version is
 #     stamped into the binaries and must share major.minor with VersionPrefix in
 #     Directory.Build.props.
 
 on:
-  push:
-    branches: [master]
-    tags: ['v*.*.*']
+  workflow_dispatch:
 
 jobs:
   cleanup:
