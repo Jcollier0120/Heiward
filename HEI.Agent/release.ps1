@@ -10,7 +10,7 @@ param(
 	[string]$Out = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\heiward'),
 	# Create the GitHub release and upload the files once they're built.
 	[switch]$Publish,
-	# Release notes: text, or the path of a file with them. Default: which file to download, and the unsigned-build note.
+	# Release notes: text, or the path of a file with them. Default: CHANGELOG.md's entry for the version (or its commits), then which file to download and the unsigned-build note.
 	[string]$Notes,
 	# The repository to release to (owner/name).
 	[string]$Repo = 'Jcollier0120/Heiward'
@@ -40,6 +40,55 @@ $tag = "v$version"
 $commit = git -C $PSScriptRoot rev-parse HEAD
 if (git -C $PSScriptRoot status --porcelain) { Write-Warning 'The working tree has uncommitted changes, and the build includes them.' }
 Write-Host "Heiward $version from commit $($commit.Substring(0, 7)), with the Steward's kit $kit"
+
+# What the release brings: CHANGELOG.md's entry for the version, under "## <version>" (the Steward's kit,
+# spec\RELEASE-NOTES.md: What's new, What changed, and Before you update, always there). A version with no
+# entry lists its commits since the release before instead, and says so; a release never says nothing.
+function Get-ChangelogEntry([string]$Text, [string]$Version) {
+	$lines = ($Text -replace "`r`n", "`n") -split "`n"
+	$heading = '^## +\[?v?' + [regex]::Escape($Version) + '\]?(\s|$|[^\w.])'
+	$at = -1
+	for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match $heading) { $at = $i; break } }
+	if ($at -lt 0) { return $null }
+	$end = $lines.Count
+	for ($i = $at + 1; $i -lt $lines.Count; $i++) { if ($lines[$i].StartsWith('## ')) { $end = $i; break } }
+	if ($end -le $at + 1) { return $null }
+	$body = ($lines[($at + 1)..($end - 1)] -join "`n").Trim()
+	if ($body) { return $body }
+	return $null
+}
+function Get-CommitsSince([string]$Version) {
+	# git writes to stderr now and then, which Windows PowerShell would turn into a stopping error.
+	$ErrorActionPreference = 'Continue'
+	$since = @(git -C $PSScriptRoot tag --merged HEAD --list 'v[0-9]*' 2>$null) |
+		Where-Object { $_ -match '^v\d+\.\d+\.\d+$' -and [version]$_.Substring(1) -lt [version]$Version } |
+		Sort-Object { [version]$_.Substring(1) } -Descending | Select-Object -First 1
+	$range = @(if ($since) { "$since..HEAD" } else { '-n'; '10' })
+	$log = (git -C $PSScriptRoot log --first-parent '--format=%s%x1f%b%x1e' @range 2>$null) -join "`n"
+	$lines = foreach ($c in ($log -split [char]0x1e)) {
+		$c = $c.Trim()
+		if (-not $c) { continue }
+		$subject, $body = $c -split [char]0x1f, 2
+		if ($subject -match '^Merge pull request #\d+ from ') { (("$body".Trim() -split "`n")[0]).Trim() }
+		elseif ($subject -match '^(Merge (remote-tracking )?branch |Merge commit |wip|fixup!|squash!)') { }
+		else { $subject.Trim() }
+	}
+	[pscustomobject]@{ Since = $since; Lines = @($lines | Where-Object { $_ } | Select-Object -Unique -First 30) }
+}
+$changelog = Join-Path $root 'CHANGELOG.md'
+$entry = if (Test-Path $changelog) { Get-ChangelogEntry (Get-Content $changelog -Raw -Encoding UTF8) $version } else { $null }
+if ($entry) {
+	Write-Host "Notes: CHANGELOG.md's entry for $version"
+	if ($entry -notmatch "(?m)^### +What's new\s*$" -and $entry -notmatch '(?m)^### +What changed\s*$') { Write-Warning "CHANGELOG.md's entry for $version has neither ""### What's new"" nor ""### What changed""." }
+	if ($entry -notmatch '(?m)^### +Before you update\s*$') { Write-Warning "CHANGELOG.md's entry for $version has no ""### Before you update"" (write ""Nothing: it updates itself as usual."" when updating needs nothing)." }
+}
+else {
+	Write-Warning "CHANGELOG.md has no ""## $version"" entry: the notes list the commits instead. Write the entry before publishing."
+	$commits = Get-CommitsSince $version
+	$said = if ($commits.Since) { "its commits since $($commits.Since)" } else { 'its latest commits' }
+	$entry = "### What changed`n`nNo changelog entry was written for this version."
+	if ($commits.Lines.Count) { $entry += " These are ${said}:`n`n" + (($commits.Lines | ForEach-Object { "- $_" }) -join "`n") }
+}
 if ($Publish) {
 	# gh reports "release not found" on stderr, which Windows PowerShell would turn into a stopping error.
 	$ErrorActionPreference = 'Continue'
@@ -84,6 +133,12 @@ if (-not $Publish) {
 
 if (-not $Notes) {
 	$Notes = @"
+Heiward $version, built from $($commit.Substring(0, 7)), with the Steward's kit $kit.
+
+$entry
+
+### Installing
+
 Download **Heiward-$version-x64.exe** for Intel or AMD PCs, or **Heiward-$version-arm64.exe** for Arm PCs such as Snapdragon, and run it. It sets up everything it needs by itself.
 
 These builds aren't code-signed yet: on the first run Windows says "Windows protected your PC". Click **More info**, then **Run anyway**. ``SHA256SUMS.txt`` lists each file's SHA-256 (PowerShell: ``Get-FileHash``).
