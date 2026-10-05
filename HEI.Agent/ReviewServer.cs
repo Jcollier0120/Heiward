@@ -110,6 +110,13 @@ namespace HEI.Agent {
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));
+			// The manor's disk measurement: the drives' free space and the big tool caches, from the last hourly reading
+			// (DiskWatch), never measured for a request. Read-only, and like every GET here, for this PC only: the Host check
+			// above, and no CORS, so another web page can't read it.
+			app.MapGet("/api/disk", (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-store";
+				return Results.Json(DiskWatch.Answer(DiskReading.Load()));
+			});
 			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
 			app.MapGet("/api/state", (bool? seen) => {
 				if (seen == true) ScanPace.MarkPageSeen();
@@ -267,29 +274,37 @@ namespace HEI.Agent {
 			// hidden, and its requests are refused.
 			var devApi = app.MapGroup("/api/dev").AddEndpointFilter(async (context, next) =>
 				DevMode.Now(cfg) is { On: false } off ? Results.Conflict(new { error = off.PageOffText }) : await next(context));
-			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here).
-			devApi.MapGet("", () => Results.Json(new { report = DevReport.Load() ?? new DevReport(), projects = AgentConfig.Load().DevProjects }, AgentConfig.Json));
+			// The last check, and the projects the user bundled repositories into (read fresh: they're edited here). At a manor,
+			// as Heiward acts on it: worktrees read-only and no merged branches where Reeve keeps them (ManorRoles), and who does.
+			devApi.MapGet("", () => {
+				ManorRoles roles = ManorRoles.Now();
+				return Results.Json(new { report = roles.View(DevReport.Load()) ?? new DevReport(), projects = AgentConfig.Load().DevProjects, roles = roles.Describe() }, AgentConfig.Json);
+			});
 			devApi.MapPost("/projects", (List<DevProject> projects) => {
 				var saved = AgentConfig.Load();
 				saved.DevProjects = DevProject.Normalize(projects);
 				saved.Save();
 				return Results.Json(saved.DevProjects, AgentConfig.Json);
 			});
-			// The repositories' open pull requests, asked of their hosts while the developer page is open (?again: Refresh).
+			// The repositories' open pull requests, asked of their hosts while the developer page is open (?again: Refresh). Not
+			// where the Steward merges them (ManorRoles): no host is asked.
 			devApi.MapGet("/pulls", async (bool? again, CancellationToken requestAborted) =>
-				Results.Json(await PullRequests.GetAsync(DevReport.Load()?.Sources ?? new(), again == true, requestAborted), AgentConfig.Json));
+				ManorRoles.Now().PullRequests is { } steward
+					? Results.Conflict(new { error = steward.Note + ": Heiward leaves pull requests to it." })
+					: Results.Json(await PullRequests.GetAsync(DevReport.Load()?.Sources ?? new(), again == true, requestAborted), AgentConfig.Json));
 			devApi.MapPost("/scan", () => {
 				if (DevBusy()) return Results.Conflict(new { error = "A developer check is already running." });
 				DevLaunch.Started(StartDetached("dev", "--scan"), DateTime.UtcNow);
 				return Results.Accepted();
 			});
 			devApi.MapPost("/items/{id}/clean", (string id) => {
-				DevItem? item = DevReport.Load()?.Categories.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == id);
+				DevItem? item = ManorRoles.Now().View(DevReport.Load())?.Categories.SelectMany(c => c.Items).FirstOrDefault(i => i.Id == id);
 				if (item == null) return Results.NotFound(new { error = "That item is no longer in the list; check again." });
 				if (item.Blocked != null) return Results.Conflict(new { error = item.Blocked });
 				return Guarded(() => Results.Json(actions.Clean(item), AgentConfig.Json));
 			});
 			devApi.MapPost("/repos/{id}/prune", (string id) => {
+				if (ManorRoles.Now().Worktrees is { } reeve) return Results.Conflict(new { error = reeve.Note + ": Heiward leaves branches to it." });
 				RepoBranches? repo = DevReport.Load()?.Repositories.FirstOrDefault(r => r.Id == id);
 				if (repo == null) return Results.NotFound(new { error = "That repository is no longer in the list; check again." });
 				return Guarded(() => Results.Json(actions.Prune(repo, null), AgentConfig.Json));
@@ -358,6 +373,7 @@ namespace HEI.Agent {
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
+			_ = DiskWatch.RunAsync(app.Lifetime.ApplicationStopping);
 			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
@@ -489,7 +505,9 @@ namespace HEI.Agent {
 			var decisions = DecisionStore.Load();
 			// Manor's Developer options, or Heiward's own switch: read on every poll, so the page follows a change in Manor.
 			DevMode devMode = DevMode.Now(cfg);
-			DevReport? devReport = devMode.On ? DevReport.Load() : null;
+			// At a manor, who keeps git state and pull requests (ManorRoles), read on every poll too.
+			ManorRoles roles = ManorRoles.Now();
+			DevReport? devReport = devMode.On ? roles.View(DevReport.Load()) : null;
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
@@ -532,7 +550,7 @@ namespace HEI.Agent {
 					recycledBytes = decisions.Values.Sum(d => d.RecycledBytes),
 					decisions = decisions.Count,
 				},
-				dev = DevSummary(devMode, devReport),
+				dev = DevSummary(devMode, devReport, roles),
 				auto = AutoView(report, devReport, decisions),
 				drives,
 				glance,
@@ -581,12 +599,14 @@ namespace HEI.Agent {
 		/// <summary>
 		/// The home page's developer card: totals per category of the last check. And for Settings, whether developer mode
 		/// is on, and with <c>manor</c>, that Manor's Developer options decide it: the page shows which way, with a link to
-		/// Manor's page, in place of its switch.
+		/// Manor's page, in place of its switch. <c>roles</c>: at a manor, who keeps worktrees and branches (Reeve) and pull
+		/// requests (the Steward) in Heiward's place, with their pages (<see cref="ManorRoles"/>).
 		/// </summary>
-		static object DevSummary(DevMode mode, DevReport? r) {
+		static object DevSummary(DevMode mode, DevReport? r, ManorRoles roles) {
 			return new {
 				enabled = mode.On,
 				manor = mode.ByManor ? new { name = mode.Manor.Name, url = mode.Manor.Url, note = mode.ManorNote } : null,
+				roles = roles.Describe(),
 				running = mode.On && DevBusy(),
 				scannedAtUtc = r?.ScannedAtUtc,
 				totalBytes = r?.Categories.SelectMany(c => c.Items).Sum(i => i.Bytes) ?? 0,
