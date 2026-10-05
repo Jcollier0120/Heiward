@@ -10,7 +10,7 @@
     <!-- The command is "hei"; Task Manager and file properties show the product name. -->
     <AssemblyName>hei</AssemblyName>
     <!-- Heiward's own version, as Apps & Features and the version option show it. Directory.Build.props's is Video Duplicate Finder's. -->
-    <VersionPrefix>1.7.27</VersionPrefix>
+    <VersionPrefix>1.7.28</VersionPrefix>
     <Product>Heiward</Product>
     <!-- The shield and leaf (make-icon.ps1 renders it from wwwroot\favicon.svg): the exe, its shortcuts and Apps & Features show it. -->
     <ApplicationIcon>heiward.ico</ApplicationIcon>
