@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md).
 
+## 1.7.29
+
+**It carries the Steward's kit 2.23.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.23.0: Settings in React, and short; and a new hire's tour of its page.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.7.28
 
 **It carries the Steward's kit 2.22.0: the parts every agent of the manor shares.**
