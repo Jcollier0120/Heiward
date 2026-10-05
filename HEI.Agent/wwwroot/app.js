@@ -763,7 +763,9 @@ function renderDevModeCard(s) {
   const card = el('div', 'auto-card');
   const row = el('div', 'auto-row');
   if (!manor) row.append(toggleSwitch(on, 'Developer mode', settingsBusy, (next) => saveSettings({ developerMode: next })));
-  const what = 'build outputs and worktrees of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and branches already merged';
+  // Where Reeve keeps git state, worktrees are only measured here, and merged branches are its.
+  const what = reeveRole() ? 'build outputs of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and the space worktrees take'
+    : 'build outputs and worktrees of projects you\'ve left, package caches, emulator images, old temp files and crash dumps, and branches already merged';
   const text = el('div', 'auto-text');
   text.append(el('div', 'auto-title', 'Developer mode'));
   if (manor) {
@@ -774,8 +776,11 @@ function renderDevModeCard(s) {
     text.append(note);
   }
   text.append(el('div', 'muted small', on
-    ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. The Developer area, from the home page, shows them beside your repositories\' open pull requests, and automatic cleanup can take them.'
+    ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. The Developer area, from the home page, shows them' +
+      (stewardRole() ? '' : ' beside your repositories\' open pull requests') + ', and automatic cleanup can take what it ticks.'
     : 'Off: nothing of it is checked or shown. For developers: a Developer area with your repositories\' open pull requests, and what development tools recreate: ' + what + '.'));
+  // At a manor, who looks after the rest.
+  if (on) for (const role of [reeveRole(), stewardRole()]) if (role) text.append(roleNote(role));
   row.append(text);
   card.append(row);
   $('devmode-card').replaceChildren(card);
@@ -1271,20 +1276,25 @@ function renderAutoCard(s) {
     }, [dupStatus]));
 
   if (s.dev.enabled) {
-    let kinds = null, devStatus = null;
+    let kinds = null, devStatus = null, reeveNote = null;
     if (set.developer) {
       kinds = el('div', 'auto-kinds');
+      // Where Reeve keeps git state, merged branches are its to delete and worktrees its to remove: what a removal that
+      // stopped partway left (a folder git no longer knows) is all of worktrees that's left here.
+      const reeve = reeveRole();
       for (const [k, label, hint] of autoKinds(a)) {
+        const reeves = !!reeve && k === 'branches', leftovers = !!reeve && k === 'worktrees';
         const l = el('label');
-        l.title = hint;
+        l.title = reeves ? reeve.note : leftovers ? 'Folders a worktree removal left behind, which git no longer knows. ' + reeve.note + '.' : hint;
         const box = el('input');
         box.type = 'checkbox';
-        box.checked = set.developerKinds.includes(k);
-        box.disabled = autoBusy;
+        box.checked = !reeves && set.developerKinds.includes(k);
+        box.disabled = autoBusy || reeves;
         box.addEventListener('change', () => saveAuto({ ...set, developerKinds: box.checked ? [...set.developerKinds, k] : set.developerKinds.filter((x) => x !== k) }));
-        l.append(box, el('span', null, label));
+        l.append(box, el('span', null, reeves ? label + ' (' + reeve.name + '\'s)' : leftovers ? 'Worktree leftovers' : label));
         kinds.append(l);
       }
+      if (reeve) reeveNote = roleNote(reeve);
       const parts = [];
       if (a.upcoming.dev.count) parts.push(upcomingText(a.upcoming.dev, 'item', 'items', true));
       if (a.upcoming.branches.count) parts.push(upcomingText(a.upcoming.branches, 'merged branch', 'merged branches', true, 'files'));
@@ -1300,7 +1310,7 @@ function renderAutoCard(s) {
             'Merged branches go only when every commit is in the remote\'s main branch; worktrees only when everything is committed and pushed.\n\n' +
             'Package caches and emulators always wait for you.')) { box.checked = false; return; }
         await saveAuto({ ...set, developer: on });
-      }, [kinds, devStatus]));
+      }, [kinds, reeveNote, devStatus]));
   }
 
   const foot = el('div', 'auto-foot');
@@ -1438,8 +1448,24 @@ let devPulls = null;          // /api/dev/pulls: { repos: { [repository folder]:
 let devPullsAsked = 0;        // when they were last asked for (ms)
 let devPullsLoading = false;
 
+// At a manor, who looks after what in Heiward's place (ManorRoles): Reeve the worktrees and merged branches, the Steward
+// the pull requests, each { name, url, note } or null. Heiward then shows worktrees read-only, and no branches or pull requests.
+const reeveRole = () => (state && state.dev.roles && state.dev.roles.worktrees) || null;
+const stewardRole = () => (state && state.dev.roles && state.dev.roles.pullRequests) || null;
+
+/** "Reeve's worktree-tidy job removes merged worktrees and branches. Open Reeve", with a link to its page. */
+function roleNote(role) {
+  const note = el('div', 'manor-decides small', role.note + '. ');
+  const link = el('a', null, 'Open ' + role.name);
+  link.href = role.url;
+  note.append(link);
+  return note;
+}
+
 async function loadDevPulls(again) {
   if (devPullsLoading) return;
+  // The Steward merges them: no host is asked.
+  if (stewardRole()) { devPulls = null; return; }
   devPullsLoading = true;
   devPullsAsked = Date.now();
   if (route.view === 'dev') renderDev();
@@ -1451,7 +1477,7 @@ async function loadDevPulls(again) {
   if (route.view === 'dev') renderDev();
 }
 
-const pullsOf = (r) => (devPulls && devPulls.repos[r.key]) || null;
+const pullsOf = (r) => (!stewardRole() && devPulls && devPulls.repos[r.key]) || null;
 
 const VCS_NAMES = {
   git: 'Git', hg: 'Mercurial', svn: 'Subversion', tfvc: 'TFVC', plastic: 'Unity Version Control', bzr: 'Bazaar',
@@ -1671,7 +1697,8 @@ function devOverview(dev) {
   again.disabled = dev.running;
   again.addEventListener('click', startDevCheck);
   const chips = [];
-  if (devPulls) {
+  const steward = stewardRole(), reeve = reeveRole();
+  if (devPulls && !steward) {
     const pulls = groups.flatMap((g) => g.pulls);
     const merge = pulls.filter((p) => p.waits === 'merge').length, review = pulls.filter((p) => p.waits === 'review').length;
     chips.push(el('span', 'chip', count(groups.reduce((a, g) => a + g.open, 0), 'open pull request', 'open pull requests')));
@@ -1679,13 +1706,20 @@ function devOverview(dev) {
     if (review) chips.push(el('span', 'chip accent', review + ' to review'));
   }
   chips.push(el('span', 'chip', bytes(total) + ' tools can recreate'), el('span', 'chip quiet', 'checked ' + ago(devReport.scannedAtUtc) + ' in ' + took(devReport.durationSec)), again);
-  const pullsAgain = el('button', 'link small', devPullsLoading ? 'Asking for pull requests…' : 'Refresh pull requests');
-  pullsAgain.disabled = devPullsLoading;
-  pullsAgain.addEventListener('click', () => loadDevPulls(true));
-  chips.push(pullsAgain);
-  const out = [devHeader(devIcon(), 'Developer area',
-    'All your repositories in one place: their open pull requests, and what your development tools recreate when they need them. Pull requests open on their host, to merge or review them. Cleaning deletes permanently, not to the Recycle Bin: tools rebuild or download it again, so the next build takes longer.',
-    chips)];
+  if (!steward) {
+    const pullsAgain = el('button', 'link small', devPullsLoading ? 'Asking for pull requests…' : 'Refresh pull requests');
+    pullsAgain.disabled = devPullsLoading;
+    pullsAgain.addEventListener('click', () => loadDevPulls(true));
+    chips.push(pullsAgain);
+  }
+  const cleanNote = 'Cleaning deletes permanently, not to the Recycle Bin: tools rebuild or download it again, so the next build takes longer.';
+  const intro = el('div');
+  intro.append(el('div', 'dev-intro', steward
+    ? 'All your repositories in one place, with what your development tools recreate when they need them. ' + cleanNote
+    : 'All your repositories in one place: their open pull requests, and what your development tools recreate when they need them. Pull requests open on their host, to merge or review them. ' + cleanNote));
+  // At a manor, who looks after the rest: Heiward still measures the worktrees, read-only.
+  for (const role of [reeve, steward]) if (role) intro.append(roleNote(role));
+  const out = [devHeader(devIcon(), 'Developer area', intro, chips)];
 
   // Why a host's pull requests couldn't be read (a sign-in, mostly), once each.
   const problems = [...new Set(Object.values((devPulls && devPulls.repos) || {}).map((r) => r.error).filter(Boolean))];
@@ -1740,6 +1774,7 @@ const hostedRepo = (r) => !!(r.source && r.source.vcs === 'git' && r.source.remo
 /** Nothing to clean, and no pull requests open, failed or still being asked for. */
 function isQuiet(g) {
   if (g.items.length || g.merged || g.open) return false;
+  if (stewardRole()) return true;
   return g.repos.every((r) => pullsOf(r) ? !pullsOf(r).error : !(hostedRepo(r) && (devPullsLoading || !devPulls)));
 }
 
@@ -1760,7 +1795,9 @@ function repoPanel(g) {
   box.append(head);
   name.title = g.repos.map((r) => r.path).join('\n');
   const cols = el('div', 'repo-cols');
-  cols.append(pullColumn(g, multi), cleanColumn(g, multi));
+  // Where the Steward merges pull requests, the panel is its cleanup alone.
+  if (!stewardRole()) cols.append(pullColumn(g, multi));
+  cols.append(cleanColumn(g, multi));
   box.append(cols);
   return box;
 }
@@ -1980,6 +2017,7 @@ function shortRemote(url) {
  * a review first. Each opens on its host, where it's merged or reviewed. Null for a repository without a known host.
  */
 function pullSection(g, multi) {
+  if (stewardRole()) return null;
   const known = g.repos.map((r) => [r, pullsOf(r)]).filter(([, p]) => p);
   if (!known.length && !(devPullsLoading && g.repos.some(hostedRepo))) return null;
   const box = el('section', 'dev-section');
@@ -2082,13 +2120,22 @@ function devSection(k, items, showRepo) {
     head.append(toggle);
   }
   box.append(head);
-  box.append(el('p', 'muted small', DEV_META[k].blurb));
+  // Where Reeve keeps git state, its worktrees are listed for the space they take, read-only, with who removes them.
+  const reeve = k === 'worktrees' ? reeveRole() : null;
+  if (reeve) box.append(el('p', 'muted small', 'Extra working folders, and the space they take.'), roleNote(reeve));
+  else box.append(el('p', 'muted small', DEV_META[k].blurb));
   if (open.length) {
     const list = el('div', 'dev-list');
     for (const i of open) list.append(devRow(i, showRepo));
     box.append(list);
   }
   const blocked = items.filter((i) => i.blocked);
+  if (reeve && blocked.length) {
+    const list = el('div', 'dev-list');
+    for (const i of blocked) list.append(devRow(i, showRepo));
+    box.append(list);
+    return box;
+  }
   if (blocked.length) {
     const group = el('details', 'blocked-group');
     group.append(el('summary', null, count(blocked.length, 'item', 'items') + ' in use or kept, ' + bytes(devSize(blocked))));
@@ -3343,6 +3390,9 @@ async function refresh(force) {
     const s = await res.json();
     // Heiward is back, as a new process: its buttons need the token of a page it served.
     if (serverLost) { location.reload(); return; }
+    // Reeve or the Steward taking over (or handing back) worktrees, branches or pull requests: the report is read again.
+    const rolesChanged = !!state && JSON.stringify(s.dev.roles) !== JSON.stringify(state.dev.roles);
+    if (rolesChanged) devReport = null;
     const changed = force || !state || s.setup.needed || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
@@ -3350,6 +3400,7 @@ async function refresh(force) {
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc || s.updated !== state.updated ||
       // Developer mode turned on or off, here or in Manor's Developer options.
       s.dev.enabled !== state.dev.enabled || JSON.stringify(s.dev.manor) !== JSON.stringify(state.dev.manor) ||
+      rolesChanged ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
     showError('');

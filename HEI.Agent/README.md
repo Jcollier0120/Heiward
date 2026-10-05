@@ -125,7 +125,7 @@ Once you trust what the page ticks, you can let Heiward clean it up by itself. T
   - copies in a cloud-synced folder, since deleting one deletes it on every device;
   - a set whose kept file changed since the scan;
   - sets that look like a copy of a whole folder: 20 or more sets with copies in the same two folders (say `C:\Pictures` and `D:\Backup`) are most likely a backup. The page can allow those two folders.
-- **Developer leftovers:** what the page ticks, of the kinds you pick: merged branches, temp files and crash dumps, build outputs of projects untouched for 30 days, clean and pushed worktrees untouched for 30 days, and emulator system images no emulator uses. Package caches and emulators always wait for you. They're deleted permanently, as with the button.
+- **Developer leftovers:** what the page ticks, of the kinds you pick: merged branches, temp files and crash dumps, build outputs of projects untouched for 30 days, clean and pushed worktrees untouched for 30 days, and emulator system images no emulator uses. Package caches and emulators always wait for you. They're deleted permanently, as with the button. [At a manor with Reeve](#at-a-manor-reeve-and-the-steward), worktrees and merged branches are Reeve's: only what a worktree removal left behind is still taken.
 - **Afterwards:** a notification says what went. History on the page marks it **Automatic**, and the card shows the last run and anything it left alone. With automatic cleanup on, the page opens at sign-in only for new sets it leaves to you, not every day.
 
 `hei auto` lists what's due and when; everything it does is also in `heiward.log`.
@@ -195,13 +195,23 @@ Tick items anywhere; a selection bar at the bottom cleans them all at once.
 
 Deletion never follows a link (pnpm's `node_modules` are full of junctions into its store), leaves files in use alone, and re-checks each item just before deleting it. It uses Windows' extended paths (`\\?\`), so folders deeper than 260 characters and names ending in a dot or a space go too. What it has to leave, it says: the page and `heiward.log` name the first file or folder left in use and what holds it, a program working in the folder or one with a file open (as Windows' Restart Manager says), or else Windows' own reason. `hei dev` shows the last check; `hei dev --scan` checks now (both in developer mode).
 
-**Merged branches.** Each repository with a remote gets a **Prune** button:
+**Merged branches.** Each repository with a remote gets a **Prune** button (except [at a manor with Reeve](#at-a-manor-reeve-and-the-steward), whose job it is):
 - It fetches first (`git fetch --prune`), then deletes the local branches already merged into the remote's default branch (`origin/HEAD`, else `main` or `master`).
 - It never deletes `main`, `master`, `develop`, `dev`, `trunk` or a branch checked out in any worktree.
 - It uses `git branch -d`; `-D` only when git objects that the branch isn't merged into the current checkout, after re-checking that it is in the remote's default branch.
 - Branches on the remote are never touched.
 
 From a terminal: `hei dev --prune-branches <repo>`.
+
+### At a manor: Reeve and the Steward
+
+At a manor, the code housekeeping other employees own is theirs, and Heiward leaves it alone. Standalone Heiward (no Manor) keeps doing all of it, as above.
+
+- **Worktrees and merged branches are Reeve's**, with Manor installed (its `settings.json` and `app` folder, as in [Developer mode](#developer-mode)) and Reeve too (`%USERPROFILE%\.reeve\app`, or `REEVE_HOME`'s `app`). Reeve's worktree-tidy job removes merged, clean worktrees and deletes merged local branches. Heiward still measures the worktrees and shows the space they take, read-only: never ticked ("Reeve looks after it"), never cleaned from the page or automatically, and no merged branches or Prune buttons (`hei dev --prune-branches` says so and exits with 1). The worktrees section says who looks after them, with a link to Reeve's page. What a worktree removal that stopped partway left behind (a folder git no longer knows) is disk, not git state, and stays Heiward's.
+- **Pull requests are the Steward's**, with Manor installed and the Steward too (`%USERPROFILE%\.steward\app`, or `STEWARD_HOME`'s `app`). The Steward merges, catches up and releases the employees' pull requests. Heiward asks no host for them and shows no pull requests or "ready to merge" panels; the Developer area says the Steward merges them, with a link to its page.
+- **Everything else is disk, and Heiward's:** build outputs, the bin and obj with no project beside them, package caches, temp files, crash dumps and emulator images.
+
+A manor without Reeve, or without the Steward, leaves that part with Heiward, so nothing is left unowned. Heiward checks on every page load and poll, every scan and every command, as it does Manor's Developer options.
 
 ## Sharing the NPU
 
@@ -261,7 +271,7 @@ hei status          settings, where AI matching runs, devices that failed lately
 hei status --json   the same essentials as one JSON object, for scripts and other tools (below)
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
-hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master
+hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master (not at a manor with Reeve)
 hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--after-days N]
 hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
 hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--gpu <number|name|default>] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
@@ -300,6 +310,42 @@ While the review page is up, its `GET /api/ping` answers `{"app":"heiward","stor
 | `lastRunOk` | Whether that scan went through: a fresh report, or nothing new to scan. `false` when it failed, found none of its folders, or was stopped; `null` when unknown |
 | `nextRunAt` | The scan task's next run, from Task Scheduler (a time already past moves on by the interval); `null` while paused, with scans only when asked, with no scan task (a development build has none), or when Task Scheduler's wording isn't a time this PC reads |
 | `runningSince` | When the scan under way started; `null` when none is |
+
+### Disk space for the manor: `GET /api/disk`
+
+Heiward measures the PC's disks for the whole manor, so the other agents ask it rather than measure again (the Surveyor's PC check reads it, and it replaces Reeve's disk-caches job). Once an hour, starting a minute after the review page starts, its process takes a reading on a thread below normal priority: every fixed drive's size and free space, and the size of the big tool caches. The reading is saved to `disk.json` in Heiward's folder, and `GET /api/disk` answers from it: nothing is measured for a request. It's read-only and for this PC only, like the rest of the page: it answers only on 127.0.0.1 and to its own names (a foreign `Host` gets 421), sends no CORS headers (another web page can't read it), and needs no token, as `/api/ping` doesn't (a POST without the page's token gets 403, as everywhere on the page).
+
+```json
+{
+  "app": "heiward",
+  "measuredAt": "2026-10-04T13:00:00Z",
+  "previousAt": "2026-10-04T12:00:00Z",
+  "everyMinutes": 60,
+  "status": "warn",
+  "warnings": ["C:\\ is below 15% free: 120 GB free of 1000 GB (12%)", "gradle grew 6 GB since the reading before (1 GB to 7 GB)"],
+  "thresholds": { "alertPercentFree": 10, "warnPercentFree": 15, "cacheGrowthBytes": 5368709120 },
+  "drives": [
+    { "root": "C:\\", "label": "Windows", "totalBytes": 1073741824000, "freeBytes": 128849018880, "percentFree": 12, "level": "warn" }
+  ],
+  "caches": [
+    { "name": "gradle", "path": "C:\\Users\\me\\.gradle", "bytes": 7516192768, "files": 1234, "grewBytes": 6442450944, "sameAs": null },
+    { "name": "npm-cache", "path": "C:\\Users\\me\\AppData\\Local\\npm-cache", "bytes": 1073741824, "files": 99, "grewBytes": null, "sameAs": null }
+  ],
+  "cachesBytes": 8589934592
+}
+```
+
+| Field | |
+|---|---|
+| `measuredAt` | When the reading was taken (UTC); `null` before the first, and then `status` is `"unknown"` and the lists are empty |
+| `previousAt` | The reading before, which `grewBytes` compares with; `null` for the first |
+| `everyMinutes` | How often a reading is taken: 60 |
+| `status` | `"alert"` when a drive is below `alertPercentFree`; `"warn"` when one is below `warnPercentFree`, or a cache grew more than `cacheGrowthBytes` since the reading before; else `"ok"`. The thresholds are those Reeve's disk-caches job had: 10%, 15% and 5 GB |
+| `warnings` | One line for each of those, drives first |
+| `drives` | Every fixed drive that's ready: `root` (`C:\`), `label`, `totalBytes`, `freeBytes` (free to this user), `percentFree` (one decimal) and `level` (`ok`, `warn` or `alert`, by the thresholds) |
+| `caches` | The caches that exist, with `bytes` and `files` (links aren't followed, so nothing is counted twice), and `grewBytes` since the reading before (less than 0 when it shrank; `null` when that reading didn't have it). By the names Reeve's job used: `foundry` (`~\.foundry`), `geniex-cache` (`~\.cache\geniex`), `reeve` (`~\.reeve`), `gradle` (`~\.gradle`), `npm-cache` (`npm_config_cache`, else `%LOCALAPPDATA%\npm-cache`), `pnpm` (`%LOCALAPPDATA%\pnpm`), `android-sdk` (`%LOCALAPPDATA%\Android\Sdk`); and `nuget` (`~\.nuget\packages`) and `pip` (`%LOCALAPPDATA%\pip\Cache`). Where the Claude app is installed, `npm-cache`, `pnpm` and `android-sdk` are also measured in its package's `LocalCache\Local`, as `npm-cache (Claude package)` and so on: AppData writes made from a Claude session land there. |
+| `sameAs` | For a Claude package copy that shows exactly the same files as the cache it's named after (a reading from a process whose AppData is redirected there): that cache's name. It isn't counted twice |
+| `cachesBytes` | All the caches together, each counted once |
 
 ## The review page
 

@@ -296,6 +296,11 @@ var dev = new Command("dev", "Developer mode: build outputs, worktrees, caches, 
 dev.SetAction(r => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(pruneBranches) is { } repoPath) {
+		// At a manor with Reeve, merged branches are Reeve's to delete (ManorRoles).
+		if (ManorRoles.Now().Worktrees is { } reeve) {
+			Console.Error.WriteLine($"{reeve.Note}: Heiward leaves branches to it ({reeve.Url}).");
+			return 1;
+		}
 		PruneResult pruned = BranchPruner.Prune(Path.GetFullPath(repoPath));
 		if (pruned.Error != null) { Console.Error.WriteLine(pruned.Error); return 1; }
 		if (!pruned.Fetched) Console.WriteLine("Couldn't fetch; used the last fetched state.");
@@ -309,12 +314,15 @@ dev.SetAction(r => {
 		Console.Error.WriteLine(off.CommandOffText);
 		return 1;
 	}
-	DevReport? report = r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load();
+	ManorRoles roles = ManorRoles.Now();
+	DevReport? report = roles.View(r.GetValue(devScan) ? DevScan.RunAndSave(cfg) ?? DevReport.Load() : DevReport.Load());
 	if (report == null) {
 		Console.WriteLine("No developer check yet: run 'hei dev --scan'.");
 		return 0;
 	}
 	Console.WriteLine($"Checked {report.ScannedAtUtc.ToLocalTime():g} in {report.DurationSec:N0} s.");
+	foreach (ManorRole? role in new[] { roles.Worktrees, roles.PullRequests })
+		if (role != null) Console.WriteLine($"{role.Note} ({role.Url}).");
 	foreach (DevCategory c in report.Categories) {
 		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked");
 		foreach (DevItem i in c.Items.Take(8))
@@ -419,7 +427,7 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 		$"things wait {a.AfterDays} day(s) after they're first listed");
 	DateTime now = DateTime.UtcNow;
 	Report? report = Report.Load();
-	DevReport? dev = DevMode.Now(cfg).On ? DevReport.Load() : null;
+	DevReport? dev = DevMode.Now(cfg).On ? ManorRoles.Now().View(DevReport.Load()) : null;
 	var decisions = DecisionStore.Load();
 	AutoCleanState s = AutoCleanState.Load();
 	AutoPlan plan = AutoCleaner.Plan(cfg, report, dev, decisions, s, now);

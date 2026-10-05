@@ -25,10 +25,11 @@ namespace HEI.Agent {
 	/// <summary>
 	/// Something a developer's tools recreate when needed, and what cleaning it takes. <see cref="Blocked"/>
 	/// says why it can't be cleaned right now (in use, uncommitted work); <see cref="Suggested"/> items
-	/// start ticked on the page.
+	/// start ticked on the page. <paramref name="Leftover"/>: what a worktree removal that stopped partway left behind, a
+	/// folder git no longer knows (disk, not git state: Heiward's even where Reeve keeps the worktrees, <see cref="ManorRoles"/>).
 	/// </summary>
 	sealed record DevItem(string Id, string Kind, string Name, string Location, List<string> Paths, long Bytes,
-		DateTime? LastUsedUtc, bool Suggested, string? Blocked, string Detail, string? Repo = null);
+		DateTime? LastUsedUtc, bool Suggested, string? Blocked, string Detail, string? Repo = null, bool Leftover = false);
 
 	sealed record DevCategory(string Key, string Title, string Explain, List<DevItem> Items);
 
@@ -366,7 +367,7 @@ namespace HEI.Agent {
 				string? blocked = use.Why(path);
 				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, Measure(path).Bytes,
 					lastUsed == DateTime.MinValue ? null : lastUsed, blocked == null, blocked,
-					$"left over from a removal · worktree of {Path.GetFileName(repo)}", repo);
+					$"left over from a removal · worktree of {Path.GetFileName(repo)}", repo, Leftover: true);
 			}
 		}
 
@@ -846,6 +847,8 @@ namespace HEI.Agent {
 					if (use.Why(item.Location) is { } busy) return new CleanResult(0, 0, busy);
 					if (DevScanner.IsLeftoverWorktree(item.Repo, item.Location))
 						return CleanResult.Of(SafeDelete.Tree(item.Location), item.Location, use);
+					// At a manor with Reeve, git worktrees are Reeve's to remove (ManorRoles): read fresh, whatever the list said.
+					if (ManorRoles.Now().Worktrees is { } reeve) return new CleanResult(0, 0, reeve.Note + ": Heiward leaves worktrees to it");
 					if (DevScanner.WorktreeBlocker(item.Location) is { } why) return new CleanResult(0, 0, why);
 					long before = DevScanner.Measure(item.Location).Bytes;
 					string? record = DevScanner.GitDirOf(item.Location); // <repo>\.git\worktrees\<id>

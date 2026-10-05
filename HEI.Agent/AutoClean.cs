@@ -362,14 +362,16 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// After a scan: runs automatic cleanup on the saved reports, holding the cleanup lock throughout. Developer
-		/// leftovers only with developer mode on (<paramref name="devMode"/>: Manor's Developer options, or Heiward's own switch).
+		/// leftovers only with developer mode on (<paramref name="devMode"/>: Manor's Developer options, or Heiward's own switch),
+		/// and never worktrees or merged branches where Reeve keeps them (<see cref="ManorRoles"/>).
 		/// </summary>
 		public static AutoRun? RunAndSave(AgentConfig cfg, DevMode devMode, bool devChecked, IAutoActions actions) {
+			ManorRoles roles = ManorRoles.Now();
 			bool on = cfg.AutoClean.Duplicates || cfg.AutoClean.Developer;
 			if (!on && !File.Exists(AutoCleanState.FilePath)) return null; // never turned on: nothing to keep
 			using (CleanLock.Acquire(TimeSpan.FromMinutes(10))) {
 				AutoCleanState s = AutoCleanState.Load();
-				AutoRun? run = Run(cfg, Report.Load(), devMode.On ? DevReport.Load() : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions);
+				AutoRun? run = Run(cfg, Report.Load(), devMode.On ? roles.View(DevReport.Load()) : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions);
 				s.Save();
 				if (run != null && (run.DidSomething || run.Problems.Count > 0))
 					AgentPaths.AppendLog("automatic cleanup: " + run.Describe() + string.Concat(run.Problems.Select(p => Environment.NewLine + "    left alone: " + p)));
@@ -445,6 +447,8 @@ namespace HEI.Agent {
 		}
 
 		public PruneResult Prune(RepoBranches repo, IReadOnlyCollection<string>? branches) {
+			// At a manor with Reeve, merged branches are Reeve's to delete (ManorRoles): read fresh, whatever the list said.
+			if (ManorRoles.Now().Worktrees is { } reeve) return new PruneResult(new(), new(), false, reeve.Note + ": Heiward leaves branches to it");
 			PruneResult result;
 			using (CleanLock.Acquire()) {
 				result = BranchPruner.Prune(repo.Path, branches);
