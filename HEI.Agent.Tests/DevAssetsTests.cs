@@ -18,13 +18,26 @@ using System.Diagnostics;
 
 namespace HEI.Agent.Tests;
 
-/// <summary>Developer mode: what counts as a build output, and deletion that never follows a link.</summary>
+/// <summary>
+/// Developer mode: what counts as a build output, and deletion that never follows a link. Standalone throughout: Manor,
+/// Reeve and the Steward have homes of their own here with nothing installed, so a PC with the real ones installed (where
+/// Reeve keeps the worktrees, <see cref="ManorRoles"/>) runs these as CI does.
+/// </summary>
+[Collection(AgentHomeCollection.Name)] // MANOR_HOME, REEVE_HOME and STEWARD_HOME are process-wide
 public sealed class DevAssetsTests : IDisposable {
+	static readonly string[] Vars = ["MANOR_HOME", "REEVE_HOME", "STEWARD_HOME"];
 	readonly string root = Path.Combine(Path.GetTempPath(), "hei-dev-" + Guid.NewGuid().ToString("N"));
+	readonly string homes = Path.Combine(Path.GetTempPath(), "hei-dev-homes-" + Guid.NewGuid().ToString("N"));
+	readonly Dictionary<string, string?> saved = Vars.ToDictionary(v => v, Environment.GetEnvironmentVariable);
 
-	public DevAssetsTests() => Directory.CreateDirectory(root);
+	public DevAssetsTests() {
+		Directory.CreateDirectory(root);
+		// Never created: none of them is installed.
+		foreach (string v in Vars) Environment.SetEnvironmentVariable(v, Path.Combine(homes, v));
+	}
 
 	public void Dispose() {
+		foreach (var (k, v) in saved) Environment.SetEnvironmentVariable(k, v);
 		// Junctions first, so cleanup can't reach through one.
 		foreach (string d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
 			if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) Directory.Delete(d);
@@ -410,6 +423,7 @@ public sealed class DevAssetsTests : IDisposable {
 		// A shell left working in it: Windows won't remove the folder, so it was offered, and failed, every day.
 		using var shell = Process.Start(new ProcessStartInfo("cmd.exe", "/c ping -n 60 127.0.0.1 >nul") { WorkingDirectory = wt, CreateNoWindow = true, UseShellExecute = false })!;
 		try {
+			Assert.Equal(wt, FolderUseTests.WorkingFolderOnceStarted(shell), StringComparer.OrdinalIgnoreCase);
 			DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(-30), default, new FolderUse(DateTime.UtcNow, claudeHome: noClaude)), i => i.Location == wt);
 			Assert.False(listed.Suggested);
 			Assert.StartsWith("In use: ", listed.Blocked);

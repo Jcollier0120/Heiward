@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.7.37
+
+**Heiward's own checks of developer mode no longer depend on what else is installed on the PC.**
+
+### What changed
+
+- The tests behind developer mode's worktree cleaning now run the same on a PC with Manor and Reeve installed as anywhere else, and the ones that watch a program working in a folder wait for it to have started. Nothing changes in what Heiward does.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.7.35
 
 **A short card at the foot of the home page about Manor, the household Heiward can join.**
