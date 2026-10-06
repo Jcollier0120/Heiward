@@ -109,6 +109,7 @@ namespace HEI.Agent {
 				return Results.Content(await ManorIcon.GetAsync(), "image/svg+xml");
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
+			app.MapGet("/tour.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("tour.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));
 			// The manor's disk measurement: the drives' free space and the big tool caches, from the last hourly reading
 			// (DiskWatch), never measured for a request. Read-only, and like every GET here, for this PC only: the Host check
@@ -393,6 +394,8 @@ namespace HEI.Agent {
 			return new {
 				app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath,
 				lastRunAt = runs.LastRunAt, lastRunOk = runs.LastRunOk, nextRunAt = runs.NextRunAt, runningSince = runs.RunningSince,
+				// Its page has a tour at #/tour (wwwroot/tour.js), as a kit agent's ping says: Manor's hire flow offers Take the tour.
+				tour = true,
 			};
 		}
 

@@ -9,6 +9,7 @@
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
+  <script src="/tour.js" defer></script>
 </head>
 <body>
   <header class="titlebar">
@@ -20,7 +21,7 @@
       </svg>
       <span>Heiward</span>
     </a>
-    <div class="scanstate">
+    <div class="scanstate" data-tour="controls">
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
       <div class="theme-picker">
         <button class="icon-btn" id="pause-btn" title="Pause scans" aria-label="Pause scans" aria-haspopup="menu" aria-expanded="false" aria-controls="pause-menu"></button>
@@ -57,31 +58,31 @@
   </main>
 
   <main id="home" class="view home">
-    <section class="tiles">
+    <section class="tiles" data-tour="tiles">
       <div class="tile"><div class="tile-value" id="t-groups">–</div><div class="muted small" id="t-groups-label">sets of copies to review</div></div>
       <div class="tile"><div class="tile-value" id="t-free">–</div><div class="muted small">you could free</div></div>
       <div class="tile"><div class="tile-value" id="t-freed">–</div><div class="muted small">freed so far</div></div>
     </section>
 
-    <section>
+    <section data-tour="drives">
       <h2>Devices and drives</h2>
       <div class="glance hidden" id="glance"></div>
       <p class="muted small scan-pace hidden" id="scan-pace" role="status"></p>
       <div class="drives" id="drives"></div>
     </section>
 
-    <section id="dev-section" class="hidden">
+    <section id="dev-section" class="hidden" data-tour="dev">
       <h2>Developer area</h2>
       <div id="dev-card"></div>
     </section>
 
-    <section id="hotspots-section">
+    <section id="hotspots-section" data-tour="hotspots">
       <h2>Where the duplicates are</h2>
       <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
       <div class="hotspots" id="hotspots"></div>
     </section>
 
-    <section>
+    <section data-tour="history">
       <details class="history" id="history">
         <summary>History</summary>
         <div id="done"></div>
