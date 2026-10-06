@@ -24,7 +24,8 @@ namespace HEI.Agent.Tests;
 /// <summary>
 /// The home page's "In a manor" card: shown without Manor, until its Not now hides it for good (settings.json's
 /// manorCard, which Settings turns on again); never with Manor installed. Nothing here reads the real Manor's settings or
-/// Heiward's, and nothing asks Manor's site.
+/// Heiward's, and nothing asks Manor's site. The card is held back until launch (ManorCard.Launched): these tests show it
+/// as it'll be then (ManorCard.ShowBeforeLaunch), apart from those that check the shipped default hides it.
 /// </summary>
 [Collection(AgentHomeCollection.Name)] // MANOR_HOME and HEIWARD_HOME are process-wide
 public sealed class ManorCardTests : IDisposable {
@@ -39,9 +40,11 @@ public sealed class ManorCardTests : IDisposable {
 		Directory.CreateDirectory(home);
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", home);
 		Environment.SetEnvironmentVariable("MANOR_HOME", manor); // nothing there until a test installs it: no Manor
+		ManorCard.ShowBeforeLaunch = true; // the card as it'll be at launch; "Before launch" tests the shipped default
 	}
 
 	public void Dispose() {
+		ManorCard.ShowBeforeLaunch = false;
 		Environment.SetEnvironmentVariable("MANOR_HOME", manorHome);
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", heiwardHome);
 		try { Directory.Delete(dir, true); } catch { }
@@ -54,7 +57,24 @@ public sealed class ManorCardTests : IDisposable {
 
 	static readonly Manor TheHall = new("The Hall", 19000, null);
 
-	// ---- Who sees it
+	// ---- Before launch (ManorCard.Launched off): no card and no switch, Manor or not. Turning Launched on changes these.
+
+	[Fact]
+	public void TheShippedDefault_HidesTheCard_WithNoManorInstalled() {
+		ManorCard.ShowBeforeLaunch = false;
+		Assert.False(ManorCard.Launched);
+		Assert.Null(ManorCard.For(new AgentConfig(), null));
+		Assert.Null(ManorCard.For(new AgentConfig { ManorCard = false }, null));
+	}
+
+	[Fact]
+	public async Task ThePage_HasNoCardAndNoSwitch_BeforeLaunch() {
+		ManorCard.ShowBeforeLaunch = false;
+		await using Page page = await Page.StartAsync(new AgentConfig());
+		Assert.Null(await page.CardAsync());
+	}
+
+	// ---- Who sees it (as at launch)
 
 	[Fact]
 	public void WithoutManor_TheCardShows_WithTheSitesLink() =>
