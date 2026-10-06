@@ -37,6 +37,18 @@ public sealed class FolderUseTests : IDisposable {
 		try { Directory.Delete(root, true); } catch { }
 	}
 
+	/// <summary>
+	/// The working folder of a process just started: Windows writes a new process's parameters as it starts it, so a read
+	/// in its first moments can find nothing yet. Null when it's still unreadable after 5 seconds.
+	/// </summary>
+	internal static string? WorkingFolderOnceStarted(Process p) {
+		var waited = Stopwatch.StartNew();
+		string? dir;
+		while ((dir = ProcessFolders.CurrentDirectoryOf(p.Id)) == null && !p.HasExited && waited.Elapsed < TimeSpan.FromSeconds(5))
+			Thread.Sleep(50);
+		return dir;
+	}
+
 	FolderUse Use(List<WorkingFolder>? processes = null) => new(Now, claudeHome: claude, processes: () => processes ?? new());
 
 	/// <summary>A transcript of a session in <paramref name="folder"/>, last written <paramref name="ago"/> ago.</summary>
@@ -125,7 +137,7 @@ public sealed class FolderUseTests : IDisposable {
 			WorkingDirectory = worktree, CreateNoWindow = true, UseShellExecute = false,
 		})!;
 		try {
-			Assert.Equal(worktree, ProcessFolders.CurrentDirectoryOf(p.Id), StringComparer.OrdinalIgnoreCase);
+			Assert.Equal(worktree, WorkingFolderOnceStarted(p), StringComparer.OrdinalIgnoreCase);
 			string? why = new FolderUse(Now, claudeHome: claude).Why(worktree);
 			Assert.NotNull(why);
 			Assert.StartsWith("In use: ", why);
