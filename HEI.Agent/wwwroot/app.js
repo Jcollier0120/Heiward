@@ -585,6 +585,7 @@ function renderHome(s) {
 
   renderDevCard(s.dev);
   renderDone(s);
+  renderManorCard(s.manorCard);
   renderFooter(s);
 }
 
@@ -740,6 +741,16 @@ function renderAboutCard(s) {
   text.append(el('div', 'auto-title', 'Version ' + version), built, from);
   row.append(text);
   card.append(row);
+  // Without Manor: the home page's "In a manor" card, on until its Not now; this brings it back.
+  if (s.manorCard) {
+    const manorRow = el('div', 'auto-row');
+    manorRow.append(toggleSwitch(s.manorCard.show, 'The "In a manor" card', settingsBusy, (on) => saveSettings({ manorCard: on })));
+    const manorText = el('div', 'auto-text');
+    manorText.append(el('div', 'auto-title', 'The "In a manor" card'),
+      el('div', 'muted small', 'Last on the home page: what Manor adds to Heiward, with a link to its site. It\'s text in the page: nothing is sent anywhere for it.'));
+    manorRow.append(manorText);
+    card.append(manorRow);
+  }
   // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
   const foot = el('div', 'auto-foot');
   const licence = el('div', 'muted small', 'Heiward is free software: you can share and change it under the ');
@@ -2624,6 +2635,54 @@ function renderDone(s) {
     }
     return row;
   }));
+}
+
+// ---------------------------------------------------------------- home: in a manor
+
+/** A few of the manor's staff, a line each, for the "In a manor" card. */
+const MANOR_STAFF = [
+  ['Porter', 'what\'s new on this PC, and who signed it.'],
+  ['Clerk', 'your screenshots and scans, made searchable.'],
+  ['Warrener', 'a name and a home for what piles up in Downloads.'],
+  ['Lamplighter', 'rolls a graphics driver back when a new one leaves the screen dark.'],
+  ['Miller', 'big videos and photos, made small.'],
+];
+
+/**
+ * Without Manor, the last thing on the home page: what Manor adds, in a few lines, with a link to its site and Not now, which
+ * hides it for good (settings.json's manorCard; Settings shows it again). It's text in the page: nothing is fetched or sent for
+ * it. With Manor installed, card is null and there's nothing here: the title bar's "Back to <manor>" says where Heiward works.
+ */
+function renderManorCard(card) {
+  const show = !!(card && card.show);
+  $('manor-card-section').classList.toggle('hidden', !show);
+  if (!show) { $('manor-card').replaceChildren(); return; }
+  const box = el('div', 'auto-card manor-card');
+  box.append(el('p', 'manor-card-lead',
+    'Heiward is one of a household of agents that put this PC\'s NPU to work: all private, all on this PC. Manor is the house they share.'));
+  const staff = el('ul', 'manor-staff');
+  for (const [name, does] of MANOR_STAFF) {
+    const li = el('li');
+    li.append(el('strong', null, name), ': ' + does);
+    staff.append(li);
+  }
+  box.append(staff);
+  box.append(el('p', null, 'Try every agent free for 30 days, with no card. After that, from $4 a month. ' +
+    'Stop paying and keep what you have: it all keeps working, just without new versions.'));
+  box.append(el('p', 'muted small', 'Heiward stays free, and works the same without it.'));
+  const actions = el('div', 'manor-card-actions');
+  const see = outLink('See the manor', card.url);
+  see.className = 'btn';
+  const later = el('button', 'btn secondary', 'Not now');
+  later.addEventListener('click', async () => {
+    later.disabled = true;
+    try { await post('/api/settings', { manorCard: false }); } catch (e) { showError(e.message); later.disabled = false; return; }
+    showNotice('The "In a manor" card is hidden for good. Settings can show it again.', { label: 'Undo', run: () => saveSettings({ manorCard: true }) });
+    refresh(true);
+  });
+  actions.append(see, later);
+  box.append(actions);
+  $('manor-card').replaceChildren(box);
 }
 
 function renderFooter(s) {

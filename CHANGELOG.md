@@ -2,6 +2,21 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.7.35
+
+**A short card at the foot of the home page about Manor, the household Heiward can join.**
+
+### What's new
+
+- Without Manor on the PC, the home page ends with an "In a manor" card: a few lines on the agents Heiward can work beside, all private and all on this PC, and a link to see the manor. It sits below everything else, never above your drives, and it's text in the page: nothing is fetched or sent for it.
+- **Not now** hides it for good. To bring it back, turn on **The "In a manor" card** under About Heiward in Settings.
+- With Manor installed there's no card: the title bar's **Back to** link already says where Heiward works.
+- Heiward stays free and complete on its own: nothing in it depends on Manor.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.7.34
 
 **It carries the Steward's kit 2.28.0: the parts every agent of the manor shares.**
