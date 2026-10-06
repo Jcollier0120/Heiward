@@ -145,7 +145,8 @@ public sealed class RunTimesTests : IDisposable {
 		// As Results.Json writes it: the web defaults.
 		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ReviewServer.Ping(cfg), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 		JsonElement root = doc.RootElement;
-		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "tour" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.True(root.GetProperty("tour").GetBoolean()); // its page has a tour at #/tour (tour.js)
 		Assert.Equal("heiward", root.GetProperty("app").GetString());
 		Assert.Equal("2026-10-03T12:00:00Z", root.GetProperty("lastRunAt").GetString());
 		Assert.True(root.GetProperty("lastRunOk").GetBoolean());
