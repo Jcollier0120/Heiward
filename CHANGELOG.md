@@ -14,6 +14,19 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 Nothing: it updates itself as usual.
 
+## 1.7.36
+
+**The "In a manor" card is put away for now: it comes back when the manor is ready to join.**
+
+### What changed
+
+- The home page no longer ends with the "In a manor" card, and Settings no longer has its switch. Nothing else on the page changes, and Heiward works just as before.
+- If you chose **Not now**, that choice is kept for when the card returns.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.7.35
 
 **A short card at the foot of the home page about Manor, the household Heiward can join.**
