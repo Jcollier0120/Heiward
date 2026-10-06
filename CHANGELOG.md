@@ -1,6 +1,6 @@
 # Heiward's changelog
 
-Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md).
+Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
 ## 1.7.31
 
@@ -69,6 +69,127 @@ Nothing: it updates itself as usual.
 ### What changed
 
 - The Steward's kit 2.19.0: Every release says what it brings: its notes are the agent's CHANGELOG.md entry for the version.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.25
+
+**It carries the Steward's kit 2.18.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.18.0: Non-employee projects: repositories that ride along with the manor.
+- A release's notes now come from its entry in this changelog, after a first line naming the version, the commit it was built from and the kit it carries.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.24
+
+**It carries the Steward's kit 2.17.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.17.0: A release is built, never the readable source, and published in the public Jcollier0120/Manor-releases.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.23
+
+**It carries the Steward's kit 2.16.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.16.0: Every agent's page uses the width of the window.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.22
+
+**It carries the Steward's kit 2.15.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.15.0: Offline is waited out, never a failure.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.21
+
+**It carries the Steward's kit 2.14.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.14.0: The title bar stays at the top as the page scrolls.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.20
+
+**It carries the Steward's kit 2.13.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.13.0: The NPU first.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.19
+
+**It carries the Steward's kit 2.12.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.12.1: A release zip's name has no spaces.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.18
+
+**It carries the Steward's kit 2.12.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.12.0: A release announces its agent to every Manor, when the checkout has manor-agent.json.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.17
+
+**It carries the Steward's kit 2.11.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.11.0: Keeping the model servers moves into the kit, for the Smith.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.16
+
+**It carries the Steward's kit 2.10.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.10.0: Manor can keep the graphics card out of model work on a PC with an NPU.
 
 ### Before you update
 
