@@ -34,6 +34,8 @@ Files you choose to clean up go to the Recycle Bin, where you can still restore 
 
 The review page runs in your browser, served by Heiward on your own PC at `127.0.0.1`. It isn't reachable from other devices on your network or from the internet, and it loads nothing from other websites. The same goes for what it tells other programs on your PC, such as the disk reading: other websites open in your browser can't read it.
 
+Without Manor installed, the home page ends with a short card about Manor, with a link to its site. The card is text in the page: nothing is fetched or sent for it, and the site learns nothing unless you open the link, which is then an ordinary visit to a website. **Not now** hides the card, and that choice stays in your settings on your PC.
+
 ## What Heiward downloads
 
 When it sets up, Heiward downloads the AI components it needs, and nothing else. Each one is checked against a fixed SHA-256 before use:

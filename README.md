@@ -11,6 +11,7 @@ It lists what it finds, and stale developer files in developer mode, on a local 
 - **A Developer area for all your repositories at once.** Each repository's open pull requests, from GitHub, Azure DevOps and TFS, GitLab, Bitbucket, Gitea or Forgejo, beside its cleanup, with those ready to merge or waiting for a review first. The cleanup is its build outputs, finished worktrees, and a button that prunes local branches already merged into main, plus package caches, unused emulator images and old temp files. Git, TFVC, Subversion, Mercurial, Perforce and other version control are recognised. It's off until you turn on Developer mode in Settings, or, with Manor installed, Manor's Developer options.
 - **Automatic cleanup, when you're ready.** Two switches let it clean plain copies and developer leftovers by itself, a few days after listing them, with a "Leave it" button on each. Edits, look-alikes, cloud-synced copies and anything that looks like a backup always wait for you.
 - **Themes.** Match Windows, Light, Dark, and six colour themes.
+- **Complete on its own, and it can join a manor.** Manor is a household of agents that put the PC's NPU to work, all private, all on the PC. Without it, a short card at the foot of the home page says what it adds, with no network call; **Not now** hides it for good. Heiward stays free either way.
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound.
 

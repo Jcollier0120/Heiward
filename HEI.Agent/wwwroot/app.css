@@ -552,6 +552,13 @@ button { font: inherit; color: inherit; }
 /* With Manor's Developer options set, they decide developer mode: which way, and a link to change it in Manor, in place of the switch. */
 .manor-decides { margin: 2px 0 4px; overflow-wrap: anywhere; }
 .manor-decides a { color: var(--accent-text); }
+/* Without Manor: the "In a manor" card, last on the home page, in the settings cards' quiet look. It wraps in a narrow window. */
+.manor-card { padding: 12px 16px 14px; overflow-wrap: anywhere; }
+.manor-card p { margin: 0 0 8px; }
+.manor-card-lead { font-weight: 600; }
+.manor-staff { margin: 0 0 10px; padding-left: 18px; display: grid; gap: 3px; }
+.manor-card-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.manor-card-actions a.btn { text-decoration: none; display: inline-block; }
 .auto-wait { display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
 .auto-wait select { font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; max-width: 100%; }
 .auto-wait select:disabled { opacity: 0.6; cursor: not-allowed; }

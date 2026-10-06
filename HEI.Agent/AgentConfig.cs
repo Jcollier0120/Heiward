@@ -234,6 +234,11 @@ namespace HEI.Agent {
 		/// <summary>A Windows notification when a scan finds something new.</summary>
 		public bool Toast { get; set; } = true;
 		/// <summary>
+		/// The home page's "In a manor" card, while Manor isn't installed (<see cref="HEI.Agent.ManorCard"/>): what Manor adds,
+		/// with a link. Its "Not now" turns this off for good; the switch in Settings turns it on again.
+		/// </summary>
+		public bool ManorCard { get; set; } = true;
+		/// <summary>
 		/// Developer mode: also look for build outputs, worktrees, caches, emulators and temp files that
 		/// tools recreate, once a day, and show them on the page. "on" or "off", the switch in the page's
 		/// Settings. Off, the page shows nothing of it and nothing is checked. Settings files from before
