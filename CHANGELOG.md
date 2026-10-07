@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.7.45
+
+**It carries the Steward's kit 2.35.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.35.0: A release of an agent Castellan sells goes to the Exchequer, and no longer to the public releases repository.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Agents for sale stop appearing in the public releases repository once the Exchequer 0.6.0 is deployed with its migration applied. Until then, releases go there as before.
+
 ## 1.7.44
 
 **It carries the Steward's kit 2.34.0: the parts every agent of the manor shares.**
