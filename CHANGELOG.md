@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.7.46
+
+**It carries the Steward's kit 2.36.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.36.1: GenieX 0.8.0 is the NPU's server on a Snapdragon.
+
+### Before you update
+
+- Nothing: it updates itself as usual. This kit comes after 2.36.0; 2.33.0 (Steward 0.19.4) is still to be released and doesn't depend on it.
+
 ## 1.7.45
 
 **It carries the Steward's kit 2.35.0: the parts every agent of the manor shares.**
