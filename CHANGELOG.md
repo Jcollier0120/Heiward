@@ -2,13 +2,25 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
-## 1.7.38
+## 1.7.39
 
 **It carries the Steward's kit 2.28.1: the parts every agent of the manor shares.**
 
 ### What changed
 
 - The Steward's kit 2.28.1: Security fix: a value with curly quotes in it could break out of a PowerShell string.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
+## 1.7.38
+
+**A security fix: a folder name or notification text with curly quotes in it can no longer break out of Heiward's PowerShell commands.**
+
+### What changed
+
+- Windows PowerShell treats the curly quotes ‘ ’ ‚ ‛ as quote marks. Making Heiward's shortcut when it installs, and showing a Windows notification from the app, now escape every one of them, so a profile like `C:\Users\O’Brien` installs as it should and stays a name, never a command.
 
 ### Before you update
 
