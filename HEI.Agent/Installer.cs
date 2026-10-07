@@ -773,16 +773,32 @@ namespace HEI.Agent {
 		/// </summary>
 		static void CreateShortcut(string lnk) {
 			string conhost = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
-			string ps = $"""
-				$s = (New-Object -ComObject WScript.Shell).CreateShortcut('{lnk.Replace("'", "''")}')
-				$s.TargetPath = '{conhost}'
-				$s.Arguments = '--headless "{InstalledExe.Replace("'", "''")}" open'
-				$s.IconLocation = '{InstalledExe.Replace("'", "''")},0'
-				$s.Description = 'Review duplicate photos and videos, and stale developer files'
-				$s.WorkingDirectory = '{InstallDir.Replace("'", "''")}'
-				$s.Save()
-				""";
-			RunPowerShell(ps);
+			RunPowerShell(ShortcutScript(lnk, conhost, InstalledExe, InstallDir));
+		}
+
+		/// <summary>The script that makes the shortcut: every path in it a PowerShell literal (<see cref="PsQuote"/>), never code.</summary>
+		internal static string ShortcutScript(string lnk, string conhost, string exe, string dir) => $"""
+			$s = (New-Object -ComObject WScript.Shell).CreateShortcut({PsQuote(lnk)})
+			$s.TargetPath = {PsQuote(conhost)}
+			$s.Arguments = {PsQuote($"--headless \"{exe}\" open")}
+			$s.IconLocation = {PsQuote(exe + ",0")}
+			$s.Description = 'Review duplicate photos and videos, and stale developer files'
+			$s.WorkingDirectory = {PsQuote(dir)}
+			$s.Save()
+			""";
+
+		/// <summary>
+		/// A PowerShell single-quoted string that PowerShell reads back as exactly <paramref name="s"/>. PowerShell ends
+		/// one at the curly quotes U+2018 to U+201B as well as at ', so each of those is doubled too (a quote doubled is
+		/// how a single-quoted string holds one), as the Steward's kit psQuote does: a profile like O’Brien stays a name.
+		/// </summary>
+		internal static string PsQuote(string s) {
+			var b = new System.Text.StringBuilder(s.Length + 2).Append('\'');
+			foreach (char c in s) {
+				if (c is '\'' or '‘' or '’' or '‚' or '‛') b.Append(c);
+				b.Append(c);
+			}
+			return b.Append('\'').ToString();
 		}
 
 		/// <summary>heiward: links, which the review page offers when it can't reach Heiward ("Start Heiward").</summary>

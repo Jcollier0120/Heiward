@@ -37,12 +37,19 @@ static class DesktopNotificationHelper {
 	const string AppId = "VideoDuplicateFinder";
 
 	static void NotifyWindows(string title, string message) {
-		// Windows 10/11 requires the AppId to be registered in HKCU before
-		// CreateToastNotifier will show anything — unregistered ids fail silently.
-		// We register on the fly inside the script (HKCU, no elevation needed).
-		// The entire script is base64-encoded via -EncodedCommand so no PowerShell
-		// string escaping is needed — only XML entity encoding matters here.
-		var script = $$"""
+		var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(WindowsScript(title, message)));
+		Process.Start(new ProcessStartInfo("powershell", $"-NoProfile -WindowStyle Hidden -EncodedCommand {encoded}") {
+			CreateNoWindow = true
+		});
+	}
+
+	/// <summary>
+	/// Windows 10/11 requires the AppId to be registered in HKCU before CreateToastNotifier will show anything
+	/// (unregistered ids fail silently), so the script registers it (HKCU, no elevation needed). The script goes in
+	/// as -EncodedCommand, so the command line needs no quoting; the title and message sit in a single-quoted
+	/// PowerShell string, which <see cref="EscapeXml"/> keeps them from ending.
+	/// </summary>
+	internal static string WindowsScript(string title, string message) => $$"""
 			[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 			[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType = WindowsRuntime] | Out-Null
 			$id = '{{AppId}}'
@@ -55,11 +62,6 @@ static class DesktopNotificationHelper {
 			$xml.LoadXml('<toast><visual><binding template="ToastGeneric"><text>{{EscapeXml(title)}}</text><text>{{EscapeXml(message)}}</text></binding></visual></toast>')
 			[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier($id).Show([Windows.UI.Notifications.ToastNotification]::new($xml))
 			""";
-		var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-		Process.Start(new ProcessStartInfo("powershell", $"-NoProfile -WindowStyle Hidden -EncodedCommand {encoded}") {
-			CreateNoWindow = true
-		});
-	}
 
 	static void NotifyMacOS(string title, string message) {
 		// ArgumentList avoids shell interpretation — no shell escaping needed,
@@ -80,12 +82,20 @@ static class DesktopNotificationHelper {
 		Process.Start(psi);
 	}
 
-	static string EscapeXml(string s) => s
+	/// <summary>
+	/// XML text that is also safe inside the script's single-quoted PowerShell string: ' becomes &amp;apos;, and the curly
+	/// quotes ‘ ’ ‚ ‛ (which PowerShell ends a single-quoted string at too) become character references.
+	/// </summary>
+	internal static string EscapeXml(string s) => s
 		.Replace("&", "&amp;")
 		.Replace("<", "&lt;")
 		.Replace(">", "&gt;")
 		.Replace("\"", "&quot;")
-		.Replace("'", "&apos;");
+		.Replace("'", "&apos;")
+		.Replace("‘", "&#x2018;")
+		.Replace("’", "&#x2019;")
+		.Replace("‚", "&#x201A;")
+		.Replace("‛", "&#x201B;");
 
 	static string EscapeAppleScript(string s) => s
 		.Replace("\\", "\\\\")
