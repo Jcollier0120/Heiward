@@ -53,29 +53,42 @@ namespace HEI.Agent {
 	static class AgentScanner {
 		/// <param name="scheduled">Started by Task Scheduler: in the background unless the review page is open (<see cref="ScanPace"/>).</param>
 		/// <param name="drives">Drives scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) that this scan reads: from the drive's own page.</param>
-		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null) {
+		/// <param name="waitTurn">The install's first scan: waits its turn among the agents' first rounds as a scheduled one does (<see cref="FirstRound"/>).</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			using FileStream? scanLock = TryLock();
 			if (scanLock == null) {
 				Console.Error.WriteLine("A scan is already running.");
 				return 0;
 			}
+			// A first scan waits its turn among the agents' first rounds (FirstRound), before it counts as started.
+			IDisposable? firstTurn;
+			try { firstTurn = FirstRound.Take(scheduled || waitTurn, Manor.Load(), AgentPaths.AppendLog); }
+			catch (TimeoutException) {
+				AgentPaths.AppendLog("first scan: no turn among the agents' first rounds yet; the next scheduled scan waits again");
+				return 0;
+			}
+			using var turn = firstTurn;
 			var started = DateTime.UtcNow;
 			try { AgentPaths.WriteAtomic(AgentPaths.ScanStarted, started.ToString("O")); }
 			catch { /* only the page's scan-when-due check and /api/ping's runningSince read it */ }
 			// How it ended, written before scan.lock is let go: /api/ping's last run (RunTimes).
 			int? code = null;
 			Exception? error = null;
-			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, started, ct)).Value; }
+			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, started, firstTurn != null, ct)).Value; }
 			catch (Exception e) { error = e; throw; }
 			finally { LastScan.Record(started, DateTime.UtcNow, code, error); }
 		}
 
-		/// <summary>The scan itself, holding scan.lock since <paramref name="started"/>.</summary>
-		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, DateTime started, CancellationToken ct) {
+		/// <summary>
+		/// The scan itself, holding scan.lock since <paramref name="started"/>. <paramref name="firstTurn"/>: a first scan in its
+		/// turn among the agents' first rounds (FirstRound), at full speed since nothing else heavy runs then; a game still
+		/// has it make way.
+		/// </summary>
+		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, DateTime started, bool firstTurn, CancellationToken ct) {
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
-			bool fullSpeed = ScanPace.FullSpeed(cfg, scheduled);
+			bool fullSpeed = firstTurn || ScanPace.FullSpeed(cfg, scheduled);
 			var settings = BuildSettings(cfg, notes, fullSpeed);
 			if (settings.IncludeList.Count == 0) {
 				Console.Error.WriteLine("None of the configured folders exist. Edit " + AgentPaths.Config);
@@ -111,7 +124,7 @@ namespace HEI.Agent {
 			// The card the scan's GPU work runs on, whose 3D engines a game would compete for.
 			GpuAdapter? card = GpuAdapters.InUse(cfg.Gpu, GpuAdapters.List());
 			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
-			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, card, stopPacing.Token);
+			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, card, stopPacing.Token, firstTurn);
 			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would.
 			ScanStop.Clear();
 			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
@@ -306,7 +319,7 @@ namespace HEI.Agent {
 		/// work runs on: while one runs, the scan runs in the background and with less memory (<see cref="Pace.MoreMemory"/>),
 		/// whatever the settings say, until it's gone. Two checks in a row either way, so a moment's 3D work doesn't flip it.
 		/// </summary>
-		static async Task FollowPageAsync(bool scheduled, bool current, Action<bool> changed, GpuAdapter? card, CancellationToken ct) {
+		static async Task FollowPageAsync(bool scheduled, bool current, Action<bool> changed, GpuAdapter? card, CancellationToken ct, bool firstTurn = false) {
 			using var watch = new ThreeDWatch(card);
 			string? makingWayFor = null;
 			int busyChecks = 0, freeChecks = 0;
@@ -329,7 +342,7 @@ namespace HEI.Agent {
 					}
 				}
 				Pace.MoreMemory = cfg.MoreMemory && makingWayFor == null;
-				bool wanted = ScanPace.FullSpeed(cfg, scheduled) && makingWayFor == null;
+				bool wanted = (firstTurn || ScanPace.FullSpeed(cfg, scheduled)) && makingWayFor == null;
 				if (wanted == current) continue;
 				current = wanted;
 				Power.SetPace(wanted, cfg.BackgroundCpuCap(Environment.ProcessorCount));

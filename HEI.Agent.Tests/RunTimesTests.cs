@@ -145,7 +145,8 @@ public sealed class RunTimesTests : IDisposable {
 		// As Results.Json writes it: the web defaults.
 		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ReviewServer.Ping(cfg), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 		JsonElement root = doc.RootElement;
-		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "tour", "pictures" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "pictures" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.Equal(JsonValueKind.Null, root.GetProperty("firstRound").ValueKind); // no first scan waiting or running (FirstRound)
 		Assert.Equal(1, root.GetProperty("pictures").GetInt32()); // POST /api/pictures/compare is here (PicturesRoute)
 		Assert.True(root.GetProperty("tour").GetBoolean()); // its page has a tour at #/tour (tour.js)
 		Assert.Equal("heiward", root.GetProperty("app").GetString());

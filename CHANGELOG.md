@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.3
+
+**Heiward's first scan waits its turn among the manor's newcomers, then runs at full speed.**
+
+### What's new
+
+- **Settling into the manor.** In a manor, Heiward's first scan, which reads every drive, no longer runs at the same time as the other agents' heavy first work. When everything is installed together, each agent does its first round in turn, so your PC isn't swamped. Heiward waits for the one before it, then scans at full speed while it has its turn, since nothing else heavy is running then. A game still makes it step aside. Every scan after that runs as you chose.
+- While it waits, or while its first scan runs, the review page says so, with a small drawing of the manor's door in your theme's colours.
+- Scan now never waits. Without a manor on this PC, or with Manor set to run everything at full speed, Heiward scans as before.
+
+### Before you update
+
+- Nothing: it updates itself as usual. A PC where Heiward has already scanned is never held up.
+
 ## 1.9.2
 
 **It carries the Steward's kit 2.41.0: the parts every agent of the manor shares.**

@@ -104,7 +104,31 @@ namespace HEI.Core.AI {
 		internal static IDisposable Acquire(string accelerator, TimeSpan? wait, bool interactive) {
 			string? dir = LockDirectoryFor(accelerator);
 			if (dir == null) return NoLock.Instance;
-			string what = accelerator == Accelerators.Npu ? "NPU" : accelerator;
+			return AcquireAt(dir, accelerator == Accelerators.Npu ? "NPU" : accelerator, wait, interactive, Stale);
+		}
+
+		/// <summary>
+		/// The manor's first-round line (the Steward's kit 2.43.0, kit\spec\ROUND.md's "Pace"): the folder
+		/// <c>&lt;locks&gt;\first-rounds</c> beside the NPU's, one slot, the same line. Agents new to the manor take it for
+		/// their heavy first round, one at a time. Null when the locks aren't in use on this PC (<see cref="LockDirectory"/>).
+		/// </summary>
+		public static string? FirstRoundDirectory => LockDirectory is string npu && Path.GetDirectoryName(npu) is { Length: > 0 } locks ? Path.Combine(locks, "first-rounds") : null;
+
+		/// <summary>
+		/// How long a first round may hold its turn before a waiter takes it over: a first scan of every drive takes
+		/// hours, and a holder whose process has gone gives the turn up at once anyway. The kit's agents allow as long.
+		/// </summary>
+		public static readonly TimeSpan FirstRoundHold = TimeSpan.FromHours(12);
+
+		/// <summary>
+		/// Holds the manor's first-round turn until disposed, after waiting in its line (background) up to
+		/// <paramref name="wait"/>, then throws <see cref="TimeoutException"/>. A no-op where the locks aren't in use.
+		/// </summary>
+		public static IDisposable AcquireFirstRound(TimeSpan wait) =>
+			FirstRoundDirectory is string dir ? AcquireAt(dir, "first-round", wait, interactive: false, FirstRoundHold) : NoLock.Instance;
+
+		/// <summary>A lock folder and its line (any of them: an accelerator's, the first-round line), as above; <paramref name="stale"/> evicts an overstayed holder.</summary>
+		internal static IDisposable AcquireAt(string dir, string what, TimeSpan? wait, bool interactive, TimeSpan stale) {
 			string queueDir = QueueDirectoryFor(dir);
 			Directory.CreateDirectory(queueDir);
 			var deadline = Stopwatch.StartNew();
@@ -132,7 +156,7 @@ namespace HEI.Core.AI {
 						continue;
 					}
 					bool head = line[0] == name;
-					if (head && TryLock(dir, what) is { } held)
+					if (head && TryLock(dir, what, stale) is { } held)
 						return held;
 					if (deadline.Elapsed > limit)
 						throw new TimeoutException($"Timed out after {limit.TotalSeconds:N0} s waiting for the {what} lock {dir} ({line.Count} in line).");
@@ -149,7 +173,7 @@ namespace HEI.Core.AI {
 		}
 
 		/// <summary>One try at the lock folder: ours, or null. Evicts a holder that died or overstayed.</summary>
-		static Held? TryLock(string dir, string what) {
+		static Held? TryLock(string dir, string what, TimeSpan stale) {
 			for (int attempt = 0; attempt < 2; attempt++) {
 				try {
 					// Win32 CreateDirectory fails when the folder exists: the atomic test-and-set the
@@ -161,7 +185,7 @@ namespace HEI.Core.AI {
 					}
 					if (Marshal.GetLastPInvokeError() != ErrorAlreadyExists)
 						throw new IOException($"Cannot create the {what} lock {dir} (Win32 error {Marshal.GetLastPInvokeError()}).");
-					if (!IsStale(dir)) return null;
+					if (!IsStale(dir, stale)) return null;
 					Logger.Instance.Info($"{what} lock {dir} was held by a process that died or overstayed; taking it over.");
 					Directory.Delete(dir, recursive: true);
 				}
@@ -248,14 +272,14 @@ namespace HEI.Core.AI {
 
 		// ------------------------------------------------------------------------------------- the lock
 
-		static bool IsStale(string dir) {
+		static bool IsStale(string dir, TimeSpan stale) {
 			Owner? owner = ReadOwner(Path.Combine(dir, "owner.json"));
 			if (owner == null) {
 				// Not written yet (give the holder a moment) or lost in a crash.
 				try { return DateTime.UtcNow - Directory.GetLastWriteTimeUtc(dir) > TimeSpan.FromSeconds(10); }
 				catch { return false; }
 			}
-			if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - owner.Since > Stale.TotalMilliseconds)
+			if (DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - owner.Since > stale.TotalMilliseconds)
 				return true;
 			return !PidAlive(owner.Pid);
 		}

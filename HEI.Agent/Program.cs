@@ -56,7 +56,8 @@ var notify = new Option<bool>("--notify") { Description = "Show a Windows notifi
 var open = new Option<bool>("--open") { Description = "Open the review page (it shows the scan's progress)." };
 var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge; run in the background unless the review page is open." };
 var drive = new Option<string[]>("--drive") { Description = "Also read these drives that are scanned only when you ask (onRequestDrives), e.g. --drive D:\\. Without it they're left alone." };
-var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive };
+var waitTurn = new Option<bool>("--wait-turn") { Description = "A first scan the person didn't start by hand (the install's): waits its turn among the manor's agents' first rounds, as a scheduled one does." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
@@ -76,7 +77,7 @@ scan.SetAction(async (r, ct) => {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
 		_ = OpenReviewPageAsync(cfg, ct);
 	}
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive));
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn));
 });
 root.Subcommands.Add(scan);
 

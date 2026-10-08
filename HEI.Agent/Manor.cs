@@ -38,7 +38,11 @@ namespace HEI.Agent {
 	/// Game mode, when Manor passes it down: its settings.json's "gameMode", true or false; null when it has none (Manor
 	/// doesn't write it yet), or something else there, and then Heiward's own switch decides (<see cref="HEI.Agent.GameMode"/>).
 	/// </param>
-	sealed record Manor(string Name, int Port, string? Theme, bool? DeveloperOptions = null, bool? GameMode = null) {
+	/// <param name="BackgroundPace">
+	/// The manor's pace (the Steward's kit 2.43.0): its settings.json's "backgroundPace", "gentle" or "full"; null when it has
+	/// none, or something else there, which counts as gentle. Gentle, a first scan waits its turn among the agents' first rounds (<see cref="FirstRound"/>).
+	/// </param>
+	sealed record Manor(string Name, int Port, string? Theme, bool? DeveloperOptions = null, bool? GameMode = null, string? BackgroundPace = null) {
 		/// <summary>The themes Manor can choose besides Match Windows ("system"): the same as theme.js and app.css have.</summary>
 		public static readonly IReadOnlyList<string> Themes = ["light", "dark", "arcade", "onyx", "carbon", "tinsel", "rosegold", "quest"];
 
@@ -81,6 +85,7 @@ namespace HEI.Agent {
 			int port = DefaultPort;
 			string? theme = null;
 			bool? developerOptions = null, gameMode = null;
+			string? backgroundPace = null;
 			try {
 				using JsonDocument doc = JsonDocument.Parse((json ?? "").TrimStart('\uFEFF'));
 				JsonElement root = doc.RootElement;
@@ -98,10 +103,12 @@ namespace HEI.Agent {
 						developerOptions = dev.GetBoolean();
 					if (root.TryGetProperty("gameMode", out JsonElement game) && game.ValueKind is JsonValueKind.True or JsonValueKind.False)
 						gameMode = game.GetBoolean();
+					if (root.TryGetProperty("backgroundPace", out JsonElement pace) && pace.ValueKind == JsonValueKind.String && pace.GetString() is "gentle" or "full")
+						backgroundPace = pace.GetString();
 				}
 			}
 			catch (JsonException) { /* not JSON: Manor's defaults */ }
-			return new Manor(name, port, theme, developerOptions, gameMode);
+			return new Manor(name, port, theme, developerOptions, gameMode, backgroundPace);
 		}
 
 		/// <summary>At most <paramref name="max"/> characters of <paramref name="text"/>, never half of an emoji's pair.</summary>

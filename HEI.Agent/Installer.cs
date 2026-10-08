@@ -245,12 +245,13 @@ namespace HEI.Agent {
 			Console.WriteLine();
 			Console.WriteLine(openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
-			if (openPage) StartDetached("scan", "--open");
+			// The first scan waits its turn among the manor's agents' first rounds (FirstRound), where there is a manor.
+			if (openPage) StartDetached("scan", "--open", "--wait-turn");
 			else {
 				// The page stays up, browser or not: an update (which stopped the old copy's) or an unattended install
 				// mustn't leave Heiward without one until the next sign-in.
 				if (pageFree) StartDetached("serve", "--no-browser");
-				StartDetached("scan");
+				StartDetached("scan", "--wait-turn");
 			}
 			return 0;
 		}
