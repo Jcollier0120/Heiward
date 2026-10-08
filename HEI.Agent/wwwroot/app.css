@@ -720,6 +720,14 @@ button.dev-item.game-install { width: 100%; text-align: left; font: inherit; col
 /* Whether Heiward scans on its own: paused, its task gone, or Heiward not running at all. */
 .agent-banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--warn-bg); color: var(--warn); padding: 8px 12px; border-radius: 6px; margin: 8px 0 0; }
 .agent-banner.down { background: var(--alert-bg); color: var(--alert); }
+/* Settling into the manor (the Steward's kit 2.43.0): the theme's accent, footsteps walking up to the door in turn. */
+.settling-banner { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--accent-soft); color: var(--fg); padding: 8px 12px; border-radius: 6px; margin: 8px 0 0; }
+.settling-banner > span { flex: 1 1 260px; }
+.settling-mark { flex: none; color: var(--accent-text); fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+.settling-mark .st-step { fill: currentColor; stroke: none; opacity: .2; animation: settling-step 3s linear infinite; }
+.settling-mark .st-s2 { animation-delay: .5s; } .settling-mark .st-s3 { animation-delay: 1s; } .settling-mark .st-s4 { animation-delay: 1.5s; }
+@keyframes settling-step { 0%, 60%, 100% { opacity: .2; } 10%, 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .settling-mark * { animation: none !important; } }
 .agent-banner .btn { padding: 3px 12px; text-decoration: none; }
 /* A drive scanned only when asked: its scan button, on its own page. */
 .rest-strip { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); padding: 8px 12px; border-radius: 6px; margin: 12px 0 0; }

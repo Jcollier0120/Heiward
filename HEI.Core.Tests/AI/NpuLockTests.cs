@@ -54,6 +54,21 @@ public sealed class NpuLockTests : IDisposable {
 	}
 
 	[Fact]
+	public void TheFirstRoundLine_BesideTheNpus_KeepsALiveHolderForHours() {
+		if (!OperatingSystem.IsWindows()) return;
+		string first = Path.Combine(Path.GetDirectoryName(dir)!, "first-rounds");
+		Assert.Equal(first, NpuLock.FirstRoundDirectory);
+		// A live holder (this process) since three hours ago: the NPU's ten minutes would take it over; a first round's turn lasts.
+		Directory.CreateDirectory(first);
+		File.WriteAllText(Path.Combine(first, "owner.json"), $$"""{"pid":{{Environment.ProcessId}},"since":{{DateTimeOffset.UtcNow.AddHours(-3).ToUnixTimeMilliseconds()}}}""");
+		Assert.Throws<TimeoutException>(() => NpuLock.AcquireFirstRound(TimeSpan.FromMilliseconds(400)));
+		Directory.Delete(first, true);
+		using (NpuLock.AcquireFirstRound(TimeSpan.FromSeconds(5)))
+			Assert.True(Directory.Exists(first));
+		Assert.False(Directory.Exists(first));
+	}
+
+	[Fact]
 	public void EvictsAHolderThatDied() {
 		if (!OperatingSystem.IsWindows()) return;
 		Directory.CreateDirectory(dir);

@@ -316,6 +316,31 @@ function renderAgent(s) {
   } else if (a.dev) {
     showAgentBanner('A development build: it doesn\'t scan on a schedule, and keeps apart from the installed Heiward. Scan now works.');
   } else showAgentBanner(null);
+  renderSettling(a.firstRound);
+}
+
+/** The manor's door, footsteps walking up to it: the settling-in drawing, as the Steward's kit draws it. */
+const SETTLING_SVG = '<svg class="settling-mark" viewBox="0 0 44 28" width="44" height="28" aria-hidden="true"><path class="st-house" d="M24 26V11l9-7 9 7v15z"/><path class="st-door" d="M30 26v-7.5a3 3 0 0 1 6 0V26"/><circle class="st-step st-s1" cx="4" cy="23.5" r="1.4"/><circle class="st-step st-s2" cx="10" cy="21.5" r="1.4"/><circle class="st-step st-s3" cx="16" cy="23.5" r="1.4"/><circle class="st-step st-s4" cx="22" cy="21.5" r="1.4"/><path class="st-ground" d="M1 26.5h42"/></svg>';
+
+/**
+ * Settling into the manor: while its first scan waits its turn among the agents' first rounds, or runs (FirstRound),
+ * the words the Steward's kit gives every agent (settlingText), Heiward's first round being a scan of every drive.
+ */
+function renderSettling(first) {
+  const banner = $('settling-banner');
+  const text = first === 'waiting'
+    ? 'Heiward is new to the manor and waits its turn: agents settling in do their first rounds one at a time, so this PC is never swamped. It starts as soon as the one before it has finished.'
+    : first === 'running'
+      ? "Heiward's first scan is under way: scanning every drive for the first time, at full speed while it has its turn. It takes longer than the scans after it, which only look at what changed."
+      : null;
+  banner.classList.toggle('hidden', !text);
+  if (banner.dataset.key === (text || '')) return;
+  banner.dataset.key = text || '';
+  if (!text) { banner.replaceChildren(); return; }
+  banner.innerHTML = SETTLING_SVG;
+  const words = el('span');
+  words.append(el('strong', null, 'Settling into the manor'), ': ' + text);
+  banner.append(words);
 }
 
 /** The pause button's menu: how long to pause for. While paused, the button resumes at once. */

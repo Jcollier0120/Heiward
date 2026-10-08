@@ -430,6 +430,8 @@ namespace HEI.Agent {
 			return new {
 				app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath,
 				lastRunAt = runs.LastRunAt, lastRunOk = runs.LastRunOk, nextRunAt = runs.NextRunAt, runningSince = runs.RunningSince,
+				// Its first scan in the manor's first-round line, as a kit agent's rounds say it (the Steward's kit 2.43.0).
+				firstRound = FirstRound.Now(),
 				// Its page has a tour at #/tour (wwwroot/tour.js), as a kit agent's ping says: Manor's hire flow offers Take the tour.
 				tour = true,
 				// POST /api/pictures/compare's version (PicturesRoute): Heiward compares pictures by look for another agent.
@@ -647,6 +649,8 @@ namespace HEI.Agent {
 				paused = pause != null,
 				pausedUntilUtc = pause?.UntilUtc,
 				pausedText = pause?.Describe(now),
+				// Its first scan in the manor's first-round line (FirstRound): "waiting" or "running", else null.
+				firstRound = FirstRound.Now(),
 				dev = DevBuild.Current,
 				scheduleMissing = !DevBuild.Current && cfg.ScanEveryMinutes > 0 && Scheduler.NextRun() == null,
 				stopping = AgentScanner.IsRunning() && ScanStop.Requested(AgentScanner.ReadStatus()?.StartedUtc ?? DateTime.MinValue),
