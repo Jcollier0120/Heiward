@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.0
+
+**Heiward lends Chamberlain its eye for pictures, so duplicate documents can be found.**
+
+### What's new
+
+- Chamberlain, finding documents that are copies of each other, can now ask Heiward whether two documents hold the same pictures. Two documents are copies only when they have the same words and the same pictures: when a picture was added, removed, swapped, cropped or retouched, they are different versions and are left as they are. Heiward compares the pictures by look, with the same rules it uses for your photos, so a picture that was only saved again or made smaller still counts as the same.
+- It does this only when the PC can spare it: never while you play a game or use a full-screen program, or while Heiward is paused. During a scan, or without AI matching installed, it compares the pictures pixel by pixel alone, which gives the same answer. It reads no files for it and keeps nothing.
+- Nothing changes on Heiward's own page.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.8.0
 
 **Game mode: Heiward looks after gamers' very large files, and its page speaks plainly to everyone who isn't a developer.**
