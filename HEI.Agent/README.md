@@ -347,6 +347,7 @@ While the review page is up, its `GET /api/ping` answers `{"app":"heiward","stor
 | `nextRunAt` | The scan task's next run, from Task Scheduler (a time already past moves on by the interval); `null` while paused, with scans only when asked, with no scan task (a development build has none), or when Task Scheduler's wording isn't a time this PC reads |
 | `runningSince` | When the scan under way started; `null` when none is |
 | `tour` | `true`: the page has a tour at `#/tour` (`wwwroot/tour.js`), as a kit agent's ping says, so Manor's hire flow offers **Take the tour**. The tour is Heiward's own: it also opens by itself the first time the page is opened after setup, with or without Manor |
+| `pictures` | `1`: the page compares pictures by look for another agent, [`POST /api/pictures/compare`](#pictures-compared-by-look-post-apipicturescompare), at this version |
 
 ### Disk space for the manor: `GET /api/disk`
 
@@ -383,6 +384,42 @@ Heiward measures the PC's disks for the whole manor, so the other agents ask it 
 | `caches` | The caches that exist, with `bytes` and `files` (links aren't followed, so nothing is counted twice), and `grewBytes` since the reading before (less than 0 when it shrank; `null` when that reading didn't have it). By the names Reeve's job used: `foundry` (`~\.foundry`), `geniex-cache` (`~\.cache\geniex`), `reeve` (`~\.reeve`), `gradle` (`~\.gradle`), `npm-cache` (`npm_config_cache`, else `%LOCALAPPDATA%\npm-cache`), `pnpm` (`%LOCALAPPDATA%\pnpm`), `android-sdk` (`%LOCALAPPDATA%\Android\Sdk`); and `nuget` (`~\.nuget\packages`) and `pip` (`%LOCALAPPDATA%\pip\Cache`). Where the Claude app is installed, `npm-cache`, `pnpm` and `android-sdk` are also measured in its package's `LocalCache\Local`, as `npm-cache (Claude package)` and so on: AppData writes made from a Claude session land there. |
 | `sameAs` | For a Claude package copy that shows exactly the same files as the cache it's named after (a reading from a process whose AppData is redirected there): that cache's name. It isn't counted twice |
 | `cachesBytes` | All the caches together, each counted once |
+
+### Pictures compared by look: `POST /api/pictures/compare`
+
+Heiward lends its eye for pictures to the other agents on this PC. Chamberlain asks it when it finds two documents with the same words: two documents are duplicates only when they hold the same pictures too, so it takes the pictures out of both (a Word document's or a presentation's images, a PDF's) and, when their bytes differ, asks Heiward whether they are the same pictures. Nothing of this needs Manor or Chamberlain: any program on this PC with the page's token may ask.
+
+Each picture in `a` is paired with its best partner in `b`, one to one, and each pair is judged by the review page's own rules for photos: the same bytes are `identical`; a grayscale match of 99.5% or more is the same picture, pixel for pixel, `smaller` (a lower resolution), `compressed` (fewer bytes) or `resaved`: the plain copies the page pre-ticks. Below that, the AI's cosine says `edited` (97% or more: the same picture with a colour change, a filter, a retouch) or `variant` (a crop, a mirror, another shot). An animated picture is never a plain copy of another (only its first frame is compared). A picture less than 75% alike to every other has no partner, as it would leave a set on the page. The AI model is asked only about the pictures the pixels leave undecided, on the device the scans use and in its turn in the NPU's (or the graphics card's) line, behind a scan or another program's work; its session closes after a minute without a question.
+
+The request is JSON, every picture's bytes as base64, at most 64 pictures a side and 32 MB in all; anything Windows decodes is read (JPEG, PNG, GIF, BMP, TIFF, and WebP, HEIC and the rest where Windows has the codec):
+
+```json
+{ "a": ["/9j/4AAQSkZJRg…", "iVBORw0KGgo…"], "b": ["iVBORw0KGgo…", "/9j/4AAQSkZJRg…"] }
+```
+
+```json
+{
+  "same": true,
+  "pairs": [
+    { "a": 0, "b": 1, "relation": "compressed", "similarity": 0.9987 },
+    { "a": 1, "b": 0, "relation": "identical", "similarity": 1 }
+  ],
+  "unmatchedA": [],
+  "unmatchedB": [],
+  "undecodable": { "a": [], "b": [] },
+  "device": null
+}
+```
+
+| Field | |
+|---|---|
+| `same` | `true` only when both sets hold as many pictures, every one decoded and paired, and every pair is a plain copy (`identical`, `smaller`, `compressed` or `resaved`). Two empty sets are the same |
+| `pairs` | Each pair, by the pictures' indexes in `a` and `b`: `relation` is what one is to the other, as the review page says it (of the two, the one Heiward would keep is the higher resolution, then the larger file), and `similarity` (0 to 1) how alike they are: the grayscale match, or the AI's cosine for `edited` and `variant` |
+| `unmatchedA`, `unmatchedB` | The decoded pictures with no partner on the other side |
+| `undecodable` | The pictures Windows couldn't decode (not a picture, a codec this PC lacks, or over 64 million pixels), by side |
+| `device` | Where the AI model ran: `"NPU"`, `"GPU"` or `"CPU"`; `null` when the pixels decided everything and it wasn't asked |
+
+It needs the page's token, as every POST does (another program reads it from the page's `<meta name="agent-token">`), and sends no `Origin` or the page's own. A request with no token gets 403; one over the limits, or that isn't such JSON, 400 with `{"error": …}`. While Heiward's model is busy or shouldn't run, it answers 503 with `{"error": …}` and a `Retry-After` header (seconds): a scan is running, a full-screen program or a game keeps the graphics card busy (as a scan steps back for), Heiward is paused, AI matching isn't installed, or the model couldn't run just now. It reads no file, keeps nothing, writes nothing but log lines, and never starts a scan or changes Heiward's settings. One comparison runs at a time; `GET /api/ping`'s `pictures` is the route's version.
 
 ## The review page
 

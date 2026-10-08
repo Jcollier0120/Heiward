@@ -220,17 +220,73 @@ namespace HEI.Core.Utils {
 			if (!IsAvailable) return Fail("not Windows");
 			nint factory = GetFactory();
 			if (factory == 0) return Fail("no WIC factory");
-			nint decoder = 0, frame = 0, bitmap = 0;
+			nint decoder = 0;
 			try {
 				int hr;
 				fixed (char* p = path)
 					if ((hr = Call(factory, Factory_CreateDecoderFromFilename, (nint)p, 0, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) < 0)
 						return Fail("no codec (CreateDecoderFromFilename)", hr);
+				return DecodeFirstFrame(factory, decoder, 0, out gray, out rgb, out width, out height);
+			}
+			catch (Exception e) when (e is not OutOfMemoryException) {
+				return Fail($"{e.GetType().Name}: {e.Message}");
+			}
+			finally {
+				Release(decoder);
+			}
+		}
+
+		[DllImport("shlwapi.dll")] static extern nint SHCreateMemStream(byte* init, uint size);
+		const int Factory_CreateDecoderFromStream = 4, Decoder_GetFrameCount = 12;
+
+		/// <summary>
+		/// <see cref="TryDecode(string, out byte[], out byte[], out int, out int)"/> for a picture held in memory (one taken
+		/// out of a document, say): nothing is written to disk. <paramref name="frames"/> is how many frames it holds (more
+		/// than one: an animation, of which only the first is decoded). A picture of more than <paramref name="maxPixels"/>
+		/// isn't decoded: a few bytes can claim a picture too big to decode.
+		/// </summary>
+		internal static bool TryDecode(byte[] data, long maxPixels, out byte[]? gray, out byte[]? rgb, out int width, out int height, out int frames) {
+			gray = null; rgb = null; width = height = frames = 0;
+			lastFailure = null;
+			if (!IsAvailable) return Fail("not Windows");
+			if (data.Length == 0) return Fail("no bytes");
+			nint factory = GetFactory();
+			if (factory == 0) return Fail("no WIC factory");
+			nint stream = 0, decoder = 0;
+			try {
+				fixed (byte* p = data)
+					stream = SHCreateMemStream(p, (uint)data.Length); // a copy: the stream owns its bytes
+				if (stream == 0) return Fail("SHCreateMemStream");
+				int hr;
+				if ((hr = ((delegate* unmanaged[Stdcall]<nint, nint, Guid*, int, nint*, int>)Slot(factory, Factory_CreateDecoderFromStream))(
+						factory, stream, null, WICDecodeMetadataCacheOnDemand, &decoder)) < 0)
+					return Fail("no codec (CreateDecoderFromStream)", hr);
+				uint count;
+				frames = ((delegate* unmanaged[Stdcall]<nint, uint*, int>)Slot(decoder, Decoder_GetFrameCount))(decoder, &count) >= 0 ? (int)count : 1;
+				return DecodeFirstFrame(factory, decoder, maxPixels, out gray, out rgb, out width, out height);
+			}
+			catch (Exception e) when (e is not OutOfMemoryException) {
+				return Fail($"{e.GetType().Name}: {e.Message}");
+			}
+			finally {
+				Release(decoder);
+				Release(stream);
+			}
+		}
+
+		/// <summary>The decoder's first frame as the AI and gray frames (see <see cref="TryDecode(string, out byte[], out byte[], out int, out int)"/>); <paramref name="maxPixels"/> 0: any size.</summary>
+		static bool DecodeFirstFrame(nint factory, nint decoder, long maxPixels, out byte[]? gray, out byte[]? rgb, out int width, out int height) {
+			gray = null; rgb = null; width = height = 0;
+			nint frame = 0, bitmap = 0;
+			try {
+				int hr;
 				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)Slot(decoder, Decoder_GetFrame))(decoder, 0, &frame)) < 0)
 					return Fail("GetFrame", hr);
 				uint w, h;
 				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint*, uint*, int>)Slot(frame, Source_GetSize))(frame, &w, &h)) < 0 || w == 0 || h == 0)
 					return Fail("GetSize", hr);
+				if (maxPixels > 0 && (long)w * h > maxPixels)
+					return Fail($"too big ({w} × {h})");
 				width = (int)w;
 				height = (int)h;
 				Orientation orientation = IsHeif(decoder) ? Orientation.None : ReadOrientation(frame); // the HEIF codec applies irot/imir itself
@@ -252,13 +308,9 @@ namespace HEI.Core.Utils {
 				gray = GrayBytesUtils.FromRgb224(rgb);
 				return true;
 			}
-			catch (Exception e) when (e is not OutOfMemoryException) {
-				return Fail($"{e.GetType().Name}: {e.Message}");
-			}
 			finally {
 				Release(bitmap);
 				Release(frame);
-				Release(decoder);
 			}
 		}
 

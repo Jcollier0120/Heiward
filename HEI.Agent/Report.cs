@@ -369,7 +369,7 @@ namespace HEI.Agent {
 		static (DuplicateItem, string) PickKeeper(List<DuplicateItem> items) => items[0].IsImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
 
 		/// <summary>The relations that are the same picture, pixel for pixel: the ones pre-ticked.</summary>
-		static bool IsPlainCopy(string relation) => relation is "identical" or "smaller" or "compressed" or "resaved";
+		internal static bool IsPlainCopy(string relation) => relation is "identical" or "smaller" or "compressed" or "resaved";
 
 		static ReportGroup BuildGroup(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
 			bool isImage = items[0].IsImage;
@@ -439,14 +439,31 @@ namespace HEI.Agent {
 			// still taken from one, are not copies of each other.
 			if (MayBeAnimated(i.Path) || MayBeAnimated(keep.Path))
 				return "variant";
-			if (fingerprints.GrayPercent(i.Path, keep.Path) is float gray && gray >= PlainCopyPercent) {
-				if (i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt)
+			return ByLook(fingerprints.GrayPercent(i.Path, keep.Path), () => fingerprints.AiPercent(i.Path, keep.Path),
+				smaller: i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt,
+				shorterCut: !i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds),
+				fewerBytes: i.SizeLong < keep.SizeLong);
+		}
+
+		/// <summary>
+		/// The last steps of <see cref="Relation"/>, by look alone, for two pictures that aren't the same bytes and
+		/// neither of which is animated: a grayscale match (<paramref name="gray"/>, percent) at or above
+		/// <see cref="PlainCopyPercent"/> is the same picture, pixel for pixel (<c>smaller</c>, <c>compressed</c> or
+		/// <c>resaved</c>; a shorter cut of a video is a <c>variant</c>); below it, the AI's cosine (<paramref name="ai"/>,
+		/// percent, asked only then) says <c>edited</c> (≥ <see cref="SamePictureAiPercent"/>) or <c>variant</c>. Also how
+		/// Heiward compares two pictures taken out of documents for another agent (<see cref="PictureCompare"/>).
+		/// </summary>
+		/// <param name="smaller">The file has a lower resolution than the kept one.</param>
+		/// <param name="fewerBytes">The file is smaller on disk than the kept one.</param>
+		internal static string ByLook(float? gray, Func<float?> ai, bool smaller, bool shorterCut, bool fewerBytes) {
+			if (gray is float g && g >= PlainCopyPercent) {
+				if (smaller)
 					return "smaller";
-				if (!i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds))
+				if (shorterCut)
 					return "variant"; // a shorter cut of the video is not a plain copy
-				return i.SizeLong < keep.SizeLong ? "compressed" : "resaved";
+				return fewerBytes ? "compressed" : "resaved";
 			}
-			return fingerprints.AiPercent(i.Path, keep.Path) >= SamePictureAiPercent ? "edited" : "variant";
+			return ai() >= SamePictureAiPercent ? "edited" : "variant";
 		}
 
 		static readonly string[] EditSuffixes = { "_original", "-original", " (original)", "-edited", "_edited", " (edited)" };

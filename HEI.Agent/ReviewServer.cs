@@ -121,6 +121,10 @@ namespace HEI.Agent {
 				ctx.Response.Headers.CacheControl = "no-store";
 				return Results.Json(DiskWatch.Answer(DiskReading.Load()));
 			});
+			// Heiward's eye for pictures, lent to another agent on this PC (Chamberlain, finding duplicate documents): are these
+			// two sets of pictures the same pictures? Behind the token like every POST; 503 with Retry-After while the model is
+			// busy or shouldn't run. It reads no file, keeps nothing, and never starts a scan (PicturesRoute).
+			app.MapPost("/api/pictures/compare", (Func<HttpContext, Task<IResult>>)(ctx => PicturesRoute.HandleAsync(ctx, ScanBusy)));
 			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
 			app.MapGet("/api/state", (bool? seen) => {
 				if (seen == true) ScanPace.MarkPageSeen();
@@ -405,6 +409,7 @@ namespace HEI.Agent {
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
 			_ = DiskWatch.RunAsync(app.Lifetime.ApplicationStopping);
+			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
 			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
 			await app.WaitForShutdownAsync(ct);
@@ -414,7 +419,8 @@ namespace HEI.Agent {
 		/// <summary>
 		/// /api/ping's answer. exe: whose page this is. Copies share a port (all but a development build), so the
 		/// installer asks another copy's to close (/api/quit). Then the scans at a glance, for Manor's employee cards
-		/// (<see cref="RunTimes"/>): lastRunAt, lastRunOk, nextRunAt and runningSince, UTC times or null.
+		/// (<see cref="RunTimes"/>): lastRunAt, lastRunOk, nextRunAt and runningSince, UTC times or null. pictures: the version of
+		/// /api/pictures/compare (<see cref="PicturesRoute"/>), for an agent that asks Heiward to compare pictures.
 		/// </summary>
 		internal static object Ping(AgentConfig cfg) {
 			RunTimes runs;
@@ -426,6 +432,8 @@ namespace HEI.Agent {
 				lastRunAt = runs.LastRunAt, lastRunOk = runs.LastRunOk, nextRunAt = runs.NextRunAt, runningSince = runs.RunningSince,
 				// Its page has a tour at #/tour (wwwroot/tour.js), as a kit agent's ping says: Manor's hire flow offers Take the tour.
 				tour = true,
+				// POST /api/pictures/compare's version (PicturesRoute): Heiward compares pictures by look for another agent.
+				pictures = PictureCompare.Version,
 			};
 		}
 
