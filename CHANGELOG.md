@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.7.47
+
+**It carries the Steward's kit 2.39.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.39.0: Every agent gets Manor's Developer options switch, and the kit's own parts of every page obey it.
+
+### Before you update
+
+- Nothing: it updates itself as usual. On a PC where Manor's Developer options are off, or with no Manor, each agent's Settings page stops showing the settings file's path and the technical lines in Where its work runs. Turn Developer options on in Manor to see them again.
+
 ## 1.7.46
 
 **It carries the Steward's kit 2.36.1: the parts every agent of the manor shares.**
