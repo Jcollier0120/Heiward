@@ -16,6 +16,18 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 - Nothing: it updates itself as usual. A PC where Heiward has already scanned is never held up.
 
+## 1.9.2
+
+**It carries the Steward's kit 2.41.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.41.0: A reranker the keeper sets up and keeps: a fourth serve kind, `rerank`.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.1
 
 **It carries the Steward's kit 2.40.0: the parts every agent of the manor shares.**
