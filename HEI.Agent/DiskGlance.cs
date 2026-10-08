@@ -18,7 +18,7 @@ using System.Runtime.InteropServices;
 using HEI.Core.Utils;
 
 namespace HEI.Agent {
-	/// <summary>One part of the used space: photos, videos, developer files, the Recycle Bin, everything else.</summary>
+	/// <summary>One part of the used space: photos, videos, developer files, games, the Recycle Bin, everything else.</summary>
 	sealed record GlanceKind(string Key, string Label, long Bytes, int Files);
 
 	/// <summary>One file type among the photos and videos the last scan found: "mp4", a video.</summary>
@@ -27,9 +27,9 @@ namespace HEI.Agent {
 	/// <summary>A drive that's nearly full: under a tenth of it free, as its card's red bar says.</summary>
 	sealed record GlanceLow(string Root, string Name, long FreeBytes, double UsedShare);
 
-	/// <summary>What can be freed now: the duplicates to review, the developer files ticked, the Recycle Bin.</summary>
-	sealed record GlanceReclaim(long Duplicates, long Developer, long RecycleBin) {
-		public long Total => Duplicates + Developer + RecycleBin;
+	/// <summary>What can be freed now: the duplicates to review, the developer files ticked, the Recycle Bin, the game leftovers ticked.</summary>
+	sealed record GlanceReclaim(long Duplicates, long Developer, long RecycleBin, long Games = 0) {
+		public long Total => Duplicates + Developer + RecycleBin + Games;
 	}
 
 	/// <param name="Drives">The drives counted: this PC's own (fixed and USB), ready.</param>
@@ -46,11 +46,11 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// This PC's drives in one card, from what the page already has: the drive cards' sizes, the last
-		/// scan's photos and videos per drive and type, the developer check's totals and the Recycle Bin.
-		/// Code adds it up; nothing is walked for it.
+		/// scan's photos and videos per drive and type, the developer check's totals, the games check's (the installed games
+		/// and what they left, with game mode on) and the Recycle Bin. Code adds it up; nothing is walked for it.
 		/// </summary>
 		public static DiskGlance Build(IReadOnlyList<DriveCard> drives, ScanIndex? index, long developerBytes, long developerTicked,
-			long duplicatesBytes, long recycleBinBytes) {
+			long duplicatesBytes, long recycleBinBytes, long gamesBytes = 0, long gamesTicked = 0) {
 			var local = drives.Where(d => d.Type is "fixed" or "removable" && d.TotalBytes > 0).ToList();
 			long total = local.Sum(d => d.TotalBytes), free = local.Sum(d => d.FreeBytes), used = total - free;
 
@@ -74,6 +74,7 @@ namespace HEI.Agent {
 				new("videos", "Videos", types.Where(t => t.Kind == "video").Sum(t => t.Bytes), types.Where(t => t.Kind == "video").Sum(t => t.Files)),
 				new("photos", "Photos", types.Where(t => t.Kind == "photo").Sum(t => t.Bytes), types.Where(t => t.Kind == "photo").Sum(t => t.Files)),
 				new("developer", "Developer files", developerBytes, 0),
+				new("games", "Games", gamesBytes, 0),
 				new("bin", "Recycle Bin", recycleBinBytes, 0),
 			};
 			kinds = kinds.Where(k => k.Bytes > 0).OrderByDescending(k => k.Bytes).ToList();
@@ -95,7 +96,7 @@ namespace HEI.Agent {
 				.OrderByDescending(d => d.UsedShare).ToList();
 
 			return new DiskGlance(local.Count, drives.Count(d => d.Type == "network"), total, used, free, kinds, shown, others, typed,
-				low, new GlanceReclaim(duplicatesBytes, developerTicked, recycleBinBytes), index?.ScannedAtUtc);
+				low, new GlanceReclaim(duplicatesBytes, developerTicked, recycleBinBytes, gamesTicked), index?.ScannedAtUtc);
 		}
 
 		/// <summary>"photo" or "video", by Heiward's own lists of the types it scans; anything else added in the settings, "other".</summary>

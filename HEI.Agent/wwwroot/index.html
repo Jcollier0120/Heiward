@@ -76,6 +76,12 @@
       <div id="dev-card"></div>
     </section>
 
+    <!-- Game mode: the Games area's card (app.js, renderGamesCard). -->
+    <section id="games-section" class="hidden" data-tour="games">
+      <h2>Games</h2>
+      <div id="games-card"></div>
+    </section>
+
     <section id="hotspots-section" data-tour="hotspots">
       <h2>Where the duplicates are</h2>
       <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
@@ -115,6 +121,12 @@
     </section>
 
     <section>
+      <h2>Game mode</h2>
+      <div id="gamemode-card"></div>
+    </section>
+
+    <!-- Hidden under Manor while its Developer options are off (app.js, renderDevModeCard). -->
+    <section id="devmode-section">
       <h2>Developer mode</h2>
       <div id="devmode-card"></div>
     </section>
@@ -142,6 +154,14 @@
       <div class="tree" id="dev-tree"></div>
     </aside>
     <section class="content" id="dev-content"></section>
+  </main>
+
+  <main id="gamesview" class="view split hidden">
+    <aside class="navpane" id="games-nav" aria-label="Games">
+      <button class="navpane-toggle" id="games-nav-toggle" aria-expanded="false">Games, drives and kinds</button>
+      <div class="tree" id="games-tree"></div>
+    </aside>
+    <section class="content" id="games-content"></section>
   </main>
 
   <main id="folder" class="view split hidden">

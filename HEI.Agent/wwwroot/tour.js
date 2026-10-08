@@ -17,6 +17,8 @@ const TOUR_PARTS = [
     'A card per drive, as File Explorer has them. Open one to walk its folders and see the copies in each. Right-click a folder to include it or leave it out, or a drive to scan it only when you ask, so an archive disk can sleep.'],
   ['dev', 'Developer area',
     'Your repositories\' open pull requests, and what development tools recreate: build outputs, finished worktrees, package caches and old temp files.'],
+  ['games', 'Games',
+    'Your games by launcher and drive, and what they leave behind: leftovers of uninstalled games, download caches, shader caches and crash dumps. What you remove goes to the Recycle Bin.'],
   ['hotspots', 'Where the duplicates are',
     'The folders where cleaning up frees the most. Only identical files and pixel-level copies are ticked for you: look-alikes are your call.'],
   ['history', 'History',
@@ -117,16 +119,29 @@ function drawTour() {
       el('p', null, 'It lists what it finds for you to review. Nothing is removed until you say so, and what you tick goes to the Recycle Bin.'));
   } else if (tourStep === 1) {
     title.textContent = 'Your choices';
-    body.append(el('p', null, 'It works as it is: every fixed drive, leaving out Windows, programs, games, app data and code. Three things are yours to decide, now or any time in Settings:'));
+    body.append(el('p', null, 'It works as it is: every fixed drive, leaving out Windows, programs, games, app data and code. A few things are yours to decide, now or any time in Settings:'));
     const list = el('div', 'tour-choices');
-    // Developer mode: its switch here, unless Manor's Developer options decide it for every agent.
-    const dev = el('div', 'auto-row');
-    const devText = el('div', 'auto-text');
-    devText.append(el('div', 'auto-title', 'Developer mode'));
-    if (state.dev.manor) devText.append(el('div', 'muted small', state.dev.manor.note + '.'));
-    else dev.append(toggleSwitch(state.dev.enabled, 'Developer mode', settingsBusy, async (on) => { await saveSettings({ developerMode: on }); tourParts = []; drawTour(); }));
-    devText.append(el('div', 'muted small', 'For developers: a Developer area with your repositories\' pull requests, and what development tools recreate, to clean up.'));
-    dev.append(devText);
+    // Game mode: its switch here, unless Manor decides it.
+    const game = el('div', 'auto-row');
+    const gameText = el('div', 'auto-text');
+    gameText.append(el('div', 'auto-title', 'Game mode'));
+    if (state.games.manor) gameText.append(el('div', 'muted small', state.games.manor.note + '.'));
+    else game.append(toggleSwitch(state.games.enabled, 'Game mode', settingsBusy, async (on) => { await saveSettings({ gameMode: on }); tourParts = []; drawTour(); }));
+    gameText.append(el('div', 'muted small', 'For gamers: a Games area with your games by launcher and drive, and what they leave behind, to clean up.'));
+    game.append(gameText);
+    list.append(game);
+    // Developer mode: its switch here, unless Manor's Developer options decide it for every agent. While they turn it off,
+    // nothing of it shows.
+    if (!(state.dev.manor && !state.dev.enabled)) {
+      const dev = el('div', 'auto-row');
+      const devText = el('div', 'auto-text');
+      devText.append(el('div', 'auto-title', 'Developer mode'));
+      if (state.dev.manor) devText.append(el('div', 'muted small', state.dev.manor.note + '.'));
+      else dev.append(toggleSwitch(state.dev.enabled, 'Developer mode', settingsBusy, async (on) => { await saveSettings({ developerMode: on }); tourParts = []; drawTour(); }));
+      devText.append(el('div', 'muted small', 'For developers: a Developer area with your repositories\' pull requests, and what development tools recreate, to clean up.'));
+      dev.append(devText);
+      list.append(dev);
+    }
     const scope = el('div', 'auto-row');
     const scopeText = el('div', 'auto-text');
     scopeText.append(el('div', 'auto-title', 'What it scans'), el('div', 'muted small', 'Right-click a folder on the page to include it or leave it out, or a drive to scan it only when you ask.'));
@@ -135,7 +150,7 @@ function drawTour() {
     const autoText = el('div', 'auto-text');
     autoText.append(el('div', 'auto-title', 'Automatic cleanup'), el('div', 'muted small', 'Off until you turn it on in Settings, once you trust what it suggests: then plain copies go by themselves a few days after they are listed.'));
     auto.append(autoText);
-    list.append(dev, scope, auto);
+    list.append(scope, auto);
     body.append(list);
   } else {
     const part = tourParts[tourStep - 2];

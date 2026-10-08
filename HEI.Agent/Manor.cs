@@ -34,7 +34,11 @@ namespace HEI.Agent {
 	/// Manor's Developer options: its settings.json's "developerOptions", true or false; null when it has none, or
 	/// something else there, and then Heiward's own switch decides.
 	/// </param>
-	sealed record Manor(string Name, int Port, string? Theme, bool? DeveloperOptions = null) {
+	/// <param name="GameMode">
+	/// Game mode, when Manor passes it down: its settings.json's "gameMode", true or false; null when it has none (Manor
+	/// doesn't write it yet), or something else there, and then Heiward's own switch decides (<see cref="HEI.Agent.GameMode"/>).
+	/// </param>
+	sealed record Manor(string Name, int Port, string? Theme, bool? DeveloperOptions = null, bool? GameMode = null) {
 		/// <summary>The themes Manor can choose besides Match Windows ("system"): the same as theme.js and app.css have.</summary>
 		public static readonly IReadOnlyList<string> Themes = ["light", "dark", "arcade", "onyx", "carbon", "tinsel", "rosegold", "quest"];
 
@@ -76,7 +80,7 @@ namespace HEI.Agent {
 			string name = DefaultName;
 			int port = DefaultPort;
 			string? theme = null;
-			bool? developerOptions = null;
+			bool? developerOptions = null, gameMode = null;
 			try {
 				using JsonDocument doc = JsonDocument.Parse((json ?? "").TrimStart('\uFEFF'));
 				JsonElement root = doc.RootElement;
@@ -92,10 +96,12 @@ namespace HEI.Agent {
 					// Only true or false: anything else ("on", 1, null) says nothing, as if it weren't there.
 					if (root.TryGetProperty("developerOptions", out JsonElement dev) && dev.ValueKind is JsonValueKind.True or JsonValueKind.False)
 						developerOptions = dev.GetBoolean();
+					if (root.TryGetProperty("gameMode", out JsonElement game) && game.ValueKind is JsonValueKind.True or JsonValueKind.False)
+						gameMode = game.GetBoolean();
 				}
 			}
 			catch (JsonException) { /* not JSON: Manor's defaults */ }
-			return new Manor(name, port, theme, developerOptions);
+			return new Manor(name, port, theme, developerOptions, gameMode);
 		}
 
 		/// <summary>At most <paramref name="max"/> characters of <paramref name="text"/>, never half of an emoji's pair.</summary>

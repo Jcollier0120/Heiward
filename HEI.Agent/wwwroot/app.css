@@ -480,6 +480,7 @@ button { font: inherit; color: inherit; }
 .k-videos { background: var(--drive-bar); }
 .k-photos { background: var(--folder); }
 .k-developer { background: var(--ok); }
+.k-games { background: var(--warn); }
 .k-bin { background: var(--alert); }
 .k-other { background: var(--faint); }
 .k-free { background: var(--line); }
@@ -583,6 +584,9 @@ button { font: inherit; color: inherit; }
 .dev-card { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; max-width: 760px; }
 .dev-card svg, .folder-head > svg.dev { width: 40px; height: 40px; flex: none; }
 .dev-intro { color: var(--muted); font-size: 12px; max-width: 760px; }
+/* The Games area: what removing a thing means, under it; an installed game's row opens its page. */
+.game-removing { color: var(--fg); margin-top: 2px; }
+button.dev-item.game-install { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 .chip-link { cursor: pointer; font: inherit; font-size: 12px; }
 .chip-link:hover { border-color: var(--accent); color: var(--fg); }
 

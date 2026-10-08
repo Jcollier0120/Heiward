@@ -234,6 +234,7 @@ status.SetAction(async (r, _) => {
 	if (cfg.ExcludeExtensions.Count > 0) Console.WriteLine($"Skipped types: {string.Join(" ", cfg.ExcludeExtensions)}");
 	Console.WriteLine($"Schedule: {Scheduler.Describe(cfg)}{(cfg.ScanEveryMinutes > 0 && cfg.ScanOnBattery ? $", on battery too above {cfg.MinBatteryPercent}% unless Battery Saver is on" : "")}");
 	Console.WriteLine($"Developer mode: {DevMode.Now(cfg).Describe()}");
+	Console.WriteLine($"Game mode: {GameMode.Now(cfg).Describe()}");
 	if (AiStatus.Load() is { } ai) Console.WriteLine($"AI: {ai.Describe()} ({(ai.Accelerator != null ? ai.Accelerator + ", " : "")}checked by the {ai.Source}, {ai.CheckedAtUtc.ToLocalTime():g})");
 	IReadOnlyList<GpuAdapter> cards = GpuAdapters.List();
 	foreach (var f in AiStatus.Failures(cards))
@@ -267,23 +268,28 @@ var autoDuplicates = new Option<string?>("--duplicates") { Description = "on or 
 autoDuplicates.AcceptOnlyFromAmong("on", "off");
 var autoDeveloper = new Option<string?>("--developer") { Description = "on or off: delete developer leftovers by itself (merged branches, temp files and crash dumps, build outputs and worktrees of stale projects, unused emulator images)." };
 autoDeveloper.AcceptOnlyFromAmong("on", "off");
+var autoGames = new Option<string?>("--games") { Description = "on or off: move what games leave behind to the Recycle Bin by itself, with game mode on (crash dumps, launchers' download caches, leftovers and shader caches of uninstalled games)." };
+autoGames.AcceptOnlyFromAmong("on", "off");
 var autoDays = new Option<int?>("--after-days") { Description = $"Days something is listed before it's cleaned (0 to {AutoCleanConfig.MaxAfterDays}; default 3)." };
-var autoCmd = new Command("auto", "Automatic cleanup: show what it will clean and when, or turn it on or off (the review page has the same switches).") { autoDuplicates, autoDeveloper, autoDays };
+var autoCmd = new Command("auto", "Automatic cleanup: show what it will clean and when, or turn it on or off (the review page has the same switches).") { autoDuplicates, autoDeveloper, autoGames, autoDays };
 autoCmd.SetAction(r => {
 	var cfg = AgentConfig.Load();
-	string? duplicates = r.GetValue(autoDuplicates), developer = r.GetValue(autoDeveloper);
+	string? duplicates = r.GetValue(autoDuplicates), developer = r.GetValue(autoDeveloper), games = r.GetValue(autoGames);
 	int? days = r.GetValue(autoDays);
-	if (duplicates != null || developer != null || days != null) {
+	if (duplicates != null || developer != null || games != null || days != null) {
 		var next = new AutoCleanConfig {
 			Duplicates = duplicates != null ? duplicates == "on" : cfg.AutoClean.Duplicates,
 			Developer = developer != null ? developer == "on" : cfg.AutoClean.Developer,
 			DeveloperKinds = cfg.AutoClean.DeveloperKinds,
+			Games = games != null ? games == "on" : cfg.AutoClean.Games,
+			GameKinds = cfg.AutoClean.GameKinds,
 			AfterDays = days ?? cfg.AutoClean.AfterDays,
 		}.Normalized();
 		cfg.AutoClean = next;
 		cfg.Save();
 		AutoCleanState.Update(s => AutoCleaner.SyncSince(next, s, DateTime.UtcNow));
-		AgentPaths.AppendLog($"automatic cleanup set from the command line: duplicates {(next.Duplicates ? "on" : "off")}, developer {(next.Developer ? "on" : "off")}, after {next.AfterDays} day(s)");
+		AgentPaths.AppendLog($"automatic cleanup set from the command line: duplicates {(next.Duplicates ? "on" : "off")}, developer {(next.Developer ? "on" : "off")}, " +
+			$"games {(next.Games ? "on" : "off")}, after {next.AfterDays} day(s)");
 	}
 	PrintAutoClean(cfg, detail: true);
 	return 0;
@@ -331,6 +337,33 @@ dev.SetAction(r => {
 	return 0;
 });
 root.Subcommands.Add(dev);
+
+var gamesScan = new Option<bool>("--scan") { Description = "Check again now (otherwise: show the last check)." };
+var gamesCmd = new Command("games", "Game mode: installed games, and what games and their launchers leave behind (leftovers, download caches, shader caches, crash dumps).") { gamesScan };
+gamesCmd.SetAction(r => {
+	var cfg = AgentConfig.Load();
+	// Manor, when its settings say "gameMode"; else Heiward's own switch.
+	if (GameMode.Now(cfg) is { On: false } off) {
+		Console.Error.WriteLine(off.CommandOffText);
+		return 1;
+	}
+	GameReport? report = r.GetValue(gamesScan) ? GameScan.RunAndSave(cfg) ?? GameReport.Load() : GameReport.Load();
+	if (report == null) {
+		Console.WriteLine("No games check yet: run 'hei games --scan'.");
+		return 0;
+	}
+	Console.WriteLine($"Checked {report.ScannedAtUtc.ToLocalTime():g} in {report.DurationSec:N0} s: {report.Games.Count} installed game(s), " +
+		$"in {(report.Launchers.Count == 0 ? "no launcher" : string.Join(", ", report.Launchers.Select(GameLaunchers.Name)))}.");
+	foreach (GameInstall g in report.Games.Take(10))
+		Console.WriteLine($"  {Format.Bytes(g.Bytes),9}  {g.Name} ({GameLaunchers.Name(g.Launcher)}){(g.LastPlayedUtc is { } p ? $", last played {p.ToLocalTime():d}" : "")}");
+	foreach (GameCategory c in report.Categories) {
+		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked");
+		foreach (GameItem i in c.Items.Take(8))
+			Console.WriteLine($"  {(i.Info ? "   " : i.Suggested ? "[x]" : i.Blocked != null ? "[-]" : "[ ]")} {Format.Bytes(i.Bytes),9}  {i.Name}  {i.Detail}{(i.Blocked != null ? $" ({i.Blocked})" : "")}");
+	}
+	return 0;
+});
+root.Subcommands.Add(gamesCmd);
 
 var count = new Option<bool>("--count") { Description = "List the drives as a scan would (every disk at once, slowest first; names and attributes only, no file is opened), with each disk's time, and count the photos and videos per folder." };
 var scope = new Command("scope", "Show what a scan looks at and what it leaves out.") { count };
@@ -419,18 +452,19 @@ static int PendingCount(string stamp) {
 /// <summary>Automatic cleanup's settings and what's coming; with <paramref name="detail"/>, thing by thing.</summary>
 static void PrintAutoClean(AgentConfig cfg, bool detail) {
 	AutoCleanConfig a = cfg.AutoClean;
-	if (!a.Duplicates && !a.Developer) {
-		Console.WriteLine("Automatic cleanup: off" + (detail ? " ('hei auto --duplicates on', '--developer on', or the switches on the review page)" : ""));
+	if (!a.Duplicates && !a.Developer && !a.Games) {
+		Console.WriteLine("Automatic cleanup: off" + (detail ? " ('hei auto --duplicates on', '--developer on', '--games on', or the switches on the review page)" : ""));
 		return;
 	}
-	Console.WriteLine($"Automatic cleanup: duplicates {(a.Duplicates ? "on" : "off")}, developer {(a.Developer ? $"on ({string.Join(", ", a.DeveloperKinds)})" : "off")}; " +
-		$"things wait {a.AfterDays} day(s) after they're first listed");
+	Console.WriteLine($"Automatic cleanup: duplicates {(a.Duplicates ? "on" : "off")}, developer {(a.Developer ? $"on ({string.Join(", ", a.DeveloperKinds)})" : "off")}, " +
+		$"games {(a.Games ? $"on ({string.Join(", ", a.GameKinds)})" : "off")}; things wait {a.AfterDays} day(s) after they're first listed");
 	DateTime now = DateTime.UtcNow;
 	Report? report = Report.Load();
 	DevReport? dev = DevMode.Now(cfg).On ? ManorRoles.Now().View(DevReport.Load()) : null;
+	GameReport? games = GameMode.Now(cfg).On ? GameReport.Load() : null;
 	var decisions = DecisionStore.Load();
 	AutoCleanState s = AutoCleanState.Load();
-	AutoPlan plan = AutoCleaner.Plan(cfg, report, dev, decisions, s, now);
+	AutoPlan plan = AutoCleaner.Plan(cfg, report, dev, decisions, s, now, games);
 	string When(DateTime due) => due <= now ? "due now" : "from " + due.ToLocalTime().ToString("ddd d MMM HH:mm");
 	void Summary(string what, IEnumerable<AutoPlanEntry> entries) {
 		var list = entries.ToList();
@@ -445,6 +479,7 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 	Summary("Sets of copies", plan.Groups.Values);
 	Summary("Developer items", plan.DevItems.Values);
 	Summary("Repositories with merged branches", plan.Repos.Values);
+	Summary("Game leftovers", plan.GameItems.Values);
 	if (detail) {
 		foreach (var (key, e) in plan.Groups.OrderBy(kv => kv.Value.DueUtc ?? DateTime.MaxValue).Take(30)) {
 			ReportGroup g = report!.Groups.First(x => x.Key == key);
@@ -464,6 +499,12 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 		}
 		if (plan.DevItems.Count > 0 || plan.Repos.Count > 0)
 			Console.WriteLine("  Developer items are cleaned right after the daily developer check once they're due.");
+		var gameItems = games?.Items.ToDictionary(i => i.Id) ?? new();
+		foreach (var (id, e) in plan.GameItems.OrderBy(kv => kv.Value.DueUtc ?? DateTime.MaxValue).Take(30))
+			Console.WriteLine($"    {(e.DueUtc is { } d ? When(d) : e.Held ? "held" : "waits"),-22} {gameItems[id].Name} ({gameItems[id].Kind}, {Format.Bytes(e.Bytes)})" +
+				(e.DueUtc == null ? ": " + (e.Held ? "you said leave it" : e.Reason) : ""));
+		if (plan.GameItems.Count > 0)
+			Console.WriteLine("  Game leftovers go to the Recycle Bin right after the daily games check once they're due.");
 	}
 	if (s.Runs.FirstOrDefault() is { } last)
 		Console.WriteLine($"  Last run: {last.AtUtc.ToLocalTime():g}: {last.Describe("; ")}");

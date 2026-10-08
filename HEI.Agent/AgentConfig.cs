@@ -247,6 +247,13 @@ namespace HEI.Agent {
 		/// Developer options set, they decide instead, and this is kept for when they don't (<see cref="DevMode"/>).
 		/// </summary>
 		public string DeveloperMode { get; set; } = "off";
+		/// <summary>
+		/// Game mode: also look for what games and their launchers leave on the drives, once a day, and show it on the page's
+		/// Games area: leftovers of uninstalled games, the launchers' download caches, shader caches, crash dumps, a game
+		/// installed twice, and games not played in months. "on" or "off", the switch in the page's Settings; off, nothing
+		/// of it is checked or shown. Heiward's own switch: when Manor's settings say "gameMode", Manor decides instead (<see cref="HEI.Agent.GameMode"/>).
+		/// </summary>
+		public string GameMode { get; set; } = "off";
 		/// <summary>A project untouched this many days has its build outputs ticked for cleaning.</summary>
 		public int StaleProjectDays { get; set; } = 30;
 		/// <summary>Temp files untouched this many days are ticked for cleaning.</summary>
@@ -262,6 +269,10 @@ namespace HEI.Agent {
 		/// <summary>Heiward's own switch is on. Whether developer mode is on now, Manor's Developer options counted, is <see cref="DevMode.Now"/>.</summary>
 		[JsonIgnore]
 		public bool DeveloperModeOn => string.Equals(DeveloperMode, "on", StringComparison.OrdinalIgnoreCase);
+
+		/// <summary>Heiward's own game mode switch is on. Whether game mode is on now, Manor counted, is <see cref="HEI.Agent.GameMode.Now"/>.</summary>
+		[JsonIgnore]
+		public bool GameModeOn => string.Equals(GameMode, "on", StringComparison.OrdinalIgnoreCase);
 
 		[JsonIgnore]
 		public bool AlwaysInBackground => string.Equals(ScanSpeed, "background", StringComparison.OrdinalIgnoreCase);
@@ -326,6 +337,11 @@ namespace HEI.Agent {
 		/// <summary>Some of <see cref="AutoCleaner.DeveloperKinds"/>: branches, temp, buildOutputs, worktrees, systemImages.</summary>
 		public List<string> DeveloperKinds { get => kinds; set => kinds = value ?? new(); }
 		List<string> kinds = AutoCleaner.DeveloperKinds.ToList();
+		/// <summary>What games leave behind, of the kinds in <see cref="GameKinds"/>, goes to the Recycle Bin (game mode on).</summary>
+		public bool Games { get; set; }
+		/// <summary>Some of <see cref="AutoCleaner.GameKinds"/>: leftovers, caches, dumps, shaders (of uninstalled games only).</summary>
+		public List<string> GameKinds { get => gameKinds; set => gameKinds = value ?? new(); }
+		List<string> gameKinds = AutoCleaner.GameKinds.ToList();
 		/// <summary>Days something is listed before it's cleaned: time to see it coming and say "leave it". 0 = at the next scan.</summary>
 		public int AfterDays { get; set; } = 3;
 
@@ -336,6 +352,8 @@ namespace HEI.Agent {
 			Duplicates = Duplicates,
 			Developer = Developer,
 			DeveloperKinds = AutoCleaner.DeveloperKinds.Where(k => DeveloperKinds.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList(),
+			Games = Games,
+			GameKinds = AutoCleaner.GameKinds.Where(k => GameKinds.Contains(k, StringComparer.OrdinalIgnoreCase)).ToList(),
 			AfterDays = Math.Clamp(AfterDays, 0, MaxAfterDays),
 		};
 	}

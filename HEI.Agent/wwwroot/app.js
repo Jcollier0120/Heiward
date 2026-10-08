@@ -60,6 +60,11 @@ const ICONS = {
     ['path', 'M4.5 5v6M4.5 5c0 4.5 3 7.5 5.5 7.5', 'stroke']],
   pull: [['circle', '4.5,3.5,1.5', 'stroke'], ['circle', '4.5,12.5,1.5', 'stroke'], ['circle', '11.5,12.5,1.5', 'stroke'],
     ['path', 'M4.5 5v6M11.5 11V6.5a2 2 0 0 0-2-2H7M8.6 3 7 4.5 8.6 6', 'stroke']],
+  pad: [['path', 'M4.8 4.5h6.4a3 3 0 0 1 2.9 3.7l-.6 2.6a1.5 1.5 0 0 1-2.7.6L9.7 10H6.3l-1.1 1.4a1.5 1.5 0 0 1-2.7-.6l-.6-2.6a3 3 0 0 1 2.9-3.7zM5.2 6.4v2.2M4.1 7.5h2.2', 'stroke'],
+    ['circle', '10.6,6.9,0.6', 'fill'], ['circle', '11.8,8.1,0.6', 'fill']],
+  box: [['path', 'M2.5 5 8 2.5 13.5 5v6L8 13.5 2.5 11zM2.5 5 8 7.5 13.5 5M8 7.5v6', 'stroke']],
+  spark: [['path', 'M8 1.8v3M8 11.2v3M1.8 8h3M11.2 8h3M3.6 3.6l2.1 2.1M10.3 10.3l2.1 2.1M3.6 12.4l2.1-2.1M10.3 5.7l2.1-2.1', 'stroke']],
+  alert: [['path', 'M8 2 14.5 13.5h-13zM8 6.5v3.2M8 11.6v.2', 'stroke']],
   pause: [['path', 'M6 3.5v9M10 3.5v9', 'stroke']],
   play: [['path', 'M5.5 3.2v9.6l7.5-4.8z', 'stroke']],
   chip: [['rect', '4,4,8,8,1.5', 'stroke'], ['rect', '6.5,6.5,3,3,0.5', 'fill'],
@@ -368,6 +373,11 @@ function parseRoute() {
   if (h === '#/dev') return { view: 'dev', cat: null };
   if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
   if (h.startsWith('#/dev/s/')) return { view: 'dev', cat: decodeURIComponent(h.slice(8)) };
+  // The Games area: the overview, a kind of thing games leave (k), a drive (d), a game (g).
+  if (h === '#/games') return { view: 'games' };
+  if (h.startsWith('#/games/k/')) return { view: 'games', cat: decodeURIComponent(h.slice(10)) };
+  if (h.startsWith('#/games/d/')) return { view: 'games', drive: decodeURIComponent(h.slice(10)) };
+  if (h.startsWith('#/games/g/')) return { view: 'games', game: decodeURIComponent(h.slice(10)) };
   if (h.startsWith('#/f/')) {
     try { return { view: 'folder', path: decodeURIComponent(h.slice(4)) }; } catch { /* fall through */ }
   }
@@ -391,8 +401,9 @@ window.addEventListener('hashchange', () => {
 // ---------------------------------------------------------------- header and command bar
 
 // Where AI matching runs, from ai-status.json: the install and "hei setup" write it, then every scan,
-// with the device it actually used. Green only when the NPU is set up and (after a scan) really ran.
-function renderAiBadge(ai) {
+// with the device it actually used. Green only when the NPU is set up and (after a scan) really ran. The commands, the
+// settings file and the log are named only with developer mode on (dev); otherwise it says the same in plain words.
+function renderAiBadge(ai, dev) {
   const badge = $('ai-badge');
   if (!ai) { badge.classList.add('hidden'); return; }
   const npu = ai.npuDisplayName || ai.npuName || 'The NPU';
@@ -404,7 +415,7 @@ function renderAiBadge(ai) {
   } else if (ai.device === 'off') {
     tone = 'warn';
     text = 'AI matching off';
-    tip = 'The AI components are not installed. Run "hei setup".';
+    tip = dev ? 'The AI components are not installed. Run "hei setup".' : 'The AI components aren\'t installed, so AI matching is off. Reinstalling Heiward adds them.';
   } else {
     const on = ai.device;
     if (ai.npuVendor === 'None') {
@@ -415,18 +426,20 @@ function renderAiBadge(ai) {
       tip = (ai.npuName || 'This NPU') + ' isn\'t supported by this version yet, so AI matching runs on the ' + on + '.';
     } else if (!ai.npuInstalled) {
       tone = 'warn'; text = 'NPU not set up · ' + on;
-      tip = 'The ' + npu + ' pack is not installed. Run "hei setup" to download it.';
+      tip = dev ? 'The ' + npu + ' pack is not installed. Run "hei setup" to download it.'
+        : 'What the ' + npu + ' needs isn\'t installed, so AI matching runs on the ' + on + '. Reinstalling Heiward adds it.';
     } else if (ai.setting === 'gpu' || ai.setting === 'cpu') {
       tone = 'quiet'; text = 'On the ' + on;
-      tip = 'settings.json asks for the ' + ai.setting.toUpperCase() + ' (aiDevice), so the ' + npu + ' is not used.';
+      tip = dev ? 'settings.json asks for the ' + ai.setting.toUpperCase() + ' (aiDevice), so the ' + npu + ' is not used.'
+        : 'Heiward\'s settings ask for the ' + (ai.setting === 'gpu' ? 'graphics card' : 'processor') + ', so the ' + npu + ' is not used.';
     } else {
       tone = 'warn'; text = 'NPU fell back · ' + on;
-      tip = 'The ' + npu + ' is set up, but it could not run the model, so AI matching ran on the ' + on + '. heiward.log has the reason.';
+      tip = 'The ' + npu + ' is set up, but it could not run AI matching, so it ran on the ' + on + '.' + (dev ? ' heiward.log has the reason.' : '');
     }
     if (ai.card) tip += ' The graphics card: ' + ai.card + '.';
   }
-  // Why the last run didn't run where it was meant to (ai-status.json's fallback, also in heiward.log).
-  if (ai.fallback) tip += ' It fell back: ' + ai.fallback + '.';
+  // Why the last run didn't run where it was meant to (ai-status.json's fallback, also in heiward.log): technical, so only for developers.
+  if (ai.fallback && dev) tip += ' It fell back: ' + ai.fallback + '.';
   badge.textContent = text;
   badge.title = tip;
   badge.className = 'ai-badge ' + tone;
@@ -459,7 +472,7 @@ function renderHeader(s) {
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
   $('subtitle').textContent = parts.join(' · ');
-  renderAiBadge(s.ai);
+  renderAiBadge(s.ai, s.dev.enabled);
 
   const running = s.scan.running;
   // Just started: running from the click, though it can't be stopped until its process has begun.
@@ -525,6 +538,27 @@ function renderCrumbs() {
       items.push(li2);
     }
   }
+  if (route.view === 'games') {
+    const li = el('li');
+    li.append(icon('sep', 'sep'));
+    const b = el('button', 'crumb');
+    b.append(icon('pad'), el('span', null, 'Games'));
+    b.addEventListener('click', () => { location.hash = '#/games'; });
+    li.append(b);
+    items.push(li);
+    const game = route.game ? gameById(route.game) : null;
+    const label = game ? game.name : route.cat && GAME_META[route.cat] ? GAME_META[route.cat].short : route.drive || null;
+    if (label) {
+      const li2 = el('li');
+      li2.append(icon('sep', 'sep'));
+      const c = el('button', 'crumb');
+      c.append(game ? icon('pad') : route.cat ? icon(GAME_META[route.cat].icon) : driveIcon('fixed'), el('span', null, label));
+      const hash = game ? '#/games/g/' + encodeURIComponent(game.id) : route.cat ? '#/games/k/' + route.cat : '#/games/d/' + encodeURIComponent(route.drive);
+      c.addEventListener('click', () => { if (location.hash === hash) renderRoute(); else location.hash = hash; });
+      li2.append(c);
+      items.push(li2);
+    }
+  }
   if (route.view === 'folder') {
     const d = cardFor(route.path);
     if (d) {
@@ -584,6 +618,7 @@ function renderHome(s) {
   }));
 
   renderDevCard(s.dev);
+  renderGamesCard(s.games);
   renderDone(s);
   renderManorCard(s.manorCard);
   renderFooter(s);
@@ -602,6 +637,7 @@ const GLANCE_TIPS = {
   videos: 'Videos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
   photos: 'Photos the last scan found, in the folders it scans (not Windows, programs, games, app data or code).',
   developer: 'What development tools recreate: build outputs, worktrees, package caches, emulators (Developer area).',
+  games: 'Your installed games, and what they and their launchers leave behind (Games area).',
   bin: 'Files in the Recycle Bin take their space until it\'s emptied, the copies Heiward recycled too.',
   other: 'Windows, apps, games, documents and everything else Heiward doesn\'t sort.',
 };
@@ -695,6 +731,7 @@ function renderGlance(g) {
   const r = g.reclaim;
   if (r.duplicates) list.append(el('li', null, bytes(r.duplicates) + ' in copies to review (Where the duplicates are, below).'));
   if (r.developer) list.append(el('li', null, bytes(r.developer) + ' of developer files ticked to clean (Developer area).'));
+  if (r.games) list.append(el('li', null, bytes(r.games) + ' that games left behind, ticked to remove (Games area).'));
   if (r.recycleBin) list.append(el('li', null, bytes(r.recycleBin) + ' in the Recycle Bin: empty it to get that space back.'));
   if (!list.childElementCount) list.append(el('li', 'muted', 'No drive is nearly full, and there\'s nothing to free right now.'));
   notes.append(list);
@@ -713,6 +750,7 @@ function renderSettings(s) {
   renderWhereCard(s);
   renderAutoCard(s);
   renderHistoryCard(s);
+  renderGameModeCard(s);
   renderDevModeCard(s);
   renderMoreCard(s);
   renderAboutCard(s);
@@ -732,13 +770,18 @@ function renderAboutCard(s) {
   const card = el('div', 'auto-card about');
   const row = el('div', 'auto-row');
   const text = el('div', 'auto-text');
-  const built = el('div', 'muted small', commit ? 'Built from commit ' : 'Built from an unknown commit.');
-  if (commit) built.append(outLink(commit.slice(0, 7), 'https://github.com/Jcollier0120/Heiward/commit/' + commit), '.');
+  text.append(el('div', 'auto-title', 'Version ' + version));
+  // The commit it was built from is for developers: only with developer mode on.
+  if (s.dev.enabled) {
+    const built = el('div', 'muted small', commit ? 'Built from commit ' : 'Built from an unknown commit.');
+    if (commit) built.append(outLink(commit.slice(0, 7), 'https://github.com/Jcollier0120/Heiward/commit/' + commit), '.');
+    text.append(built);
+  }
   const from = el('div', 'muted small');
   if (s.about.store) from.append('From the Microsoft Store, which keeps it up to date.');
   else if (s.about.dev) from.append('A development build, kept apart from the installed Heiward.');
   else from.append('From GitHub: new versions are on its ', outLink('releases page', 'https://github.com/Jcollier0120/Heiward/releases'), '.');
-  text.append(el('div', 'auto-title', 'Version ' + version), built, from);
+  text.append(from);
   row.append(text);
   card.append(row);
   // Without Manor: the home page's "In a manor" card, on until its Not now; this brings it back.
@@ -771,6 +814,10 @@ function renderAboutCard(s) {
 function renderDevModeCard(s) {
   const on = s.dev.enabled;
   const manor = s.dev.manor;
+  // Under Manor with its Developer options off, nothing of developer mode shows: no switch, and no pitch to developers.
+  const hidden = !!manor && !on;
+  $('devmode-section').classList.toggle('hidden', hidden);
+  if (hidden) { $('devmode-card').replaceChildren(); return; }
   const card = el('div', 'auto-card');
   const row = el('div', 'auto-row');
   if (!manor) row.append(toggleSwitch(on, 'Developer mode', settingsBusy, (next) => saveSettings({ developerMode: next })));
@@ -797,6 +844,35 @@ function renderDevModeCard(s) {
   $('devmode-card').replaceChildren(card);
 }
 
+/**
+ * Game mode: the daily look at the games, the Games area (from the home page), and its automatic cleanup, or none of it. Heiward's
+ * own switch; once Manor passes it down (its settings' "gameMode"), the card says which way, with a link, in place of the switch.
+ */
+function renderGameModeCard(s) {
+  const on = s.games.enabled;
+  const manor = s.games.manor;
+  const card = el('div', 'auto-card');
+  const row = el('div', 'auto-row');
+  if (!manor) row.append(toggleSwitch(on, 'Game mode', settingsBusy, (next) => saveSettings({ gameMode: next })));
+  const text = el('div', 'auto-text');
+  text.append(el('div', 'auto-title', 'Game mode'));
+  if (manor) {
+    const note = el('div', 'manor-decides small', manor.note + '. ');
+    const link = el('a', null, `Change it in ${manor.name}`);
+    link.href = manor.url;
+    note.append(link);
+    text.append(note);
+  }
+  text.append(el('div', 'muted small', on
+    ? 'Once a day Heiward also looks at your games: what each launcher has installed and where, leftovers of games you\'ve uninstalled, ' +
+      'launchers\' download caches, shader caches, crash dumps, a game installed twice, and games you haven\'t played in months. ' +
+      'The Games area, from the home page, shows them. What you remove goes to the Recycle Bin; your games\' own files and your saves are never touched.'
+    : 'Off: nothing of it is checked or shown. For gamers: a Games area with your games by launcher and drive, and what they leave behind, to clean up.'));
+  row.append(text);
+  card.append(row);
+  $('gamemode-card').replaceChildren(card);
+}
+
 function renderHistoryCard(s) {
   const card = el('div', 'auto-card');
   card.append(historyBar(s, true));
@@ -808,34 +884,35 @@ function renderHistoryCard(s) {
  * its lock), why it fell back, and the devices that failed for Heiward lately, which its Auto leaves alone for
  * 10 minutes (Heiward's own marks: other programs' failures, of their model servers, don't count here).
  */
-function acceleratorNotes(a) {
+function acceleratorNotes(a, dev) {
   const notes = [];
   if (!a) return notes;
   if (a.inUse) {
-    const where = a.card ? 'the ' + a.card : a.inUse === 'npu' ? 'the NPU' : a.inUse === 'cpu' ? 'the processor' : a.inUse;
-    notes.push(el('div', 'muted small', 'Last ran on ' + where + ' (' + a.inUse + ').'));
+    const where = a.card ? 'the ' + a.card : a.inUse === 'npu' ? 'the NPU' : a.inUse === 'cpu' ? 'the processor' : dev ? a.inUse : 'the graphics card';
+    // The manor's ids for its accelerators (npu, gpu-…) and why one failed are for developers.
+    notes.push(el('div', 'muted small', 'Last ran on ' + where + (dev ? ' (' + a.inUse + ')' : '') + '.'));
   }
-  if (a.fallback) notes.push(el('div', 'small gpu-note', 'It fell back: ' + a.fallback + '.'));
+  if (a.fallback && dev) notes.push(el('div', 'small gpu-note', 'It fell back: ' + a.fallback + '.'));
   const until = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   for (const f of a.failed || []) {
-    notes.push(el('div', 'small gpu-note', (f.name.startsWith('the ') ? 'The ' + f.name.slice(4) : f.name) + ' (' + f.id + ') failed at ' +
-      until(f.sinceUtc) + ', so Heiward leaves it until ' + until(f.untilUtc) + ': ' + f.reason));
+    notes.push(el('div', 'small gpu-note', (f.name.startsWith('the ') ? 'The ' + f.name.slice(4) : f.name) + (dev ? ' (' + f.id + ')' : '') + ' failed at ' +
+      until(f.sinceUtc) + ', so Heiward leaves it until ' + until(f.untilUtc) + (dev ? ': ' + f.reason : '.')));
   }
   return notes;
 }
 
 /** Where AI matching runs on this PC, in a sentence, from ai-status.json as the title bar's badge reads it. */
-function modelHere(ai) {
+function modelHere(ai, dev) {
   if (!ai) return '';
-  if (ai.device === 'off') return 'On this PC it\'s off: its components aren\'t installed ("hei setup" installs them).';
+  if (ai.device === 'off') return 'On this PC it\'s off: its components aren\'t installed' + (dev ? ' ("hei setup" installs them).' : '.');
   const where = ai.device === 'NPU' ? 'the ' + (ai.npuDisplayName || ai.npuName || 'NPU')
     : ai.device === 'GPU' ? 'the graphics card' + (ai.card ? ', the ' + ai.card : '') : 'the processor';
   const why = ai.device === 'NPU' ? ''
     : ai.npuVendor === 'None' ? ', as this PC has no NPU'
       : !ai.npuSupported ? ', as this version doesn\'t support its NPU yet'
-        : !ai.npuInstalled ? ', as its NPU isn\'t set up ("hei setup")'
-          : ai.setting === 'gpu' || ai.setting === 'cpu' ? ', as the settings file asks (aiDevice)'
-            : ', as the NPU couldn\'t run the model (heiward.log says why)';
+        : !ai.npuInstalled ? ', as its NPU isn\'t set up' + (dev ? ' ("hei setup")' : '')
+          : ai.setting === 'gpu' || ai.setting === 'cpu' ? ', as Heiward\'s settings ask' + (dev ? ' (aiDevice)' : '')
+            : ', as the NPU couldn\'t run it' + (dev ? ' (heiward.log says why)' : '');
   return 'On this PC it ' + (ai.source === 'scan' ? 'ran' : 'runs') + ' on ' + where + why + '.';
 }
 
@@ -859,10 +936,15 @@ function renderWhereCard(s) {
       : 'Scan now runs ' + fast + '.',
     full: 'Every scan runs ' + fast + (s.schedule.everyMinutes ? ', scheduled ones too.' : '.'),
   }[speed];
+  // The model's and its runtimes' names are for developers; otherwise the same in plain words.
+  const dev = s.dev.enabled;
   const rows = [
-    ['The model', 'AI matching compares pictures and video frames with DINOv2, a vision model. It runs on the NPU, through its maker\'s runtime ' +
-      '(Qualcomm\'s QNN, Intel\'s OpenVINO or AMD\'s Vitis AI, with Windows ML); without an NPU that works, on a graphics card through DirectML; otherwise on the processor. ' + modelHere(s.ai)],
-    ['Video frames', 'FFmpeg decodes the frames Heiward samples from each video. A few videos at a time go to the graphics chip\'s video decoder, ' +
+    ['The model', (dev
+      ? 'AI matching compares pictures and video frames with DINOv2, a vision model. It runs on the NPU, through its maker\'s runtime ' +
+        '(Qualcomm\'s QNN, Intel\'s OpenVINO or AMD\'s Vitis AI, with Windows ML); without an NPU that works, on a graphics card through DirectML; otherwise on the processor. '
+      : 'AI matching compares pictures and video frames with a vision model, here on this PC. It runs on the NPU when there\'s one that works, ' +
+        'otherwise on the graphics card, otherwise on the processor. ') + modelHere(s.ai, dev)],
+    ['Video frames', (dev ? 'FFmpeg decodes the frames Heiward samples' : 'Heiward decodes the frames it samples') + ' from each video. A few videos at a time go to the graphics chip\'s video decoder, ' +
       'which costs the processor little; the rest, and any it can\'t decode, are decoded on the processor. iPhone photos use that decoder too, beside the processor.'],
     ['Files', 'Listing folders, reading files and hashing them is processor and disk work. A rescan reads only new and changed files. ' +
       'Files of the same size are hashed whole, once, to find exact copies; photos are decoded, and the sound of videos fingerprinted, on the processor.'],
@@ -887,31 +969,39 @@ function renderWhereCard(s) {
 /** What the page has no switch for: where it's set, and what it's set to now. */
 function renderMoreCard(s) {
   const c = s.config;
+  // Where each is set (the settings file, its keys) only with developer mode on; plain words otherwise.
+  const dev = s.dev.enabled;
   const card = el('div', 'auto-card');
   const extra = c.folders.filter((f) => trimSep(f).length > 3); // not a drive's root
+  const device = { npu: 'NPU', gpu: 'graphics card', cpu: 'processor' }[c.aiDevice] || c.aiDevice.toUpperCase();
   const rows = [
     ['What\'s scanned', c.allDrives
       ? 'Every fixed drive, minus Windows, programs, games, app data and code.' + (extra.length ? ' Also: ' + extra.join('; ') : '')
-      : c.folders.join('; ') || 'Nothing: add folders in the settings file.',
+      : c.folders.join('; ') || (dev ? 'Nothing: add folders in the settings file.' : 'Nothing yet: right-click a folder to include it.'),
       'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
-    ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', 'excludeExtensions in the settings file.'],
+    ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', dev ? 'excludeExtensions in the settings file.' : null],
     ['Where AI matching runs', c.aiDevice === 'auto'
       ? 'On the NPU when there is one that works, otherwise on the graphics card once Heiward has checked it, otherwise on the processor.'
-      : 'On the ' + c.aiDevice.toUpperCase() + (c.aiDevice === 'gpu' && s.gpu && (s.gpu.chosen || s.gpu.windowsDefault)
+      : 'On the ' + (dev ? c.aiDevice.toUpperCase() : device) + (c.aiDevice === 'gpu' && s.gpu && (s.gpu.chosen || s.gpu.windowsDefault)
         ? ': the ' + (s.gpu.missing ? s.gpu.windowsDefault : s.gpu.chosen || s.gpu.windowsDefault) : '') + '.',
-      'aiDevice in the settings file: auto, npu, gpu or cpu.', acceleratorNotes(s.accelerators)],
+      dev ? 'aiDevice in the settings file: auto, npu, gpu or cpu.' : null, acceleratorNotes(s.accelerators, dev)],
   ];
   for (const [title, value, how, notes] of rows) {
     const r = el('div', 'auto-row');
     const text = el('div', 'auto-text');
-    text.append(el('div', 'auto-title', title), el('div', null, value), ...(notes || []), el('div', 'muted small', how));
+    text.append(el('div', 'auto-title', title), el('div', null, value), ...(notes || []));
+    if (how) text.append(el('div', 'muted small', how));
     r.append(text);
     card.append(r);
   }
   const foot = el('div', 'auto-foot');
-  const file = el('div', 'muted small', 'Settings file: ');
-  file.append(el('code', null, c.path));
-  foot.append(file, el('div', 'muted small', 'Changes to the file apply at the next scan. The page\'s own switches above save to it too.'));
+  if (dev && c.path) {
+    const file = el('div', 'muted small', 'Settings file: ');
+    file.append(el('code', null, c.path));
+    foot.append(file, el('div', 'muted small', 'Changes to the file apply at the next scan. The page\'s own switches above save to it too.'));
+  } else {
+    foot.append(el('div', 'muted small', 'The switches on this page keep your choices.'));
+  }
   card.append(foot);
   $('more-card').replaceChildren(card);
 }
@@ -975,7 +1065,7 @@ function renderScanCard(s) {
   const foot = el('div', 'auto-foot');
   foot.append(el('div', 'muted small', s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
     : s.schedule.everyMinutes === 0 ? 'No scheduled scans: scans run when you press Scan now.'
-      : 'Scheduled scans aren\'t set up on this PC: run "hei install".'));
+      : s.dev.enabled ? 'Scheduled scans aren\'t set up on this PC: run "hei install".' : 'Scheduled scans aren\'t set up on this PC: reinstall Heiward to set them up.'));
   card.append(foot);
   $('scan-card').replaceChildren(card);
 }
@@ -1087,7 +1177,7 @@ async function startSetup(button) {
 }
 
 function renderSetup(s) {
-  for (const id of ['home', 'settingsview', 'devview', 'folder']) $(id).classList.add('hidden');
+  for (const id of ['home', 'settingsview', 'devview', 'gamesview', 'folder']) $(id).classList.add('hidden');
   $('setup').classList.remove('hidden');
   const setup = s.setup;
   const card = $('setup-card');
@@ -1097,7 +1187,7 @@ function renderSetup(s) {
     log.textContent = setup.output.join('\n') || 'Starting…';
     const parts = [el('h2', null, setup.failed ? 'Setup stopped' : 'Setting up Heiward…')];
     parts.push(el('p', 'muted', setup.failed
-      ? 'Something went wrong; the last lines below say what. heiward.log has the rest.'
+      ? 'Something went wrong; the last lines below say what.' + (s.dev.enabled ? ' heiward.log has the rest.' : '')
       : 'Downloading what the AI needs and checking where it runs. The first scan starts right after.'));
     parts.push(log);
     if (setup.failed) {
@@ -1225,7 +1315,7 @@ async function autoAllow(pair) {
 function dueText(iso, dev) {
   const d = new Date(iso);
   const now = new Date();
-  if (d <= now) return dev ? 'after the next daily developer check' : 'at the next scan';
+  if (d <= now) return dev === 'games' ? 'after the next daily look at your games' : dev ? 'after the next daily developer check' : 'at the next scan';
   const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
   const days = Math.round((day(d) - day(now)) / 86400000);
   if (days === 0) return 'from ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' today';
@@ -1324,6 +1414,41 @@ function renderAutoCard(s) {
       }, [kinds, reeveNote, devStatus]));
   }
 
+  // Game mode: what games leave behind, to the Recycle Bin, of the kinds ticked (AutoCleaner.GameKinds).
+  if (s.games.enabled) {
+    let kinds = null, gameStatus = null;
+    if (set.games) {
+      kinds = el('div', 'auto-kinds');
+      for (const [k, label, hint] of [
+        ['dumps', 'Crash dumps and reports', 'What games and Windows wrote when a game crashed.'],
+        ['caches', 'Launchers\' download caches', 'Left alone while their launcher runs.'],
+        ['leftovers', 'Leftovers of uninstalled games', 'Never a folder with saved games in it.'],
+        ['shaders', 'Shader caches of uninstalled games', 'Those of games you have always wait for you.'],
+      ]) {
+        const l = el('label');
+        l.title = hint;
+        const box = el('input');
+        box.type = 'checkbox';
+        box.checked = (set.gameKinds || []).includes(k);
+        box.disabled = autoBusy;
+        box.addEventListener('change', () => saveAuto({ ...set, gameKinds: box.checked ? [...(set.gameKinds || []), k] : (set.gameKinds || []).filter((x) => x !== k) }));
+        l.append(box, el('span', null, label));
+        kinds.append(l);
+      }
+      gameStatus = el('div', 'auto-status small', a.upcoming.games && a.upcoming.games.count ? upcomingText(a.upcoming.games, 'item', 'items', 'games') : 'Nothing is due yet.');
+    }
+    card.append(row(!!set.games, 'What games leave behind',
+      'The kinds you tick below go to the Recycle Bin by themselves right after the daily look at your games, ' + waitText +
+      '. Paused downloads, and shader caches of games you have, always wait for you.',
+      async (on, box) => {
+        if (on && !confirm('Clean up what games leave behind automatically?\n\n' +
+            'Right after the daily look at your games, Heiward moves what the Games area ticks for you (of the kinds you pick) to the Recycle Bin ' + waitText + '. ' +
+            'You can restore it from there.\n\n' +
+            'Installed games\' own files and saved games are never touched, and nothing of a launcher or game that\'s running.')) { box.checked = false; return; }
+        await saveAuto({ ...set, games: on });
+      }, [kinds, gameStatus]));
+  }
+
   const foot = el('div', 'auto-foot');
   const wait = el('label', 'auto-wait');
   const select = el('select');
@@ -1348,6 +1473,7 @@ function renderAutoCard(s) {
     if (last.files) parts.push(count(last.files, 'copy', 'copies') + ' (' + bytes(last.fileBytes) + ') to the Recycle Bin');
     if (last.devItems) parts.push(bytes(last.devBytes) + ' of developer leftovers');
     if (last.branches) parts.push(count(last.branches, 'merged branch', 'merged branches'));
+    if (last.gameItems) parts.push(bytes(last.gameBytes) + ' of game leftovers to the Recycle Bin');
     const line = el('div', 'muted small', 'Last run ' + ago(last.atUtc) + ': ' + (parts.join(' · ') || 'nothing cleaned') + '.');
     if (last.problems.length) {
       const more = el('details', 'auto-problems');
@@ -2403,6 +2529,494 @@ async function cleanDev(picked) {
   refresh(true);
 }
 
+// ---------------------------------------------------------------- games area
+
+// Game mode: the games every launcher has installed, by game and by drive, and what games and launchers leave behind.
+// Laid out like the Developer area: a navigation pane, a page at a time, and a selection bar once something is ticked.
+// Everything removed goes to the Recycle Bin; an installed game's files and anyone's saves are never touched (GameSafety).
+let gameReport = null;         // /api/games
+const gameTicks = new Set();   // ticked item ids
+const gameSeen = new Set();    // ids whose default tick was applied (the user's edits survive refreshes)
+let gameBusy = false;
+let gameResult = null;         // [ok, message, what wasn't removed] after the last removal, shown until the next
+let gameProgress = '';         // while removing: what, and how far along
+
+const GAME_META = {
+  leftovers: { short: 'Leftovers', icon: 'box' },
+  caches: { short: 'Download caches', icon: 'db' },
+  shaders: { short: 'Shader caches', icon: 'spark' },
+  dumps: { short: 'Crash dumps', icon: 'alert' },
+  twice: { short: 'Installed twice', icon: 'stack' },
+  idle: { short: 'Not played in months', icon: 'clock' },
+};
+const LAUNCHERS = {
+  steam: 'Steam', epic: 'Epic Games', gog: 'GOG GALAXY', ea: 'EA app', ubisoft: 'Ubisoft Connect', battlenet: 'Battle.net', xbox: 'Xbox',
+};
+
+// The Games area's mark: a game controller on an accent tile.
+function gamesIcon(cls) {
+  return svg('0 0 40 40', [
+    ['rect', '4,6,32,28,6', 'fill', 'var(--accent)'],
+    ['path', 'M14 15h12a4.5 4.5 0 0 1 4.4 5.5l-1 4.2a2.3 2.3 0 0 1-4 .9L23.5 23h-7l-1.9 2.6a2.3 2.3 0 0 1-4-.9l-1-4.2A4.5 4.5 0 0 1 14 15zM14.5 18v4M12.5 20h4', 'stroke'],
+    ['circle', '24.5,19.5,0.9', 'fill'], ['circle', '26.8,21.5,0.9', 'fill'],
+  ], cls);
+}
+
+function gameCatIcon(k, big) {
+  const box = el('span', 'cat-icon' + (big ? ' big' : ''));
+  box.append(icon((GAME_META[k] || {}).icon || 'pad'));
+  return box;
+}
+
+async function startGamesCheck() {
+  try { await post('/api/games/scan'); } catch (e) { showError(e.message); }
+  refresh(true);
+}
+
+/** The home page's games card: what's installed, and what the games left that could go. */
+function renderGamesCard(g) {
+  const section = $('games-section');
+  section.classList.toggle('hidden', !g || !g.enabled);
+  if (!g || !g.enabled) { $('games-card').replaceChildren(); return; }
+  const card = el('div', 'dev-card');
+  const top = el('div', 'drive-top');
+  top.append(gamesIcon());
+  const text = el('div');
+  text.style.flex = '1';
+  text.style.minWidth = '0';
+  if (!g.scannedAtUtc) {
+    text.append(el('div', 'drive-name', 'Your games'),
+      el('div', 'muted small', g.running ? 'Looking at your games and launchers…' : 'Your games by launcher and drive, and what they leave behind. Not checked yet.'));
+  } else {
+    text.append(el('div', 'drive-name', count(g.installed, 'game', 'games') + ' installed, ' + bytes(g.installedBytes)),
+      el('div', 'muted small', (g.totalBytes ? bytes(g.totalBytes) + ' left behind · ' : 'Nothing left behind · ') +
+        (g.suggestedBytes ? bytes(g.suggestedBytes) + ' ticked to remove · ' : '') + (g.running ? 'checking again…' : 'checked ' + ago(g.scannedAtUtc))));
+    const chips = el('div', 'chips');
+    chips.style.marginTop = '6px';
+    for (const c of g.categories || []) {
+      const chip = el('button', 'chip quiet chip-link', ((GAME_META[c.key] || {}).short || c.title) + (c.bytes ? ' ' + bytes(c.bytes) : ' · ' + c.count));
+      chip.addEventListener('click', () => { location.hash = '#/games/k/' + c.key; });
+      chips.append(chip);
+    }
+    text.append(chips);
+  }
+  top.append(text);
+  const actions = el('div', 'actions');
+  actions.style.marginTop = '0';
+  const b = el('button', 'btn', g.scannedAtUtc ? 'Review' : g.running ? 'Checking…' : 'Check now');
+  b.disabled = !g.scannedAtUtc && g.running;
+  b.addEventListener('click', () => { if (g.scannedAtUtc) location.hash = '#/games'; else startGamesCheck(); });
+  actions.append(b);
+  top.append(actions);
+  card.append(top);
+  $('games-card').replaceChildren(card);
+}
+
+async function loadGameReport() {
+  const res = await fetch('/api/games');
+  const data = res.ok ? await res.json() : null;
+  gameReport = data ? data.report : null;
+  for (const i of gameItems())
+    if (!gameSeen.has(i.id)) {
+      gameSeen.add(i.id);
+      if (i.suggested && !i.blocked && !i.info) gameTicks.add(i.id);
+    }
+}
+
+const gameItems = () => ((gameReport && gameReport.categories) || []).flatMap((c) => c.items);
+const gameSize = (items) => items.reduce((a, i) => a + i.bytes, 0);
+const gamePicked = () => gameItems().filter((i) => gameTicks.has(i.id) && !i.blocked && !i.info);
+const driveOf = (p) => (p || '').slice(0, 3).toUpperCase();
+const gameById = (id) => ((gameReport && gameReport.games) || []).find((g) => g.id === id) || null;
+const launcherName = (id) => LAUNCHERS[id] || id || '';
+
+function gameCategoryOf(i) {
+  const c = ((gameReport && gameReport.categories) || []).find((x) => x.items.includes(i));
+  return c ? c.key : null;
+}
+
+/** Each drive with games or leftovers on it: its games, and what's left on it, biggest first. */
+function gameDrives() {
+  const drives = new Map();
+  const of = (root) => {
+    if (!drives.has(root)) drives.set(root, { root, games: [], items: [] });
+    return drives.get(root);
+  };
+  for (const g of (gameReport && gameReport.games) || []) of(driveOf(g.folder)).games.push(g);
+  for (const i of gameItems()) if (!i.info) of(driveOf(i.location)).items.push(i);
+  const total = (d) => d.games.reduce((a, g) => a + g.bytes, 0) + gameSize(d.items);
+  return [...drives.values()].sort((a, b) => total(b) - total(a) || a.root.localeCompare(b.root));
+}
+
+function renderGames() {
+  renderGamesNav();
+  renderGamesContent();
+}
+
+function renderGamesNav() {
+  const rows = [];
+  const row = (label, glyph, hash, badge, selected, dim) => {
+    const b = el('button', 'tree-row' + (dim ? ' empty' : ''));
+    b.style.paddingLeft = '8px';
+    glyph.classList.add('glyph');
+    b.append(glyph, el('span', 'label', label));
+    if (badge) b.append(el('span', 'count', badge));
+    if (selected) { b.classList.add('selected'); b.setAttribute('aria-current', 'page'); }
+    b.addEventListener('click', () => { location.hash = hash; $('games-nav').classList.remove('open'); });
+    rows.push(b);
+  };
+  row('Overview', icon('pad'), '#/games', null, !route.game && !route.drive && !route.cat);
+  if (gameReport && gameReport.scannedAtUtc) {
+    if (gameReport.categories.length) rows.push(el('div', 'tree-section', 'What games leave'));
+    for (const c of gameReport.categories)
+      row(GAME_META[c.key].short, gameCatIcon(c.key), '#/games/k/' + c.key, gameSize(c.items) ? bytes(gameSize(c.items)) : String(c.items.length), route.cat === c.key);
+    const drives = gameDrives();
+    if (drives.length) rows.push(el('div', 'tree-section', 'Drives'));
+    for (const d of drives)
+      row(d.root, driveIcon('fixed'), '#/games/d/' + encodeURIComponent(d.root), bytes(d.games.reduce((a, g) => a + g.bytes, 0) + gameSize(d.items)), route.drive === d.root);
+    if (gameReport.games.length) rows.push(el('div', 'tree-section', 'Games'));
+    for (const g of gameReport.games) {
+      const has = gameItems().some((i) => i.game === g.id);
+      row(g.name, icon('pad'), '#/games/g/' + encodeURIComponent(g.id), g.bytes ? bytes(g.bytes) : '', route.game === g.id, !has);
+    }
+  }
+  $('games-tree').replaceChildren(...rows);
+}
+
+function renderGamesContent() {
+  const content = $('games-content');
+  const y = content.scrollTop;
+  const frag = document.createDocumentFragment();
+  const g = state.games;
+  if (!gameReport || !gameReport.scannedAtUtc) {
+    frag.append(devHeader(gamesIcon(), 'Games', 'Your games by launcher and drive, and what they and their launchers leave behind: leftovers of uninstalled games, download caches, shader caches and crash dumps.', []));
+    const empty = el('div', 'empty-state');
+    empty.append(el('div', null, g.running ? 'Looking at your games… this takes a minute or so.' : 'Not checked yet.'));
+    if (!g.running) {
+      const b = el('button', 'btn more', 'Check now');
+      b.addEventListener('click', startGamesCheck);
+      empty.append(b);
+    }
+    frag.append(empty);
+  } else if (route.cat) {
+    const c = gameReport.categories.find((x) => x.key === route.cat);
+    frag.append(...(c ? gameCategoryPage(c) : [el('div', 'empty-state', 'Nothing here in the last check.')]));
+  } else if (route.drive) {
+    const d = gameDrives().find((x) => x.root === route.drive);
+    frag.append(...(d ? gameDrivePage(d) : [el('div', 'empty-state', 'No games or leftovers on that drive in the last check.')]));
+  } else if (route.game) {
+    const game = gameById(route.game);
+    frag.append(...(game ? gamePage(game) : [el('div', 'empty-state', 'That game isn\'t in the last check.')]));
+  } else {
+    frag.append(...gamesOverview(g));
+  }
+  if (gameResult) {
+    const [ok, msg, failed] = gameResult;
+    const banner = el('div', 'dev-banner ' + (ok ? 'ok' : 'bad'), msg);
+    if (failed && failed.length) {
+      const list = el('ul');
+      for (const f of failed) list.append(el('li', null, f));
+      banner.append(list);
+    }
+    frag.append(banner);
+  }
+  frag.append(gameSelectionBar());
+  content.replaceChildren(frag);
+  content.scrollTop = y;
+}
+
+const GAMES_SAFE = 'Nothing is removed until you tick it, and what you remove goes to the Recycle Bin. Heiward never touches an installed game\'s own files or your saved games.';
+
+function gamesOverview(g) {
+  const again = el('button', 'link small', g.running ? 'Checking…' : 'Check again');
+  again.disabled = g.running;
+  again.addEventListener('click', startGamesCheck);
+  const left = gameSize(gameItems().filter((i) => !i.info));
+  const chips = [el('span', 'chip', count(gameReport.games.length, 'game', 'games') + ' installed · ' + bytes(gameReport.games.reduce((a, x) => a + x.bytes, 0))),
+    el('span', 'chip', bytes(left) + ' left behind'),
+    el('span', 'chip quiet', 'checked ' + ago(gameReport.scannedAtUtc) + ' in ' + took(gameReport.durationSec)), again];
+  const launchers = (gameReport.launchers || []).map(launcherName);
+  const intro = el('div');
+  intro.append(el('div', 'dev-intro', (launchers.length ? 'Found ' + launchers.join(', ') + '. ' : 'No game launcher found on this PC. ') + GAMES_SAFE));
+  const out = [devHeader(gamesIcon(), 'Games', intro, chips)];
+
+  if (gameReport.categories.length) {
+    out.push(el('h2', null, 'What your games leave behind'));
+    const grid = el('div', 'cat-grid');
+    for (const c of gameReport.categories) grid.append(gameKindCard(c));
+    out.push(grid);
+  }
+  const drives = gameDrives();
+  if (drives.length) {
+    out.push(el('h2', null, 'By drive'));
+    const grid = el('div', 'cat-grid');
+    for (const d of drives) {
+      const card = el('button', 'cat-card');
+      const top = el('div', 'cat-top');
+      const glyph = el('span', 'cat-icon big');
+      glyph.append(driveIcon('fixed'));
+      const text = el('div');
+      text.style.minWidth = '0';
+      text.append(el('div', 'cat-title', d.root), el('div', 'cat-amount', bytes(d.games.reduce((a, x) => a + x.bytes, 0) + gameSize(d.items))));
+      top.append(glyph, text);
+      card.append(top, el('div', 'muted small', count(d.games.length, 'game', 'games') + (d.items.length ? ' · ' + bytes(gameSize(d.items)) + ' left behind' : '')));
+      card.addEventListener('click', () => { location.hash = '#/games/d/' + encodeURIComponent(d.root); });
+      grid.append(card);
+    }
+    out.push(grid);
+  }
+  if (gameReport.games.length) {
+    out.push(el('h2', null, 'Biggest games'));
+    const list = el('div', 'dev-list');
+    for (const game of gameReport.games.slice(0, 8)) list.append(gameInstallRow(game));
+    out.push(list);
+    if (gameReport.games.length > 8) out.push(el('p', 'muted small', 'The rest are under Games, in the pane on the left.'));
+  }
+  if (!gameReport.games.length && !gameReport.categories.length) out.push(el('div', 'empty-state', 'No games, and nothing they left behind.'));
+  return out;
+}
+
+function gameKindCard(c) {
+  const card = el('button', 'cat-card');
+  const top = el('div', 'cat-top');
+  top.append(gameCatIcon(c.key, true));
+  const text = el('div');
+  text.style.minWidth = '0';
+  text.append(el('div', 'cat-title', GAME_META[c.key].short), el('div', 'cat-amount', bytes(gameSize(c.items))));
+  top.append(text);
+  card.append(top);
+  const blocked = c.items.filter((i) => i.blocked).length;
+  card.append(el('div', 'muted small', count(c.items.length, c.key === 'twice' || c.key === 'idle' ? 'game' : 'item', c.key === 'twice' || c.key === 'idle' ? 'games' : 'items') +
+    (blocked ? ' · ' + blocked + ' waiting' : '')));
+  const picked = c.items.filter((i) => gameTicks.has(i.id) && !i.blocked && !i.info);
+  if (picked.length) card.append(el('span', 'chip good', bytes(gameSize(picked)) + ' selected'));
+  card.addEventListener('click', () => { location.hash = '#/games/k/' + c.key; });
+  return card;
+}
+
+/** An installed game: its launcher, size and when it was last played; it opens the game's page. */
+function gameInstallRow(game) {
+  const row = el('button', 'dev-item game-install');
+  const main = el('div', 'dev-item-main');
+  main.append(el('div', 'dev-item-name', game.name));
+  const where = el('div', 'folder muted small', launcherName(game.launcher) + ' · ' + game.folder);
+  where.title = game.folder;
+  main.append(where);
+  row.append(main);
+  const side = el('div', 'dev-item-side');
+  side.append(el('div', 'dev-size', bytes(game.bytes)));
+  if (game.lastPlayedUtc) side.append(el('div', 'muted small', playedText(game.lastPlayedUtc)));
+  row.append(side);
+  row.addEventListener('click', () => { location.hash = '#/games/g/' + encodeURIComponent(game.id); });
+  row.addEventListener('contextmenu', (e) => openPathMenu(e, { name: game.name, path: game.folder, folder: true }));
+  return row;
+}
+
+function playedText(iso) {
+  const days = (Date.now() - new Date(iso).getTime()) / 86400000;
+  if (days < 1) return 'played today';
+  if (days < 2) return 'played yesterday';
+  if (days < 60) return 'played ' + Math.floor(days) + ' days ago';
+  return 'played ' + Math.round(days / 30) + ' months ago';
+}
+
+/** A kind of thing games leave, or one game's, or one drive's: its items, ticked ones first, those waiting folded. */
+function gameSection(k, items, showWhere) {
+  const box = el('section', 'dev-section');
+  const head = el('div', 'dev-section-head');
+  head.append(gameCatIcon(k));
+  const title = el('div', 'dev-section-title');
+  const info = items.every((i) => i.info);
+  title.append(el('span', null, GAME_META[k].short), el('span', 'muted', ' · ' + (info ? count(items.length, 'game', 'games') : bytes(gameSize(items)))));
+  head.append(title);
+  const open = items.filter((i) => !i.blocked && !i.info);
+  if (open.length > 1) {
+    const allOn = open.every((i) => gameTicks.has(i.id));
+    const toggle = el('button', 'link small', allOn ? 'Select none' : 'Select all');
+    toggle.addEventListener('click', () => { for (const i of open) if (allOn) gameTicks.delete(i.id); else gameTicks.add(i.id); renderGames(); });
+    head.append(toggle);
+  }
+  box.append(head);
+  const listed = items.filter((i) => !i.blocked);
+  if (listed.length) {
+    const list = el('div', 'dev-list');
+    for (const i of listed) list.append(gameRow(i, showWhere));
+    box.append(list);
+  }
+  const blocked = items.filter((i) => i.blocked);
+  if (blocked.length) {
+    const group = el('details', 'blocked-group');
+    group.append(el('summary', null, count(blocked.length, 'item waits', 'items wait') + ', ' + bytes(gameSize(blocked))));
+    const list = el('div', 'dev-list');
+    for (const i of blocked) list.append(gameRow(i, showWhere));
+    group.append(list);
+    box.append(group);
+  }
+  return box;
+}
+
+/** One thing with its tick box (none for what Heiward only points to): what it is, what removing it means, its size. */
+function gameRow(i, showWhere) {
+  const on = gameTicks.has(i.id) && !i.blocked && !i.info;
+  const row = el(i.info ? 'div' : 'label', 'dev-item' + (i.blocked ? ' blocked' : '') + (on ? ' on' : ''));
+  if (!i.info) {
+    const box = el('input');
+    box.type = 'checkbox';
+    box.checked = on;
+    box.disabled = !!i.blocked || gameBusy;
+    box.addEventListener('change', () => { if (box.checked) gameTicks.add(i.id); else gameTicks.delete(i.id); renderGames(); });
+    row.append(box);
+  }
+  const main = el('div', 'dev-item-main');
+  const name = el('div', 'dev-item-name');
+  name.append(el('span', null, i.name));
+  if (i.blocked) name.append(el('span', 'tag', i.blocked));
+  else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
+  else if (i.kind === 'shader' && i.game || i.kind === 'gpu-shader') name.append(el('span', 'tag', 'First launch may stutter'));
+  main.append(name);
+  main.append(el('div', 'muted small', i.detail + '.'));
+  main.append(el('div', 'small game-removing', (i.info ? '' : 'Removing it: ') + i.removing));
+  const auto = state.auto.gameItems && state.auto.gameItems[i.id];
+  if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'm:' + i.id, 'Goes to the Recycle Bin automatically ' + dueText(auto.dueUtc, 'games') + '.'));
+  if (showWhere !== false && !(i.kind === 'twice')) {
+    const where = el('div', 'folder muted small', i.location);
+    where.title = i.location;
+    main.append(where);
+  }
+  const places = i.paths || [];
+  if (places.length) row.addEventListener('contextmenu', (e) => openPathMenu(e, { name: i.name, path: places[0], folder: i.kind !== 'dump', more: places.length - 1 }));
+  row.append(main);
+  const side = el('div', 'dev-item-side');
+  side.append(el('div', 'dev-size', bytes(i.bytes)));
+  if (i.kind === 'idle' && i.lastUsedUtc) side.append(el('div', 'muted small', playedText(i.lastUsedUtc)));
+  else if (i.lastUsedUtc) side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
+  row.append(side);
+  return row;
+}
+
+function gameCategoryPage(c) {
+  const picked = c.items.filter((i) => gameTicks.has(i.id) && !i.blocked && !i.info);
+  const chips = [el('span', 'chip', bytes(gameSize(c.items))), el('span', 'chip quiet', count(c.items.length, 'item', 'items'))];
+  if (picked.length) chips.push(el('span', 'chip good', bytes(gameSize(picked)) + ' selected'));
+  return [devHeader(bigGameIcon(GAME_META[c.key].icon), c.title, c.explain, chips), gameSection(c.key, c.items)];
+}
+
+function bigGameIcon(name) {
+  const box = el('span', 'cat-icon big hero');
+  box.append(icon(name));
+  return box;
+}
+
+/** A drive: the games on it, and what games left on it, kind by kind. */
+function gameDrivePage(d) {
+  const gamesBytes = d.games.reduce((a, g) => a + g.bytes, 0);
+  const glyph = el('span', 'cat-icon big hero');
+  glyph.append(driveIcon('fixed'));
+  const card = (state.drives || []).find((x) => x.root.toUpperCase() === d.root);
+  const chips = [el('span', 'chip', count(d.games.length, 'game', 'games') + ' · ' + bytes(gamesBytes))];
+  if (d.items.length) chips.push(el('span', 'chip', bytes(gameSize(d.items)) + ' left behind'));
+  if (card) chips.push(el('span', 'chip quiet', bytes(card.freeBytes) + ' free of ' + bytes(card.totalBytes)));
+  const out = [devHeader(glyph, (card && card.name) || d.root, 'The games on this drive, and what games and their launchers left on it. ' + GAMES_SAFE, chips)];
+  if (d.games.length) {
+    const box = el('section', 'dev-section');
+    const head = el('div', 'dev-section-head');
+    const glyphBox = el('span', 'cat-icon');
+    glyphBox.append(icon('pad'));
+    head.append(glyphBox);
+    const title = el('div', 'dev-section-title');
+    title.append(el('span', null, 'Games on it'), el('span', 'muted', ' · ' + bytes(gamesBytes)));
+    head.append(title);
+    box.append(head, el('p', 'muted small', 'To move a game to another drive, use its launcher: each game\'s page says how.'));
+    const list = el('div', 'dev-list');
+    for (const g of d.games) list.append(gameInstallRow(g));
+    box.append(list);
+    out.push(box);
+  }
+  for (const c of gameReport.categories) {
+    const here = d.items.filter((i) => c.items.includes(i));
+    if (here.length) out.push(gameSection(c.key, here));
+  }
+  return out;
+}
+
+/** One game: where it is, how big, when last played, how to move it, and everything Heiward found of it. */
+function gamePage(game) {
+  const chips = [el('span', 'chip', bytes(game.bytes)), el('span', 'chip quiet', launcherName(game.launcher))];
+  if (game.lastPlayedUtc) chips.push(el('span', 'chip quiet', playedText(game.lastPlayedUtc)));
+  const intro = el('div');
+  const where = el('div', 'folder muted small', game.folder);
+  where.title = game.folder;
+  where.addEventListener('contextmenu', (e) => openPathMenu(e, { name: game.name, path: game.folder, folder: true }));
+  intro.append(where, el('div', 'dev-intro', game.advice + ' Heiward never touches the game\'s own files or its saves.'));
+  const glyph = el('span', 'cat-icon big hero');
+  glyph.append(icon('pad'));
+  const out = [devHeader(glyph, game.name, intro, chips)];
+  const mine = gameItems().filter((i) => i.game === game.id || (i.kind === 'twice' && (i.paths || []).some((p) => p.toLowerCase() === game.folder.toLowerCase())));
+  for (const c of gameReport.categories) {
+    const here = mine.filter((i) => c.items.includes(i));
+    if (here.length) out.push(gameSection(c.key, here));
+  }
+  if (!mine.length) out.push(el('p', 'muted small', 'Nothing else of it to look at: no shader cache, crash dumps or second copy found.'));
+  return out;
+}
+
+/** Appears once something is ticked, on any page: the one place to remove from. */
+function gameSelectionBar() {
+  const picked = gamePicked();
+  const bar = el('div', 'sel-bar' + (picked.length || gameBusy ? ' show' : ''));
+  if (!picked.length && !gameBusy) return bar;
+  const text = el('div', 'sel-text');
+  text.append(el('div', 'sel-count', gameBusy ? 'Moving to the Recycle Bin…' : count(picked.length, 'item', 'items') + ' selected · ' + bytes(gameSize(picked))));
+  const status = el('div', 'muted small');
+  status.id = 'games-status';
+  const kinds = [...new Set(picked.map((i) => (GAME_META[gameCategoryOf(i)] || {}).short).filter(Boolean))];
+  status.textContent = gameBusy ? gameProgress : kinds.join(', ');
+  text.append(status);
+  bar.append(text);
+  const clear = el('button', 'btn secondary', 'Clear');
+  clear.disabled = gameBusy;
+  clear.addEventListener('click', () => { for (const i of picked) gameTicks.delete(i.id); renderGames(); });
+  const go = el('button', 'btn', gameBusy ? 'Moving…' : 'Move ' + bytes(gameSize(picked)) + ' to the Recycle Bin');
+  go.disabled = gameBusy;
+  go.addEventListener('click', () => removeGames(picked));
+  bar.append(clear, go);
+  return bar;
+}
+
+async function removeGames(picked) {
+  const lines = ['Move ' + count(picked.length, 'item', 'items') + ' (' + bytes(gameSize(picked)) + ') to the Recycle Bin?',
+    'You can restore them from there until it\'s emptied. Installed games\' files and saved games are never touched.'];
+  const stutter = picked.filter((i) => (i.kind === 'shader' && i.game) || i.kind === 'gpu-shader').length;
+  if (stutter) lines.push(count(stutter, 'shader cache is', 'shader caches are') + ' of games you have: they rebuild, but the first launch of those games may stutter for a while.');
+  if (picked.some((i) => i.kind === 'paused')) lines.push('A paused download starts again from the beginning.');
+  if (!confirm(lines.join('\n\n'))) return;
+  gameBusy = true;
+  gameResult = null;
+  renderGames();
+  let freed = 0;
+  const failed = [];
+  for (const [n, i] of picked.entries()) {
+    gameProgress = i.name + ' (' + (n + 1) + ' of ' + picked.length + ')';
+    const status = $('games-status');
+    if (status) status.textContent = gameProgress;
+    try {
+      const r = await post('/api/games/items/' + encodeURIComponent(i.id) + '/remove');
+      freed += r.freedBytes;
+      if (r.error) failed.push(i.name + ' (' + r.error + ')');
+      else if (r.leftInUse) failed.push(i.name + ': ' + count(r.leftInUse, 'part', 'parts') + ' left' + (r.heldBy ? ' (' + r.heldBy + ')' : ''));
+      gameTicks.delete(i.id);
+    } catch (e) {
+      failed.push(i.name + ' (' + e.message + ')');
+    }
+  }
+  gameBusy = false;
+  gameProgress = '';
+  gameResult = [!failed.length, 'Moved ' + bytes(freed) + ' to the Recycle Bin.' + (failed.length ? ' Not moved:' : ''), failed];
+  await loadGameReport();
+  renderGames();
+  refresh(true);
+}
+
 /**
  * The running scan reads this drive (or folder): its card waits for the scan's end. Until the scan says which
  * it reads, every drive but those scanned only when asked.
@@ -2619,6 +3233,8 @@ function renderDone(s) {
       if (d.folder) row.append(where(d.folder));
     } else if (d.action === 'branches-pruned') {
       row.append(el('span', null, 'Deleted ' + count(d.recycled - 1, 'merged branch', 'merged branches') + ' in ' + (d.label || 'a repository')));
+    } else if (d.action === 'game-recycled') {
+      row.append(el('span', null, 'Moved ' + (d.label || 'what a game left behind') + ', ' + bytes(d.recycledBytes) + ', to the Recycle Bin'));
     } else if (d.action === 'dev-cleaned') {
       row.append(el('span', null, 'Cleaned ' + (d.label || 'developer files') + ', freed ' + bytes(d.recycledBytes) + ' (deleted permanently)'));
     } else if (d.action === 'recycled') {
@@ -3400,7 +4016,8 @@ async function renderRoute() {
   if (!state) return;
   if (state.setup.needed) { renderSetup(state); return; }
   // Developer mode is off (Settings): its pages aren't there, so a link to one lands home.
-  if (route.view === 'dev' && !state.dev.enabled) {
+  // Game mode the same way: off, the Games area isn't there.
+  if ((route.view === 'dev' && !state.dev.enabled) || (route.view === 'games' && !state.games.enabled)) {
     history.replaceState(null, '', '#/');
     route = parseRoute();
   }
@@ -3410,6 +4027,7 @@ async function renderRoute() {
   $('home').classList.toggle('hidden', route.view !== 'home');
   $('settingsview').classList.toggle('hidden', route.view !== 'settings');
   $('devview').classList.toggle('hidden', route.view !== 'dev');
+  $('gamesview').classList.toggle('hidden', route.view !== 'games');
   $('folder').classList.toggle('hidden', !folder);
   $('settings-btn').setAttribute('aria-pressed', String(route.view === 'settings'));
   if (route.view === 'settings') {
@@ -3422,6 +4040,12 @@ async function renderRoute() {
     if (devReport && devReport.scannedAtUtc && Date.now() - devPullsAsked > 120000) loadDevPulls(false);
     renderCrumbs(); // a project's name comes with the report
     renderDev();
+    return;
+  }
+  if (route.view === 'games') {
+    if (!gameReport || (state.games.scannedAtUtc && gameReport.scannedAtUtc !== state.games.scannedAtUtc)) await loadGameReport();
+    renderCrumbs(); // a game's name comes with the report
+    renderGames();
     return;
   }
   if (!folder) {
@@ -3459,6 +4083,9 @@ async function refresh(force) {
       s.dev.running !== state.dev.running || s.dev.scannedAtUtc !== state.dev.scannedAtUtc || s.updated !== state.updated ||
       // Developer mode turned on or off, here or in Manor's Developer options.
       s.dev.enabled !== state.dev.enabled || JSON.stringify(s.dev.manor) !== JSON.stringify(state.dev.manor) ||
+      // Game mode turned on or off, its check running or done.
+      s.games.enabled !== state.games.enabled || JSON.stringify(s.games.manor) !== JSON.stringify(state.games.manor) ||
+      s.games.running !== state.games.running || s.games.scannedAtUtc !== state.games.scannedAtUtc ||
       rolesChanged ||
       (s.report && state.report && s.report.scannedAtUtc !== state.report.scannedAtUtc);
     state = s;
@@ -3469,7 +4096,7 @@ async function refresh(force) {
       await renderRoute();
     }
     // Quickly while something is starting, so its progress shows as soon as it has some.
-    timer = setTimeout(refresh, s.setup.running || s.scan.starting ? 1000 : s.scan.running || s.dev.running ? 2000 : 15000);
+    timer = setTimeout(refresh, s.setup.running || s.scan.starting ? 1000 : s.scan.running || s.dev.running || s.games.running ? 2000 : 15000);
   } catch (e) {
     // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
     serverLost = true;
@@ -3602,7 +4229,12 @@ $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
 $('nav-back').addEventListener('click', () => history.back());
 $('nav-fwd').addEventListener('click', () => history.forward());
-$('nav-up').addEventListener('click', () => { if (route.view === 'folder') go(parentOf(route.path)); else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); } else if (route.view === 'settings') go(null); });
+$('nav-up').addEventListener('click', () => {
+  if (route.view === 'folder') go(parentOf(route.path));
+  else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); }
+  else if (route.view === 'games') { if (route.cat || route.drive || route.game) location.hash = '#/games'; else go(null); }
+  else if (route.view === 'settings') go(null);
+});
 // Heiward's name in the title bar goes home, wherever the page is.
 $('brand').addEventListener('click', (e) => { e.preventDefault(); go(null); $('home').scrollTop = 0; });
 $('settings-btn').append(icon('gear'));
@@ -3610,6 +4242,10 @@ $('settings-btn').addEventListener('click', () => { location.hash = route.view =
 $('dev-nav-toggle').addEventListener('click', () => {
   const open = $('dev-nav').classList.toggle('open');
   $('dev-nav-toggle').setAttribute('aria-expanded', String(open));
+});
+$('games-nav-toggle').addEventListener('click', () => {
+  const open = $('games-nav').classList.toggle('open');
+  $('games-nav-toggle').setAttribute('aria-expanded', String(open));
 });
 $('navpane-toggle').addEventListener('click', () => {
   const open = $('navpane').classList.toggle('open');
