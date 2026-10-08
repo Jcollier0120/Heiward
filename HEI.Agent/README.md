@@ -1,6 +1,6 @@
 # Heiward
 
-Heiward tends your drives. It looks for likely duplicate photos and videos and, in developer mode, stale developer files, and lists them on a local review page. Nothing is deleted until you say so: files you tick go to the Recycle Bin, where you can restore them. Once you trust what it suggests, you can let it [clean up by itself](#automatic-cleanup).
+Heiward tends your drives. It looks for likely duplicate photos and videos and, in [game mode](#game-mode), what games leave behind, and in developer mode, stale developer files, and lists them on a local review page. Nothing is deleted until you say so: files you tick go to the Recycle Bin, where you can restore them. Once you trust what it suggests, you can let it [clean up by itself](#automatic-cleanup).
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound. The command is `hei`.
 
@@ -213,6 +213,39 @@ At a manor, the code housekeeping other employees own is theirs, and Heiward lea
 
 A manor without Reeve, or without the Steward, leaves that part with Heiward, so nothing is left unowned. Heiward checks on every page load and poll, every scan and every command, as it does Manor's Developer options.
 
+## Game mode
+
+Game mode is for gamers' very large files. It's off until you turn it on with the **Game mode** switch in the review page's Settings (or `"gameMode": "on"`). Off, nothing of it is checked or shown. On, once a day after a scheduled scan (or **Check now**, or `hei games --scan`), Heiward looks at your games and lists them in the **Games** area of the review page, by game, by drive and by kind, each with its size, what it is, and what removing it means.
+
+**What it reads.** Only the launchers' own records, never a guess from a folder's name:
+- **Steam:** its library list (`libraryfolders.vdf`) and each game's app manifest, with the size and when it was last played.
+- **Epic Games:** the launcher's manifests in `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests`.
+- **GOG GALAXY, the EA app, Ubisoft Connect, Battle.net:** what each writes to the registry (an EA game also has the EA app's `__Installer` folder; Blizzard's games are their uninstall entries).
+- **Xbox and the Microsoft Store:** each drive's `XboxGames` folder, a game per folder with its `MicrosoftGame.config`.
+
+Only Steam records when a game was last played.
+
+**What it lists:**
+1. **Leftovers of uninstalled games.** Folders in a Steam library's `common` folder that no manifest claims, folders in the Epic Games folder with Epic's `.egstore` record and no manifest, and Steam Workshop downloads of games no longer installed. A folder with a saved game in it is never offered. In a Steam library where Steam lists no game at all (it may have lost track of it), leftovers are never ticked.
+2. **Launchers' download caches.** Steam's `depotcache`, web cache, browser cache, `steamapps\temp` and unfinished downloads (one of a game Steam still lists is a paused download or update, never ticked: removing it restarts that download); Epic's web caches and Unreal Engine marketplace downloads (`VaultCache`, never ticked); GOG GALAXY's and Battle.net's caches.
+3. **Shader caches.** The graphics drivers' (NVIDIA's DXCache and GLCache, AMD's, Intel's, DirectX's D3DSCache) and Steam's per game. Those of uninstalled games are ticked; those of installed games and the drivers' never are, and the page says the first launch may stutter while they rebuild.
+4. **Crash dumps and reports.** Windows' crash dumps of the games' programs, Windows Error Reporting's reports of them, Unreal and Unity games' crash folders, and Steam's dumps.
+5. **The same game installed twice,** in two launchers or two libraries.
+6. **Games not played in months** (90 days), biggest first.
+
+The last two are only pointed to: Heiward doesn't move or uninstall games. Each game's page says how its launcher does it (Steam: right-click the game › Properties › Installed Files › **Move install folder**; the Xbox app: **Manage › Files › Move**).
+
+**Safety.** Nothing is removed until you tick it, and what you remove goes to the Recycle Bin, never deleted outright: what the Recycle Bin can't take (a network or removable drive, one set to delete at once, a folder too big for its bin) stays, and the page says why. Just before removing anything, Heiward reads the launchers' records again and checks what's running:
+- never an installed game's own files, or a folder that holds one;
+- never saved games: `Saved Games`, `Documents\My Games`, Steam's `userdata`, any folder named like saves, or a folder with a save in it;
+- nothing of a launcher while it runs (its caches, Steam's downloads and its shader caches of installed games), and nothing of a game while it runs (its shader cache, its crash dumps; the drivers' shader caches and crash folders while any game runs).
+
+**Automatic cleanup** can take the safe kinds once you turn it on (the card's **What games leave behind**, or `hei auto --games on`): crash dumps and reports, launchers' download caches, leftovers of uninstalled games, and shader caches of uninstalled games, to the Recycle Bin, right after the daily look at your games. Paused downloads, and shader caches of installed games and the drivers', always wait for you.
+
+The home page's **At a glance** has a **Games** slice: the installed games and what they left.
+
+**With Manor:** game mode is Heiward's own switch for now. The seam for Manor is there, as for [Developer options](#developer-mode): with Manor installed and its `settings.json` saying `"gameMode": true` or `false`, that decides instead, Settings shows which way with a link in place of the switch, and Heiward's own `gameMode` waits, kept as you left it. Manor doesn't write it yet; a hire for gaming can also set Heiward's own `"gameMode": "on"` in its first settings.
+
 ## Sharing the NPU
 
 Other NPU tools on this PC can use the NPU at the same time. Heiward takes turns with the ones that use the same machine-wide lock, `%USERPROFILE%\.npu-agent\locks\npu`, whenever `%USERPROFILE%\.npu-agent` exists. (The folder name is historical, kept so every tool still finds the lock.) They wait their turn in the NPU queue they share (`npu.queue` next to the lock):
@@ -256,8 +289,9 @@ The same tools now run models on graphics cards and the processor as well (the m
 | `manorCard` | true | Without Manor installed, the home page's [In a manor](#the-review-page) card, held back for now (no card shows whatever this says). Its **Not now** sets `false`; Settings' **The "In a manor" card** sets it back |
 | `toast` | true | A notification when a scan finds new duplicates, or automatic cleanup cleans some up. New look-alikes get none: they're on the page the next time you open it |
 | `developerMode` | `off` | `on`: also check once a day for developer leftovers ([Developer mode](#developer-mode)); the switch in Settings sets it. An older file's `auto` counts as on only with automatic cleanup of developer leftovers on. With Manor installed and its `developerOptions` true or false, Manor's Developer options decide instead and this waits, kept for when they don't |
+| `gameMode` | `off` | `on`: also look at your games once a day ([Game mode](#game-mode)); the switch in Settings sets it. With Manor installed and its `gameMode` true or false, Manor decides instead and this waits |
 | `staleProjectDays`, `tempOlderThanDays` | 30, 7 | When build outputs and temp files are ticked |
-| `autoClean` | off | [Automatic cleanup](#automatic-cleanup): `duplicates` and `developer` (true/false), `developerKinds` (`branches`, `temp`, `buildOutputs`, `worktrees`, `systemImages`), `afterDays` (3; 0 to 90) |
+| `autoClean` | off | [Automatic cleanup](#automatic-cleanup): `duplicates`, `developer` and `games` (true/false), `developerKinds` (`branches`, `temp`, `buildOutputs`, `worktrees`, `systemImages`), `gameKinds` (`dumps`, `caches`, `leftovers`, `shaders`), `afterDays` (3; 0 to 90) |
 
 ## Commands
 
@@ -273,7 +307,8 @@ hei status --json   the same essentials as one JSON object, for scripts and othe
 hei scope [--count] what a scan looks at and leaves out
 hei dev [--scan]    developer mode: build outputs, worktrees, caches, emulators, temp
 hei dev --prune-branches <repo>   delete local branches merged into the remote's main/master (not at a manor with Reeve)
-hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--after-days N]
+hei games [--scan]  game mode: installed games, leftovers, download caches, shader caches, crash dumps
+hei auto            automatic cleanup: what's due and when  [--duplicates on|off] [--developer on|off] [--games on|off] [--after-days N]
 hei setup           get FFmpeg and the AI components  [--reuse-from <folder>]
 hei install         [--dry-run] [--yes] [--device npu|gpu|cpu] [--gpu <number|name|default>] [--on-demand] [--scan-speed background|full|auto] [--no-browser] [--remove-github-copy] [--reuse-from <folder>]
 hei uninstall       [--purge] [--dry-run]
@@ -379,7 +414,7 @@ It's laid out like File Explorer, so you can go where you care most instead of s
 - **Its scan task gone or turned off** in Task Scheduler: **Turn them back on** registers it again.
 - **Heiward not running** (it stopped, or the PC slept): the page stays as it was, says so, and offers **Start Heiward**, a `heiward://start` link the installer registers. Once Heiward is back, the page reloads by itself.
 
-**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, **Keep a history** (with Clear history), **Developer mode** (with Manor installed, Manor's Developer options decide that one: [Developer mode](#developer-mode)), and, once the card is back, without Manor, under About Heiward, **The "In a manor" card** ([In a manor](#the-review-page)). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
+**Settings:** the gear in the title bar opens every switch in one place: **Scans run** (in the background, at full speed when you're here, or always at full speed), **Automatic cleanup**, **Keep a history** (with Clear history), **Game mode** ([Game mode](#game-mode)), **Developer mode** (with Manor installed, Manor's Developer options decide that one: [Developer mode](#developer-mode); while they're off, the card isn't shown at all), and, once the card is back, without Manor, under About Heiward, **The "In a manor" card** ([In a manor](#the-review-page)). It also shows what the settings file sets that the page has no switch for (what's scanned, skipped file types, where AI matching runs), and where the file is.
 
 **Themes:** the palette button in the title bar picks Match Windows (the default), Light, Dark, or one of six colour themes: Arcade, Onyx, Carbon, Tinsel, Rose Gold and Quest. The choice is kept in the browser. With Manor installed, Manor chooses the theme for every page in the manor, Heiward's too: the page follows the `theme` in Manor's `settings.json` from its next load, and the palette shows it, with a link to change it in Manor.
 

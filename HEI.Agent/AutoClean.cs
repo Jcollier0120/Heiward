@@ -27,8 +27,10 @@ namespace HEI.Agent {
 	sealed record AutoPlanEntry(DateTime? DueUtc, string? Reason, bool Held = false, string? FolderPair = null, int Count = 0, long Bytes = 0);
 
 	/// <summary>One automatic cleanup: what went, and what couldn't.</summary>
-	sealed record AutoRun(DateTime AtUtc, int Files, long FileBytes, int DevItems, long DevBytes, int Branches, List<string> Problems) {
-		public bool DidSomething => Files > 0 || DevItems > 0 || Branches > 0;
+	/// <param name="GameItems">What games left behind that went to the Recycle Bin (game mode), and <paramref name="GameBytes"/> their size.</param>
+	sealed record AutoRun(DateTime AtUtc, int Files, long FileBytes, int DevItems, long DevBytes, int Branches, List<string> Problems,
+		int GameItems = 0, long GameBytes = 0) {
+		public bool DidSomething => Files > 0 || DevItems > 0 || Branches > 0 || GameItems > 0;
 
 		/// <summary>"12 copies (340 MB) to the Recycle Bin · 2.1 GB of developer leftovers · 5 merged branches" (the console gets "; ").</summary>
 		public string Describe(string separator = " · ") {
@@ -36,6 +38,7 @@ namespace HEI.Agent {
 			if (Files > 0) parts.Add($"{Files} {(Files == 1 ? "copy" : "copies")} ({Format.Bytes(FileBytes)}) to the Recycle Bin");
 			if (DevItems > 0) parts.Add($"{Format.Bytes(DevBytes)} of developer leftovers");
 			if (Branches > 0) parts.Add($"{Branches} merged {(Branches == 1 ? "branch" : "branches")}");
+			if (GameItems > 0) parts.Add($"{Format.Bytes(GameBytes)} of game leftovers to the Recycle Bin");
 			if (parts.Count == 0) parts.Add("nothing cleaned");
 			if (Problems.Count > 0) parts.Add($"{Problems.Count} left alone (see the review page)");
 			return string.Join(separator, parts);
@@ -51,9 +54,10 @@ namespace HEI.Agent {
 	sealed class AutoCleanState {
 		public DateTime? DuplicatesSinceUtc { get; set; }
 		public DateTime? DeveloperSinceUtc { get; set; }
-		/// <summary>"g:{set}", "d:{developer item}", "b:{repository}:{branch}" → when first listed.</summary>
+		public DateTime? GamesSinceUtc { get; set; }
+		/// <summary>"g:{set}", "d:{developer item}", "b:{repository}:{branch}", "m:{game item}" → when first listed.</summary>
 		public Dictionary<string, DateTime> FirstSeenUtc { get; set; } = new();
-		/// <summary>"g:{set}", "d:{developer item}", "b:{repository}": the user said "leave it".</summary>
+		/// <summary>"g:{set}", "d:{developer item}", "b:{repository}", "m:{game item}": the user said "leave it".</summary>
 		public HashSet<string> Held { get; set; } = new();
 		/// <summary>Folder pairs (<see cref="AutoCleaner.FolderPair"/>) the user let past the whole-folder brake.</summary>
 		public HashSet<string> AllowedFolderPairs { get; set; } = new();
@@ -96,6 +100,8 @@ namespace HEI.Agent {
 		public Dictionary<string, AutoPlanEntry> DevItems { get; } = new();
 		/// <summary>By repository id: the first of its merged branches due, and how many are merged.</summary>
 		public Dictionary<string, AutoPlanEntry> Repos { get; } = new();
+		/// <summary>By game item id (game mode).</summary>
+		public Dictionary<string, AutoPlanEntry> GameItems { get; } = new();
 		/// <summary>Due now: each set's files to move.</summary>
 		internal Dictionary<string, List<string>> GroupTargets { get; } = new();
 		/// <summary>Due now: each repository's branches to delete.</summary>
@@ -124,6 +130,13 @@ namespace HEI.Agent {
 		/// <summary>The developer kinds automatic cleanup can take, safest first.</summary>
 		public static readonly string[] DeveloperKinds = { Branches, Temp, BuildOutputs, Worktrees, SystemImages };
 
+		public const string GameLeftovers = "leftovers", GameCaches = "caches", GameDumps = "dumps", GameShaders = "shaders";
+		/// <summary>
+		/// What games leave behind that automatic cleanup can take (to the Recycle Bin), safest first. Shader caches only of games
+		/// no longer installed: those of installed games make their next launch stutter.
+		/// </summary>
+		public static readonly string[] GameKinds = { GameDumps, GameCaches, GameLeftovers, GameShaders };
+
 		/// <summary>This many sets or more with copies between the same two folders look like a copy of the whole folder.</summary>
 		internal const int WholeFolderSets = 20;
 		/// <summary>A set automatic cleanup couldn't move is tried again after this.</summary>
@@ -142,6 +155,26 @@ namespace HEI.Agent {
 			_ => null,
 		};
 
+		/// <summary>
+		/// The automatic-cleanup kind of a game item; null for what it never takes: shader caches of installed games and the
+		/// graphics drivers', paused downloads, and what Heiward only points to (a game installed twice, one not played).
+		/// </summary>
+		internal static string? KindOf(GameItem item) => item.Info ? null : item.Kind switch {
+			"orphan" or "workshop" => GameLeftovers,
+			"cache" or "download" => GameCaches,
+			"dump" or "crash" or "wer" => GameDumps,
+			"shader" when item.Game == null => GameShaders,
+			_ => null,
+		};
+
+		internal static string GameLabel(string kind) => kind switch {
+			GameLeftovers => "leftovers of uninstalled games",
+			GameCaches => "launchers' download caches",
+			GameDumps => "crash dumps and reports",
+			GameShaders => "shader caches of uninstalled games",
+			_ => kind,
+		};
+
 		static string Label(string kind) => kind switch {
 			Branches => "merged branches",
 			Temp => "temp files and crash dumps",
@@ -155,19 +188,23 @@ namespace HEI.Agent {
 		public static void SyncSince(AutoCleanConfig cfg, AutoCleanState s, DateTime now) {
 			s.DuplicatesSinceUtc = cfg.Duplicates ? s.DuplicatesSinceUtc ?? now : null;
 			s.DeveloperSinceUtc = cfg.Developer ? s.DeveloperSinceUtc ?? now : null;
+			s.GamesSinceUtc = cfg.Games ? s.GamesSinceUtc ?? now : null;
 		}
 
 		/// <summary>
 		/// Notes when each set, ticked developer item and merged branch was first listed, and forgets what's
 		/// gone: a developer item that stops being ticked (worked on again, or blocked) starts over.
 		/// </summary>
-		public static void Observe(AutoCleanState s, Report? report, DevReport? dev, DateTime now) {
+		public static void Observe(AutoCleanState s, Report? report, DevReport? dev, DateTime now, GameReport? games = null) {
 			var groups = (report?.Groups ?? new()).Select(g => "g:" + g.Key).ToHashSet();
 			var items = dev?.Categories.SelectMany(c => c.Items).ToList() ?? new();
 			var repos = dev?.Repositories ?? new();
+			var gameItems = games?.Items.ToList() ?? new();
 			var listed = new HashSet<string>(groups);
 			foreach (DevItem i in items)
 				if (i.Suggested && i.Blocked == null) listed.Add("d:" + i.Id);
+			foreach (GameItem i in gameItems)
+				if (i.Suggested && i.Blocked == null) listed.Add("m:" + i.Id);
 			foreach (RepoBranches r in repos)
 				foreach (string b in r.Merged) listed.Add($"b:{r.Id}:{b}");
 			foreach (string k in listed) s.FirstSeenUtc.TryAdd(k, now);
@@ -176,12 +213,14 @@ namespace HEI.Agent {
 			var exists = new HashSet<string>(groups);
 			foreach (DevItem i in items) exists.Add("d:" + i.Id);
 			foreach (RepoBranches r in repos) exists.Add("b:" + r.Id);
+			foreach (GameItem i in gameItems) exists.Add("m:" + i.Id);
 			s.Held.RemoveWhere(k => !exists.Contains(k));
 			foreach (var (k, f) in s.Failed.ToList())
 				if (!groups.Contains(k) || now - f.AtUtc >= RetryAfter) s.Failed.Remove(k);
 		}
 
-		public static AutoPlan Plan(AgentConfig cfg, Report? report, DevReport? dev, IReadOnlyDictionary<string, Decision> decisions, AutoCleanState s, DateTime now) {
+		public static AutoPlan Plan(AgentConfig cfg, Report? report, DevReport? dev, IReadOnlyDictionary<string, Decision> decisions, AutoCleanState s, DateTime now,
+			GameReport? games = null) {
 			var plan = new AutoPlan();
 			AutoCleanConfig auto = cfg.AutoClean;
 			DateTime Due(string key, DateTime? since) {
@@ -241,6 +280,21 @@ namespace HEI.Agent {
 					plan.Repos[r.Id] = new AutoPlanEntry(held ? null : dues.Min(d => d.Due), null, held, Count: r.Merged.Count);
 					var dueNow = held ? new() : dues.Where(d => d.Due <= now).Select(d => d.Branch).ToList();
 					if (dueNow.Count > 0) plan.BranchesDue[r.Id] = dueNow;
+				}
+			}
+
+			if (auto.Games && games != null) {
+				foreach (GameItem i in games.Items.Where(i => !i.Info)) {
+					string key = "m:" + i.Id;
+					string? kind = KindOf(i);
+					string? reason =
+						kind == null ? (i.Kind == "paused" ? "A paused download is always your call"
+							: "Shader caches of installed games are always your call: they rebuild, and the next launch may stutter") :
+						!auto.GameKinds.Contains(kind) ? $"Automatic cleanup is off for {GameLabel(kind)}" :
+						i.Blocked ?? (i.Suggested ? null : "Not ticked for you");
+					bool held = s.Held.Contains(key);
+					DateTime? due = reason == null && !held ? Due(key, s.GamesSinceUtc) : null;
+					plan.GameItems[i.Id] = new AutoPlanEntry(due, reason, held, Count: i.Paths.Count, Bytes: i.Bytes);
 				}
 			}
 			return plan;
@@ -309,12 +363,13 @@ namespace HEI.Agent {
 		/// today's (developer items are cleaned only then). Updates <paramref name="s"/>: first-listed times,
 		/// failures, and the run. Null when automatic cleanup is off.
 		/// </summary>
+		/// <param name="games">The games check's list, with game mode on; <paramref name="gamesChecked"/>: it just ran, so it's today's (game items are cleaned only then).</param>
 		internal static AutoRun? Run(AgentConfig cfg, Report? report, DevReport? dev, IReadOnlyDictionary<string, Decision> decisions,
-			AutoCleanState s, DateTime now, bool devChecked, IAutoActions actions) {
+			AutoCleanState s, DateTime now, bool devChecked, IAutoActions actions, GameReport? games = null, bool gamesChecked = false) {
 			SyncSince(cfg.AutoClean, s, now);
-			Observe(s, report, dev, now);
-			if (!cfg.AutoClean.Duplicates && !cfg.AutoClean.Developer) return null;
-			AutoPlan plan = Plan(cfg, report, dev, decisions, s, now);
+			Observe(s, report, dev, now, games);
+			if (!cfg.AutoClean.Duplicates && !cfg.AutoClean.Developer && !cfg.AutoClean.Games) return null;
+			AutoPlan plan = Plan(cfg, report, dev, decisions, s, now, games);
 
 			int files = 0, devItems = 0, branches = 0;
 			long fileBytes = 0, devBytes = 0;
@@ -352,7 +407,21 @@ namespace HEI.Agent {
 					if (r.Error != null) problems.Add($"{repo.Name}: {r.Error}");
 				}
 			}
-			var run = new AutoRun(now, files, fileBytes, devItems, devBytes, branches, problems);
+			int gameItems = 0;
+			long gameBytes = 0;
+			if (gamesChecked && games != null) {
+				foreach (GameItem i in games.Items.ToList()) {
+					if (!plan.GameItems.TryGetValue(i.Id, out AutoPlanEntry? e) || !(e.DueUtc <= now)) continue;
+					CleanResult r = actions.RemoveGame(i);
+					if (r.FreedBytes > 0) {
+						gameItems++;
+						gameBytes += r.FreedBytes;
+					}
+					if (r.Error != null) problems.Add($"{i.Name}: {r.Error}");
+					else if (r.Describe(withPath: false) is { } left) problems.Add($"{i.Name}: {left}");
+				}
+			}
+			var run = new AutoRun(now, files, fileBytes, devItems, devBytes, branches, problems, gameItems, gameBytes);
 			if (run.DidSomething || problems.Count > 0) {
 				s.Runs.Insert(0, run);
 				if (s.Runs.Count > RunsKept) s.Runs.RemoveRange(RunsKept, s.Runs.Count - RunsKept);
@@ -365,13 +434,15 @@ namespace HEI.Agent {
 		/// leftovers only with developer mode on (<paramref name="devMode"/>: Manor's Developer options, or Heiward's own switch),
 		/// and never worktrees or merged branches where Reeve keeps them (<see cref="ManorRoles"/>).
 		/// </summary>
-		public static AutoRun? RunAndSave(AgentConfig cfg, DevMode devMode, bool devChecked, IAutoActions actions) {
+		/// <param name="gameMode">What games leave behind only with game mode on, right after the daily games check (<paramref name="gamesChecked"/>).</param>
+		public static AutoRun? RunAndSave(AgentConfig cfg, DevMode devMode, bool devChecked, IAutoActions actions, GameMode? gameMode = null, bool gamesChecked = false) {
 			ManorRoles roles = ManorRoles.Now();
-			bool on = cfg.AutoClean.Duplicates || cfg.AutoClean.Developer;
+			bool on = cfg.AutoClean.Duplicates || cfg.AutoClean.Developer || cfg.AutoClean.Games;
 			if (!on && !File.Exists(AutoCleanState.FilePath)) return null; // never turned on: nothing to keep
 			using (CleanLock.Acquire(TimeSpan.FromMinutes(10))) {
 				AutoCleanState s = AutoCleanState.Load();
-				AutoRun? run = Run(cfg, Report.Load(), devMode.On ? roles.View(DevReport.Load()) : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions);
+				AutoRun? run = Run(cfg, Report.Load(), devMode.On ? roles.View(DevReport.Load()) : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions,
+					gameMode is { On: true } ? GameReport.Load() : null, gamesChecked);
 				s.Save();
 				if (run != null && (run.DidSomething || run.Problems.Count > 0))
 					AgentPaths.AppendLog("automatic cleanup: " + run.Describe() + string.Concat(run.Problems.Select(p => Environment.NewLine + "    left alone: " + p)));
@@ -403,6 +474,8 @@ namespace HEI.Agent {
 		CleanResult Clean(DevItem item);
 		/// <param name="branches">Only these of its merged branches; null for all.</param>
 		PruneResult Prune(RepoBranches repo, IReadOnlyCollection<string>? branches);
+		/// <summary>Moves what a game left behind to the Recycle Bin (game mode).</summary>
+		CleanResult RemoveGame(GameItem item) => new(0, 0, "Not available here");
 	}
 
 	/// <summary>
@@ -442,6 +515,23 @@ namespace HEI.Agent {
 			}
 			// Without a history, the log keeps no names either.
 			AgentPaths.AppendLog($"developer clean{(automatic ? " (automatic)" : "")}: {item.Kind}{(cfg.KeepHistory ? " " + item.Location : "")}: freed {Format.Bytes(result.FreedBytes)}" +
+				(result.Describe(cfg.KeepHistory) is { } left ? ", " + left : "") + (result.Error != null ? $", {result.Error}" : ""));
+			return result;
+		}
+
+		public CleanResult RemoveGame(GameItem item) {
+			CleanResult result;
+			using (CleanLock.Acquire()) {
+				result = GameCleaner.Remove(item, GamePlaces.Current(cfg));
+				if (result.FreedBytes > 0)
+					DecisionStore.Record(cfg, "game:" + item.Id, new Decision("game-recycled", DateTime.UtcNow, new() { item.Name }, result.FreedBytes, automatic));
+				// Gone, or what's left (in use, refused) kept for another try, unticked.
+				if (result.Error == null)
+					GameReport.Update(item.Id, result.LeftInUse == 0 ? null : item with { Bytes = Math.Max(0, item.Bytes - result.FreedBytes), Suggested = false });
+			}
+			// Without a history, the log keeps no names either.
+			AgentPaths.AppendLog($"game clean{(automatic ? " (automatic)" : "")}: {item.Kind}{(cfg.KeepHistory ? " " + item.Location : "")}: " +
+				$"{Format.Bytes(result.FreedBytes)} to the Recycle Bin" +
 				(result.Describe(cfg.KeepHistory) is { } left ? ", " + left : "") + (result.Error != null ? $", {result.Error}" : ""));
 			return result;
 		}

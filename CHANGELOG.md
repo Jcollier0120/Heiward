@@ -2,6 +2,32 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.8.0
+
+**Game mode: Heiward looks after gamers' very large files, and its page speaks plainly to everyone who isn't a developer.**
+
+### What's new
+
+- **Game mode**, a new switch in Settings, off until you turn it on. Once a day Heiward looks at your games and lists them in a new **Games** area on the home page, by game, by drive and by kind, each with its size, what it is, and what removing it means:
+  - your installed games from Steam, Epic Games, GOG GALAXY, the EA app, Ubisoft Connect, Battle.net and Xbox, with when you last played them where the launcher records it (Steam does);
+  - leftovers of games you've uninstalled, and workshop downloads of games no longer installed;
+  - the launchers' download caches;
+  - shader caches: those of uninstalled games are ticked for you; those of games you have never are, as their first launch afterwards may stutter;
+  - crash dumps and crash reports of your games;
+  - the same game installed twice, and games you haven't played in months, biggest first, with how to move or uninstall each with its own launcher. Heiward doesn't move or uninstall games itself.
+- Everything you remove there goes to the Recycle Bin. An installed game's own files and your saved games are never touched, nor anything of a launcher or a game while it's running.
+- Automatic cleanup can take what games leave behind once you turn it on: crash dumps, download caches, and leftovers and shader caches of uninstalled games, to the Recycle Bin.
+- At a glance on the home page has a **Games** slice.
+
+### What changed
+
+- With developer mode off, the page no longer shows technical details: no commands, settings-file or log names, model or runtime names, or the commit a build came from. The title bar's AI badge and Settings say the same things in plain words.
+- With Manor installed and its Developer options off, Settings no longer shows the Developer mode card.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Game mode stays off until you turn it on in Settings.
+
 ## 1.7.47
 
 **It carries the Steward's kit 2.39.0: the parts every agent of the manor shares.**

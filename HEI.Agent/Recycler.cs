@@ -77,6 +77,41 @@ namespace HEI.Agent {
 			return new(recycled, failed, bytes);
 		}
 
+		/// <summary>
+		/// Moves files and folders to the Recycle Bin, the games area's way: each refused up front where the bin can't take it
+		/// (<see cref="BinRefusal"/>), so the shell never deletes anything for good. A folder's size is what it holds.
+		/// </summary>
+		public static RecycleResult RecyclePaths(IReadOnlyCollection<string> paths) {
+			var failed = new List<RecycleFailure>();
+			var ok = new List<(string Path, long Bytes)>();
+			foreach (string p in paths.Distinct(StringComparer.OrdinalIgnoreCase)) {
+				bool folder = Directory.Exists(p);
+				if (!folder && !File.Exists(p)) continue; // already gone
+				long size = folder ? DevScanner.Measure(p).Bytes : new FileInfo(p).Length;
+				if (BinRefusal(Path.GetFullPath(p), size) is { } why) failed.Add(new(p, why));
+				else ok.Add((p, size));
+			}
+			if (ok.Count == 0) return new(new(), failed, 0);
+			var op = new FileUtils.SHFILEOPSTRUCT {
+				wFunc = FileUtils.FileOperationType.FO_DELETE,
+				pFrom = string.Join('\0', ok.Select(o => o.Path)) + "\0\0",
+				fFlags = FileUtils.FileOperationFlags.FOF_ALLOWUNDO | FileUtils.FileOperationFlags.FOF_NOCONFIRMATION |
+						 FileUtils.FileOperationFlags.FOF_NOERRORUI | FileUtils.FileOperationFlags.FOF_SILENT,
+			};
+			int rc = FileUtils.SHFileOperation(ref op);
+			var recycled = new List<string>();
+			long bytes = 0;
+			foreach (var (p, size) in ok) {
+				if (Path.Exists(p))
+					failed.Add(new(p, rc != 0 ? $"Windows refused (error {rc}): a file in it may be in use" : "still there after the move"));
+				else {
+					recycled.Add(p);
+					bytes += size;
+				}
+			}
+			return new(recycled, failed, bytes);
+		}
+
 		/// <summary>Why <paramref name="path"/> must not go through the shell's delete, or null when it may.</summary>
 		static string? RefuseReason(string path, ReportItem item) {
 			var fi = new FileInfo(path);
@@ -84,7 +119,15 @@ namespace HEI.Agent {
 				return "already gone";
 			if (fi.Length != item.Size || Math.Abs((fi.LastWriteTimeUtc - item.ModifiedUtc).TotalSeconds) > 2)
 				return "changed since the scan; scan again first";
-			string? root = Path.GetPathRoot(fi.FullName);
+			return BinRefusal(fi.FullName, fi.Length);
+		}
+
+		/// <summary>
+		/// Why the Recycle Bin can't take <paramref name="fullPath"/> (<paramref name="bytes"/> in all), so the shell would delete it
+		/// for good: on a network or removable drive, a drive set to delete at once, or too big for its bin. Null when it can.
+		/// </summary>
+		internal static string? BinRefusal(string fullPath, long bytes) {
+			string? root = Path.GetPathRoot(fullPath);
 			if (string.IsNullOrEmpty(root) || root.StartsWith(@"\\", StringComparison.Ordinal))
 				return "on a network location, which has no Recycle Bin";
 			var drive = new DriveInfo(root);
@@ -93,7 +136,7 @@ namespace HEI.Agent {
 			(bool nuke, long maxBytes) = BinSettings(root, drive);
 			if (nuke)
 				return "this drive is set to delete files immediately instead of using the Recycle Bin";
-			if (fi.Length > maxBytes)
+			if (bytes > maxBytes)
 				return $"too large for this drive's Recycle Bin ({maxBytes / (1 << 20):N0} MB); delete it yourself if you're sure";
 			return null;
 		}

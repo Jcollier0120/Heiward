@@ -28,7 +28,9 @@ namespace HEI.Agent {
 	sealed record BatchRequest(string Batch);
 	/// <param name="Gpu">The graphics card for GPU work, by name (<see cref="AgentConfig.Gpu"/>); "" for Windows' default.</param>
 	/// <param name="ManorCard">The home page's "In a manor" card: false from its "Not now", true from Settings (<see cref="AgentConfig.ManorCard"/>).</param>
-	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null, bool? ManorCard = null);
+	/// <param name="GameMode">Heiward's own game mode switch (<see cref="AgentConfig.GameMode"/>), unless Manor decides it.</param>
+	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null, bool? ManorCard = null,
+		bool? GameMode = null);
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
@@ -190,6 +192,8 @@ namespace HEI.Agent {
 				DevMode devMode = DevMode.Now(cfg);
 				// Heiward's own switch waits while Manor decides: it's changed in Manor, and Heiward's own stays as the user left it.
 				if (request.DeveloperMode != null && devMode.ByManor) return Results.Conflict(new { error = devMode.ManorDecidesText });
+				GameMode gameMode = GameMode.Now(cfg);
+				if (request.GameMode != null && gameMode.ByManor) return Results.Conflict(new { error = gameMode.ManorDecidesText });
 				string? gpu = null;
 				if (request.Gpu != null) {
 					// A scan keeps the card it started on (its decoders and AI session are open on it): the next one would
@@ -208,13 +212,16 @@ namespace HEI.Agent {
 				if (request.MoreMemory is bool more) saved.MoreMemory = cfg.MoreMemory = more;
 				if (request.DeveloperMode is bool dev) saved.DeveloperMode = cfg.DeveloperMode = dev ? "on" : "off";
 				if (request.ManorCard is bool card) saved.ManorCard = cfg.ManorCard = card;
+				if (request.GameMode is bool game) saved.GameMode = cfg.GameMode = game ? "on" : "off";
 				saved.Save();
 				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
 					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here") +
 					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}" +
 					(devMode.ByManor ? $" (but {devMode.Manor.Name}'s Developer options turn it {(devMode.On ? "on" : "off")})" : "") +
+					$", game mode {(saved.GameModeOn ? "on" : "off")}" + (gameMode.ByManor ? $" (but {gameMode.Manor.Name} turns it {(gameMode.On ? "on" : "off")})" : "") +
 					$", the \"In a manor\" card {(saved.ManorCard ? "shown" : "hidden")}");
-				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu, saved.ManorCard }, AgentConfig.Json);
+				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu, saved.ManorCard,
+					GameMode = saved.GameModeOn }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
 			app.MapPost("/api/setup", (SetupRequest request) => {
@@ -314,6 +321,24 @@ namespace HEI.Agent {
 				if (repo == null) return Results.NotFound(new { error = "That repository is no longer in the list; check again." });
 				return Guarded(() => Results.Json(actions.Prune(repo, null), AgentConfig.Json));
 			});
+			// Game mode off (Settings, or Manor once it passes it down, read fresh for each request): the Games area is hidden,
+			// and its requests are refused, as the developer ones are.
+			var gamesApi = app.MapGroup("/api/games").AddEndpointFilter(async (context, next) =>
+				GameMode.Now(cfg) is { On: false } off ? Results.Conflict(new { error = off.PageOffText }) : await next(context));
+			gamesApi.MapGet("", () => Results.Json(new { report = GameReport.Load() ?? new GameReport() }, AgentConfig.Json));
+			gamesApi.MapPost("/scan", () => {
+				if (GamesBusy()) return Results.Conflict(new { error = "A games check is already running." });
+				GameLaunch.Started(StartDetached("games", "--scan"), DateTime.UtcNow);
+				return Results.Accepted();
+			});
+			// To the Recycle Bin, checked again first (GameCleaner): never an installed game's files, never saves, nothing deleted outright.
+			gamesApi.MapPost("/items/{id}/remove", (string id) => {
+				GameItem? item = GameReport.Load()?.Items.FirstOrDefault(i => i.Id == id);
+				if (item == null) return Results.NotFound(new { error = "That item is no longer in the list; check again." });
+				if (item.Info) return Results.Conflict(new { error = "Heiward doesn't move or uninstall games. " + item.Removing });
+				if (item.Blocked != null) return Results.Conflict(new { error = item.Blocked });
+				return Guarded(() => Results.Json(actions.RemoveGame(item), AgentConfig.Json));
+			});
 			// Automatic cleanup: its settings (saved to settings.json), and "leave it" / "allow" per thing.
 			app.MapPost("/api/auto/settings", (AutoCleanConfig wanted) => Guarded(() => {
 				AutoCleanConfig next = wanted.Normalized();
@@ -323,7 +348,8 @@ namespace HEI.Agent {
 				cfg.AutoClean = next;
 				AutoCleanState.Update(s => AutoCleaner.SyncSince(next, s, DateTime.UtcNow));
 				AgentPaths.AppendLog($"automatic cleanup set: duplicates {(next.Duplicates ? "on" : "off")}, developer " +
-					(next.Developer ? $"on ({string.Join(", ", next.DeveloperKinds)})" : "off") + $", after {next.AfterDays} day(s)");
+					(next.Developer ? $"on ({string.Join(", ", next.DeveloperKinds)})" : "off") +
+					", games " + (next.Games ? $"on ({string.Join(", ", next.GameKinds)})" : "off") + $", after {next.AfterDays} day(s)");
 				return Results.Json(next, AgentConfig.Json);
 			}));
 			app.MapPost("/api/auto/hold", (AutoHoldRequest request) => Guarded(() => {
@@ -403,8 +429,8 @@ namespace HEI.Agent {
 			};
 		}
 
-		/// <summary>A set, developer item or repository automatic cleanup can be told to leave (see <see cref="AutoCleanState.Held"/>).</summary>
-		static readonly Regex AutoTarget = new("^[gdb]:[0-9a-f]{16}$", RegexOptions.CultureInvariant);
+		/// <summary>A set, developer item, repository or game item automatic cleanup can be told to leave (see <see cref="AutoCleanState.Held"/>).</summary>
+		static readonly Regex AutoTarget = new("^[gdbm]:[0-9a-f]{16}$", RegexOptions.CultureInvariant);
 
 		static readonly Regex BatchId = new("^[0-9a-f]{8,32}$", RegexOptions.CultureInvariant);
 
@@ -441,8 +467,8 @@ namespace HEI.Agent {
 		/// <summary>The minutes between scheduled scans; 0 in a development build, which scans only when asked (it has no scan task).</summary>
 		static int ScanEveryMinutes(AgentConfig cfg) => DevBuild.Current ? 0 : cfg.ScanEveryMinutes;
 
-		/// <summary>The scan and the developer check this page started, until each holds its lock (see <see cref="Launch"/>).</summary>
-		static readonly Launch ScanLaunch = new(), DevLaunch = new();
+		/// <summary>The scan, the developer check and the games check this page started, until each holds its lock (see <see cref="Launch"/>).</summary>
+		static readonly Launch ScanLaunch = new(), DevLaunch = new(), GameLaunch = new();
 
 		/// <summary>Why the graphics card can't change now; the page says the same next to its disabled choice.</summary>
 		internal const string GpuLockedText = "A scan is running on the graphics card. Let it finish, or stop it, to choose another one.";
@@ -503,6 +529,11 @@ namespace HEI.Agent {
 			return DevLaunch.Starting(locked, DateTime.UtcNow) || locked;
 		}
 
+		static bool GamesBusy() {
+			bool locked = GameScan.IsRunning();
+			return GameLaunch.Starting(locked, DateTime.UtcNow) || locked;
+		}
+
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {
 			// The last report, whichever build made it, read once; the page shows this build's own (Report.Load).
@@ -516,14 +547,20 @@ namespace HEI.Agent {
 			// At a manor, who keeps git state and pull requests (ManorRoles), read on every poll too.
 			ManorRoles roles = ManorRoles.Now();
 			DevReport? devReport = devMode.On ? roles.View(DevReport.Load()) : null;
+			// Game mode the same way: Heiward's own switch, or Manor once its settings say.
+			GameMode gameMode = GameMode.Of(cfg, manor);
+			GameReport? gameReport = gameMode.On ? GameReport.Load() : null;
 			var groups = report?.Groups ?? new();
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
 			var drives = ExplorerView.Drives(cfg, index, pending);
 			// This PC's drives at a glance, from what's here already (DiskGlance).
 			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
+			// The games: what's installed, and what they left (a game installed twice or idle is installed already).
+			var gameItems = gameReport?.Items.Where(i => !i.Info).ToList() ?? [];
+			long gamesBytes = (gameReport?.Games.Sum(g => g.Bytes) ?? 0) + gameItems.Sum(i => i.Bytes);
 			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
-				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives));
+				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives), gamesBytes, gameItems.Where(i => i.Suggested && i.Blocked == null).Sum(i => i.Bytes));
 			AiStatus? ai = AiStatus.Load();
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
@@ -536,7 +573,7 @@ namespace HEI.Agent {
 						key = d.Key, batch = d.Value.Batch, folder = d.Value.Folder, sets = rows.Count(),
 						action = d.Value.Action, atUtc = d.Value.AtUtc, recycled = rows.Sum(r => r.Value.Recycled.Count), recycledBytes = rows.Sum(r => r.Value.RecycledBytes),
 						kind = g?.Kind, keepName = g?.Items.FirstOrDefault(i => i.Keep)?.Name, inReport = rows.Any(r => byKey.ContainsKey(r.Key)),
-						label = d.Value.Action is "dev-cleaned" or "branches-pruned" ? d.Value.Recycled.FirstOrDefault() : null,
+						label = d.Value.Action is "dev-cleaned" or "branches-pruned" or "game-recycled" ? d.Value.Recycled.FirstOrDefault() : null,
 						auto = d.Value.Auto,
 					};
 				})
@@ -559,9 +596,10 @@ namespace HEI.Agent {
 					decisions = decisions.Count,
 				},
 				dev = DevSummary(devMode, devReport, roles),
+				games = GamesSummary(gameMode, gameReport),
 				// Without Manor, the home page's "In a manor" card and its switch in Settings; with Manor, null: neither (ManorCard).
 				manorCard = ManorCard.For(cfg, manor),
-				auto = AutoView(report, devReport, decisions),
+				auto = AutoView(report, devReport, decisions, gameReport),
 				drives,
 				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
@@ -579,8 +617,9 @@ namespace HEI.Agent {
 					next = Scheduler.NextRun(), everyMinutes = ScanEveryMinutes(cfg), text = Scheduler.Describe(cfg),
 					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), ScanEveryMinutes(cfg)),
 				},
+				// The settings file's path only with developer mode on: the page shows no file names otherwise.
 				config = new {
-					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = AgentPaths.Config,
+					folders = ScanScope.Roots(cfg), allDrives = cfg.ScanAllDrives, cfg.ExcludeExtensions, cfg.AiDevice, path = devMode.On ? AgentPaths.Config : null,
 					cfg.KeepHistory, cfg.ScanSpeed, fullSpeedCores = cfg.ParallelismFor(true),
 						backgroundCpuPercent = Math.Round(cfg.BackgroundCpuCap(Environment.ProcessorCount)),
 						cfg.MoreMemory, moreMemoryBytes = HEI.Core.FFTools.FFmpegNative.HardwareVideoDecode.MoreMemoryBytes,
@@ -626,11 +665,30 @@ namespace HEI.Agent {
 			};
 		}
 
+		/// <summary>
+		/// The home page's games card and the Settings switch: whether game mode is on, and who decides it (Manor, once its settings
+		/// say: the page shows which way, with a link, in place of its switch); then the last games check's totals per category.
+		/// </summary>
+		static object GamesSummary(GameMode mode, GameReport? r) {
+			var items = r?.Items.Where(i => !i.Info).ToList() ?? [];
+			return new {
+				enabled = mode.On,
+				manor = mode.ByManor ? new { name = mode.Manor.Name, url = mode.Manor.Url, note = mode.ManorNote } : null,
+				running = mode.On && GamesBusy(),
+				scannedAtUtc = r?.ScannedAtUtc,
+				installed = r?.Games.Count ?? 0,
+				installedBytes = r?.Games.Sum(g => g.Bytes) ?? 0,
+				totalBytes = items.Sum(i => i.Bytes),
+				suggestedBytes = items.Where(i => i.Suggested && i.Blocked == null).Sum(i => i.Bytes),
+				categories = r?.Categories.Where(c => c.Items.Count > 0).Select(c => new { c.Key, c.Title, bytes = c.Items.Sum(i => i.Bytes), count = c.Items.Count }).ToList(),
+			};
+		}
+
 		/// <summary>Automatic cleanup for the page: the settings, what happens to each thing and when, and the last run.</summary>
-		static object AutoView(Report? report, DevReport? dev, Dictionary<string, Decision> decisions) {
+		static object AutoView(Report? report, DevReport? dev, Dictionary<string, Decision> decisions, GameReport? games) {
 			AgentConfig fresh = AgentConfig.Load(); // settings.json, as the page or the user last left it
 			AutoCleanState s = AutoCleanState.Load();
-			AutoPlan plan = AutoCleaner.Plan(fresh, report, dev, decisions, s, DateTime.UtcNow);
+			AutoPlan plan = AutoCleaner.Plan(fresh, report, dev, decisions, s, DateTime.UtcNow, games);
 			static object Upcoming(IEnumerable<AutoPlanEntry> entries) {
 				var due = entries.Where(e => e.DueUtc != null).ToList();
 				return new { count = due.Count, files = due.Sum(e => e.Count), bytes = due.Sum(e => e.Bytes), firstDueUtc = due.Min(e => e.DueUtc) };
@@ -642,7 +700,8 @@ namespace HEI.Agent {
 				groups = plan.Groups,
 				devItems = plan.DevItems,
 				repos = plan.Repos,
-				upcoming = new { groups = Upcoming(plan.Groups.Values), dev = Upcoming(plan.DevItems.Values), branches = Upcoming(plan.Repos.Values) },
+				gameItems = plan.GameItems,
+				upcoming = new { groups = Upcoming(plan.Groups.Values), dev = Upcoming(plan.DevItems.Values), branches = Upcoming(plan.Repos.Values), games = Upcoming(plan.GameItems.Values) },
 				lastRun = s.Runs.FirstOrDefault(),
 			};
 		}
