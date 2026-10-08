@@ -411,11 +411,15 @@ public sealed class PictureCompareTests : IDisposable {
 		(status, _, _) = await page.CompareAsync(new { a = new[] { tiny } });
 		Assert.Equal(HttpStatusCode.BadRequest, status); // one set only
 
-		// Over 32 MB: refused before it's read.
+		// Over 32 MB: refused before it's read. The answer can reach the client, or the connection can close under its
+		// upload first (the server doesn't read what it refuses): either way, nothing is compared.
 		var big = new string('A', PictureCompare.MaxBodyBytes);
-		(status, body, _) = await page.CompareAsync(new StringContent($"{{\"a\": [\"{big}\"], \"b\": []}}", Encoding.UTF8, "application/json"));
-		Assert.Equal(HttpStatusCode.BadRequest, status);
-		Assert.Contains("over 32 MB", body);
+		try {
+			(status, body, _) = await page.CompareAsync(new StringContent($"{{\"a\": [\"{big}\"], \"b\": []}}", Encoding.UTF8, "application/json"));
+			Assert.Equal(HttpStatusCode.BadRequest, status);
+			Assert.Contains("over 32 MB", body);
+		}
+		catch (HttpRequestException) { }
 
 		// Just under it is read, though over the web server's own 30 MB (and bytes that aren't a picture are undecodable).
 		string almost = new('A', 31 * 1024 * 1024);
@@ -425,17 +429,25 @@ public sealed class PictureCompareTests : IDisposable {
 	}
 
 	[Fact]
-	public async Task TheRoute_StepsBack_WhileTheModelIsBusyOrShouldntRun() {
+	public async Task TheRoute_StepsBack_ForAGameOrAPause_AndAnswersByPixelsWithoutTheModel() {
 		await using Page page = await Page.StartAsync();
 		object one = new { a = new[] { B64(Original) }, b = new[] { B64(Original) } };
+		object resaved = new { a = new[] { B64(Original) }, b = new[] { B64(Jpeg(Original, 4096)) } };
+		object edited = new { a = new[] { B64(Original) }, b = new[] { B64(Bmp(Scene(W, H, edited: true), W, H)) } };
 
-		// A scan holds scan.lock, as `hei scan` does.
+		// A scan holds scan.lock, as `hei scan` does: the model is left to it, and the pixels alone answer.
+		var eye = new FakeEye();
+		PicturesRoute.TestEmbedder = eye;
 		using (new FileStream(AgentPaths.ScanLock, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose)) {
-			var (status, body, answer) = await page.CompareAsync(one);
-			Assert.Equal(HttpStatusCode.ServiceUnavailable, status);
-			Assert.Contains("A scan is running", body);
-			Assert.True(answer.Headers.RetryAfter?.Delta > TimeSpan.Zero);
+			var (status, body, _) = await page.CompareAsync(resaved);
+			Assert.Equal(HttpStatusCode.OK, status);
+			Assert.Contains("\"same\":true", body);
+			(status, body, _) = await page.CompareAsync(edited);
+			Assert.Equal(HttpStatusCode.OK, status);
+			Assert.Contains("\"same\":false", body);
+			Assert.Contains("\"device\":null", body);
 		}
+		Assert.Equal(0, eye.Frames); // the model wasn't asked while the scan ran
 		Assert.False(File.Exists(AgentPaths.ScanLock)); // the route left nothing behind
 
 		PicturesRoute.TestGraphicsBusy = () => "a full-screen game";
@@ -456,12 +468,14 @@ public sealed class PictureCompareTests : IDisposable {
 		}
 		AgentPause.Resume();
 
-		PicturesRoute.TestEmbedder = null; // the real model, whose components this test home doesn't have
-		string? ai = HEI.Core.AI.AiComponents.IsReady ? "ready" : null;
-		if (ai == null) {
-			var (status, body, _) = await page.CompareAsync(one);
-			Assert.Equal(HttpStatusCode.ServiceUnavailable, status);
-			Assert.Contains("isn't installed", body);
+		PicturesRoute.TestEmbedder = null; // the real model, whose components this test home may not have: the pixels answer
+		if (!HEI.Core.AI.AiComponents.IsReady) {
+			var (status, body, _) = await page.CompareAsync(resaved);
+			Assert.Equal(HttpStatusCode.OK, status);
+			Assert.Contains("\"same\":true", body);
+			(status, body, _) = await page.CompareAsync(edited);
+			Assert.Equal(HttpStatusCode.OK, status);
+			Assert.Contains("\"same\":false", body);
 		}
 		PicturesRoute.TestEmbedder = new FakeEye();
 

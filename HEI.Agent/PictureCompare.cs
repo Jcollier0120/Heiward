@@ -163,8 +163,9 @@ namespace HEI.Agent {
 
 	/// <summary>
 	/// POST /api/pictures/compare: <see cref="PictureCompare"/> for another agent on this PC, behind the page's token
-	/// (ReviewServer). It reads nothing from disk, writes nothing but log lines, and never starts a scan. While Heiward's
-	/// model is busy or shouldn't run (a scan, a game, a pause, no AI) it answers 503 with Retry-After.
+	/// (ReviewServer). It reads nothing from disk, writes nothing but log lines, and never starts a scan. While a game or a
+	/// full-screen program holds the graphics, or Heiward is paused, it answers 503 with Retry-After. Without the AI model
+	/// (not installed, or busy with a scan) the pixels alone answer, which is the same answer.
 	/// </summary>
 	static class PicturesRoute {
 		static readonly SemaphoreSlim oneAtATime = new(1, 1);
@@ -202,16 +203,20 @@ namespace HEI.Agent {
 			if (!await oneAtATime.WaitAsync(TimeSpan.FromSeconds(30), ctx.RequestAborted))
 				return Unavailable(ctx, "Heiward is comparing other pictures. Ask again in a moment.", 10);
 			try {
-				if (WhyNotNow(scanBusy) is var (error, retryAfter))
+				if (WhyNotNow() is var (error, retryAfter))
 					return Unavailable(ctx, error, retryAfter);
-				IPictureEmbedder eye = TestEmbedder ?? (model ??= new ModelEye());
+				// The answer (same or not) is the pixels' alone: the model only pairs up pictures that are already not plain
+				// copies. So without it (not installed, busy with a scan, or failing) the pixels still answer, and the
+				// pairs of what differs are made by grayscale instead.
+				IPictureEmbedder? eye = TestEmbedder != null ? (scanBusy() ? null : TestEmbedder)
+					: AiComponents.IsReady && !scanBusy() ? (model ??= new ModelEye()) : null;
 				try {
 					return Results.Json(PictureCompare.Compare(request.A, request.B, eye), AnswerJson);
 				}
-				catch (Exception e) when (e is not OutOfMemoryException) {
+				catch (Exception e) when (e is not OutOfMemoryException && eye != null) {
 					// The model couldn't run: the NPU's or card's turn took too long, or the accelerator failed under it.
-					AgentPaths.AppendLog($"pictures compare: the AI model couldn't run: {Accelerators.OneLine(e.Message)}");
-					return Unavailable(ctx, "Heiward's AI model couldn't run just now: " + Accelerators.OneLine(e.Message), 600);
+					AgentPaths.AppendLog($"pictures compare: the AI model couldn't run, so the pixels alone answered: {Accelerators.OneLine(e.Message)}");
+					return Results.Json(PictureCompare.Compare(request.A, request.B, null), AnswerJson);
 				}
 			}
 			finally {
@@ -219,18 +224,14 @@ namespace HEI.Agent {
 			}
 		}
 
-		/// <summary>Why Heiward's model can't be lent now, and in how many seconds to ask again; null when it can.</summary>
-		static (string Error, int RetryAfter)? WhyNotNow(Func<bool> scanBusy) {
-			if (scanBusy())
-				return ("A scan is running: Heiward's AI model is busy. Ask again when it has finished.", 300);
+		/// <summary>Why Heiward won't compare pictures now, and in how many seconds to ask again; null when it will.</summary>
+		static (string Error, int RetryAfter)? WhyNotNow() {
 			if (AgentPause.Load() is { } pause) {
 				int seconds = pause.UntilUtc is { } until ? (int)Math.Clamp((until - DateTime.UtcNow).TotalSeconds, 60, 3600) : 3600;
 				return ("Heiward is paused.", seconds);
 			}
 			if (GraphicsBusy() is { } busy)
 				return ($"Heiward leaves the PC to {busy} for now.", 300);
-			if (TestEmbedder == null && !AiComponents.IsReady)
-				return ("Heiward's AI matching isn't installed on this PC.", 3600);
 			return null;
 		}
 
