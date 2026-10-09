@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.7
+
+**It carries the Steward's kit 2.45.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.45.0: Each agent Castellan sells checks the trial's end itself, from the license Manor holds.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Manor's own copy of the keys and the license check (its license-keys.ts and license.ts) can move to this kit's license.ts in a later Manor change.
+
 ## 1.9.6
 
 **It carries the Steward's kit 2.44.0: the parts every agent of the manor shares.**
