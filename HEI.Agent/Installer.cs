@@ -63,13 +63,25 @@ namespace HEI.Agent {
 		/// <param name="openPage">Open the review page once the first scan starts (the page itself runs the Store version's setup).</param>
 		/// <param name="removeGitHubCopy">The Store version: remove a copy installed from GitHub (<see cref="RemoveGitHubCopy"/>).</param>
 		/// <param name="gpu">The graphics card for GPU work on a PC with more than one: its number as <see cref="AskGpu"/> lists them, or its name. Null: ask.</param>
+		/// <param name="keepSettings">
+		/// An update (<see cref="SelfUpdate"/>): where the AI runs, when scans run and the graphics card stay as settings.json
+		/// has them, unless <paramref name="device"/>, <paramref name="onDemand"/> or <paramref name="gpu"/> say otherwise.
+		/// Without it, --yes would move a processor's AI to the graphics card, and reset a schedule of one's own.
+		/// </param>
 		/// <returns>0 once installed (or for a dry run); otherwise not 0, with the reason on stderr.</returns>
 		public static async Task<int> InstallAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand = null, IReadOnlyList<string>? reuseFrom = null,
-			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false, string? gpu = null) {
+			string? scanSpeed = null, bool openPage = true, bool removeGitHubCopy = false, string? gpu = null, bool keepSettings = false) {
 			// A development build installs the installed copy: its settings, tasks and folders, not its own.
 			AgentPaths.ActAsInstalled();
 			try {
-				return await InstallStepsAsync(dryRun, assumeYes, device, ct, onDemand, reuseFrom, scanSpeed, openPage, removeGitHubCopy, gpu);
+				if (keepSettings && File.Exists(AgentPaths.Config)) {
+					var kept = Kept(AgentConfig.Load());
+					device ??= kept.Device;
+					onDemand ??= kept.OnDemand;
+					gpu ??= kept.Gpu;
+				}
+				else keepSettings = false;
+				return await InstallStepsAsync(dryRun, assumeYes, device, ct, onDemand, reuseFrom, scanSpeed, openPage, removeGitHubCopy, gpu, keepSettings);
 			}
 			catch (Exception e) when (e is not OperationCanceledException) {
 				AgentPaths.AppendLog("install failed: " + e);
@@ -78,8 +90,18 @@ namespace HEI.Agent {
 			}
 		}
 
+		/// <summary>
+		/// What an update keeps from settings.json: the GPU or the processor when the AI was set there (null, Auto: the NPU
+		/// where there is one, else asked); scans only on demand or not (null: no scheduled scans' question to answer); and
+		/// the graphics card, "default" for Windows' default.
+		/// </summary>
+		internal static (AiDevice? Device, bool? OnDemand, string Gpu) Kept(AgentConfig cfg) => (
+			cfg.AiDevice.ToLowerInvariant() switch { "gpu" => AiDevice.Gpu, "cpu" => AiDevice.Cpu, _ => null },
+			cfg.ScanEveryMinutes == 0,
+			cfg.Gpu.Length > 0 ? cfg.Gpu : "default");
+
 		static async Task<int> InstallStepsAsync(bool dryRun, bool assumeYes, AiDevice? device, CancellationToken ct, bool? onDemand, IReadOnlyList<string>? reuseFrom,
-			string? scanSpeed, bool openPage, bool removeGitHubCopy, string? gpu) {
+			string? scanSpeed, bool openPage, bool removeGitHubCopy, string? gpu, bool keepSettings) {
 			void Step(string s) => Console.WriteLine((dryRun ? "[dry run] " : "") + s);
 			Console.WriteLine($"{DisplayName} setup");
 			if (StorePackage.InPackageFolder && !StorePackage.IsPackaged) {
@@ -96,6 +118,8 @@ namespace HEI.Agent {
 			string? gpuKey = null;
 			if (gpu != null) {
 				gpuKey = GpuArgument(gpu, gpus);
+				// An update whose card has gone: Windows' default, rather than no update.
+				if (gpuKey == null && keepSettings) gpuKey = "";
 				if (gpuKey == null) {
 					Console.WriteLine($"  No graphics card \"{gpu}\" on this PC." + (gpus.Count == 0 ? "" : " It has:"));
 					for (int i = 0; i < gpus.Count; i++) Console.WriteLine($"    {i + 1}. {gpus[i].Key}");
@@ -148,6 +172,8 @@ namespace HEI.Agent {
 				: NpuComponents.IsSupportedPlatform ? $"The {NpuComponents.NpuName} could not run the model here."
 				: $"This build does not support this PC's NPU yet ({NpuHardware.Name}).");
 			var cfg = File.Exists(AgentPaths.Config) ? AgentConfig.Load() : new AgentConfig();
+			// An update on the GPU or the processor keeps its schedule; one that loses its NPU gets the GPU's and CPU's.
+			bool keepSchedule = keepSettings && cfg.AiDevice.ToLowerInvariant() is "gpu" or "cpu";
 			cfg.AiDevice = "auto";
 			// With more than one graphics card, which one does the GPU work: asked once, before the GPU check, which runs on it.
 			bool gpuPicked = false;
@@ -186,9 +212,12 @@ namespace HEI.Agent {
 					}
 				}
 				cfg.AiDevice = choice == AiDevice.Gpu ? "gpu" : "cpu";
-				cfg.ScanOnBattery = false;
-				// Without an NPU a scan costs real power: every 6 hours on AC power, or only on demand.
-				cfg.ScanEveryMinutes = (onDemand ?? AskOnDemand(assumeYes)) ? 0 : GpuCpuScanMinutes;
+				// An update keeps a schedule of one's own: battery and interval as they were, unless they were on demand.
+				if (!keepSchedule || cfg.ScanEveryMinutes == 0 || onDemand == true) {
+					cfg.ScanOnBattery = false;
+					// Without an NPU a scan costs real power: every 6 hours on AC power, or only on demand.
+					cfg.ScanEveryMinutes = (onDemand ?? AskOnDemand(assumeYes)) ? 0 : GpuCpuScanMinutes;
+				}
 				Step($"AI matching runs on the {(choice == AiDevice.Gpu ? "GPU (DirectML)" : "CPU")}.");
 			}
 			else if (onDemand == true) {

@@ -239,6 +239,12 @@ namespace HEI.Agent {
 		/// </summary>
 		public bool ManorCard { get; set; } = true;
 		/// <summary>
+		/// Update by itself: once a day the copy installed from GitHub looks for a newer release there, and installs it while
+		/// no scan runs, keeping these settings (<see cref="SelfUpdate"/>). The Store version is updated by the Store, and one
+		/// Manor employs by Manor, whatever this says.
+		/// </summary>
+		public bool AutoUpdate { get; set; } = true;
+		/// <summary>
 		/// Developer mode: also look for build outputs, worktrees, caches, emulators and temp files that
 		/// tools recreate, once a day, and show them on the page. "on" or "off", the switch in the page's
 		/// Settings. Off, the page shows nothing of it and nothing is checked. Settings files from before

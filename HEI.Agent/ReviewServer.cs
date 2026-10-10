@@ -29,8 +29,9 @@ namespace HEI.Agent {
 	/// <param name="Gpu">The graphics card for GPU work, by name (<see cref="AgentConfig.Gpu"/>); "" for Windows' default.</param>
 	/// <param name="ManorCard">The home page's "In a manor" card: false from its "Not now", true from Settings (<see cref="AgentConfig.ManorCard"/>).</param>
 	/// <param name="GameMode">Heiward's own game mode switch (<see cref="AgentConfig.GameMode"/>), unless Manor decides it.</param>
+	/// <param name="AutoUpdate">Update by itself (<see cref="AgentConfig.AutoUpdate"/>): the copy from GitHub, when nothing else updates it.</param>
 	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null, bool? ManorCard = null,
-		bool? GameMode = null);
+		bool? GameMode = null, bool? AutoUpdate = null);
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
@@ -217,15 +218,16 @@ namespace HEI.Agent {
 				if (request.DeveloperMode is bool dev) saved.DeveloperMode = cfg.DeveloperMode = dev ? "on" : "off";
 				if (request.ManorCard is bool card) saved.ManorCard = cfg.ManorCard = card;
 				if (request.GameMode is bool game) saved.GameMode = cfg.GameMode = game ? "on" : "off";
+				if (request.AutoUpdate is bool update) saved.AutoUpdate = cfg.AutoUpdate = update;
 				saved.Save();
 				AgentPaths.AppendLog($"settings: history {(saved.KeepHistory ? "kept" : "off")}, scans " +
 					(saved.AlwaysFullSpeed ? "always at full speed" : saved.AlwaysInBackground ? "always in the background" : "at full speed when you're here") +
 					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}" +
 					(devMode.ByManor ? $" (but {devMode.Manor.Name}'s Developer options turn it {(devMode.On ? "on" : "off")})" : "") +
 					$", game mode {(saved.GameModeOn ? "on" : "off")}" + (gameMode.ByManor ? $" (but {gameMode.Manor.Name} turns it {(gameMode.On ? "on" : "off")})" : "") +
-					$", the \"In a manor\" card {(saved.ManorCard ? "shown" : "hidden")}");
+					$", the \"In a manor\" card {(saved.ManorCard ? "shown" : "hidden")}, updating by itself {(saved.AutoUpdate ? "on" : "off")}");
 				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu, saved.ManorCard,
-					GameMode = saved.GameModeOn }, AgentConfig.Json);
+					GameMode = saved.GameModeOn, saved.AutoUpdate }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
 			app.MapPost("/api/setup", (SetupRequest request) => {
@@ -409,6 +411,8 @@ namespace HEI.Agent {
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
 			_ = DiskWatch.RunAsync(app.Lifetime.ApplicationStopping);
+			// The copy from GitHub keeps itself up to date, once a day, never during a scan (SelfUpdate).
+			_ = SelfUpdate.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
 			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
@@ -617,7 +621,7 @@ namespace HEI.Agent {
 				setup = StoreSetup.View(),
 				agent = AgentView(cfg),
 				// Settings' About: this build ("1.6.0+<commit>") and where it came from.
-				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current },
+				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current, update = SelfUpdate.View(cfg) },
 				ai,
 				accelerators = AcceleratorView(ai),
 				gpu = GpuView(cfg),
