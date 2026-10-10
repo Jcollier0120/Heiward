@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.13
+
+**An About button beside Settings, as on Manor's page.**
+
+### What changed
+
+- About, beside Settings in the title bar, has what you read once: which version this is and where it came from, its license, and where its work runs. They were at the foot of Settings.
+- Settings keeps every switch: Update by itself and the "In a manor" card are now under Updates.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.12
 
 **It carries the Steward's kit 2.47.0: the parts every agent of the manor shares.**
