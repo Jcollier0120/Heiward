@@ -38,6 +38,19 @@ Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4
    - First remove any copy registered from a build folder (`Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`). It has the same identity, so the Store can't install next to it. Removing it deletes its AI components and setup marker: setup runs again, with the settings and history kept.
 4. **Go public:** a new submission with **Public audience**. It may go through certification again.
 
+### Releasing from CI
+
+[`.github/workflows/store.yml`](../.github/workflows/store.yml) runs `store.ps1` on GitHub's Windows runner for every release of Heiward, and keeps the bundle as the run's artifact (**Actions > Microsoft Store**, 30 days). So step 1 above is done for you: the bundle for the first, private submission can be downloaded from there. Tags that aren't Heiward's (VDF's `v4.1.1` and the like) are skipped.
+
+Once the app has a published submission, the workflow also submits each new release to Partner Center itself. Each submission copies the last one's listing, pricing and audience, with the new package in its place, and goes to certification; the Store publishes it when it passes, and Windows updates the installed copies. To set that up, once:
+
+1. **Give Partner Center an app to sign in as.** In Partner Center, **Account settings > User management > Microsoft Entra applications**: **Create Microsoft Entra application** (if it asks, first associate your account with a Microsoft Entra tenant: an individual account gets one free). Give it the **Manager** role. Open it and **Add new key**: note its **Client ID**, its **Key** (shown once) and the **Tenant ID** on the same page.
+2. **Note your Seller ID**: **Account settings > Legal info > Developer**.
+3. **Add them to the repository** (GitHub, **Settings > Secrets and variables > Actions > Secrets**): `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_CLIENT_ID`, `PARTNER_CENTER_CLIENT_SECRET` (the key) and `PARTNER_CENTER_SELLER_ID`.
+4. **Turn it on** once the first submission is published (steps 2 to 4 above): under **Variables**, `STORE_SUBMIT` set to `true`. Without it, or before it, nothing is sent: the bundle is only built and kept.
+
+To send a release again, or to look before it goes to certification: **Actions > Microsoft Store > Run workflow**, with the release's tag (empty: the newest), and **Leave the submission as a draft** ticked to send it yourself from Partner Center. The key expires (you choose when, up to two years): make a new one in step 1 and replace the secret.
+
 ### What each page asks
 
 **Pricing and availability:** Free, in every market. Visibility as in step 2 above.
