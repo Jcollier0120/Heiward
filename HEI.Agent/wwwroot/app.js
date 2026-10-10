@@ -799,12 +799,36 @@ function renderAboutCard(s) {
     text.append(built);
   }
   const from = el('div', 'muted small');
+  const update = s.about.update || {};
   if (s.about.store) from.append('From the Microsoft Store, which keeps it up to date.');
   else if (s.about.dev) from.append('A development build, kept apart from the installed Heiward.');
+  else if (update.by === 'manor') from.append('From GitHub. Manor keeps it up to date.');
   else from.append('From GitHub: new versions are on its ', outLink('releases page', 'https://github.com/Jcollier0120/Heiward/releases'), '.');
   text.append(from);
   row.append(text);
   card.append(row);
+  // The copy from GitHub, when nothing else updates it: its switch, and what the last daily look found (SelfUpdate).
+  if (update.switch) {
+    const updateRow = el('div', 'auto-row');
+    updateRow.append(toggleSwitch(update.on, 'Update by itself', settingsBusy, (on) => saveSettings({ autoUpdate: on })));
+    const updateText = el('div', 'auto-text');
+    updateText.append(el('div', 'auto-title', 'Update by itself'),
+      el('div', 'muted small', update.on
+        ? 'Once a day Heiward looks for a new version on GitHub, and installs it while no scan runs. Your settings stay as they are.'
+        : 'Off: new versions wait for you on its releases page.'));
+    const last = update.last;
+    if (update.on && last) {
+      const said = last.outcome === 'up to date' ? 'Up to date'
+        : last.outcome.startsWith('updating') ? 'Updating to ' + last.latest
+        : last.outcome.startsWith('couldn') ? 'Couldn\'t look for one'
+        : last.outcome.charAt(0).toUpperCase() + last.outcome.slice(1);
+      const line = el('div', 'muted small', said + ': looked ' + ago(last.checkedAtUtc) + '.');
+      line.title = last.outcome;
+      updateText.append(line);
+    }
+    updateRow.append(updateText);
+    card.append(updateRow);
+  }
   // Without Manor: the home page's "In a manor" card, on until its Not now; this brings it back.
   if (s.manorCard) {
     const manorRow = el('div', 'auto-row');
