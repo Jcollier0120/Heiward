@@ -483,8 +483,9 @@ function scanDueIn(schedule) {
 function renderHeader(s) {
   const r = s.report;
   const parts = [];
+  if (s.scan.running) parts.push('Scanning now');
   if (r) {
-    parts.push('Last scan ' + ago(r.scannedAtUtc));
+    parts.push((s.scan.running ? 'last finished ' : 'Last scan ') + ago(r.scannedAtUtc));
     parts.push(r.device === 'off' ? 'AI matching off' : 'AI on the ' + r.device);
   } else {
     // A new build set the last report aside: its sets were judged by the old rules. The next due scan
@@ -493,6 +494,7 @@ function renderHeader(s) {
       : 'Heiward was updated: the next scan finds the sets again');
   }
   if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
+  else if (s.scan.running) { /* the next is counted from this one's end */ }
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
@@ -507,14 +509,8 @@ function renderHeader(s) {
   scanBtn.textContent = starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
   scanBtn.classList.toggle('secondary', running);
   renderAgent(s);
-  // How the scan runs, above the drives; each drive's card shows how far it has got.
-  const st = s.scan.status;
-  const pace = $('scan-pace');
-  pace.classList.toggle('hidden', !running);
-  pace.textContent = !running ? '' : starting ? 'Starting the scan…' : (st ? (st.fullSpeed ? 'Scanning at full speed' : 'Scanning in the background') + ', started ' + ago(st.startedUtc) : 'Scanning') + '.';
-  pace.title = st ? (st.fullSpeed
-    ? 'Full speed: every core but one, at normal priority.'
-    : 'In the background: Windows\' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.') : '';
+  // The scan's step and progress at the top of the page; each drive's card shows how far it has got on it.
+  renderScanStatus(s);
   renderDriveProgress(s);
   $('notes').replaceChildren(...((r && r.notes) || []).map((n) => el('li', null, n)));
 }
@@ -3088,11 +3084,90 @@ function driveProgress(d, st) {
     if (done < total) return ['Checking files' + where + ' · ' + done.toLocaleString() + ' of ' + total.toLocaleString(), done / total];
     return ['Checked ' + count(total, 'file', 'files') + where + waiting, 1];
   }
-  if (st.phase === 'comparing') {
-    const what = st.stage ? st.stage[0].toUpperCase() + st.stage.slice(1) : 'Comparing';
-    return st.max > 0 ? [what, st.position / st.max] : [what + '…', null];
+  // Comparing and the report are every drive's together: the status at the top shows how far, not each card.
+  const several = state.drives.filter((c) => c.scanned && scanReads(c)).length > 1;
+  return ['Files checked · ' + (several ? 'being compared with the other drives' : 'looking for copies among them'), 'done'];
+}
+
+/** A scan's three steps, as the status at the top of the page names them (renderScanStatus). */
+const SCAN_STEPS = [
+  { phases: ['listing'], label: 'Find photos and videos' },
+  { phases: ['checking'], label: 'Check new and changed files' },
+  { phases: ['comparing', 'finishing'], label: 'Compare and make the report' },
+];
+
+/** The whole scan's step now (0 to 2), what it's doing in words, and how far (0 to 1, or null while it can't count). */
+function scanProgress(st) {
+  if (!st) return { step: 0, text: 'Starting the scan…', fraction: null };
+  const step = Math.max(0, SCAN_STEPS.findIndex((x) => x.phases.includes(st.phase)));
+  if (st.phase === 'listing') {
+    const roots = st.roots || [];
+    const listed = new Set((st.listed || []).map(normRoot));
+    const done = roots.filter((r) => listed.has(normRoot(r))).length;
+    return { step, text: roots.length > 1 ? 'Finding photos and videos · ' + done + ' of ' + roots.length + ' places done' : 'Finding photos and videos…', fraction: null };
   }
-  return ['Finishing the report…', null];
+  if (st.phase === 'checking') {
+    const drives = st.drives || [];
+    const done = drives.reduce((n, x) => n + x.done, 0), total = drives.reduce((n, x) => n + x.total, 0);
+    if (!total) return { step, text: 'Getting ready to check the files…', fraction: null };
+    return { step, text: 'Checking files · ' + done.toLocaleString() + ' of ' + total.toLocaleString(), fraction: done / total };
+  }
+  if (st.phase === 'comparing') {
+    const what = st.stage ? st.stage[0].toUpperCase() + st.stage.slice(1) : 'Comparing the drives together';
+    return { step, text: what, fraction: st.max > 0 ? st.position / st.max : null };
+  }
+  return { step, text: 'Finishing the report: checking the copies byte for byte', fraction: null };
+}
+
+/**
+ * While a scan runs, at the top of the page: that it's scanning, since when and at what pace; what it's doing now, in
+ * words; and one bar in three parts, a part a step, each named under it: done, under way (filling, or sweeping while it
+ * can't count), or still to come. Updated in place each poll, so the bar glides.
+ */
+function renderScanStatus(s) {
+  const box = $('scan-status');
+  const running = s.scan.running;
+  box.classList.toggle('hidden', !running);
+  if (!running) return;
+  const st = s.scan.status;
+  if (!box.firstChild) {
+    const head = el('div', 'ss-head');
+    const who = el('div', 'ss-who');
+    who.append(el('span', 'ss-dot'), el('strong', 'ss-title', 'Scanning'), el('span', 'ss-when muted small'));
+    head.append(who, el('span', 'ss-pct'));
+    const steps = el('ol', 'ss-steps');
+    SCAN_STEPS.forEach((x, i) => {
+      const li = el('li', 'ss-step');
+      const bar = el('div', 'dp-bar');
+      bar.append(el('div', 'dp-fill'));
+      const label = el('div', 'ss-label small');
+      label.append(el('span', 'ss-num', String(i + 1)), el('span', null, x.label));
+      li.append(bar, label);
+      steps.append(li);
+    });
+    box.append(head, el('div', 'ss-text'), steps);
+  }
+  const p = scanProgress(s.scan.starting ? null : st);
+  const when = box.querySelector('.ss-when');
+  when.textContent = st ? 'started ' + ago(st.startedUtc) + ' · ' + (st.fullSpeed ? 'at full speed' : 'in the background') : '';
+  when.title = st ? (st.fullSpeed
+    ? 'Full speed: every core but one, at normal priority.'
+    : "In the background: Windows' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.") : '';
+  const sweep = p.fraction === null;
+  box.querySelector('.ss-pct').textContent = sweep ? '' : Math.floor(100 * Math.min(1, p.fraction)) + '%';
+  box.querySelector('.ss-text').textContent = p.text;
+  box.querySelectorAll('.ss-step').forEach((li, i) => {
+    const now = i === p.step;
+    li.classList.toggle('done', i < p.step);
+    li.classList.toggle('now', now);
+    li.querySelector('.ss-num').textContent = i < p.step ? '✓' : String(i + 1);
+    li.title = now && st ? PHASE_TIPS[st.phase] || '' : '';
+    if (now) li.setAttribute('aria-current', 'step');
+    else li.removeAttribute('aria-current');
+    const bar = li.querySelector('.dp-bar');
+    bar.classList.toggle('sweep', now && sweep);
+    bar.querySelector('.dp-fill').style.width = i < p.step ? '100%' : now && !sweep ? 100 * Math.min(1, p.fraction) + '%' : now ? '' : '0';
+  });
 }
 
 const PHASE_TIPS = {
@@ -3112,9 +3187,16 @@ function fillDriveProgress(box, d, st) {
     bar.append(el('div', 'dp-fill'));
     box.append(line, bar);
   }
+  const done = fraction === 'done';
   const sweep = fraction === null;
   box.title = (st && PHASE_TIPS[st.phase]) || '';
+  box.classList.toggle('checked', done);
   box.querySelector('.dp-text').textContent = text;
+  box.querySelector('.dp-bar').classList.toggle('hidden', done);
+  if (done) {
+    box.querySelector('.dp-pct').textContent = '';
+    return;
+  }
   box.querySelector('.dp-pct').textContent = sweep || fraction === 0 ? '' : Math.floor(100 * Math.min(1, fraction)) + '%';
   box.querySelector('.dp-bar').classList.toggle('sweep', sweep);
   box.querySelector('.dp-fill').style.width = sweep ? '' : 100 * Math.min(1, fraction) + '%';
