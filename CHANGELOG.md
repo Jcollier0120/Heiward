@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.11
+
+**The Store version of Heiward is built for every release, and sent to the Store once that is set up.**
+
+### What changed
+
+- Each release of Heiward now also builds its Microsoft Store package. Once the owner has connected Partner Center, each one is submitted to the Store by itself, and Store installs update through Windows as before.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.9
 
 **It carries the Steward's kit 2.46.0: the parts every agent of the manor shares.**

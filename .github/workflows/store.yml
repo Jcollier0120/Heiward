@@ -1,0 +1,130 @@
+name: Microsoft Store
+
+# Heiward's Store package, built by HEI.Agent/store.ps1 for every release of Heiward (a v1.x tag whose version is
+# VersionPrefix in HEI.Agent/HEI.Agent.csproj), and kept as this run's artifact. docs/STORE.md, "Releasing from CI".
+#
+# It is also submitted to Partner Center, once the owner has set it up there:
+#   - the repository variable STORE_SUBMIT is "true" (only after the first, private-audience submission went
+#     through by hand: Partner Center won't take a package for an app that has never been published), and
+#   - the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID, PARTNER_CENTER_CLIENT_SECRET and
+#     PARTNER_CENTER_SELLER_ID hold the Microsoft Entra app Partner Center's API is reached through.
+# Without them the package is built and kept, and nothing is sent.
+#
+# Started by hand (Actions > Microsoft Store > Run workflow), it builds a given release's tag, and can leave the
+# submission as a draft in Partner Center instead of sending it to certification.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release's tag, like v1.9.11 (empty: the newest release)"
+        required: false
+      draft:
+        description: "Leave the submission as a draft in Partner Center, for you to send"
+        type: boolean
+        default: false
+
+# One Store build at a time: Partner Center takes one pending submission per app.
+concurrency:
+  group: store
+  cancel-in-progress: false
+
+env:
+  STORE_ID: 9NX5K0L4CW3D
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.which.outputs.version }}
+      skip: ${{ steps.heiward.outputs.skip }}
+    steps:
+      - name: Which release
+        id: which
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: |
+          if [[ -z "$TAG" ]]; then TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName); fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.which.outputs.tag }}
+      # Only Heiward's own releases: the tags VDF left (v4.1.1 and the like) are other apps, which aren't in the Store.
+      - name: A release of Heiward
+        id: heiward
+        shell: bash
+        env:
+          VERSION: ${{ steps.which.outputs.version }}
+        run: |
+          PREFIX=$(sed -n 's:.*<VersionPrefix>\(.*\)</VersionPrefix>.*:\1:p' HEI.Agent/HEI.Agent.csproj | head -1)
+          if [[ "$PREFIX" != "$VERSION" ]]; then
+            echo "::notice::$VERSION isn't a release of Heiward (HEI.Agent.csproj says $PREFIX at that tag): no Store package."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup .NET
+        if: steps.heiward.outputs.skip != 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      # In Windows PowerShell, as on the PCs that build Heiward. It fills the Steward's kit from its public release.
+      - name: Build the bundle
+        if: steps.heiward.outputs.skip != 'true'
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
+      - name: Keep it
+        if: steps.heiward.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Heiward-${{ steps.which.outputs.version }}-store
+          path: artifacts/store/Heiward-${{ steps.which.outputs.version }}.msixbundle
+          if-no-files-found: error
+          retention-days: 30
+
+  submit:
+    needs: build
+    if: needs.build.outputs.skip != 'true' && vars.STORE_SUBMIT == 'true'
+    runs-on: windows-latest
+    steps:
+      - name: Partner Center's secrets
+        id: secrets
+        shell: bash
+        env:
+          TENANT: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          CLIENT: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+          SELLER: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
+        run: |
+          missing=()
+          [[ -n "$TENANT" ]] || missing+=(PARTNER_CENTER_TENANT_ID)
+          [[ -n "$CLIENT" ]] || missing+=(PARTNER_CENTER_CLIENT_ID)
+          [[ -n "$SECRET" ]] || missing+=(PARTNER_CENTER_CLIENT_SECRET)
+          [[ -n "$SELLER" ]] || missing+=(PARTNER_CENTER_SELLER_ID)
+          if (( ${#missing[@]} )); then
+            echo "::error::STORE_SUBMIT is true, but these secrets aren't set: ${missing[*]} (docs/STORE.md, \"Releasing from CI\")."
+            exit 1
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: Heiward-${{ needs.build.outputs.version }}-store
+          path: store
+      - uses: microsoft/setup-msstore-cli@v1
+      - name: Sign in to Partner Center
+        shell: bash
+        run: >
+          msstore reconfigure
+          --tenantId "${{ secrets.PARTNER_CENTER_TENANT_ID }}"
+          --clientId "${{ secrets.PARTNER_CENTER_CLIENT_ID }}"
+          --clientSecret "${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}"
+          --sellerId "${{ secrets.PARTNER_CENTER_SELLER_ID }}"
+      # A new submission copies the last one's listing, pricing and audience, with this package in place of the old.
+      # Without --noCommit it goes to certification at once; the Store publishes it when it passes.
+      - name: Submit
+        shell: bash
+        run: |
+          args=(publish --inputFile "store/Heiward-${{ needs.build.outputs.version }}.msixbundle" --appId "$STORE_ID")
+          if [[ "${{ inputs.draft }}" == "true" ]]; then args+=(--noCommit); fi
+          msstore "${args[@]}"
