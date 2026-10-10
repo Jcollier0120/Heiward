@@ -174,11 +174,12 @@ var speedOpt = new Option<string?>("--scan-speed") { Description = "How hard sca
 speedOpt.AcceptOnlyFromAmong(AgentConfig.ScanSpeeds);
 var installNoBrowser = new Option<bool>("--no-browser") { Description = "Don't open the review page when done." };
 var removeGitHubOpt = new Option<bool>("--remove-github-copy") { Description = "The Store version: remove Heiward installed from GitHub (its shortcuts, Apps & Features entry and folder). Settings and history stay." };
+var keepSettingsOpt = new Option<bool>("--keep-settings") { Description = "An update: where the AI runs, when scans run and the graphics card stay as settings.json has them, instead of being asked again (or, with --yes, set to the defaults)." };
 var gpuOpt = new Option<string?>("--gpu") { Description = "On a PC with more than one graphics card, the one for GPU work (AI matching on the GPU, decoding videos and iPhone photos): its number as the installer lists them, its name, or default (Windows' default). Default: ask; with --yes, the one with the most memory of its own." };
-var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, removeGitHubOpt, reuseFrom, gpuOpt };
+var install = new Command("install", "Install for this user (no admin): prerequisites, scheduled scans (hourly on an NPU, every 6 hours on a GPU or CPU), sign-in review page, Start menu and desktop shortcuts, Apps & Features.") { dryRun, yes, deviceOpt, onDemandOpt, speedOpt, installNoBrowser, removeGitHubOpt, reuseFrom, gpuOpt, keepSettingsOpt };
 install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetValue(yes), r.GetValue(deviceOpt), ct,
 	r.GetResult(onDemandOpt) != null ? r.GetValue(onDemandOpt) : null, r.GetValue(reuseFrom), r.GetValue(speedOpt), openPage: !r.GetValue(installNoBrowser),
-	removeGitHubCopy: r.GetValue(removeGitHubOpt), gpu: r.GetValue(gpuOpt)));
+	removeGitHubCopy: r.GetValue(removeGitHubOpt), gpu: r.GetValue(gpuOpt), keepSettings: r.GetValue(keepSettingsOpt)));
 
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime). A GPU check is
@@ -264,6 +265,15 @@ status.SetAction(async (r, _) => {
 	return 0;
 });
 root.Subcommands.Add(status);
+
+var updateCheck = new Option<bool>("--check") { Description = "Only say whether a newer release is out; don't install it." };
+var update = new Command("update", "Install the newest release from GitHub now, as the review page does once a day, keeping the settings. Not for the Store version, nor one Manor employs: they update it.") { updateCheck };
+update.SetAction(async (r, ct) => {
+	string said = await SelfUpdate.LookAsync(AgentScanner.IsRunning, install: !r.GetValue(updateCheck), ct);
+	Console.WriteLine(said);
+	return said.StartsWith("Heiward couldn't", StringComparison.Ordinal) ? 1 : 0;
+});
+root.Subcommands.Add(update);
 
 var autoDuplicates = new Option<string?>("--duplicates") { Description = "on or off: move plain copies of photos, and byte-identical videos, to the Recycle Bin by itself." };
 autoDuplicates.AcceptOnlyFromAmong("on", "off");

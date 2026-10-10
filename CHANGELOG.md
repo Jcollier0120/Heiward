@@ -14,6 +14,24 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 - Nothing: it updates itself as usual.
 
+## 1.9.10
+
+**Heiward installed from GitHub keeps itself up to date.**
+
+### What's new
+
+- Once a day Heiward looks for a newer release. When there is one, it downloads it, checks it against the release's checksums and installs it, keeping your settings: where the AI runs, the schedule and the graphics card. It never updates during a scan.
+- The About card has an **Update by itself** switch to turn this off, and says when Heiward last looked and what it found.
+- `hei update` installs the newest release now (`hei update --check` only looks).
+
+### What changed
+
+- A copy that something else keeps up to date is left alone: the Store version, a Heiward that Manor employs, and development builds.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.9
 
 **It carries the Steward's kit 2.46.0: the parts every agent of the manor shares.**
