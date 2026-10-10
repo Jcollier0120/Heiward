@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.8
+
+**While Heiward scans, its page says plainly what it's doing and how far it has got.**
+
+### What changed
+
+- A scan under way now has its own panel at the top of the page: what Heiward is doing right now, how far through it is, and the scan's three steps (find photos and videos, check new and changed files, compare and make the report) with the ones done ticked.
+- Once every drive's files are checked, the drive cards say so, instead of each showing the same comparing bar.
+- The line at the top right says Scanning now while a scan runs.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.7
 
 **It carries the Steward's kit 2.45.0: the parts every agent of the manor shares.**
