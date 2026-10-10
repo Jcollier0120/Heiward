@@ -4,11 +4,11 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.12
 
-**It carries the Steward's kit 2.46.1: the parts every agent of the manor shares.**
+**It carries the Steward's kit 2.47.0: the parts every agent of the manor shares.**
 
 ### What changed
 
-- The Steward's kit 2.46.1: Settings' "changed" mark shows only beside a field that's changed.
+- The Steward's kit 2.47.0: A long page, and long Settings, in tabs; a short one stays a single column.
 
 ### Before you update
 
