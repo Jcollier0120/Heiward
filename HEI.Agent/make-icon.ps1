@@ -82,3 +82,11 @@ foreach ($name in $logos.Keys) {
   [System.IO.File]::WriteAllBytes((Join-Path $assets $name), (Render $logos[$name][0] $logos[$name][1]))
 }
 Write-Host "Wrote $($logos.Count) Store logos in Store\Assets."
+
+# The Store listing's own logos, uploaded in Partner Center (Store listings > Store logos), not packed: without them the
+# Store blows up the package's 50 px StoreLogo for its tiles. 1:1 box art at 2160 px, and the 300 px app tile icon.
+$listing = Join-Path $here '..\docs\store-listing'
+New-Item -ItemType Directory -Force $listing | Out-Null
+[System.IO.File]::WriteAllBytes((Join-Path $listing 'box-art-2160.png'), (Render 2160 0.7))
+[System.IO.File]::WriteAllBytes((Join-Path $listing 'app-tile-icon-300.png'), (Render 300 0.8))
+Write-Host "Wrote the Store listing's logos in docs\store-listing."

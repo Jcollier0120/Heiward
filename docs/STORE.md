@@ -24,7 +24,7 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
   - It's the lean LGPL build from [ffmpeg-winarm64-lean](https://github.com/Jcollier0120/ffmpeg-winarm64-lean), pinned by release and SHA-256: `n8.1.3-4`, for both arm64 and x64.
   - **arm64** is the same one the GitHub exe downloads; **x64** is the same configuration built for x64.
   - `n8.1.3-4` adds Media Foundation's encoders (`hevc_mf`, `h264_mf`, `av1_mf`), which reach the PC's hardware video encoder. Heiward only decodes, but other apps that find this FFmpeg can encode with it.
-- **Logos** in `Store\Assets`, rendered from `wwwroot\favicon.svg` by `make-icon.ps1`, and a `resources.pri` that lets Windows pick one per size.
+- **Logos** in `Store\Assets`, rendered from `wwwroot\favicon.svg` by `make-icon.ps1`, and a `resources.pri` that lets Windows pick one per size. The Store listing's own logos, uploaded in Partner Center rather than packed, are rendered with them into `docs/store-listing`.
 
 ## Partner Center
 
@@ -58,7 +58,7 @@ To send a release again, or to look before it goes to certification: **Actions >
 **Properties:**
 - **Category:** Utilities & tools.
 - **Privacy policy URL:** `https://github.com/Jcollier0120/Heiward/blob/master/docs/PRIVACY.md` ([PRIVACY.md](PRIVACY.md)). The Store requires one because Heiward reads the user's photos and videos.
-- **Website:** `https://github.com/Jcollier0120/Heiward`
+- **Website:** `https://castellan-software.com/heiward`
 - **Support contact info:** `https://github.com/Jcollier0120/Heiward/issues`
 - **System requirements:** Windows 10 version 2004 or later, on an x64 or Arm64 PC. An NPU (Qualcomm Snapdragon, Intel Core Ultra or AMD Ryzen AI) is recommended, not required.
 
@@ -99,6 +99,9 @@ To send a release again, or to look before it goes to certification: **Actions >
   Match Windows, Light, Dark, and six colour themes
   No account and no telemetry: nothing leaves your PC
   ```
+- **Store logos** (from `docs/store-listing`, rendered by `make-icon.ps1` with the package's logos; without them the Store enlarges the package's 50 px logo for its tiles):
+  - **1:1 Box art:** `box-art-2160.png` (2160 × 2160).
+  - **1:1 App tile icon:** `app-tile-icon-300.png` (300 × 300).
 - **Screenshots** (2560 × 1600, from `docs/screenshots`), in this order, with these captions:
   1. `home.png`: `A card per drive or folder with its sets of copies, developer cleanup, and where cleaning up frees the most`
   2. `duplicates.png`: `A folder and its duplicates. Each set keeps one file; the copies go to the Recycle Bin`
