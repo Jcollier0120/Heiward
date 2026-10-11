@@ -54,13 +54,17 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
-	public void UninstallTask_RunsTheExe_InAWindow_OnlyWhenStarted() {
+	public void UninstallTask_RunsTheExe_WithoutAWindow_OnlyWhenStarted() {
 		string xml = Scheduler.UninstallXml(@"C:\x\hei.exe", purge: true);
-		Assert.Contains(@"<Command>C:\x\hei.exe</Command>", xml);
-		Assert.Contains("<Arguments>uninstall --purge</Arguments>", xml);
+		Assert.Matches(@"<Command>.+\\conhost\.exe</Command>", xml);
+		Assert.Contains("<Arguments>--headless \"C:\\x\\hei.exe\" uninstall --purge</Arguments>", xml.Replace("&quot;", "\""));
 		Assert.DoesNotContain("Trigger>", xml);
 		Assert.True(System.Xml.Linq.XDocument.Parse(xml).Root != null);
 	}
+
+	[Fact]
+	public void AppsAndFeatures_UninstallsWithoutAConsoleWindow() =>
+		Assert.Equal(@"""C:\W\conhost.exe"" --headless ""C:\x\hei.exe"" uninstall", Installer.UninstallCommand(@"C:\W\conhost.exe", @"C:\x\hei.exe"));
 
 	[Fact]
 	public void RemoveKeysTask_DeletesEachKey_ThenItself_InOnePairOfOuterQuotes() {

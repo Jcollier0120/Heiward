@@ -86,8 +86,9 @@ namespace HEI.Agent {
 			Action(OpenTask, agentExe, openBrowser ? "open --if-pending --once-a-day" : "open --no-browser", removeWhenGone));
 
 		/// <summary>
-		/// <c>hei uninstall</c> in a window, run once by <see cref="RunNow"/>: Task Scheduler starts it outside the
-		/// package environment of whatever started the uninstall.
+		/// <c>hei uninstall</c>, run once by <see cref="RunNow"/>: Task Scheduler starts it outside the package
+		/// environment of whatever started the uninstall. Through conhost --headless, as every other task: no window
+		/// (before, an empty console window stood open while it ran). Should it fail, it says so in a message box.
 		/// </summary>
 		public static string UninstallXml(string agentExe, bool purge) => Task(
 			"Uninstalls Heiward, as Settings > Apps asked.",
@@ -97,8 +98,7 @@ namespace HEI.Agent {
 			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
 			    <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
 			""",
-			purge ? "uninstall --purge" : "uninstall",
-			command: agentExe);
+			Action(UninstallTask, agentExe, purge ? "uninstall --purge" : "uninstall", removeWhenGone: false));
 
 		/// <summary>
 		/// Deletes the HKCU <paramref name="keys"/> with reg.exe, then the task itself, run once by <see cref="RunNow"/>:
