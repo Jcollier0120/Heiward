@@ -506,10 +506,22 @@ From the repository root, on the commit to release, with the .NET 10 SDK and the
 powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1 -Publish
 ```
 
-It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, writes `SHA256SUMS.txt`, then creates the release `v<version>` at the commit it built and uploads all three. The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
+It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, signs them, writes `SHA256SUMS.txt`, then creates the release `v<version>` at the commit it built and uploads all three. The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
 
 - It fills the kit first (`tools\kit.ps1`, above), at the version `kit.json` pins, and refuses a kit tree from `STEWARD_KIT`.
 - Without `-Publish` it only builds.
-- `-Notes <text or file>` replaces the default release notes, which say which file to download and how to get past the unsigned-build warning.
+- `-Notes <text or file>` replaces the default release notes, which say which file to download and what Windows says on the first run.
+
+**Signing.** Each exe is signed with the publisher's code-signing certificate (`-Thumbprint`, in `Cert:\CurrentUser\My`) by the Windows SDK's signtool, and timestamped (`-TimestampUrl`, RFC 3161), so the signature outlives the certificate. Then `signtool verify /pa` must pass. Install signtool once:
+
+```
+winget install Microsoft.WindowsSDK.10.0.26100 --override "/features OptionId.SigningTools /quiet /norestart"
+```
+
+- The certificate's key is in Certum's cloud. **SimplySign Desktop** must be running and connected (your SimplySign ID and the token from its phone app). The script checks this before it builds.
+- It always runs the **x64** signtool. SimplySign's key provider comes as x64 and x86 DLLs only, which an Arm64 process can't load; on an Arm64 PC, Windows runs the x64 signtool emulated.
+- A sign that fails is tried three times (the timestamp server fails now and then). One that hangs for 5 minutes stops the release: SimplySign's sign-in is likely waiting.
+- With `-Publish` it won't release unsigned files. `-Unsigned` builds and publishes without signing, on a PC without the certificate. Without `-Publish`, a PC that can't sign builds unsigned files and says why.
+- The Store package (`store.ps1`) isn't signed here: Microsoft signs it after certification.
 
 GitHub attaches the source code to every release by itself.

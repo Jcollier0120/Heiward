@@ -2,6 +2,23 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.16
+
+**Heiward's downloads are now code-signed, so Windows names its publisher when you run them.**
+
+### What's new
+
+- Both downloads, for Intel/AMD and for Arm PCs, are signed by Jeremy Collier with a Certum code-signing certificate, and timestamped so the signature stays valid after the certificate expires. When you run one, Windows shows the publisher's name instead of "Unknown publisher".
+
+### What changed
+
+- Windows may still say "Windows protected your PC" right after a release, until enough people have run it. If it does, click **More info**, check the publisher is Jeremy Collier, then **Run anyway**.
+- The Microsoft Store version is unchanged: Microsoft signs it, as before.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.15
 
 **It carries the Steward's kit 2.49.0: the parts every agent of the manor shares.**
