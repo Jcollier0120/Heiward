@@ -2,20 +2,92 @@
 # (Heiward-<version>-x64.exe, Heiward-<version>-arm64.exe) and SHA256SUMS.txt, in artifacts\heiward.
 # With -Publish it then creates the GitHub release v<version> at the commit it built, and uploads every file.
 # It fills the Steward's kit first (tools\kit.ps1), at the version kit.json pins.
-# Needs the .NET 10 SDK on PATH, and for -Publish the GitHub CLI (gh), signed in.
+# Each exe is code-signed before SHA256SUMS.txt is written (below, "Signing"); -Publish refuses unsigned files unless
+# told -Unsigned.
+# Needs the .NET 10 SDK on PATH, for -Publish the GitHub CLI (gh), signed in, and for signing the Windows SDK's
+# signtool and the signing certificate (with SimplySign Desktop connected, for the cloud one).
 #
-#   powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1              build only
-#   powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1 -Publish     build, then release and upload
+#   powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1              build (signed when the certificate is here)
+#   powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1 -Publish     build and sign, then release and upload
 param(
 	[string]$Out = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\heiward'),
 	# Create the GitHub release and upload the files once they're built.
 	[switch]$Publish,
-	# Release notes: text, or the path of a file with them. Default: CHANGELOG.md's entry for the version (or its commits), then which file to download and the unsigned-build note.
+	# Release notes: text, or the path of a file with them. Default: CHANGELOG.md's entry for the version (or its commits), then which file to download and what Windows says on the first run.
 	[string]$Notes,
 	# The repository to release to (owner/name).
-	[string]$Repo = 'Jcollier0120/Heiward'
+	[string]$Repo = 'Jcollier0120/Heiward',
+	# Build without signing, and publish so: for a PC without the certificate.
+	[switch]$Unsigned,
+	# The code-signing certificate, by its SHA-1 thumbprint, in Cert:\CurrentUser\My: Heiward's publisher's, from Certum.
+	[string]$Thumbprint = '6B654D9C34800D4307D42ACD63B925EDA5CE8D33',
+	# The RFC 3161 timestamp server: a timestamped signature stays valid after the certificate expires.
+	[string]$TimestampUrl = 'http://time.certum.pl'
 )
 $ErrorActionPreference = 'Stop'
+
+# Signing. The key of Heiward's certificate is in Certum's cloud (SimplySign): SimplySign Desktop, connected with its
+# ID and the token from the phone app, shows it to Windows as a smart card. Its key provider (SimplySign CSP) comes as
+# x64 and x86 DLLs only, which an Arm64 process can't load, so this always runs the x64 signtool: on an Arm64 PC
+# Windows runs it emulated, and it loads the x64 provider. Everything is checked before the build, so a release
+# can't stop half done for want of the certificate.
+function Find-SignTool {
+	$kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+	Get-ChildItem $kits -Directory -ErrorAction SilentlyContinue |
+		Where-Object { $_.Name -match '^\d+(\.\d+){3}$' -and (Test-Path (Join-Path $_.FullName 'x64\signtool.exe')) } |
+		Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1 |
+		ForEach-Object { Join-Path $_.FullName 'x64\signtool.exe' }
+}
+# Why this PC can't sign now, in a line; nothing when it can.
+function Get-SignProblem([string]$SignTool, $Cert) {
+	if (-not $SignTool) { return "The Windows SDK's signtool isn't installed (winget install Microsoft.WindowsSDK.10.0.26100 --override ""/features OptionId.SigningTools /quiet /norestart"")" }
+	if (-not $Cert) { return "The signing certificate ($Thumbprint) isn't in Cert:\CurrentUser\My. Its key is in Certum's cloud: start SimplySign Desktop and connect (your SimplySign ID and the token from the phone app)" }
+	if (-not $Cert.HasPrivateKey) { return "The signing certificate ($Thumbprint) is here without its key" }
+	# The cloud key needs SimplySign Desktop running: without it, signtool would wait on a sign-in no one sees.
+	$provider = (certutil -user -store My $Thumbprint 2>$null | Select-String '^\s*Provider = (.+)$' | Select-Object -First 1).Matches.Groups[1].Value
+	if ($provider -match 'SimplySign' -and -not (Get-Process SimplySignDesktop -ErrorAction SilentlyContinue)) {
+		return 'SimplySign Desktop isn''t running, and the signing key is in its cloud: start it and connect (your SimplySign ID and the token from the phone app)'
+	}
+}
+# Quoted as one argument for Start-Process, which joins its arguments with spaces as they are.
+function ConvertTo-Argument([string]$Text) { if ($Text -match '[\s"]') { '"' + ($Text -replace '"', '\"') + '"' } else { $Text } }
+# Runs signtool, at most $Minutes; its output, and whether it succeeded.
+function Invoke-SignTool([string[]]$Arguments, [int]$Minutes) {
+	$log = Join-Path ([IO.Path]::GetTempPath()) "heiward-signtool-$([guid]::NewGuid().ToString('N'))"
+	try {
+		$p = Start-Process -FilePath $script:signtool -ArgumentList (($Arguments | ForEach-Object { ConvertTo-Argument $_ }) -join ' ') `
+			-NoNewWindow -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
+		# Without its handle taken now, Windows PowerShell's process object has no ExitCode once it has exited.
+		$null = $p.Handle
+		if (-not $p.WaitForExit($Minutes * 60000)) {
+			$p.Kill()
+			return [pscustomobject]@{ Ok = $false; TimedOut = $true; Text = "signtool didn't finish within $Minutes minutes. Is SimplySign Desktop connected? Its sign-in may be waiting." }
+		}
+		$text = ((Get-Content "$log.out", "$log.err" -ErrorAction SilentlyContinue) -join "`n").Trim()
+		[pscustomobject]@{ Ok = $p.ExitCode -eq 0; TimedOut = $false; Text = $text }
+	}
+	finally {
+		Remove-Item "$log.out", "$log.err" -ErrorAction SilentlyContinue
+	}
+}
+# Signs one file and timestamps it, a few times over if the timestamp server fails; then checks the signature is
+# Windows' to trust, and the certificate's.
+function Set-ReleaseSignature([string]$File) {
+	$sign = @('sign', '/sha1', $Thumbprint, '/fd', 'SHA256', '/tr', $TimestampUrl, '/td', 'SHA256', '/d', 'Heiward', '/du', "https://github.com/$Repo", $File)
+	for ($try = 1; ; $try++) {
+		$r = Invoke-SignTool $sign 5
+		if ($r.Ok) { break }
+		if ($r.TimedOut -or $try -ge 3) { throw "Couldn't sign $(Split-Path $File -Leaf): $($r.Text)" }
+		Write-Warning "Signing $(Split-Path $File -Leaf) failed (try $try of 3), trying again in 15 s: $($r.Text)"
+		Start-Sleep -Seconds 15
+	}
+	$v = Invoke-SignTool @('verify', '/pa', $File) 2
+	if (-not $v.Ok) { throw "$(Split-Path $File -Leaf) is signed, but its signature doesn't verify: $($v.Text)" }
+	$s = Get-AuthenticodeSignature $File
+	if ($s.Status -ne 'Valid' -or $s.SignerCertificate.Thumbprint -ne $Thumbprint -or -not $s.TimeStamperCertificate) {
+		throw "$(Split-Path $File -Leaf)'s signature isn't the certificate's, timestamped: $($s.Status), $($s.SignerCertificate.Subject)."
+	}
+}
 
 if (-not ((dotnet --list-sdks 2>$null) -match '^10\.')) {
 	throw 'The .NET 10 SDK is not on PATH ("dotnet --list-sdks" lists no 10.x). Install it, or put its folder first on PATH.'
@@ -98,6 +170,23 @@ if ($Publish) {
 	if ($exists) { throw "Release $tag already exists on $Repo. Raise VersionPrefix in HEI.Agent.csproj first." }
 }
 
+$signtool = $null
+$signer = $null
+if (-not $Unsigned) {
+	$signtool = Find-SignTool
+	$cert = Get-Item "Cert:\CurrentUser\My\$Thumbprint" -ErrorAction SilentlyContinue
+	$problem = Get-SignProblem $signtool $cert
+	if ($problem) {
+		if ($Publish) { throw "$problem. Releases are signed: fix that, or publish unsigned with -Unsigned." }
+		Write-Warning "$problem. Building unsigned files (-Unsigned does so without this warning)."
+		$Unsigned = $true
+	}
+	else {
+		$signer = $cert.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+		Write-Host "Signing as $signer, with $signtool"
+	}
+}
+
 # Only this script's own files are replaced, so -Out can point at a folder that holds other things.
 New-Item -ItemType Directory -Force $Out | Out-Null
 Get-ChildItem $Out -File | Where-Object { $_.Name -like 'Heiward-*.exe' -or $_.Name -eq 'SHA256SUMS.txt' } | Remove-Item
@@ -111,7 +200,12 @@ try {
 			-p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
 			--source https://api.nuget.org/v3/index.json -o (Join-Path $work $arch) -nologo -v q
 		if ($LASTEXITCODE -ne 0) { throw "The $arch build failed." }
-		Copy-Item (Join-Path $work "$arch\hei.exe") (Join-Path $Out "Heiward-$version-$arch.exe")
+		$exe = Join-Path $Out "Heiward-$version-$arch.exe"
+		Copy-Item (Join-Path $work "$arch\hei.exe") $exe
+		if (-not $Unsigned) {
+			Write-Host "Signing $arch..."
+			Set-ReleaseSignature $exe
+		}
 	}
 }
 finally {
@@ -132,6 +226,14 @@ if (-not $Publish) {
 }
 
 if (-not $Notes) {
+	# A signed file names its publisher, but Windows' SmartScreen still warns about a new download until enough people
+	# have run it: the reputation comes with time, not with the certificate.
+	$firstRun = if ($Unsigned) {
+		'These builds aren''t code-signed: on the first run Windows says "Windows protected your PC". Click **More info**, then **Run anyway**.'
+	}
+	else {
+		"Both files are code-signed by $signer, the publisher Windows names when you run them. Right after a release, until enough people have run it, Windows may still say ""Windows protected your PC"": click **More info**, check the publisher is $signer, then **Run anyway**."
+	}
 	$Notes = @"
 Heiward $version, built from $($commit.Substring(0, 7)), with the Steward's kit $kit.
 
@@ -141,7 +243,7 @@ $entry
 
 Download **Heiward-$version-x64.exe** for Intel or AMD PCs, or **Heiward-$version-arm64.exe** for Arm PCs such as Snapdragon, and run it. It sets up everything it needs by itself.
 
-These builds aren't code-signed yet: on the first run Windows says "Windows protected your PC". Click **More info**, then **Run anyway**. ``SHA256SUMS.txt`` lists each file's SHA-256 (PowerShell: ``Get-FileHash``).
+$firstRun ``SHA256SUMS.txt`` lists each file's SHA-256 (PowerShell: ``Get-FileHash``).
 "@
 }
 elseif (Test-Path $Notes) {
