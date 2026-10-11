@@ -150,6 +150,17 @@ function el(tag, cls, text) {
   return e;
 }
 
+// Writes for what a poll redraws in place (the scan's progress, the title bar): each only when the value changed, so a
+// poll that finds nothing new touches nothing, and one that does touches just that text, attribute or width.
+function setText(node, text) { if (node.textContent !== text) node.textContent = text; }
+function setTitle(node, title) { if (node.title !== title) node.title = title; }
+function setAttr(node, name, value) {
+  if (value === null) { if (node.hasAttribute(name)) node.removeAttribute(name); }
+  else if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+}
+function setWidth(node, width) { if (node.style.width !== width) node.style.width = width; }
+function setDisabled(node, disabled) { if (node.disabled !== disabled) node.disabled = disabled; }
+
 function bytes(b) {
   if (b >= 2 ** 40) return (b / 2 ** 40).toFixed(1) + ' TB';
   if (b >= 2 ** 30) return (b / 2 ** 30).toFixed(1) + ' GB';
@@ -302,12 +313,16 @@ function renderAgent(s) {
   const a = s.agent;
   const btn = $('pause-btn');
   const label = a.paused ? 'Resume scans' : 'Pause scans';
-  btn.replaceChildren(icon(a.paused ? 'play' : 'pause'));
-  btn.title = a.paused ? 'Resume scans (paused ' + a.pausedText + ')' : label;
-  btn.setAttribute('aria-label', label);
-  btn.setAttribute('aria-haspopup', a.paused ? 'false' : 'menu');
-  btn.setAttribute('aria-pressed', String(a.paused));
-  btn.disabled = s.setup.needed;
+  const glyph = a.paused ? 'play' : 'pause';
+  if (btn.dataset.icon !== glyph) {
+    btn.dataset.icon = glyph;
+    btn.replaceChildren(icon(glyph));
+  }
+  setTitle(btn, a.paused ? 'Resume scans (paused ' + a.pausedText + ')' : label);
+  setAttr(btn, 'aria-label', label);
+  setAttr(btn, 'aria-haspopup', a.paused ? 'false' : 'menu');
+  setAttr(btn, 'aria-pressed', String(a.paused));
+  setDisabled(btn, !!s.setup.needed);
   if (s.setup.needed) showAgentBanner(null);
   else if (a.paused) {
     showAgentBanner('Scans are paused ' + a.pausedText + ': scheduled scans skip themselves. Scan now still works.', ['Resume scans', resumeScans]);
@@ -466,9 +481,9 @@ function renderAiBadge(ai, dev) {
   }
   // Why the last run didn't run where it was meant to (ai-status.json's fallback, also in heiward.log): technical, so only for developers.
   if (ai.fallback && dev) tip += ' It fell back: ' + ai.fallback + '.';
-  badge.textContent = text;
-  badge.title = tip;
-  badge.className = 'ai-badge ' + tone;
+  setText(badge, text);
+  setTitle(badge, tip);
+  if (badge.className !== 'ai-badge ' + tone) badge.className = 'ai-badge ' + tone;
 }
 
 /**
@@ -499,21 +514,26 @@ function renderHeader(s) {
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
-  $('subtitle').textContent = parts.join(' · ');
+  setText($('subtitle'), parts.join(' · '));
   renderAiBadge(s.ai, s.dev.enabled);
 
   const running = s.scan.running;
   // Just started: running from the click, though it can't be stopped until its process has begun.
   const starting = !!s.scan.starting;
   const scanBtn = $('scan-now');
-  scanBtn.disabled = s.setup.needed || s.agent.stopping || starting;
-  scanBtn.textContent = starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now';
+  setDisabled(scanBtn, !!(s.setup.needed || s.agent.stopping || starting));
+  setText(scanBtn, starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now');
   scanBtn.classList.toggle('secondary', running);
   renderAgent(s);
   // The scan's step and progress at the top of the page; each drive's card shows how far it has got on it.
   renderScanStatus(s);
   renderDriveProgress(s);
-  $('notes').replaceChildren(...((r && r.notes) || []).map((n) => el('li', null, n)));
+  const notes = (r && r.notes) || [];
+  const notesKey = JSON.stringify(notes);
+  if ($('notes').dataset.key !== notesKey) {
+    $('notes').dataset.key = notesKey;
+    $('notes').replaceChildren(...notes.map((n) => el('li', null, n)));
+  }
 }
 
 function renderCrumbs() {
@@ -1079,11 +1099,15 @@ function renderMoreCard(s) {
 
 let settingsBusy = false;
 
+/**
+ * Saves, then waits for the page's state to say so: a caller that draws its switches again afterwards (the tour)
+ * draws them as saved. Before, it drew them from the state before the save, so a switch's first click sprang back.
+ */
 async function saveSettings(next) {
   settingsBusy = true;
   try { await post('/api/settings', next); } catch (e) { showError(e.message); }
   settingsBusy = false;
-  refresh(true);
+  await refresh(true);
 }
 
 /**
@@ -1192,9 +1216,14 @@ function gpuSetting(s) {
 // against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to
 // remove a copy installed from GitHub. The answers survive the page's polls; the install's output shows
 // while it runs.
-const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true, gpu: null };
+// More memory and the history are the Settings page's own switches (moreMemory, keepHistory), saved there before the
+// install runs, which keeps them; null until the form is built from the settings as they are.
+const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true, gpu: null, moreMemory: null, keepHistory: null };
 let setupRetry = false;
 let setupShown = null; // 'form' or 'progress': the form is only built once, so a poll doesn't reset it
+
+/** Scans only when the person presses Scan now: asked when the AI runs on the GPU or the CPU. */
+const setupOnDemand = () => setupAnswers.device !== 'npu' && setupAnswers.onDemand;
 
 /** The NPU setup found, named as Windows lists it: the AI runs on it unless the user picks otherwise. */
 function npuFound(setup) {
@@ -1230,9 +1259,11 @@ function setupChoice(title, name, options, current, onPick) {
 async function startSetup(button) {
   button.disabled = true;
   try {
+    // The two switches first, through Settings' own save: the install reads settings.json and keeps them.
+    await post('/api/settings', { moreMemory: setupAnswers.moreMemory, keepHistory: setupAnswers.keepHistory });
     await post('/api/setup', {
       device: setupAnswers.device,
-      onDemand: setupAnswers.device !== 'npu' && setupAnswers.onDemand,
+      onDemand: setupOnDemand(),
       scanSpeed: setupAnswers.scanSpeed,
       removeGitHubCopy: !!state.setup.gitHubCopy && setupAnswers.removeGitHubCopy,
       gpu: state.setup.gpus && state.setup.gpus.length > 1 ? setupAnswers.gpu : null,
@@ -1257,7 +1288,9 @@ function renderSetup(s) {
     const parts = [el('h2', null, setup.failed ? 'Setup stopped' : 'Setting up Heiward…')];
     parts.push(el('p', 'muted', setup.failed
       ? 'Something went wrong; the last lines below say what.' + (s.dev.enabled ? ' heiward.log has the rest.' : '')
-      : 'Downloading what the AI needs and checking where it runs. The first scan starts right after.'));
+      : 'Downloading what the AI needs and checking where it runs.' + (setupOnDemand()
+        ? ' Then this page shows Scan now: nothing scans until you press it.'
+        : ' The first scan starts right after.')));
     parts.push(log);
     if (setup.failed) {
       const again = el('button', 'btn', 'Try again');
@@ -1285,14 +1318,17 @@ function renderSetup(s) {
   const advice = el('p', 'setup-advice', 'Not recommended on this PC. The ' + setup.npuName + ' does this work on far less power. ' +
     'On the graphics card or the processor, scans draw more power and run warmer, so scheduled ones run only every 6 hours ' +
     'on AC power, and the NPU sits idle.');
+  const go = el('button', 'btn');
   const when = setupChoice('When should it look for new duplicates?', 'setup-when', [
     [false, 'Every 6 hours, on AC power (recommended)', 'Scans skip themselves on battery.'],
-    [true, 'Only when I press Scan now', 'Nothing runs on a schedule.'],
-  ], setupAnswers.onDemand, (v) => { setupAnswers.onDemand = v; });
-  const sync = () => {
+    [true, 'Only when I press Scan now', 'Nothing runs on a schedule, and no scan starts after setup.'],
+  ], setupAnswers.onDemand, (v) => { setupAnswers.onDemand = v; sync(); });
+  // "Set up and scan" only when a scan follows: with scans only on demand, none does until Scan now.
+  function sync() {
     advice.classList.toggle('hidden', !setup.npu || setupAnswers.device === 'npu');
     when.classList.toggle('hidden', setupAnswers.device === 'npu');
-  };
+    go.textContent = setupOnDemand() ? 'Set up' : 'Set up and scan';
+  }
   const where = setupChoice('Where should the AI run?', 'setup-device', devices, setupAnswers.device, (v) => { setupAnswers.device = v; sync(); });
   where.append(advice);
   sync();
@@ -1315,6 +1351,34 @@ function renderSetup(s) {
     ['full', 'At full speed', 'As many cores as it takes, at normal priority, to finish as fast as possible.'],
   ], setupAnswers.scanSpeed, (v) => { setupAnswers.scanSpeed = v; }));
 
+  // Two of Settings' switches, with its words: more memory for faster scans, and the history (its Clear history stays in Settings).
+  if (setupAnswers.moreMemory == null) setupAnswers.moreMemory = s.config.moreMemory !== false;
+  if (setupAnswers.keepHistory == null) setupAnswers.keepHistory = s.config.keepHistory !== false;
+  const switches = el('fieldset', 'setup-question setup-switches');
+  switches.append(el('legend', 'auto-title', 'Memory and history'));
+  const memoryText = el('div', 'muted small');
+  const historyText = el('div', 'muted small');
+  const words = () => {
+    memoryText.textContent = setupAnswers.moreMemory
+      ? 'In the background, the graphics chip decodes more videos at once, taking up to ' + bytes(s.config.moreMemoryBytes) + ' of memory while a scan runs, so it finishes sooner on less of the processor.'
+      : 'The graphics chip decodes two videos at once, up to about 1 GB of memory. Scans take longer.';
+    historyText.textContent = setupAnswers.keepHistory
+      ? 'What you and automatic cleanup clean up or keep is listed under History on the home page, with file names.'
+      : 'Off: nothing new is listed, and no file names are kept. Sets you kept still stay hidden.';
+  };
+  const memoryRow = el('div', 'auto-row');
+  const memoryInfo = el('div', 'auto-text');
+  memoryInfo.append(el('div', 'auto-title', 'Use more memory to scan faster'), memoryText,
+    el('div', 'muted small', 'While a game or another 3D program runs, or anything full screen, scans make way: they run in the background with less memory until it\'s closed.'));
+  memoryRow.append(toggleSwitch(setupAnswers.moreMemory, 'Use more memory to scan faster', false, (on) => { setupAnswers.moreMemory = on; words(); }), memoryInfo);
+  const historyRow = el('div', 'auto-row');
+  const historyInfo = el('div', 'auto-text');
+  historyInfo.append(el('div', 'auto-title', 'Keep a history'), historyText);
+  historyRow.append(toggleSwitch(setupAnswers.keepHistory, 'Keep a history', false, (on) => { setupAnswers.keepHistory = on; words(); }), historyInfo);
+  words();
+  switches.append(memoryRow, historyRow);
+  parts.push(switches);
+
   // A copy installed from GitHub: this one replaces it, and the Store keeps it up to date.
   if (setup.gitHubCopy != null) {
     const box = el('fieldset', 'setup-question');
@@ -1334,9 +1398,8 @@ function renderSetup(s) {
     parts.push(box);
   }
 
-  const go = el('button', 'btn', 'Set up and scan');
   go.addEventListener('click', () => startSetup(go));
-  parts.push(el('p', 'muted small', 'The Microsoft Store keeps Heiward up to date. How hard scans work can be changed on the Settings page later. ' +
+  parts.push(el('p', 'muted small', 'The Microsoft Store keeps Heiward up to date. How hard scans work, more memory and the history can be changed on the Settings page later. ' +
     'Your photos, videos and files are never deleted unless you choose them on this page.'), go);
   card.replaceChildren(...parts);
 }
@@ -3197,26 +3260,29 @@ function renderScanStatus(s) {
   }
   const p = scanProgress(s.scan.starting ? null : st);
   const when = box.querySelector('.ss-when');
-  when.textContent = st ? 'started ' + ago(st.startedUtc) + ' · ' + (st.fullSpeed ? 'at full speed' : 'in the background') : '';
-  when.title = st ? (st.fullSpeed
+  setText(when, st ? 'started ' + ago(st.startedUtc) + ' · ' + (st.fullSpeed ? 'at full speed' : 'in the background') : '');
+  setTitle(when, st ? (st.fullSpeed
     ? 'Full speed: every core but one, at normal priority.'
-    : "In the background: Windows' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.") : '';
+    : "In the background: Windows' efficiency mode, low priority, and a cap on how much of the processor it uses. Open this page and it speeds up, unless the Scanning setting keeps every scan in the background.") : '');
   const sweep = p.fraction === null;
-  box.querySelector('.ss-pct').textContent = sweep ? '' : Math.floor(100 * Math.min(1, p.fraction)) + '%';
-  box.querySelector('.ss-text').textContent = p.text;
+  setText(box.querySelector('.ss-pct'), sweep ? '' : Math.floor(100 * Math.min(1, p.fraction)) + '%');
+  setText(box.querySelector('.ss-text'), p.text);
   box.querySelectorAll('.ss-step').forEach((li, i) => {
     const now = i === p.step;
     li.classList.toggle('done', i < p.step);
     li.classList.toggle('now', now);
-    li.querySelector('.ss-num').textContent = i < p.step ? '✓' : String(i + 1);
-    li.title = now && st ? PHASE_TIPS[st.phase] || '' : '';
-    if (now) li.setAttribute('aria-current', 'step');
-    else li.removeAttribute('aria-current');
+    setText(li.querySelector('.ss-num'), i < p.step ? '✓' : String(i + 1));
+    setTitle(li, now && st ? PHASE_TIPS[st.phase] || '' : '');
+    setAttr(li, 'aria-current', now ? 'step' : null);
     const bar = li.querySelector('.dp-bar');
     bar.classList.toggle('sweep', now && sweep);
-    bar.querySelector('.dp-fill').style.width = i < p.step ? '100%' : now && !sweep ? 100 * Math.min(1, p.fraction) + '%' : now ? '' : '0';
+    // To a tenth of a percent: a bar a few pixels wide doesn't move for less.
+    setWidth(bar.querySelector('.dp-fill'), i < p.step ? '100%' : now && !sweep ? widthOf(p.fraction) : now ? '' : '0%');
   });
 }
+
+/** A bar's width for a fraction done, to a tenth of a percent. */
+const widthOf = (fraction) => Math.round(1000 * Math.min(1, Math.max(0, fraction))) / 10 + '%';
 
 const PHASE_TIPS = {
   listing: 'Step 1 of 3: finding the photos and videos. Where the drive\'s change journal says what changed, only those folders are listed again.',
@@ -3237,17 +3303,17 @@ function fillDriveProgress(box, d, st) {
   }
   const done = fraction === 'done';
   const sweep = fraction === null;
-  box.title = (st && PHASE_TIPS[st.phase]) || '';
+  setTitle(box, (st && PHASE_TIPS[st.phase]) || '');
   box.classList.toggle('checked', done);
-  box.querySelector('.dp-text').textContent = text;
+  setText(box.querySelector('.dp-text'), text);
   box.querySelector('.dp-bar').classList.toggle('hidden', done);
   if (done) {
-    box.querySelector('.dp-pct').textContent = '';
+    setText(box.querySelector('.dp-pct'), '');
     return;
   }
-  box.querySelector('.dp-pct').textContent = sweep || fraction === 0 ? '' : Math.floor(100 * Math.min(1, fraction)) + '%';
+  setText(box.querySelector('.dp-pct'), sweep || fraction === 0 ? '' : Math.floor(100 * Math.min(1, fraction)) + '%');
   box.querySelector('.dp-bar').classList.toggle('sweep', sweep);
-  box.querySelector('.dp-fill').style.width = sweep ? '' : 100 * Math.min(1, fraction) + '%';
+  setWidth(box.querySelector('.dp-fill'), sweep ? '' : widthOf(fraction));
 }
 
 /** Every poll while a scan runs: the drive cards' progress, without rebuilding the cards. */
@@ -4223,17 +4289,67 @@ async function renderRoute() {
   $('content').scrollTop = y;
 }
 
+// How the page keeps up. The whole state (/api/state: the report, the drives, the history...) every 15 seconds when
+// nothing runs. While a scan runs, its progress alone (/api/progress) every 1.5 seconds, drawn in place: the percent, the
+// line under the title, the bars and each drive card's line, each written only when it changed. The whole state then
+// comes every 20 seconds, and at once when the scan starts, stops, or reads other drives. A hidden page polls nothing:
+// it catches up when it's shown again.
 let timer = null;
 let serverLost = false;
+let refreshSeq = 0; // the latest poll's number: an older answer arriving after it is dropped
+let lastFull = 0;
+const FULL_EVERY = 20000;
+const PROGRESS_EVERY = 1500;
+
+/** "seen": this page is showing, so a scan runs at full speed; a hidden tab doesn't say so. */
+const seenQuery = () => (document.visibilityState === 'visible' ? '?seen=true' : '');
+
+/** The next poll, unless the page is hidden: showing it again polls at once (the visibilitychange listener). */
+function schedule(next, ms) {
+  clearTimeout(timer);
+  timer = document.visibilityState === 'hidden' ? null : setTimeout(next, ms);
+}
+
+/** The scan's status file is rewritten every second: a poll that caught it mid-write keeps the last one rather than flicker. */
+function keepStatus(next, prev) {
+  if (prev && next.running && prev.running && !next.starting && !next.status && prev.status) next.status = prev.status;
+  return next;
+}
+
+const rootsOf = (scan) => JSON.stringify((scan.status && scan.status.roots) || null);
+
+/** While a scan runs: its progress alone, drawn in place; the whole state when anything else moved, or every 20 seconds. */
+async function pollProgress() {
+  if (!state || !state.scan.running || Date.now() - lastFull >= FULL_EVERY) return refresh();
+  const seq = refreshSeq;
+  try {
+    const res = await fetch('/api/progress' + seenQuery());
+    if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
+    const p = await res.json();
+    if (seq !== refreshSeq || !state) return; // a full poll began meanwhile: it draws
+    const scan = keepStatus(p.scan, state.scan);
+    if (scan.running !== state.scan.running || !!scan.starting !== !!state.scan.starting || rootsOf(scan) !== rootsOf(state.scan)) return refresh();
+    state.scan = scan;
+    state.agent = p.agent;
+    renderHeader(state);
+    schedule(pollProgress, PROGRESS_EVERY);
+  } catch {
+    refresh(); // says what's wrong when Heiward has gone
+  }
+}
+
 async function refresh(force) {
   clearTimeout(timer);
+  const seq = ++refreshSeq;
   try {
-    // "seen": this page is showing, so a scan runs at full speed; a hidden tab doesn't say so.
-    const res = await fetch('/api/state' + (document.visibilityState === 'visible' ? '?seen=true' : ''));
+    const res = await fetch('/api/state' + seenQuery());
     if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
     const s = await res.json();
+    if (seq !== refreshSeq) return; // a newer poll (a save's) is under way: its answer is the one to draw
     // Heiward is back, as a new process: its buttons need the token of a page it served.
     if (serverLost) { location.reload(); return; }
+    lastFull = Date.now();
+    if (state) keepStatus(s.scan, state.scan);
     // Reeve or the Steward taking over (or handing back) worktrees, branches or pull requests: the report is read again.
     const rolesChanged = !!state && JSON.stringify(s.dev.roles) !== JSON.stringify(state.dev.roles);
     if (rolesChanged) devReport = null;
@@ -4256,9 +4372,14 @@ async function refresh(force) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
     }
-    // Quickly while something is starting, so its progress shows as soon as it has some.
-    timer = setTimeout(refresh, s.setup.running || s.scan.starting ? 1000 : s.scan.running || s.dev.running || s.games.running ? 2000 : 15000);
+    // Quickly while something is starting, so its progress shows as soon as it has some; a running scan's progress
+    // alone in between (pollProgress); the developer and games checks draw from the whole state.
+    if (s.setup.running || s.scan.starting) schedule(refresh, 1000);
+    else if (s.dev.running || s.games.running) schedule(refresh, 2000);
+    else if (s.scan.running && !s.setup.needed) schedule(pollProgress, PROGRESS_EVERY);
+    else schedule(refresh, 15000);
   } catch (e) {
+    if (seq !== refreshSeq) return;
     // The page stays as it was, and says what's wrong: Heiward isn't running (it stopped, or the PC slept).
     serverLost = true;
     // heiward://start starts the installed Heiward, which isn't a development build's page.
@@ -4269,7 +4390,7 @@ async function refresh(force) {
         ['Start Heiward', 'heiward://start'], true);
     }
     $('scan-now').disabled = true;
-    timer = setTimeout(refresh, 5000);
+    schedule(refresh, 5000);
   }
 }
 

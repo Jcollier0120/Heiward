@@ -31,7 +31,7 @@ namespace HEI.Agent {
 	/// <item>write settings.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
 	/// <item>register the scan task and the sign-in "open the review page" task;</item>
 	/// <item>add Start menu and desktop shortcuts to the review page, the name and icon its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
-	/// <item>start the first scan and open the review page.</item>
+	/// <item>start the first scan and open the review page; with scans only on demand, open the page and scan nothing (<see cref="AfterInstall"/>).</item>
 	/// </list>
 	/// <c>--dry-run</c> prints every step without changing anything.
 	/// The Store version (<see cref="StorePackage"/>) is installed already: it skips the copy, the shortcuts, the
@@ -271,35 +271,61 @@ namespace HEI.Agent {
 			// Opening another copy's page would show that copy's report as this one's.
 			bool pageFree = fromStore || await MakeWayForPageAsync(cfg.Port, ct);
 			if (!pageFree) openPage = false;
+			bool onDemandOnly = cfg.ScanEveryMinutes <= 0;
 			Console.WriteLine();
-			Console.WriteLine(openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
+			Console.WriteLine(onDemandOnly
+				? openPage ? "Installed. Scans run when you press Scan now on the review page, which opens in your browser." : "Installed. Scans run when you press Scan now on the review page."
+				: openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
-			// The first scan waits its turn among the manor's agents' first rounds (FirstRound), where there is a manor.
-			if (openPage) StartDetached("scan", "--open", "--wait-turn");
-			else {
-				// The page stays up, browser or not: an update (which stopped the old copy's) or an unattended install
-				// mustn't leave Heiward without one until the next sign-in.
-				if (pageFree) StartDetached("serve", "--no-browser");
-				StartDetached("scan", "--wait-turn");
-			}
+			foreach (string[] args in AfterInstall(openPage, pageFree, onDemandOnly)) StartDetached(args);
 			return 0;
 		}
 
 		/// <summary>
-		/// From Settings > Apps (Apps &amp; Features runs <c>hei uninstall</c> in a console window of its own),
-		/// or the command line. Every step goes to heiward.log, which uninstalling keeps. Started in a window
-		/// of its own, it says how it went before the window closes: an error stays until Enter, so it can be
-		/// read (a first build's uninstall closed at once, and left no trace of why it did nothing).
+		/// What the install starts once it's done, each a command line for <see cref="StartDetached"/>. Scheduled scans:
+		/// the first scan, which waits its turn among the manor's agents' first rounds (FirstRound), where there is a manor,
+		/// and the page (the scan's <c>--open</c> opens it). Scans only on demand: the page alone, and no scan until the
+		/// person presses Scan now; an update with that choice doesn't scan either.
+		/// </summary>
+		/// <param name="openPage">Open the review page in the browser.</param>
+		/// <param name="pageFree">No other copy's page holds the port: this one's page can start.</param>
+		/// <param name="onDemandOnly">No scheduled scans (<see cref="AgentConfig.ScanEveryMinutes"/> 0).</param>
+		internal static List<string[]> AfterInstall(bool openPage, bool pageFree, bool onDemandOnly) {
+			var starts = new List<string[]>();
+			if (onDemandOnly) {
+				if (openPage) starts.Add(["open"]);
+				else if (pageFree) starts.Add(["serve", "--no-browser"]);
+				return starts;
+			}
+			if (openPage) starts.Add(["scan", "--open", "--wait-turn"]);
+			else {
+				// The page stays up, browser or not: an update (which stopped the old copy's) or an unattended install
+				// mustn't leave Heiward without one until the next sign-in.
+				if (pageFree) starts.Add(["serve", "--no-browser"]);
+				starts.Add(["scan", "--wait-turn"]);
+			}
+			return starts;
+		}
+
+		/// <summary>
+		/// From Settings > Apps (Apps &amp; Features runs <c>hei uninstall</c> under conhost --headless, with no window),
+		/// or the command line. Every step goes to heiward.log, which uninstalling keeps. Started in a window of its
+		/// own, it says how it went before the window closes: an error stays until Enter, so it can be read (a first
+		/// build's uninstall closed at once, and left no trace of why it did nothing). Without one, an error shows in
+		/// a message box.
 		/// </summary>
 		public static int Uninstall(bool purge, bool dryRun) {
 			// From a development build too, it's the installed copy that goes, with its data; the build's own stays.
 			AgentPaths.ActAsInstalled();
-			bool ownWindow = !Console.IsInputRedirected && !Console.IsOutputRedirected;
+			// A console window the user sees: started from a terminal, or by an Apps & Features entry from before 1.9.18.
+			// Settings > Apps now runs it under conhost --headless, and its task the same: no window, nothing to wait on.
+			bool shown = ConsoleShown();
+			bool ownWindow = shown && !Console.IsInputRedirected && !Console.IsOutputRedirected;
 			uninstallLog = !dryRun;
 			Log($"uninstall started ({AppBuild.Current}, from {Environment.ProcessPath}{(StorePackage.Identity is string id ? $", with the package identity {id}" : "")})");
 			try {
 				if (!dryRun && StorePackage.Identity != null && !StorePackage.IsPackaged && HandOver(purge)) {
-					Console.WriteLine("Uninstalling Heiward in a new window.");
+					Console.WriteLine("Uninstalling Heiward in the background.");
 					return 0;
 				}
 				int code = UninstallSteps(purge, dryRun);
@@ -320,15 +346,36 @@ namespace HEI.Agent {
 					Console.Error.WriteLine("Press Enter to close.");
 					Console.ReadLine();
 				}
+				// Without a window, nobody would read that: Windows' own message box says it instead.
+				else if (!shown && !dryRun && !Console.IsOutputRedirected)
+					MessageBoxW(IntPtr.Zero, "Heiward couldn't finish uninstalling: " + e.Message + "\n\nThe details are in " + AgentPaths.Log +
+						". Uninstalling it again picks up where it stopped.", "Heiward", MessageBoxIconWarning);
 				return 1;
 			}
 		}
+
+		/// <summary>Whether this process has a console window on screen; not under conhost --headless, nor when it has none.</summary>
+		static bool ConsoleShown() {
+			try {
+				IntPtr window = GetConsoleWindow();
+				return window != IntPtr.Zero && IsWindowVisible(window);
+			}
+			catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException) { return true; }
+		}
+
+		const uint MessageBoxIconWarning = 0x30;
+
+		[DllImport("user32.dll", CharSet = CharSet.Unicode)]
+		static extern int MessageBoxW(IntPtr owner, string text, string caption, uint type);
+
+		[DllImport("user32.dll")]
+		static extern bool IsWindowVisible(IntPtr window);
 
 		/// <summary>
 		/// Settings > Apps starts the uninstall inside its own package's environment (<see cref="StorePackage.Identity"/>),
 		/// which keeps registry changes, and those of any program started from here, in that package's view of
 		/// HKCU: the Apps &amp; Features entry would look gone to the uninstall and stay in Settings. Task Scheduler
-		/// starts its tasks outside any, so a one-time task runs the uninstall again, in a window of its own.
+		/// starts its tasks outside any, so a one-time task runs the uninstall again, with no window (<see cref="Scheduler.UninstallXml"/>).
 		/// </summary>
 		/// <returns>False when Task Scheduler wouldn't: then the uninstall goes ahead here.</returns>
 		static bool HandOver(bool purge) {
@@ -845,6 +892,9 @@ namespace HEI.Agent {
 			command.SetValue("", $"\"{conhost}\" --headless \"{InstalledExe}\" \"%1\"");
 		}
 
+		/// <summary>Apps &amp; Features' command: the console exe under conhost --headless, which gives it a console and the user no window.</summary>
+		internal static string UninstallCommand(string conhost, string exe) => $"\"{conhost}\" --headless \"{exe}\" uninstall";
+
 		static void RegisterUninstall() {
 			using RegistryKey key = Registry.CurrentUser.CreateSubKey(UninstallKey);
 			string version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
@@ -853,8 +903,9 @@ namespace HEI.Agent {
 			key.SetValue("Publisher", "The Nexus"); // as the Microsoft Store lists it
 			key.SetValue("DisplayIcon", InstalledExe);
 			key.SetValue("InstallLocation", InstallDir);
-			key.SetValue("UninstallString", $"\"{InstalledExe}\" uninstall");
-			key.SetValue("QuietUninstallString", $"\"{InstalledExe}\" uninstall");
+			// Through conhost --headless, as its shortcuts and tasks: Settings > Apps uninstalls it without a console window.
+			key.SetValue("UninstallString", UninstallCommand(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), InstalledExe));
+			key.SetValue("QuietUninstallString", UninstallCommand(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), InstalledExe));
 			key.SetValue("NoModify", 1, RegistryValueKind.DWord);
 			key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
 			try {

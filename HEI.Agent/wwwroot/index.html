@@ -60,6 +60,10 @@
   </main>
 
   <main id="home" class="view home">
+    <!-- Two columns in a wide window (app.css, .home-cols): the scan, the totals and the drives; beside them the
+         Developer area, the Games, where the duplicates are and the History. One column, in this order, otherwise. -->
+    <div class="home-cols">
+    <div class="home-col">
     <!-- While a scan runs: which step it's on and how far (app.js, renderScanStatus). -->
     <section class="scan-status hidden" id="scan-status" role="status" aria-live="polite"></section>
 
@@ -74,7 +78,9 @@
       <div class="glance hidden" id="glance"></div>
       <div class="drives" id="drives"></div>
     </section>
+    </div>
 
+    <div class="home-col home-side">
     <section id="dev-section" class="hidden" data-tour="dev">
       <h2>Developer area</h2>
       <div id="dev-card"></div>
@@ -104,6 +110,8 @@
       <h2 id="manor-card-title">In a manor</h2>
       <div id="manor-card"></div>
     </section>
+    </div>
+    </div>
 
     <footer class="muted small" id="footer"></footer>
   </main>

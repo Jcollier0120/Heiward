@@ -122,7 +122,7 @@ To send a release again, or to look before it goes to certification: **Actions >
 
   1. Start Heiward from the Start menu. The page opens with first-run setup.
   2. Pick where the AI runs (the NPU when the PC has one, otherwise the graphics card or the processor) and how hard scans work, then start. Setup downloads the AI components (ONNX Runtime and a small image model from GitHub and NuGet; about 215 MB more for the graphics card), so the PC needs internet access.
-  3. The first scan starts by itself; its progress is on the page. With few photos on the PC it finds little: copy a photo to a second folder to see a set of duplicates. Tick a copy and move it to the Recycle Bin.
+  3. The first scan starts by itself (unless "Only when I press Scan now" was chosen: then Scan now starts it); its progress is on the page. With few photos on the PC it finds little: copy a photo to a second folder to see a set of duplicates. Tick a copy and move it to the Recycle Bin.
   4. "hei" in a terminal is the command line (hei --help).
   ```
 
@@ -162,7 +162,7 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
     - Settings, the report and the history stay: the Store version uses them.
     - It runs after the AI components were copied from that folder, and before the Store version's tasks take over the same names.
 
-  The page then runs `hei install --yes` with the answers, shows its output, and switches to the home page once the first scan starts. The GitHub installer asks the same speed question in its console.
+  The page then runs `hei install --yes` with the answers, shows its output, and switches to the home page once the first scan starts (or, with scans only on demand, once it is set up: no scan starts until Scan now). The GitHub installer asks the same speed question in its console.
 - **The review page's port:** both versions use it. When a GitHub copy's page answers there (its ping doesn't say `"store":true`), the Store version stops that copy first, so its own page, and its setup, is the one that opens.
 - **The installer:** the package is the install.
   - There's no copy to `%LOCALAPPDATA%\Programs`, no shortcuts, no notification name and no Apps & Features entry: the package has all of those.

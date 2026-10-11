@@ -56,6 +56,20 @@ function isTourHash(hash) {
   return hash === '#/tour' || hash.startsWith('#/tour?');
 }
 
+/**
+ * When and how hard it scans, as its settings have it now (what setup asked, or Settings since): never a pace or a
+ * schedule the person didn't choose. "It scans every 6 hours on AC power, in the background at low power."
+ */
+function tourScanWords(s) {
+  const when = s.schedule && s.schedule.text ? s.schedule.text : 'scans when it\'s due';
+  const pace = {
+    background: ', in the background at low power (Windows\' efficiency mode)',
+    full: ', at full speed',
+    auto: ', at full speed while this page is open and in the background otherwise',
+  }[s.config.scanSpeed] || '';
+  return 'It ' + when + pace + '; Settings changes that.';
+}
+
 function startTour(from) {
   if (!state || state.setup.needed) return;
   tourFrom = from;
@@ -115,7 +129,8 @@ function drawTour() {
   if (tourStep === 0) {
     title.textContent = 'Heiward tends your drives';
     body.append(
-      el('p', null, 'It finds duplicate photos and videos, including resized, recompressed, cropped and edited copies, with a vision model on this PC: on its NPU when it has one. It scans in the background, lightly, and keeps everything here: nothing about you or your files leaves this PC.'),
+      el('p', null, 'It finds duplicate photos and videos, including resized, recompressed, cropped and edited copies, with a vision model on this PC: on its NPU when it has one. ' +
+        tourScanWords(state) + ' It keeps everything here: nothing about you or your files leaves this PC.'),
       el('p', null, 'It lists what it finds for you to review. Nothing is removed until you say so, and what you tick goes to the Recycle Bin.'));
   } else if (tourStep === 1) {
     title.textContent = 'Your choices';

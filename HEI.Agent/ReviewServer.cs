@@ -131,6 +131,12 @@ namespace HEI.Agent {
 				if (seen == true) ScanPace.MarkPageSeen();
 				return Results.Json(State(cfg), AgentConfig.Json);
 			});
+			// While a scan runs, the page asks for its progress alone, every second or two: the scan status file, the lock and
+			// the pause, not the report, the index and the rest that /api/state reads (that every 20 seconds).
+			app.MapGet("/api/progress", (bool? seen) => {
+				if (seen == true) ScanPace.MarkPageSeen();
+				return Results.Json(Progress(cfg), AgentConfig.Json);
+			});
 			// Folder names only, and only below what the agent scans (a GET from another site can't read
 			// the answer: no CORS, and a foreign Host header is refused above).
 			app.MapGet("/api/tree", (string path, bool? all) => {
@@ -547,6 +553,9 @@ namespace HEI.Agent {
 			bool locked = GameScan.IsRunning();
 			return GameLaunch.Starting(locked, DateTime.UtcNow) || locked;
 		}
+
+		/// <summary>A running scan's progress, and whether scans are paused or it is stopping: what the page's light poll draws.</summary>
+		internal static object Progress(AgentConfig cfg) => new { scan = ScanView(), agent = AgentView(cfg) };
 
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {

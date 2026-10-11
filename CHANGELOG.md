@@ -2,6 +2,28 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.18
+
+**A smoother first run, a page that fills a wide screen, lighter scan progress, and a quiet uninstall.**
+
+### What's new
+
+- In a wide window, such as a 2K or 4K screen, the home page uses two columns: the scan, the totals and your drives on the left; the Developer area, the Games, where the duplicates are and the History beside them. Narrower windows keep the single column.
+- The Microsoft Store version's setup now also offers **Use more memory to scan faster** and **Keep a history**, the same switches as on the Settings page.
+
+### What changed
+
+- If you choose **Only when I press Scan now** during setup, no scan starts until you press Scan now. Before, the first scan started straight after setup anyway. The same goes for an update when scans run only on demand.
+- The tour's first step describes when and how hard Heiward scans as your settings have it, rather than always saying it scans in the background.
+- The Game mode and Developer mode switches in the tour now stay as you set them on the first click; before, the first click sprang back.
+- While a scan runs, the page asks Heiward only for the scan's progress, every second and a half, and updates just the percent, the progress line and the bars, instead of reloading everything every two seconds. The page stops asking while it's hidden and catches up when you look again. On big libraries, both the page and the PC stay more responsive during a scan.
+- Uninstalling from Settings > Apps no longer opens an empty console window. If something stops the uninstall, a message says what and where the details are.
+- Links on the page use the theme's link colour, so they're easy to read in both light and dark themes.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.17
 
 **Heiward's privacy policy now mentions its daily look for updates.**
