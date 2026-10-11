@@ -395,6 +395,7 @@ function ticked(g) {
 function parseRoute() {
   const h = location.hash;
   if (h === '#/settings') return { view: 'settings' };
+  if (h === '#/about') return { view: 'about' };
   if (h === '#/dev') return { view: 'dev', cat: null };
   if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
   if (h.startsWith('#/dev/s/')) return { view: 'dev', cat: decodeURIComponent(h.slice(8)) };
@@ -536,6 +537,15 @@ function renderCrumbs() {
     const b = el('button', 'crumb');
     b.append(icon('gear'), el('span', null, 'Settings'));
     b.addEventListener('click', () => { location.hash = '#/settings'; });
+    li.append(b);
+    items.push(li);
+  }
+  if (route.view === 'about') {
+    const li = el('li');
+    li.append(icon('sep', 'sep'));
+    const b = el('button', 'crumb');
+    b.append(icon('info'), el('span', null, 'About'));
+    b.addEventListener('click', () => { location.hash = '#/about'; });
     li.append(b);
     items.push(li);
   }
@@ -768,13 +778,19 @@ function renderGlance(g) {
 // rest of settings.json (folders, file types, the AI device) is listed with where to change it.
 function renderSettings(s) {
   renderScanCard(s);
-  renderWhereCard(s);
   renderAutoCard(s);
   renderHistoryCard(s);
   renderGameModeCard(s);
   renderDevModeCard(s);
   renderMoreCard(s);
+  renderUpdatesCard(s);
+}
+
+// What's read once, behind the About button beside Settings (as on Manor's and every kit agent's page): this
+// build, the licence's notice, and where its work runs. Its switches stay in Settings.
+function renderAbout(s) {
   renderAboutCard(s);
+  renderWhereCard(s);
 }
 
 const outLink = (text, href) => {
@@ -807,6 +823,22 @@ function renderAboutCard(s) {
   text.append(from);
   row.append(text);
   card.append(row);
+  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
+  const foot = el('div', 'auto-foot');
+  const licence = el('div', 'muted small', 'Heiward is free software: you can share and change it under the ');
+  licence.append(outLink('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
+    '. It comes with no warranty. Its ', outLink('source code', 'https://github.com/Jcollier0120/Heiward'), ' is on GitHub. It includes code from ',
+    outLink('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
+    ' (© 0x90d and contributors), under the same licence.');
+  foot.append(licence);
+  card.append(foot);
+  $('about-card').replaceChildren(card);
+}
+
+/** Settings' Updates: updating by itself, for the copy from GitHub, and the "In a manor" card, without Manor. Hidden when neither is there. */
+function renderUpdatesCard(s) {
+  const update = s.about.update || {};
+  const card = el('div', 'auto-card');
   // The copy from GitHub, when nothing else updates it: its switch, and what the last daily look found (SelfUpdate).
   if (update.switch) {
     const updateRow = el('div', 'auto-row');
@@ -839,16 +871,8 @@ function renderAboutCard(s) {
     manorRow.append(manorText);
     card.append(manorRow);
   }
-  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
-  const foot = el('div', 'auto-foot');
-  const licence = el('div', 'muted small', 'Heiward is free software: you can share and change it under the ');
-  licence.append(outLink('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
-    '. It comes with no warranty. Its ', outLink('source code', 'https://github.com/Jcollier0120/Heiward'), ' is on GitHub. It includes code from ',
-    outLink('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
-    ' (© 0x90d and contributors), under the same licence.');
-  foot.append(licence);
-  card.append(foot);
-  $('about-card').replaceChildren(card);
+  $('updates-section').classList.toggle('hidden', !card.childElementCount);
+  $('updates-card').replaceChildren(card);
 }
 
 /**
@@ -1222,7 +1246,7 @@ async function startSetup(button) {
 }
 
 function renderSetup(s) {
-  for (const id of ['home', 'settingsview', 'devview', 'gamesview', 'folder']) $(id).classList.add('hidden');
+  for (const id of ['home', 'settingsview', 'aboutview', 'devview', 'gamesview', 'folder']) $(id).classList.add('hidden');
   $('setup').classList.remove('hidden');
   const setup = s.setup;
   const card = $('setup-card');
@@ -4157,12 +4181,18 @@ async function renderRoute() {
   $('setup').classList.add('hidden');
   $('home').classList.toggle('hidden', route.view !== 'home');
   $('settingsview').classList.toggle('hidden', route.view !== 'settings');
+  $('aboutview').classList.toggle('hidden', route.view !== 'about');
   $('devview').classList.toggle('hidden', route.view !== 'dev');
   $('gamesview').classList.toggle('hidden', route.view !== 'games');
   $('folder').classList.toggle('hidden', !folder);
   $('settings-btn').setAttribute('aria-pressed', String(route.view === 'settings'));
+  $('about-btn').setAttribute('aria-pressed', String(route.view === 'about'));
   if (route.view === 'settings') {
     renderSettings(state);
+    return;
+  }
+  if (route.view === 'about') {
+    renderAbout(state);
     return;
   }
   if (route.view === 'dev') {
@@ -4364,12 +4394,14 @@ $('nav-up').addEventListener('click', () => {
   if (route.view === 'folder') go(parentOf(route.path));
   else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); }
   else if (route.view === 'games') { if (route.cat || route.drive || route.game) location.hash = '#/games'; else go(null); }
-  else if (route.view === 'settings') go(null);
+  else if (route.view === 'settings' || route.view === 'about') go(null);
 });
 // Heiward's name in the title bar goes home, wherever the page is.
 $('brand').addEventListener('click', (e) => { e.preventDefault(); go(null); $('home').scrollTop = 0; });
 $('settings-btn').append(icon('gear'));
 $('settings-btn').addEventListener('click', () => { location.hash = route.view === 'settings' ? '#/' : '#/settings'; });
+$('about-btn').append(icon('info'));
+$('about-btn').addEventListener('click', () => { location.hash = route.view === 'about' ? '#/' : '#/about'; });
 $('dev-nav-toggle').addEventListener('click', () => {
   const open = $('dev-nav').classList.toggle('open');
   $('dev-nav-toggle').setAttribute('aria-expanded', String(open));

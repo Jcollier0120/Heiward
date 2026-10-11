@@ -27,6 +27,7 @@
         <button class="icon-btn" id="pause-btn" title="Pause scans" aria-label="Pause scans" aria-haspopup="menu" aria-expanded="false" aria-controls="pause-menu"></button>
         <div class="theme-menu pause-menu hidden" id="pause-menu" role="menu" aria-label="Pause scans"></div>
       </div>
+      <button class="icon-btn" id="about-btn" title="About" aria-label="About"></button>
       <button class="icon-btn" id="settings-btn" title="Settings" aria-label="Settings"></button>
       <div class="theme-picker">
         <button class="icon-btn" id="theme-btn" title="Theme" aria-label="Theme" aria-haspopup="menu" aria-expanded="false" aria-controls="theme-menu"></button>
@@ -139,12 +140,21 @@
       <div id="more-card"></div>
     </section>
 
+    <!-- Updating by itself and the "In a manor" card; hidden when neither is there (app.js, renderUpdatesCard). -->
+    <section id="updates-section">
+      <h2>Updates</h2>
+      <div id="updates-card"></div>
+    </section>
+  </main>
+
+  <!-- What's read once, behind the About button beside Settings, as on Manor's and every kit agent's page (the Steward's kit 2.48.0). -->
+  <main id="aboutview" class="view home settings hidden">
     <section>
       <h2>About Heiward</h2>
       <div id="about-card"></div>
     </section>
 
-    <!-- Last, as on every kit agent's Settings page (the Steward's kit 1.2.0). -->
+    <!-- Last, as on every kit agent's About view. -->
     <section>
       <h2>Where its work runs</h2>
       <div id="where-card"></div>

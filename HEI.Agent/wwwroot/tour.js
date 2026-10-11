@@ -10,7 +10,7 @@ const TOURED = 'heiward.toured';
 /** The parts of the page it walks, by their data-tour; only those showing are walked. */
 const TOUR_PARTS = [
   ['controls', 'Where the AI runs, and Scan now',
-    'The badge says where AI matching runs: on the NPU when this PC has one, else the graphics card or the processor. Pause holds the scheduled scans for a while; Scan now starts one at full speed.'],
+    'The badge says where AI matching runs: on the NPU when this PC has one, else the graphics card or the processor. Pause holds the scheduled scans for a while; About, beside Settings, has its version, its licence and where its work runs; Scan now starts one at full speed.'],
   ['tiles', 'What you could free',
     'The sets of copies waiting for your review, the space they take, and what you have freed so far.'],
   ['drives', 'Devices and drives',
