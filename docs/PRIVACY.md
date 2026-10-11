@@ -1,6 +1,6 @@
 # Heiward privacy policy
 
-Effective 4 October 2026. It covers Heiward from the Microsoft Store and from [GitHub](https://github.com/Jcollier0120/Heiward/releases).
+Effective 11 October 2026. It covers Heiward from the Microsoft Store and from [GitHub](https://github.com/Jcollier0120/Heiward/releases).
 
 **In short: nothing about you or your files leaves your PC.** Heiward has no account, no telemetry, no ads and no analytics. The developer receives no data from it. The one exception is yours to turn on: in developer mode, Heiward asks the services that host your code for their open pull requests (see [below](#pull-requests-in-developer-mode)).
 
@@ -42,6 +42,8 @@ When it sets up, Heiward downloads the AI components it needs, and nothing else.
 - the image model (DINOv2 small), from GitHub or Hugging Face.
 
 The version from GitHub also downloads FFmpeg, from GitHub; the Store version comes with it.
+
+The version from GitHub also keeps itself up to date: once a day it asks GitHub for Heiward's newest release and, when there is one, downloads it from there and checks it against the release's SHA-256 sums. It doesn't when Manor or the Microsoft Store updates it, or when you turn off **Update by itself** in Settings.
 
 These downloads are ordinary web requests. Like any, they show your IP address to the site that serves the file (GitHub, NuGet or Hugging Face), under that site's own privacy policy. Heiward sends nothing about you or your files with them.
 

@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.17
+
+**Heiward's privacy policy now mentions its daily look for updates.**
+
+### What changed
+
+- The privacy policy says that the version from GitHub asks GitHub once a day for a newer Heiward, as it has done since it began updating itself. The Microsoft Store version leaves updates to the Store.
+- Sharper logos for Heiward's Microsoft Store listing.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.16
 
 **Heiward's downloads are now code-signed, so Windows names its publisher when you run them.**
