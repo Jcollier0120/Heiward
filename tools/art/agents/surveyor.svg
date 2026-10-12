@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- The Surveyor's mark: a theodolite on its tripod, its telescope sighting across the estate. Light and Dark. -->
+  <style>
+    .back { fill: #e6f1ea; stroke: #2f5d43; }
+    .front { fill: #2f5d43; }
+    .legs { fill: none; stroke: #2f5d43; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #17281e; stroke: #9fd3b2; }
+      .front { fill: #9fd3b2; }
+      .legs { stroke: #9fd3b2; }
+    }
+  </style>
+  <path class="legs" stroke-width="1.9" stroke-linecap="round" d="M12 13.4 5.2 22.2M12 13.4v8.8M12 13.4l6.8 8.8"/>
+  <path class="front" d="M8.2 11.6h7.6v2.4H8.2z"/>
+  <path class="back" stroke-width="1.5" stroke-linejoin="round" d="M9.5 6.2h5v5.4h-5z"/>
+  <g transform="rotate(-14 12 5.6)">
+    <path class="back" stroke-width="1.5" stroke-linejoin="round" d="M3.4 4.1h13.4v3H3.4z"/>
+    <path class="front" d="M16.8 3.3h3.6v4.6h-3.6z"/>
+  </g>
+  <circle class="front" cx="12" cy="5.6" r="1.2"/>
+</svg>

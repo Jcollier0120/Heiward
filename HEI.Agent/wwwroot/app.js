@@ -1216,7 +1216,7 @@ function gpuSetting(s) {
 // the questions the console setup asks: where the AI runs (the NPU it found, named, unless the user overrides it,
 // against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to remove a copy
 // installed from GitHub. Then the install's progress beside a slideshow of what Heiward does (tools/art/make-art.mjs
-// draws the slides), and Done, with Castellan, the staff of agents Heiward is part of. The page keeps the setup's look
+// draws the slides), and Done, with Castellan, the household staff Heiward is part of. The page keeps the setup's look
 // (html.setup-mode) until Open Heiward.
 const SETUP_SLIDES = [
   ['found', 'Look-alike photos and videos, found'],
@@ -1403,7 +1403,7 @@ function setupWelcome(setup) {
   }
   text.append(facts);
   const part = el('p', 'setup-part');
-  part.append(document.createTextNode('Heiward is part of Castellan, a staff of AI agents that look after your PC on its own hardware. '), castellanLink('castellan-software.com'));
+  part.append(document.createTextNode('Heiward is part of Castellan, a household staff that looks after your PC, with its AI on the PC itself. '), castellanLink('castellan-software.com'));
   const go = el('button', 'btn setup-go', 'Get started');
   go.addEventListener('click', () => { setupStep = 'pc'; renderSetup(state); });
   const actions = el('div', 'setup-actions');
@@ -1608,12 +1608,12 @@ function setupDone(s) {
   const more = el('aside', 'setup-castellan');
   const pic = el('img', 'setup-castellan-img');
   pic.src = '/setup/castellan.svg';
-  pic.alt = 'Heiward among Castellan\'s staff of agents';
+  pic.alt = 'Heiward among Castellan\'s staff';
   const text = el('div', 'setup-castellan-text');
   text.append(el('div', 'setup-eyebrow castellan', 'Part of Castellan'),
     el('h2', null, 'Heiward has company'),
-    el('p', null, 'Castellan is a staff of AI agents that look after your PC: backups, undoing a bad update, display drivers, ' +
-      'documents, games and more, each using a local AI model on this PC (on its NPU when it has one), privately.'),
+    el('p', null, 'Castellan is a household staff that looks after your PC: backups, undoing a bad update, display drivers, ' +
+      'documents, games and more. Those that use AI run it on this PC, on its NPU when it has one: your files stay here.'),
     castellanLink('Meet the staff at castellan-software.com', 'btn castellan-btn'));
   more.append(pic, text);
   return [col, more];
@@ -3711,7 +3711,7 @@ function renderManorCard(card) {
   if (!show) { $('manor-card').replaceChildren(); return; }
   const box = el('div', 'auto-card manor-card');
   box.append(el('p', 'manor-card-lead',
-    'Heiward is one of a household of agents that look after this PC, each at its own job, all on this PC. Castellan is the house they share.'));
+    'Heiward is one of a household staff that look after this PC, each at its own job, all on this PC. Castellan is the house they share.'));
   const staff = el('ul', 'manor-staff');
   for (const [name, does] of MANOR_STAFF) {
     const li = el('li');

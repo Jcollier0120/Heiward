@@ -279,19 +279,20 @@ const more = slide('more', {
 const castellan = slide('castellan', {
   eyebrow: 'ONE OF A STAFF',
   title: ['Heiward works for', [['Castellan.', 'url(#hlc)']]],
-  body: ['Castellan\u2019s agents tidy, guard, back up and', 'update your PC, and the AI they use runs on', 'its own NPU. Local, private and offline.', 'Heiward stays free, on its own or among them.'],
+  body: ['Castellan\u2019s staff keep your PC tidy and up', 'to date, with AI that runs on the PC, on', 'its NPU when it has one. Private, offline.', 'Heiward stays free, on its own or among them.'],
   castellan: true,
   washAt: [880, 300],
   art: (() => {
     const cx = 870, cy = 318;
     const staff = [
-      ['warrener', 'Warrener', 'Files your downloads'],
-      ['cellarer', 'Cellarer', 'Backs up your files'],
-      ['lamplighter', 'Lamplighter', 'Keeps drivers safe'],
-      ['porter', 'Porter', 'Keeps apps updated'],
-      ['miller', 'Miller', 'Shrinks big videos'],
-      ['watchman', 'Watchman', 'Undoes bad updates'],
-      ['chamberlain', 'Chamberlain', 'Finds duplicate docs'],
+      // Only staff that use the local AI (the site's lib/npu-staff.ts): this picture wires each to the NPU.
+      ['warrener', 'Warrener', 'Names your downloads'],
+      ['thatcher', 'Thatcher', 'Explains app upgrades'],
+      ['lamplighter', 'Lamplighter', 'Puts back good drivers'],
+      ['herald', 'Herald', 'Sums up patch notes'],
+      ['surveyor', 'Surveyor', 'Checks your PC'],
+      ['clerk', 'Clerk', 'Makes scans searchable'],
+      ['chamberlain', 'Chamberlain', 'Answers from your docs'],
     ];
     const ring = [];
     const all = [['heiward', 'Heiward', 'Look-alike photos'], ...staff];

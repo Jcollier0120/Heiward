@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Clerk's mark: a quill over a rolled scroll (the manor's rolls). Light and Dark. -->
+  <style>
+    .back { fill: #e0f2f0; stroke: #1f5f5a; }
+    .front { fill: #1f5f5a; }
+    .pen { stroke: #1f5f5a; }
+    .cut { stroke: #e0f2f0; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #112725; stroke: #8ad6cd; }
+      .front { fill: #8ad6cd; }
+      .pen { stroke: #8ad6cd; }
+      .cut { stroke: #112725; }
+    }
+  </style>
+  <rect class="back" x="1.8" y="13.6" width="20.4" height="8" rx="4" stroke-width="1.6"/>
+  <ellipse class="back" cx="18.2" cy="17.6" rx="2.4" ry="4" stroke-width="1.4"/>
+  <circle class="front" cx="18.2" cy="17.6" r="1.1"/>
+  <path class="front" d="M8 14.6C9 8.8 14.4 3.2 22.2 1.6C21 8.4 15.8 12.8 8 14.6Z"/>
+  <path class="cut" fill="none" stroke-width="0.8" stroke-linecap="round" d="M10.6 12.2C13.4 8.6 16.6 5.6 20.4 3.4"/>
+  <path class="pen" fill="none" stroke-width="1.4" stroke-linecap="round" d="M8.6 14.1L5.6 17.6"/>
+</svg>

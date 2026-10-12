@@ -17,7 +17,7 @@ It lists what it finds, what games leave behind in game mode, and stale develope
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound.
 
-**Part of Castellan.** Heiward is free, open source and works on its own. It's also one of the staff of [Castellan](https://castellan-software.com/): AI agents that look after a Windows PC with a local model, on its NPU when it has one, for backups, undoing a bad update, display drivers, documents, games and more. Meet them at [castellan-software.com](https://castellan-software.com/).
+**Part of Castellan.** Heiward is free, open source and works on its own. It's also one of the staff of [Castellan](https://castellan-software.com/): a household staff that looks after a Windows PC: backups, undoing a bad update, display drivers, documents, games and more. Those that use AI run a local model on the PC, on its NPU when it has one. Meet them at [castellan-software.com](https://castellan-software.com/).
 
 ![Heiward's home page: a card per drive or folder with its sets of copies, developer cleanup, and the folders where cleaning up frees the most](docs/screenshots/home.png)
 
@@ -43,7 +43,7 @@ A *heiward* (Middle English, "hedge warden") was the village officer who kept th
 </tr>
 <tr>
 <td width="50%"><img src="docs/art/heiward-gentle.png" alt="Gentle in the background: efficiency mode, and it makes way for games and a low battery"></td>
-<td width="50%"><a href="https://castellan-software.com/"><img src="docs/art/heiward-castellan.png" alt="Heiward works for Castellan, a staff of AI agents for your PC: castellan-software.com"></a></td>
+<td width="50%"><a href="https://castellan-software.com/"><img src="docs/art/heiward-castellan.png" alt="Heiward works for Castellan, a household staff for your PC: castellan-software.com"></a></td>
 </tr>
 </table>
 
