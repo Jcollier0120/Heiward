@@ -222,8 +222,9 @@ root.Subcommands.Add(probe);
 root.Subcommands.Add(install);
 
 var purge = new Option<bool>("--purge") { Description = "Also delete settings, the report and caches." };
-var uninstall = new Command("uninstall", "Remove Heiward, its tasks and shortcuts. Keeps the report and settings unless --purge.") { purge, dryRun };
-uninstall.SetAction(r => Installer.Uninstall(r.GetValue(purge), r.GetValue(dryRun)));
+var noWindow = new Option<bool>("--no-window") { Description = "Never ask in a window: what Settings > Apps' quiet uninstall runs. Without it, started from Settings > Apps, Heiward's page asks first." };
+var uninstall = new Command("uninstall", "Remove Heiward, its tasks and shortcuts. Keeps the report and settings unless --purge.") { purge, dryRun, noWindow };
+uninstall.SetAction(r => Installer.Uninstall(r.GetValue(purge), r.GetValue(dryRun), r.GetValue(noWindow)));
 root.Subcommands.Add(uninstall);
 
 var statusJson = new Option<bool>("--json") { Description = "Print one JSON object instead, for scripts and other tools: running (not paused), stoppedSince, pausedUntil, scheduled, nextScan, scanning, lastScan, toReview, page {url, up}, summary." };

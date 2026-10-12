@@ -12,6 +12,18 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - On Linux and macOS, a file that can't go to the trash is left where it is and you're told, instead of being deleted for good.
 - Replacing a duplicate with a link to the copy you keep makes the link first and only then puts it in the duplicate's place, so a link that can't be made leaves the file as it was.
 
+## 1.9.27
+
+**Uninstalling Heiward looks like setting it up, and asks before it goes.**
+
+### What's new
+
+- Uninstalling Heiward from Settings > Apps opens a window like its setup: the same banner, steps and pictures. It says what goes and what stays, and asks whether to keep your settings and the report, for if you install Heiward again. Uninstall or Cancel, then it shows how it went.
+
+### What changed
+
+- Before, uninstalling from Settings > Apps happened silently, with no window. Tools that uninstall quietly, such as winget, still do, and so does Castellan's uninstall.
+
 ### Before you update
 
 - Nothing: it updates itself as usual.

@@ -312,9 +312,10 @@ namespace HEI.Agent {
 		/// or the command line. Every step goes to heiward.log, which uninstalling keeps. Started in a window of its
 		/// own, it says how it went before the window closes: an error stays until Enter, so it can be read (a first
 		/// build's uninstall closed at once, and left no trace of why it did nothing). Without one, an error shows in
-		/// a message box.
+		/// a message box. From Settings > Apps, Heiward's page asks first, in a window of its own as the setup does
+		/// (<see cref="OpenUninstallWindow"/>), and its process uninstalls; <paramref name="noWindow"/> never asks.
 		/// </summary>
-		public static int Uninstall(bool purge, bool dryRun) {
+		public static int Uninstall(bool purge, bool dryRun, bool noWindow = false) {
 			// From a development build too, it's the installed copy that goes, with its data; the build's own stays.
 			AgentPaths.ActAsInstalled();
 			// A console window the user sees: started from a terminal, or by an Apps & Features entry from before 1.9.18.
@@ -326,6 +327,10 @@ namespace HEI.Agent {
 			try {
 				if (!dryRun && StorePackage.Identity != null && !StorePackage.IsPackaged && HandOver(purge)) {
 					Console.WriteLine("Uninstalling Heiward in the background.");
+					return 0;
+				}
+				if (!dryRun && !noWindow && !shown && UninstallWindowWanted() && OpenUninstallWindow(purge)) {
+					Log("uninstall: Heiward's page asks, in a window of its own");
 					return 0;
 				}
 				int code = UninstallSteps(purge, dryRun);
@@ -409,9 +414,15 @@ namespace HEI.Agent {
 			catch (InvalidOperationException) { } // no console to read keys from
 		}
 
-		static int UninstallSteps(bool purge, bool dryRun) {
+		/// <param name="said">Each line it says, for the page's Details too (<see cref="UninstallFromPage"/>).</param>
+		/// <param name="fromPage">Run by the page's own process: its folders go once that process has stopped.</param>
+		static int UninstallSteps(bool purge, bool dryRun, Action<string>? said = null, bool fromPage = false) {
+			void Say(string s) {
+				Console.WriteLine(s);
+				if (s.Length > 0) said?.Invoke(s);
+			}
 			void Step(string s) {
-				Console.WriteLine((dryRun ? "[dry run] " : "") + s);
+				Say((dryRun ? "[dry run] " : "") + s);
 				Log("uninstall: " + s);
 			}
 			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
@@ -439,13 +450,17 @@ namespace HEI.Agent {
 				Step($"Delete settings, report and caches: {AgentPaths.Home}");
 				if (!dryRun) {
 					uninstallLog = false; // the log goes with the folder; writing to it would make the folder again
-					try { Directory.Delete(AgentPaths.Home, recursive: true); } catch { }
+					// The page's process still has files open in it: the folder goes once it has stopped, as the install folder does.
+					if (fromPage)
+						Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
+							DeleteFolderLater(AgentPaths.Home)) { UseShellExecute = false, CreateNoWindow = true });
+					else try { Directory.Delete(AgentPaths.Home, recursive: true); } catch { }
 				}
 			}
-			else Console.WriteLine($"Kept settings and the report in {AgentPaths.Home} (add --purge to delete them).");
+			else Say($"Kept settings and the report in {AgentPaths.Home}{(fromPage ? "" : " (add --purge to delete them)")}.");
 			if (StorePackage.IsPackaged) {
 				if (!dryRun) try { File.Delete(AgentPaths.StoreSetUp); } catch { }
-				Console.WriteLine(dryRun ? "" : "Scans are off. To remove Heiward itself: Settings > Apps > Installed apps > Heiward > Uninstall.");
+				Say(dryRun ? "" : "Scans are off. To remove Heiward itself: Settings > Apps > Installed apps > Heiward > Uninstall.");
 				return 0;
 			}
 			if (Directory.Exists(InstallDir)) {
@@ -457,7 +472,7 @@ namespace HEI.Agent {
 					Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe"),
 						DeleteFolderLater(InstallDir)) { UseShellExecute = false, CreateNoWindow = true });
 			}
-			Console.WriteLine(dryRun ? "" : "Uninstalled. Files you reviewed stay where they are; recycled ones are in the Recycle Bin.");
+			Say(dryRun ? "" : "Uninstalled. Files you reviewed stay where they are; recycled ones are in the Recycle Bin.");
 			return 0;
 		}
 
@@ -893,7 +908,8 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>Apps &amp; Features' command: the console exe under conhost --headless, which gives it a console and the user no window.</summary>
-		internal static string UninstallCommand(string conhost, string exe) => $"\"{conhost}\" --headless \"{exe}\" uninstall";
+		/// <param name="quiet">The quiet uninstall (QuietUninstallString), for winget and other tools: no window asks.</param>
+		internal static string UninstallCommand(string conhost, string exe, bool quiet = false) => $"\"{conhost}\" --headless \"{exe}\" uninstall{(quiet ? " --no-window" : "")}";
 
 		static void RegisterUninstall() {
 			using RegistryKey key = Registry.CurrentUser.CreateSubKey(UninstallKey);
@@ -905,7 +921,7 @@ namespace HEI.Agent {
 			key.SetValue("InstallLocation", InstallDir);
 			// Through conhost --headless, as its shortcuts and tasks: Settings > Apps uninstalls it without a console window.
 			key.SetValue("UninstallString", UninstallCommand(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), InstalledExe));
-			key.SetValue("QuietUninstallString", UninstallCommand(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), InstalledExe));
+			key.SetValue("QuietUninstallString", UninstallCommand(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe"), InstalledExe, quiet: true));
 			key.SetValue("NoModify", 1, RegistryValueKind.DWord);
 			key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
 			try {
