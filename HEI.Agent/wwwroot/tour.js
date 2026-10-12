@@ -71,7 +71,7 @@ function tourScanWords(s) {
 }
 
 function startTour(from) {
-  if (!state || state.setup.needed) return;
+  if (!state || setupShowing(state)) return; // the setup, and its Done until Open Heiward
   tourFrom = from;
   tourStep = 0;
   // The page under it is the home page, whose parts the tour walks.
@@ -220,7 +220,7 @@ window.addEventListener('hashchange', () => {
 
 // The first time the page is opened after setup, and at #/tour: once the page has its state.
 const tourWait = setInterval(() => {
-  if (!state || state.setup.needed) return;
+  if (!state || setupShowing(state)) return; // the setup, and its Done until Open Heiward
   clearInterval(tourWait);
   if (isTourHash(location.hash)) startTour(tourFromHash(location.hash));
   else if (!toured()) startTour(null);

@@ -1209,21 +1209,101 @@ function gpuSetting(s) {
   return row;
 }
 
-// ---------------------------------------------------------------- the Store version's first run
+// ---------------------------------------------------------------- setup
 
-// From the Store, Heiward starts without a console, so its first run asks here what the GitHub exe asks
-// in its window (StoreSetup): where the AI runs (the NPU it found, named, unless the user overrides it,
-// against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to
-// remove a copy installed from GitHub. The answers survive the page's polls; the install's output shows
-// while it runs.
+// Heiward's first run, on this page (StoreSetup): the GitHub exe's setup window (serve --setup, which the downloaded
+// exe opens as an app window of its own) and the Store version's first start, which has no console. A welcome, then
+// the questions the console setup asks: where the AI runs (the NPU it found, named, unless the user overrides it,
+// against the page's advice), when to scan (on the GPU or CPU), how hard scans work, and whether to remove a copy
+// installed from GitHub. Then the install's progress beside a slideshow of what Heiward does (tools/art/make-art.mjs
+// draws the slides), and Done, with Castellan, the staff of agents Heiward is part of. The page keeps the setup's look
+// (html.setup-mode) until Open Heiward.
+const SETUP_SLIDES = [
+  ['found', 'Look-alike photos and videos, found'],
+  ['npu', 'AI on your NPU, not in the cloud'],
+  ['safe', 'Nothing goes until you say so'],
+  ['gentle', 'Gentle in the background'],
+  ['more', 'Games and code, tidied too'],
+  ['castellan', 'Heiward works for Castellan'],
+];
+const SETUP_STEPS = [['welcome', 'Welcome'], ['pc', 'Your PC'], ['progress', 'Setting up'], ['done', 'Done']];
+// The install's output, as stages: each matches the lines Installer.InstallStepsAsync writes when it gets there.
+const SETUP_STAGES = [
+  ['Getting what the AI needs', /^(Prerequisites|Copy )/],
+  ['Finding where the AI runs best', /^(NPU found|AI matching|No NPU|The .+ could not run|This build does not|GPU pack|Graphics card)/],
+  ['Saving your settings and schedule', /^(Settings:|Remove the copy from GitHub)/],
+  ['Adding Heiward to Start and notifications', /^(Start menu|Notifications|Apps & Features|heiward: links)/],
+];
 // More memory and the history are the Settings page's own switches (moreMemory, keepHistory), saved there before the
 // install runs, which keeps them; null until the form is built from the settings as they are.
 const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true, gpu: null, moreMemory: null, keepHistory: null };
 let setupRetry = false;
-let setupShown = null; // 'form' or 'progress': the form is only built once, so a poll doesn't reset it
+let setupStep = 'welcome'; // before the install: the welcome or the questions
+let setupShown = null; // the view built last: each is built once, so a poll doesn't reset the answers or the slideshow
+let setupRan = false; // this page ran the install: Done shows until Open Heiward
+let setupRun = null; // the progress view's parts a poll updates
+let slideTimer = null;
 
 /** Scans only when the person presses Scan now: asked when the AI runs on the GPU or the CPU. */
 const setupOnDemand = () => setupAnswers.device !== 'npu' && setupAnswers.onDemand;
+
+/** Whether the page shows the setup: until it's done, and after, until Open Heiward when this page ran it. */
+const setupShowing = (s) => s.setup.needed || setupRan;
+
+/** Castellan's site, from the page's poll (ManorCard.ManorSiteUrl), as the home page's Castellan card has it. */
+function castellanLink(text, cls) {
+  const a = outLink(text, state.setup.site);
+  if (cls) a.className = cls;
+  return a;
+}
+
+/** The setup's pictures, one every 8 seconds, and a dot for each to pick it. */
+function setupSlideshow(start) {
+  clearInterval(slideTimer);
+  const box = el('figure', 'setup-show');
+  const img = el('img', 'setup-show-img');
+  const dots = el('div', 'setup-dots');
+  let at = 0;
+  const show = (n) => {
+    at = (n + SETUP_SLIDES.length) % SETUP_SLIDES.length;
+    img.src = '/setup/' + SETUP_SLIDES[at][0] + '.svg';
+    img.alt = SETUP_SLIDES[at][1];
+    img.classList.remove('in');
+    void img.offsetWidth; // the fade again, for the next picture
+    img.classList.add('in');
+    [...dots.children].forEach((d, k) => d.setAttribute('aria-current', String(k === at)));
+  };
+  const restart = () => {
+    clearInterval(slideTimer);
+    slideTimer = setInterval(() => { if (document.visibilityState === 'visible') show(at + 1); }, 8000);
+  };
+  SETUP_SLIDES.forEach(([name, title], k) => {
+    new Image().src = '/setup/' + name + '.svg'; // ready before its turn
+    const dot = el('button', 'setup-dot');
+    dot.type = 'button';
+    dot.title = title;
+    dot.setAttribute('aria-label', title);
+    dot.addEventListener('click', () => { show(k); restart(); });
+    dots.append(dot);
+  });
+  show(start || 0);
+  restart();
+  box.append(img, dots);
+  return box;
+}
+
+function setupStepsRail(view) {
+  const firstRun = state && state.setup.firstRun;
+  const steps = SETUP_STEPS.filter(([id]) => firstRun || id !== 'welcome');
+  const now = steps.findIndex(([id]) => id === view);
+  $('setup-steps').replaceChildren(...steps.map(([, label], i) => {
+    const li = el('li', i < now ? 'done' : i === now ? 'now' : null);
+    li.append(el('span', 'setup-step-dot', i < now ? '' : String(i + 1)), el('span', null, label));
+    if (i < now) li.firstChild.append(icon('check'));
+    if (i === now) li.setAttribute('aria-current', 'step');
+    return li;
+  }));
+}
 
 /** The NPU setup found, named as Windows lists it: the AI runs on it unless the user picks otherwise. */
 function npuFound(setup) {
@@ -1269,6 +1349,7 @@ async function startSetup(button) {
       gpu: state.setup.gpus && state.setup.gpus.length > 1 ? setupAnswers.gpu : null,
     });
     setupRetry = false;
+    setupRan = true;
     refresh(true);
   } catch (e) {
     showError(e.message);
@@ -1279,32 +1360,67 @@ async function startSetup(button) {
 function renderSetup(s) {
   for (const id of ['home', 'settingsview', 'aboutview', 'devview', 'gamesview', 'folder']) $(id).classList.add('hidden');
   $('setup').classList.remove('hidden');
+  document.documentElement.classList.add('setup-mode');
+  document.title = 'Set up Heiward';
   const setup = s.setup;
+  $('setup-version').textContent = setup.version ? 'Version ' + setup.version : '';
+  for (const a of document.querySelectorAll('#setup a[data-castellan]')) a.href = setup.site;
+  // The Store version's setup has no welcome: Heiward's Store page was that.
+  if (!setup.firstRun && setupStep === 'welcome') setupStep = 'pc';
+  const view = !setup.needed ? 'done' : setup.running || (setup.failed && !setupRetry) ? 'progress' : setupStep;
+  if (view === 'progress') setupRan = true;
+  setupStepsRail(view);
+  if (view === 'progress') { renderSetupProgress(setup, s); return; }
+  if (setupShown === view) return;
+  setupShown = view;
+  setupRun = null;
   const card = $('setup-card');
-  if (setup.running || (setup.failed && !setupRetry)) {
-    setupShown = 'progress';
-    const log = el('pre', 'setup-log');
-    log.textContent = setup.output.join('\n') || 'Starting…';
-    const parts = [el('h2', null, setup.failed ? 'Setup stopped' : 'Setting up Heiward…')];
-    parts.push(el('p', 'muted', setup.failed
-      ? 'Something went wrong; the last lines below say what.' + (s.dev.enabled ? ' heiward.log has the rest.' : '')
-      : 'Downloading what the AI needs and checking where it runs.' + (setupOnDemand()
-        ? ' Then this page shows Scan now: nothing scans until you press it.'
-        : ' The first scan starts right after.')));
-    parts.push(log);
-    if (setup.failed) {
-      const again = el('button', 'btn', 'Try again');
-      again.addEventListener('click', () => { setupRetry = true; setupShown = null; renderSetup(state); });
-      parts.push(again);
-    }
-    card.replaceChildren(...parts);
-    log.scrollTop = log.scrollHeight;
-    return;
+  card.className = 'setup-card setup-' + view;
+  if (view === 'welcome') card.replaceChildren(...setupWelcome(setup));
+  else if (view === 'pc') card.replaceChildren(...setupForm(s));
+  else card.replaceChildren(...setupDone(s));
+  $('setup').scrollTop = 0;
+}
+
+function setupWelcome(setup) {
+  const text = el('div', 'setup-col');
+  text.append(el('div', 'setup-eyebrow', 'Free · open source · AI on your PC'));
+  const h = el('h1', 'setup-title', 'Find the look-alike photos and videos ');
+  h.append(el('span', 'setup-hl', 'filling your PC'));
+  text.append(h, el('p', 'setup-lead', 'Heiward looks through your pictures and videos with AI that runs on this PC, on its NPU when it has one, ' +
+    'lists the copies side by side, and leaves the choice to you.'));
+  const facts = el('ul', 'setup-facts');
+  for (const [lead, rest] of [
+    ['Not just exact copies:', 'resized, edited, re-saved and burst shots too.'],
+    ['Private:', 'the AI runs here, and none of your files are sent online.'],
+    ['Nothing goes until you say so:', 'what you choose goes to the Recycle Bin.'],
+    ['Gentle:', 'it scans in the background, and makes way for games and a low battery.'],
+  ]) {
+    const li = el('li');
+    li.append(icon('check'), el('span', null, ''));
+    li.lastChild.append(el('b', null, lead + ' '), document.createTextNode(rest));
+    facts.append(li);
   }
-  if (setupShown === 'form') return;
-  setupShown = 'form';
+  text.append(facts);
+  const part = el('p', 'setup-part');
+  part.append(document.createTextNode('Heiward is part of Castellan, a staff of AI agents that look after your PC on its own hardware. '), castellanLink('castellan-software.com'));
+  const go = el('button', 'btn setup-go', 'Get started');
+  go.addEventListener('click', () => { setupStep = 'pc'; renderSetup(state); });
+  const actions = el('div', 'setup-actions');
+  actions.append(go);
+  text.append(actions, part);
+  const art = el('div', 'setup-col setup-art');
+  art.append(setupSlideshow(0));
+  return [text, art];
+}
+
+function setupForm(s) {
+  clearInterval(slideTimer);
+  const setup = s.setup;
   if (!setupAnswers.device) setupAnswers.device = setup.npu ? 'npu' : 'gpu';
-  const parts = [el('h2', null, 'Set up Heiward')];
+  const head = el('div', 'setup-head');
+  head.append(el('h1', 'setup-title', 'Your PC'), el('p', 'setup-lead', 'How Heiward works on this PC. You can change any of it later, in Settings.'));
+  const parts = [head];
   if (setup.npu) parts.push(npuFound(setup));
   else parts.push(el('p', 'muted', (setup.unsupportedNpu
     ? 'This version of Heiward can\'t use this PC\'s NPU yet (' + setup.unsupportedNpu + '), so'
@@ -1318,7 +1434,7 @@ function renderSetup(s) {
   const advice = el('p', 'setup-advice', 'Not recommended on this PC. The ' + setup.npuName + ' does this work on far less power. ' +
     'On the graphics card or the processor, scans draw more power and run warmer, so scheduled ones run only every 6 hours ' +
     'on AC power, and the NPU sits idle.');
-  const go = el('button', 'btn');
+  const go = el('button', 'btn setup-go');
   const when = setupChoice('When should it look for new duplicates?', 'setup-when', [
     [false, 'Every 6 hours, on AC power (recommended)', 'Scans skip themselves on battery.'],
     [true, 'Only when I press Scan now', 'Nothing runs on a schedule, and no scan starts after setup.'],
@@ -1334,7 +1450,7 @@ function renderSetup(s) {
   sync();
   parts.push(where, when);
 
-  // More than one graphics card: which one does the GPU work (the GitHub exe asks the same, Installer.AskGpu).
+  // More than one graphics card: which one does the GPU work (the console setup asks the same, Installer.AskGpu).
   if (setup.gpus && setup.gpus.length > 1) {
     if (setupAnswers.gpu == null) setupAnswers.gpu = setup.recommendedGpu;
     const cards = setupChoice('Which graphics card should Heiward use?', 'setup-gpu', setup.gpus.map((c) => {
@@ -1379,7 +1495,7 @@ function renderSetup(s) {
   switches.append(memoryRow, historyRow);
   parts.push(switches);
 
-  // A copy installed from GitHub: this one replaces it, and the Store keeps it up to date.
+  // A copy installed from GitHub, on the Store version's first run: this one replaces it, and the Store keeps it up to date.
   if (setup.gitHubCopy != null) {
     const box = el('fieldset', 'setup-question');
     box.append(el('legend', 'auto-title', 'Heiward from GitHub'));
@@ -1399,9 +1515,108 @@ function renderSetup(s) {
   }
 
   go.addEventListener('click', () => startSetup(go));
-  parts.push(el('p', 'muted small', 'The Microsoft Store keeps Heiward up to date. How hard scans work, more memory and the history can be changed on the Settings page later. ' +
-    'Your photos, videos and files are never deleted unless you choose them on this page.'), go);
-  card.replaceChildren(...parts);
+  parts.push(el('p', 'muted small setup-note', (setup.firstRun ? 'Heiward keeps itself up to date.' : 'The Microsoft Store keeps Heiward up to date.') +
+    ' Your photos, videos and files are never deleted unless you choose them on Heiward\'s page.'));
+  const bar = el('div', 'setup-actions setup-bar');
+  if (setup.firstRun) {
+    const back = el('button', 'btn secondary', 'Back');
+    back.addEventListener('click', () => { setupStep = 'welcome'; renderSetup(state); });
+    bar.append(back);
+  }
+  bar.append(go);
+  parts.push(bar);
+  return parts;
+}
+
+/** While the install runs: its stages, its output under Details, and the slideshow; Try again when it failed. */
+function renderSetupProgress(setup, s) {
+  if (setupShown !== 'progress' || !setupRun) {
+    setupShown = 'progress';
+    const card = $('setup-card');
+    card.className = 'setup-card setup-progress';
+    const col = el('div', 'setup-col');
+    const title = el('h1', 'setup-title');
+    const lead = el('p', 'setup-lead');
+    const bar = el('div', 'setup-bar-track');
+    bar.append(el('div', 'setup-bar-fill'));
+    const stages = el('ol', 'setup-stages');
+    for (const [label] of SETUP_STAGES) {
+      const li = el('li');
+      li.append(el('span', 'setup-stage-mark'), el('span', null, label));
+      stages.append(li);
+    }
+    const details = el('details', 'setup-details');
+    const log = el('pre', 'setup-log');
+    details.append(el('summary', null, 'Details'), log);
+    const again = el('button', 'btn setup-go hidden', 'Try again');
+    again.addEventListener('click', () => { setupRetry = true; setupStep = 'pc'; setupShown = null; renderSetup(state); });
+    col.append(title, lead, bar, stages, again, details);
+    const art = el('div', 'setup-col setup-art');
+    art.append(setupSlideshow(1));
+    card.replaceChildren(col, art);
+    setupRun = { title, lead, fill: bar.firstChild, stages, details, log, again };
+  }
+  const r = setupRun;
+  const lines = setup.output || [];
+  // The furthest stage the output has reached; the first while it starts.
+  let reached = 0;
+  SETUP_STAGES.forEach(([, match], i) => { if (lines.some((l) => match.test(l))) reached = i; });
+  [...r.stages.children].forEach((li, i) => {
+    li.className = i < reached ? 'done' : i === reached ? (setup.failed ? 'failed' : 'now') : '';
+    const mark = li.firstChild;
+    mark.replaceChildren(i < reached ? icon('check') : setup.failed && i === reached ? icon('alert') : '');
+  });
+  r.fill.style.width = (setup.failed ? 100 : Math.round(((reached + 0.5) / (SETUP_STAGES.length + 0.5)) * 100)) + '%';
+  r.fill.classList.toggle('failed', !!setup.failed);
+  r.title.textContent = setup.failed ? 'Setup stopped' : 'Setting up Heiward…';
+  r.lead.textContent = setup.failed
+    ? 'Something went wrong; Details says what.' + (s.dev.enabled ? ' heiward.log has the rest.' : '')
+    : 'Getting the AI ready and finding where it runs best. It takes a minute or two.' + (setupOnDemand()
+      ? ' Then Scan now starts the first scan.' : ' The first scan starts right after.');
+  r.again.classList.toggle('hidden', !setup.failed);
+  if (setup.failed) r.details.open = true;
+  const atBottom = r.log.scrollTop + r.log.clientHeight >= r.log.scrollHeight - 4;
+  r.log.textContent = lines.join('\n') || 'Starting…';
+  if (atBottom) r.log.scrollTop = r.log.scrollHeight;
+}
+
+function setupDone(s) {
+  clearInterval(slideTimer);
+  const col = el('div', 'setup-col setup-done-col');
+  const mark = el('div', 'setup-done-mark');
+  mark.append(icon('check'));
+  const onDemand = setupOnDemand();
+  col.append(mark, el('h1', 'setup-title', 'Heiward is set up'),
+    el('p', 'setup-lead', onDemand
+      ? 'Press Scan now on Heiward\'s page whenever you like: nothing scans until you do.'
+      : 'Its first scan has started. Heiward lists what it finds on its page, and looks again on its own.'),
+    el('p', 'muted', 'Open it any time from the Start menu or your desktop: Heiward.'));
+  const open = el('button', 'btn setup-go', 'Open Heiward');
+  open.addEventListener('click', () => {
+    setupRan = false;
+    setupShown = null;
+    document.documentElement.classList.remove('setup-mode');
+    document.title = 'Heiward';
+    history.replaceState(null, '', '#/');
+    route = parseRoute();
+    renderRoute();
+  });
+  const actions = el('div', 'setup-actions');
+  actions.append(open);
+  col.append(actions);
+  // Castellan: the staff Heiward works with, and where to meet them.
+  const more = el('aside', 'setup-castellan');
+  const pic = el('img', 'setup-castellan-img');
+  pic.src = '/setup/castellan.svg';
+  pic.alt = 'Heiward among Castellan\'s staff of agents';
+  const text = el('div', 'setup-castellan-text');
+  text.append(el('div', 'setup-eyebrow castellan', 'Part of Castellan'),
+    el('h2', null, 'Heiward has company'),
+    el('p', null, 'Castellan is a staff of AI agents that look after your PC: backups, undoing a bad update, display drivers, ' +
+      'documents, games and more, each using a local AI model on this PC (on its NPU when it has one), privately.'),
+    castellanLink('Meet the staff at castellan-software.com', 'btn castellan-btn'));
+  more.append(pic, text);
+  return [col, more];
 }
 
 // ---------------------------------------------------------------- automatic cleanup
@@ -4236,7 +4451,7 @@ function groupCard(g, folder) {
 
 async function renderRoute() {
   if (!state) return;
-  if (state.setup.needed) { renderSetup(state); return; }
+  if (setupShowing(state)) { renderSetup(state); return; }
   // Developer mode is off (Settings): its pages aren't there, so a link to one lands home.
   // Game mode the same way: off, the Games area isn't there.
   if ((route.view === 'dev' && !state.dev.enabled) || (route.view === 'games' && !state.games.enabled)) {
@@ -4354,7 +4569,7 @@ async function refresh(force) {
     // Reeve or the Steward taking over (or handing back) worktrees, branches or pull requests: the report is read again.
     const rolesChanged = !!state && JSON.stringify(s.dev.roles) !== JSON.stringify(state.dev.roles);
     if (rolesChanged) devReport = null;
-    const changed = force || !state || s.setup.needed || state.setup.needed ||
+    const changed = force || !state || setupShowing(s) || state.setup.needed ||
       JSON.stringify(s.pending.map((g) => g.key)) !== JSON.stringify(state.pending.map((g) => g.key)) ||
       s.done.length !== state.done.length || s.totals.decisions !== state.totals.decisions || s.scan.running !== state.scan.running ||
       JSON.stringify(s.scan.status && s.scan.status.roots) !== JSON.stringify(state.scan.status && state.scan.status.roots) ||

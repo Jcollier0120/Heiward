@@ -44,6 +44,8 @@ root.SetAction(async (_, ct) => {
 		await OpenReviewPageAsync(AgentConfig.Load(), ct);
 		return 0;
 	}
+	// Double-clicked: the setup in a window of its own; the console's questions when that can't be (a script started it).
+	if (await Installer.OpenSetupWindowAsync(ct)) return 0;
 	int code = await Installer.InstallAsync(dryRun: false, assumeYes: false, device: null, ct);
 	if (!Console.IsInputRedirected) {
 		Console.WriteLine("Press Enter to close.");
@@ -112,8 +114,13 @@ stopCmd.SetAction(_ => {
 root.Subcommands.Add(stopCmd);
 
 var noBrowser = new Option<bool>("--no-browser") { Description = "Don't open a browser tab." };
-var serve = new Command("serve", "Serve the review page on 127.0.0.1, in this window (what open starts in the background).") { noBrowser };
-serve.SetAction((r, ct) => ReviewServer.RunAsync(AgentConfig.Load(), !r.GetValue(noBrowser), ct));
+var setupMode = new Option<bool>("--setup") { Description = "The setup window's page (what the downloaded exe starts): it asks the setup's questions and installs Heiward, then stays as its review page." };
+var serveReuse = new Option<string[]>("--reuse-from") { Description = "With --setup: a folder the install may copy FFmpeg and the AI components from. Repeatable." };
+var serve = new Command("serve", "Serve the review page on 127.0.0.1, in this window (what open starts in the background).") { noBrowser, setupMode, serveReuse };
+serve.SetAction((r, ct) => {
+	if (r.GetValue(setupMode)) StoreSetup.BeginFirstRun(r.GetValue(serveReuse));
+	return ReviewServer.RunAsync(AgentConfig.Load(), !r.GetValue(noBrowser), ct);
+});
 root.Subcommands.Add(serve);
 
 var ifPending = new Option<bool>("--if-pending") { Description = "Open the browser only when duplicates wait for review (look-alikes don't count)." };

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- The Watchman's mark: the night watch's lantern, lit, with a curved arrow round it: the way back. Light and Dark. -->
+  <style>
+    .back { fill: #e8eefb; stroke: #24467a; }
+    .front { fill: #24467a; }
+    .glow { fill: #e0a43a; }
+    .line { stroke: #24467a; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #172338; stroke: #9cc0f5; }
+      .front { fill: #9cc0f5; }
+      .glow { fill: #f2c46d; }
+      .line { stroke: #9cc0f5; }
+    }
+  </style>
+  <path class="line" fill="none" stroke-width="1.5" stroke-linecap="round" d="M3.6 12a8.4 8.4 0 1 0 2.5-6"/>
+  <path class="front" d="M3 3.2v4.6h4.6z"/>
+  <path class="front" d="M10.4 5.6h3.2l.6 1.6H9.8z"/>
+  <rect class="back" x="9.3" y="7.6" width="5.4" height="7.8" rx="1.2" stroke-width="1.3"/>
+  <path class="glow" d="M12 9.2c1 1.2 1.4 2 1.4 2.8a1.4 1.4 0 0 1-2.8 0c0-.8.4-1.6 1.4-2.8z"/>
+  <path class="front" d="M9.6 15.8h4.8v1.4H9.6z"/>
+</svg>

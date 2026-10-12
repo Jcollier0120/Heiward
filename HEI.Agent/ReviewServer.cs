@@ -55,7 +55,7 @@ namespace HEI.Agent {
 	/// those, not the page). Only another copy's installer (/api/quit) or stopping this copy's processes ends it;
 	/// the sign-in task, each scheduled scan and each install start it again (<see cref="EnsureRunningInBackground"/>).
 	/// </summary>
-	static class ReviewServer {
+	static partial class ReviewServer {
 		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct) {
 			int port = cfg.Port;
 			var actions = new CleanupActions(cfg, automatic: false);
@@ -112,6 +112,13 @@ namespace HEI.Agent {
 				ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
 				return Results.Content(await ManorIcon.GetAsync(), "image/svg+xml");
 			});
+			// The setup's pictures (tools/art/make-art.mjs): SVGs with nothing in them that runs, their icons inlined as data: images.
+			app.MapGet("/setup/{name}", (HttpContext ctx, string name) => {
+				if (!SetupArtName().IsMatch(name) || SetupArt(name) is not string svg) return Results.NotFound();
+				ctx.Response.Headers.CacheControl = "no-cache";
+				ctx.Response.Headers.ContentSecurityPolicy = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+				return Results.Content(svg, "image/svg+xml");
+			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/tour.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("tour.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));
@@ -129,6 +136,7 @@ namespace HEI.Agent {
 			// seen=1: the page is showing, so scans run at full speed (ScanPace); a hidden tab leaves it out.
 			app.MapGet("/api/state", (bool? seen) => {
 				if (seen == true) ScanPace.MarkPageSeen();
+				StoreSetup.Seen();
 				return Results.Json(State(cfg), AgentConfig.Json);
 			});
 			// While a scan runs, the page asks for its progress alone, every second or two: the scan status file, the lock and
@@ -422,6 +430,7 @@ namespace HEI.Agent {
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
 			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
+			if (StoreSetup.FirstRun) _ = StopWhenAbandonedAsync(app.Lifetime);
 			await app.WaitForShutdownAsync(ct);
 			return 0;
 		}
@@ -729,6 +738,38 @@ namespace HEI.Agent {
 				upcoming = new { groups = Upcoming(plan.Groups.Values), dev = Upcoming(plan.DevItems.Values), branches = Upcoming(plan.Repos.Values), games = Upcoming(plan.GameItems.Values) },
 				lastRun = s.Runs.FirstOrDefault(),
 			};
+		}
+
+		/// <summary>
+		/// The setup window closed before Heiward was set up: nothing else will ask for this page, and a Heiward that
+		/// isn't installed has no business staying up. Once it's set up, the page stays as the installed copy's.
+		/// </summary>
+		static async Task StopWhenAbandonedAsync(IHostApplicationLifetime lifetime) {
+			try {
+				while (!lifetime.ApplicationStopping.IsCancellationRequested && StoreSetup.Needed) {
+					await Task.Delay(TimeSpan.FromSeconds(30), lifetime.ApplicationStopping);
+					if (StoreSetup.Abandoned(DateTime.UtcNow)) {
+						AgentPaths.AppendLog("setup window closed before Heiward was set up: the page stops");
+						lifetime.StopApplication();
+						return;
+					}
+				}
+			}
+			catch (OperationCanceledException) { }
+		}
+
+		[System.Text.RegularExpressions.GeneratedRegex(@"^[a-z0-9-]+\.svg$")]
+		private static partial System.Text.RegularExpressions.Regex SetupArtName();
+
+		/// <summary>A picture from wwwroot\setup; MSBuild names the resource with this OS's folder separator.</summary>
+		static string? SetupArt(string name) {
+			foreach (string sep in new[] { "/", "\\" }) {
+				using Stream? s = Assembly.GetExecutingAssembly().GetManifestResourceStream("wwwroot/setup" + sep + name);
+				if (s == null) continue;
+				using var r = new StreamReader(s);
+				return r.ReadToEnd();
+			}
+			return null;
 		}
 
 		static string Asset(string name) {

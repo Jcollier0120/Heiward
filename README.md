@@ -1,5 +1,7 @@
 # Heiward
 
+![Heiward: look-alike photos and videos, found, with AI on your PC's NPU. Part of Castellan](docs/art/heiward-found.png)
+
 Heiward is NPU-first AI for Windows. It runs a vision model, DINOv2, on the PC's NPU (the AI processor in Snapdragon X, Intel Core Ultra and AMD Ryzen AI PCs) to find duplicate photos and videos, including resized, recompressed, cropped, mirrored and edited copies. On the NPU it's fast and barely uses power, so it can scan every hour in the background. All of it runs on your PC: nothing about you or your files leaves it.
 
 It lists what it finds, what games leave behind in game mode, and stale developer files in developer mode, on a local review page. Nothing is removed until you say so, and files you tick go to the Recycle Bin. Once you trust what it suggests, it can clean up by itself.
@@ -14,6 +16,8 @@ It lists what it finds, what games leave behind in game mode, and stale develope
 - **Themes.** Match Windows, Light, Dark, and six colour themes.
 
 A *heiward* (Middle English, "hedge warden") was the village officer who kept the hedges trimmed and the fences sound.
+
+**Part of Castellan.** Heiward is free, open source and works on its own. It's also one of the staff of [Castellan](https://castellan-software.com/): AI agents that look after a Windows PC with a local model, on its NPU when it has one, for backups, undoing a bad update, display drivers, documents, games and more. Meet them at [castellan-software.com](https://castellan-software.com/).
 
 ![Heiward's home page: a card per drive or folder with its sets of copies, developer cleanup, and the folders where cleaning up frees the most](docs/screenshots/home.png)
 
@@ -32,6 +36,17 @@ A *heiward* (Middle English, "hedge warden") was the village officer who kept th
 </tr>
 </table>
 
+<table>
+<tr>
+<td width="50%"><img src="docs/art/heiward-npu.png" alt="AI on your NPU, not in the cloud: about 3 ms a picture on a Snapdragon X NPU, hourly scans, no files sent online"></td>
+<td width="50%"><img src="docs/art/heiward-safe.png" alt="Nothing goes until you say so: you choose, and copies go to the Recycle Bin"></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/art/heiward-gentle.png" alt="Gentle in the background: efficiency mode, and it makes way for games and a low battery"></td>
+<td width="50%"><a href="https://castellan-software.com/"><img src="docs/art/heiward-castellan.png" alt="Heiward works for Castellan, a staff of AI agents for your PC: castellan-software.com"></a></td>
+</tr>
+</table>
+
 ## Install
 
 1. Download from [Releases](https://github.com/Jcollier0120/Heiward/releases):
@@ -39,9 +54,9 @@ A *heiward* (Middle English, "hedge warden") was the village officer who kept th
    - `Heiward-<version>-arm64.exe` for Arm PCs, such as Snapdragon Copilot+ PCs.
 
    Not sure which? **Settings > System > About** says "x64-based processor" or "ARM-based processor".
-2. Run it.
+2. Run it. Its setup opens in a window of its own.
 
-There's nothing to install first: no .NET, no FFmpeg, no admin rights. Heiward downloads what it needs itself and runs its first scan, and the review page opens in your browser to show its progress. It asks how hard scans should work: in the background, slower and light on power, or at full speed. On a PC without an NPU it also asks whether to run the AI on the graphics card or the processor.
+There's nothing to install first: no .NET, no FFmpeg, no admin rights. The setup shows what Heiward does, then asks how hard scans should work: in the background, slower and light on power, or at full speed. On a PC without an NPU it also asks whether to run the AI on the graphics card or the processor. Then Heiward downloads what it needs, starts its first scan, and the same window becomes its review page. Started from a script or a command prompt, it asks its questions there instead.
 
 From 1.9.16 the releases are code-signed by Jeremy Collier, the publisher Windows names when you run them. Right after a release, until enough people have run it, Windows may still say "Windows protected your PC": click **More info**, check the publisher, then **Run anyway**. `SHA256SUMS.txt` on the release lists each file's SHA-256, which PowerShell's `Get-FileHash` shows.
 
