@@ -234,7 +234,7 @@ namespace HEI.Agent {
 		/// <summary>A Windows notification when a scan finds something new.</summary>
 		public bool Toast { get; set; } = true;
 		/// <summary>
-		/// The home page's "In a manor" card, while Manor isn't installed (<see cref="HEI.Agent.ManorCard"/>): what Manor adds,
+		/// The home page's Castellan card, while Manor isn't installed (<see cref="HEI.Agent.ManorCard"/>): what Manor adds,
 		/// with a link. Its "Not now" turns this off for good; the switch in Settings turns it on again.
 		/// </summary>
 		public bool ManorCard { get; set; } = true;

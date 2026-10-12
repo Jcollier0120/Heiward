@@ -2,6 +2,25 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.24
+
+**The home page says a word about Castellan, the household Heiward belongs to.**
+
+### What's new
+
+- Without Castellan installed, the home page ends with a short card on Castellan: the household of agents that look
+  after your PC, Heiward among them, with a link to castellan-software.com. It's text in the page: nothing is fetched
+  or sent for it unless you open the link. **Not now** hides it for good, and **The Castellan card** in Settings
+  brings it back. With Castellan installed there's no card.
+
+### What changed
+
+- The privacy policy says so, and names Castellan where it said Manor.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Heiward is free, and works the same with or without Castellan.
+
 ## 1.9.23
 
 **It carries the Steward's kit 2.56.0: the parts every agent of the manor shares.**

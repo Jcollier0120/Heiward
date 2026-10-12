@@ -12,9 +12,11 @@ It reads them on your PC, including the AI matching, which runs on your PC's NPU
 
 In developer mode, so as not to offer a worktree you're still using, it also looks at which folder each of your running programs works in, which programs have a file open that a cleanup couldn't delete (as Windows' Restart Manager tells installers), and, if you use Claude Code, which folders its sessions work in (`%USERPROFILE%\.claude\sessions`) and when their transcripts were last written (`%USERPROFILE%\.claude\projects`; only the date, never what's in them). None of it is kept or sent anywhere.
 
-Once an hour, while its review page is up, Heiward also measures your disks, for you and for the other programs on your PC that ask it (Manor's agents): each fixed drive's size and free space, and how much the big tool caches in your user folder take (Gradle, npm, pnpm, NuGet, pip, the Android SDK, and those of Foundry, GeniEx and Reeve). It only adds up the sizes of the files in those folders: it opens none of them, and keeps no file names. The last reading stays on your PC, and is given to programs on this PC only (`/api/disk`).
+Once an hour, while its review page is up, Heiward also measures your disks, for you and for the other programs on your PC that ask it (Castellan's agents): each fixed drive's size and free space, and how much the big tool caches in your user folder take (Gradle, npm, pnpm, NuGet, pip, the Android SDK, and those of Foundry, GeniEx and Reeve). It only adds up the sizes of the files in those folders: it opens none of them, and keeps no file names. The last reading stays on your PC, and is given to programs on this PC only (`/api/disk`).
 
-With Manor installed, Heiward also looks at whether Reeve and the Steward are installed (whether `%USERPROFILE%\.reeve\app` and `%USERPROFILE%\.steward\app` exist), to leave them their part of a developer's housekeeping.
+With Castellan installed, Heiward also looks at whether Reeve and the Steward are installed (whether `%USERPROFILE%\.reeve\app` and `%USERPROFILE%\.steward\app` exist), to leave them their part of a developer's housekeeping.
+
+Without Castellan installed, the home page ends with a few lines about Castellan, the household of agents Heiward belongs to, with a link to its site. They're text in the page: nothing is fetched or sent for them, unless you open the link. **Not now** hides them for good, and Settings shows them again.
 
 ## What Heiward keeps, and where
 
@@ -43,20 +45,20 @@ When it sets up, Heiward downloads the AI components it needs, and nothing else.
 
 The version from GitHub also downloads FFmpeg, from GitHub; the Store version comes with it.
 
-The version from GitHub also keeps itself up to date: once a day it asks GitHub for Heiward's newest release and, when there is one, downloads it from there and checks it against the release's SHA-256 sums. It doesn't when Manor or the Microsoft Store updates it, or when you turn off **Update by itself** in Settings.
+The version from GitHub also keeps itself up to date: once a day it asks GitHub for Heiward's newest release and, when there is one, downloads it from there and checks it against the release's SHA-256 sums. It doesn't when Castellan or the Microsoft Store updates it, or when you turn off **Update by itself** in Settings.
 
 These downloads are ordinary web requests. Like any, they show your IP address to the site that serves the file (GitHub, NuGet or Hugging Face), under that site's own privacy policy. Heiward sends nothing about you or your files with them.
 
 ## Pull requests, in developer mode
 
-Developer mode is off until you turn it on in Settings (or, with Manor installed, in Manor's Developer options, which then decide it). On, the developer page lists your code repositories and, for those hosted on GitHub, Azure DevOps (or Azure DevOps Server and TFS), GitLab, Bitbucket, Gitea or Forgejo, their open pull requests.
+Developer mode is off until you turn it on in Settings (or, with Castellan installed, in its Developer options, which then decide it). On, the developer page lists your code repositories and, for those hosted on GitHub, Azure DevOps (or Azure DevOps Server and TFS), GitLab, Bitbucket, Gitea or Forgejo, their open pull requests.
 
 To list them, Heiward asks each host while the developer page is open:
 - **What it sends:** the names of your repositories hosted there, as their remotes in git name them, and nothing else about you or your files.
 - **Signed in as you:** with the host's own command-line tool if you use one (the GitHub CLI, the Azure CLI), with the sign-in git already keeps for that host (Git Credential Manager), or with your Windows sign-in for a server on your own network. A sign-in only ever goes to the host it belongs to, is never written anywhere, and Heiward never asks you for one.
 - **What it keeps:** the answer, in memory, for two minutes.
 
-These are ordinary requests to each host, under its own privacy policy. With developer mode off, nothing is asked; nor with Manor and the Steward installed, since the Steward looks after pull requests there.
+These are ordinary requests to each host, under its own privacy policy. With developer mode off, nothing is asked; nor with Castellan and the Steward installed, since the Steward looks after pull requests there.
 
 ## Children
 
