@@ -555,14 +555,25 @@ namespace HEI.Agent {
 	/// </summary>
 	static class GameSafety {
 		static readonly HashSet<string> SaveFolders = new(StringComparer.OrdinalIgnoreCase) {
-			"save", "saves", "savegame", "savegames", "saved games", "savedata", "save data", "savefiles", "save files", "userdata",
+			"userdata", "profile", "profiles", "player", "players", "remote", "slots", "characters", "progress",
 		};
 
-		static readonly HashSet<string> SaveExtensions = new(StringComparer.OrdinalIgnoreCase) { ".sav", ".save", ".savegame", ".sl2", ".ess", ".fos" };
+		static readonly HashSet<string> SaveExtensions = new(StringComparer.OrdinalIgnoreCase) {
+			".sav", ".save", ".savegame", ".sl2", ".ess", ".fos", ".srm", ".state", ".sv",
+		};
 
-		/// <summary>A file or folder name that looks like a saved game.</summary>
-		internal static bool LooksLikeSave(string name, bool folder) =>
-			folder ? SaveFolders.Contains(name) : SaveExtensions.Contains(Path.GetExtension(name)) || name.StartsWith("savegame", StringComparison.OrdinalIgnoreCase);
+		/// <summary>
+		/// A file or folder name that looks like a saved game: generous, since a save kept by mistake costs a little room
+		/// and a save removed costs someone's progress. Save*, Slot* and Profile* names count, and Steam Cloud's "remote";
+		/// a folder's only as one word ("Save the Universe" is a game), and never Unreal's "Saved", which holds logs and crashes.
+		/// </summary>
+		internal static bool LooksLikeSave(string name, bool folder) {
+			bool prefixed = new[] { "save", "slot", "profile" }.Any(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+			if (!folder) return prefixed || SaveExtensions.Contains(Path.GetExtension(name));
+			if (SaveFolders.Contains(name) || name.Equals("save data", StringComparison.OrdinalIgnoreCase) || name.Equals("save files", StringComparison.OrdinalIgnoreCase)
+				|| name.Equals("saved games", StringComparison.OrdinalIgnoreCase)) return true;
+			return prefixed && !name.Contains(' ') && !name.Equals("saved", StringComparison.OrdinalIgnoreCase);
+		}
 
 		static bool Inside(string path, string folder) =>
 			path.Equals(folder, StringComparison.OrdinalIgnoreCase) || path.StartsWith(folder + "\\", StringComparison.OrdinalIgnoreCase);

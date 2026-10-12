@@ -388,6 +388,24 @@ public sealed class GameSafetyTests : IDisposable {
 		Assert.True(GameSafety.LooksLikeSave("slot.sav", folder: false));
 		Assert.True(GameSafety.LooksLikeSave("SaveGames", folder: true));
 		Assert.False(GameSafety.LooksLikeSave("Saved", folder: true)); // Unreal's folder of logs and crashes
+		foreach (string folder in new[] { "SaveData2", "slot_01", "Profiles", "profile1", "remote", "Players" })
+			Assert.True(GameSafety.LooksLikeSave(folder, folder: true), folder);
+		foreach (string file in new[] { "save1.dat", "Slot3.bin", "profile.json", "game.srm" })
+			Assert.True(GameSafety.LooksLikeSave(file, folder: false), file);
+		Assert.False(GameSafety.LooksLikeSave("Save the Universe", folder: true)); // a game's name
+		Assert.False(GameSafety.LooksLikeSave("shadercache", folder: true));
+	}
+
+	[Fact]
+	public void TheRecycleBin_IsNeverFilledPastItsSize_SoWindowsNeverDeletesWhatsInIt() {
+		// A 100-byte bin holding 60: a batch of 30 and 20 fits the first and refuses the second.
+		var room = new Recycler.BinRoom(_ => 60);
+		Assert.True(room.Take(@"C:\", 100, 30));
+		Assert.False(room.Take(@"C:\", 100, 20));
+		Assert.True(room.Take(@"C:\", 100, 10));
+		Assert.False(room.Take(@"C:\", 100, 1));
+		// Each drive's bin is its own.
+		Assert.True(room.Take(@"D:\", 100, 40));
 	}
 
 	GameItem Item(string kind, string name) => GameScanner.Run(pc.Places).Items.First(i => i.Kind == kind && i.Name == name);

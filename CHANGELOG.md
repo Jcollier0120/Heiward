@@ -2,6 +2,23 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.26
+
+**Heiward keeps more of your files out of harm's way when it cleans.**
+
+### What changed
+
+- A worktree is only removed when everything git ignores in it is build output a build makes again. One holding a `.env`, a local database or settings stays, and Heiward says which file kept it.
+- What an unfinished worktree removal left behind now goes to the Recycle Bin, except the build output in it, so anything never committed can be put back.
+- Build folders (`bin`, `obj`, `build`, `target`) are kept when git tracks files in them or they hold a database.
+- Heiward never fills a drive's Recycle Bin past its size: Windows would then delete what's already in it for good. It asks you to empty the bin first. A folder with a path too long for the bin is left for you, too.
+- More names count as saved games, and are never touched: folders and files named Save…, Slot… or Profile…, and Steam Cloud's `remote`.
+- Heiward's page and pictures speak of Castellan's household staff, and show only the staff that use AI on the NPU.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.25
 
 **Heiward's setup opens in a window of its own, and shows what Heiward does while it sets up.**

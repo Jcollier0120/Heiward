@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Thatcher's mark: a cottage under a thatched roof, the straw laid in strands down to a deep, rounded eave. Light and Dark. -->
+  <style>
+    .back { fill: #f7edd3; stroke: #7a5a1c; }
+    .front { fill: #7a5a1c; }
+    .strand { stroke: #7a5a1c; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #2d2614; stroke: #e8c77a; }
+      .front { fill: #e8c77a; }
+      .strand { stroke: #e8c77a; }
+    }
+  </style>
+  <path class="back" stroke-width="1.6" stroke-linejoin="round" d="M5 13.6v7.4h14v-7.4"/>
+  <path class="back" stroke-width="1.8" stroke-linejoin="round" d="M1.8 13.4L12 2.8l10.2 10.6c-3.2 1.5-6.6 2.2-10.2 2.2s-7-.7-10.2-2.2z"/>
+  <path class="strand" fill="none" stroke-width="1.3" stroke-linecap="round" d="M8.6 7.6L6 14.2M12 6.2v8.8M15.4 7.6l2.6 6.6"/>
+  <path class="front" d="M9.4 5.2L12 2.2l2.6 3zM10.4 17.2h3.2v3.8h-3.2z"/>
+</svg>

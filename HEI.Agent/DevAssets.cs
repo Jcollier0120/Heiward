@@ -463,6 +463,9 @@ namespace HEI.Agent {
 			var (code, status) = Git.Run(worktree, "status", "--porcelain");
 			if (code != 0) return "git couldn't read it";
 			if (status.Trim().Length > 0) return "Uncommitted changes";
+			// git worktree remove deletes the files git ignores too: a .env, a local database, settings. Only build output may go.
+			if (KeptIgnored(worktree) is not { } kept) return "git couldn't read it";
+			if (kept.Count > 0) return $"Files git ignores that aren't build output, such as {kept[0]}: kept";
 			var (upstreamCode, _) = Git.Run(worktree, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}");
 			if (upstreamCode == 0) {
 				var (c, ahead) = Git.Run(worktree, "rev-list", "--count", "@{u}..HEAD");
@@ -471,6 +474,73 @@ namespace HEI.Agent {
 			// No upstream: fine only if a remote branch already has this commit.
 			var (rc, remotes) = Git.Run(worktree, "branch", "-r", "--contains", "HEAD");
 			return rc == 0 && remotes.Trim().Length > 0 ? null : "Commits not pushed";
+		}
+
+		/// <summary>Folders and files a build makes again by itself: in a worktree, the only ignored files it may lose (Reeve's worktree-tidy keeps the same list).</summary>
+		static readonly HashSet<string> RebuiltFolders = new(StringComparer.OrdinalIgnoreCase) {
+			"node_modules", "dist", "build", "out", "bin", "obj", ".next", ".nuxt", ".turbo", ".svelte-kit", ".parcel-cache", ".vite", ".cache",
+			"coverage", ".nyc_output", "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", ".venv", "venv", "target", ".gradle",
+			".dart_tool", "Pods", "DerivedData", "artifacts",
+		};
+		static readonly string[] RebuiltFiles = { ".tsbuildinfo", ".eslintcache", ".pyc", ".pyo", "next-env.d.ts" };
+
+		/// <summary>
+		/// The files and folders git ignores in <paramref name="worktree"/> that a build wouldn't make again (a .env, a local database,
+		/// an editor's settings), which git worktree remove would delete with it; null when git can't say.
+		/// </summary>
+		internal static List<string>? KeptIgnored(string worktree) {
+			var (code, status) = Git.Run(worktree, "status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=normal");
+			if (code != 0) return null;
+			bool kit = File.Exists(Path.Combine(worktree, "kit.json"));
+			var kept = new List<string>();
+			foreach (string e in status.Split('\0', StringSplitOptions.RemoveEmptyEntries)) {
+				if (!e.StartsWith("!! ", StringComparison.Ordinal)) continue;
+				string rel = e[3..].TrimEnd('/');
+				// The Steward's kit, filled from its release: a manor agent's kit folder.
+				if (kit && (rel == "kit" || rel.StartsWith("kit/", StringComparison.Ordinal) || ("/" + rel + "/").Contains("/src/kit/", StringComparison.Ordinal))) continue;
+				string[] parts = rel.Split('/');
+				if (parts.Any(RebuiltFolders.Contains) || RebuiltFiles.Any(f => parts[^1].EndsWith(f, StringComparison.OrdinalIgnoreCase))) continue;
+				kept.Add(rel);
+			}
+			return kept;
+		}
+
+		static readonly string[] DataExtensions = { ".db", ".db3", ".sqlite", ".sqlite3", ".mdf", ".ldf", ".mdb", ".accdb" };
+
+		/// <summary>
+		/// Why a build output of the project <paramref name="repo"/> must stay although its name says a build made it: git
+		/// tracks files in it (someone keeps them there on purpose), or it holds a database, which a build doesn't make again
+		/// (a site's data in bin\Debug). Null: it may go.
+		/// </summary>
+		internal static string? BuildOutputKeeps(string repo, string folder) {
+			if (Git.Exe != null && Path.Exists(Path.Combine(repo, ".git")) && UntrackedOrIgnored(repo, new[] { folder }).Count == 0)
+				return "git keeps files in it";
+			if (Path.GetFileName(folder).ToLowerInvariant() is "node_modules" or ".venv" or "venv" or ".gradle" or ".next") return null;
+			try {
+				var all = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+				if (Directory.EnumerateFiles(folder, "*", all).FirstOrDefault(f => DataExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase)) is { } data)
+					return "it holds a database, " + Path.GetRelativePath(folder, data);
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return "Windows wouldn't let Heiward look inside"; }
+			return null;
+		}
+
+		/// <summary>The build outputs below <paramref name="root"/> (<see cref="BuildOutputLabel"/>), not walked into, links never followed.</summary>
+		internal static List<string> BuiltInside(string root) {
+			var found = new List<string>();
+			var stack = new Stack<string>();
+			stack.Push(root);
+			while (stack.Count > 0) {
+				DirectoryInfo[] subfolders;
+				try { subfolders = new DirectoryInfo(stack.Pop()).GetDirectories("*", ListOptions); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
+				foreach (DirectoryInfo d in subfolders) {
+					if ((d.Attributes & FileAttributes.ReparsePoint) != 0) continue;
+					if (BuildOutputLabel(d) != null) found.Add(d.FullName);
+					else stack.Push(d.FullName);
+				}
+			}
+			return found;
 		}
 
 		// ------------------------------------------------------------------ caches
@@ -816,7 +886,7 @@ namespace HEI.Agent {
 	}
 
 	/// <summary>
-	/// Cleans one developer-mode item, re-checking it first. Deletion is permanent (tools recreate all of
+	/// Cleans one developer-mode item, re-checking it first. Deletion of build output is permanent (tools recreate all of
 	/// it), removes links without touching what they point to, and leaves files in use alone, saying what holds them.
 	/// </summary>
 	static class DevCleaner {
@@ -825,11 +895,17 @@ namespace HEI.Agent {
 			switch (item.Kind) {
 				case DevScanner.Projects: {
 					var r = new SafeDelete.Result(0, 0);
+					string? kept = null;
 					foreach (string p in item.Paths) {
 						var dir = new DirectoryInfo(p);
 						if (!dir.Exists || DevScanner.BuildOutputLabel(dir) == null) continue; // no longer what it was
+						if (DevScanner.BuildOutputKeeps(item.Location, p) is { } why) {
+							kept ??= $"{Path.GetRelativePath(item.Location, p)} kept: {why}";
+							continue;
+						}
 						r = r.Add(SafeDelete.Tree(p));
 					}
+					if (kept != null && r.Bytes == 0 && r.Left == 0) return new CleanResult(0, 0, kept);
 					return CleanResult.Of(r, item.Location, use);
 				}
 				case DevScanner.Orphans: {
@@ -845,8 +921,16 @@ namespace HEI.Agent {
 				case DevScanner.Worktrees: {
 					if (item.Repo == null) return new CleanResult(0, 0, "Unknown repository");
 					if (use.Why(item.Location) is { } busy) return new CleanResult(0, 0, busy);
-					if (DevScanner.IsLeftoverWorktree(item.Repo, item.Location))
-						return CleanResult.Of(SafeDelete.Tree(item.Location), item.Location, use);
+					if (DevScanner.IsLeftoverWorktree(item.Repo, item.Location)) {
+						// Git no longer knows the folder, so it can't say what in it was never committed: only what a build
+						// makes again goes for good, and the rest to the Recycle Bin, where it can be put back.
+						var built = new SafeDelete.Result(0, 0);
+						foreach (string p in DevScanner.BuiltInside(item.Location)) built = built.Add(SafeDelete.Tree(p));
+						if (built.Left > 0) return CleanResult.Of(built, item.Location, use);
+						RecycleResult rest = Recycler.RecyclePaths(new[] { item.Location });
+						return new CleanResult(built.Bytes + rest.RecycledBytes, rest.Failed.Count, null,
+							rest.Failed.FirstOrDefault()?.Path, rest.Failed.FirstOrDefault()?.Reason);
+					}
 					// At a manor with Reeve, git worktrees are Reeve's to remove (ManorRoles): read fresh, whatever the list said.
 					if (ManorRoles.Now().Worktrees is { } reeve) return new CleanResult(0, 0, reeve.Note + ": Heiward leaves worktrees to it");
 					if (DevScanner.WorktreeBlocker(item.Location) is { } why) return new CleanResult(0, 0, why);
