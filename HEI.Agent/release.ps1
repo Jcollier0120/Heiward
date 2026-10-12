@@ -48,6 +48,26 @@ function Get-SignProblem([string]$SignTool, $Cert) {
 	if ($provider -match 'SimplySign' -and -not (Get-Process SimplySignDesktop -ErrorAction SilentlyContinue)) {
 		return 'SimplySign Desktop isn''t running, and the signing key is in its cloud: start it and connect (your SimplySign ID and the token from the phone app)'
 	}
+	# Running isn't connected: a SimplySign Desktop whose session has ended leaves the certificate in the store, key and
+	# all, and signtool then finds "no certificates that met all the given criteria". So a copy of signtool itself is
+	# signed first (untimestamped, and thrown away), the one way to know the key answers.
+	$probe = Join-Path ([IO.Path]::GetTempPath()) "heiward-signprobe-$([guid]::NewGuid().ToString('N')).exe"
+	try {
+		Copy-Item $SignTool $probe
+		$r = Invoke-SignTool @('sign', '/sha1', $Thumbprint, '/fd', 'SHA256', $probe) 2
+		if ($r.TimedOut) { return "signtool didn't sign a trial file within 2 minutes: SimplySign Desktop's sign-in is likely waiting. Connect it (your SimplySign ID and the token from the phone app)" }
+		if (-not $r.Ok) { return (Get-SignFailure $r.Text) }
+	}
+	finally {
+		Remove-Item $probe -ErrorAction SilentlyContinue
+	}
+}
+# What a failed signtool sign says, put in a line that says what to do.
+function Get-SignFailure([string]$Text) {
+	if ($Text -match 'No certificates were found that met all the given criteria') {
+		return "signtool can't reach the signing certificate's key ($Thumbprint): SimplySign Desktop isn't connected. Connect it (your SimplySign ID and the token from the phone app)"
+	}
+	"signtool couldn't sign a trial file: $Text"
 }
 # Quoted as one argument for Start-Process, which joins its arguments with spaces as they are.
 function ConvertTo-Argument([string]$Text) { if ($Text -match '[\s"]') { '"' + ($Text -replace '"', '\"') + '"' } else { $Text } }
@@ -77,6 +97,8 @@ function Set-ReleaseSignature([string]$File) {
 	for ($try = 1; ; $try++) {
 		$r = Invoke-SignTool $sign 5
 		if ($r.Ok) { break }
+		# A key out of reach stays so: only the timestamp server's hiccups are worth another try.
+		if ($r.Text -match 'No certificates were found') { throw "Couldn't sign $(Split-Path $File -Leaf): $(Get-SignFailure $r.Text)." }
 		if ($r.TimedOut -or $try -ge 3) { throw "Couldn't sign $(Split-Path $File -Leaf): $($r.Text)" }
 		Write-Warning "Signing $(Split-Path $File -Leaf) failed (try $try of 3), trying again in 15 s: $($r.Text)"
 		Start-Sleep -Seconds 15
