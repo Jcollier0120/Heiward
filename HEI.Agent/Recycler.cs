@@ -48,8 +48,9 @@ namespace HEI.Agent {
 			}
 
 			var ok = new List<string>();
+			var room = new BinRoom();
 			foreach (string p in chosen) {
-				string? why = RefuseReason(p, byPath[p]);
+				string? why = RefuseReason(p, byPath[p], room);
 				if (why != null) failed.Add(new(p, why));
 				else ok.Add(p);
 			}
@@ -84,11 +85,14 @@ namespace HEI.Agent {
 		public static RecycleResult RecyclePaths(IReadOnlyCollection<string> paths) {
 			var failed = new List<RecycleFailure>();
 			var ok = new List<(string Path, long Bytes)>();
+			var room = new BinRoom();
 			foreach (string p in paths.Distinct(StringComparer.OrdinalIgnoreCase)) {
 				bool folder = Directory.Exists(p);
 				if (!folder && !File.Exists(p)) continue; // already gone
 				long size = folder ? DevScanner.Measure(p).Bytes : new FileInfo(p).Length;
-				if (BinRefusal(Path.GetFullPath(p), size) is { } why) failed.Add(new(p, why));
+				// The shell deletes for good what it can't put in the bin, a path too long for it among them.
+				if (folder && TooLongInside(p) is { } tooLong) failed.Add(new(p, $"a path in it is too long for the Recycle Bin ({tooLong}); delete it yourself if you're sure"));
+				else if (BinRefusal(Path.GetFullPath(p), size, room) is { } why) failed.Add(new(p, why));
 				else ok.Add((p, size));
 			}
 			if (ok.Count == 0) return new(new(), failed, 0);
@@ -112,21 +116,33 @@ namespace HEI.Agent {
 			return new(recycled, failed, bytes);
 		}
 
+		/// <summary>The first path below <paramref name="folder"/> longer than the Recycle Bin takes (259 characters), or null.</summary>
+		internal static string? TooLongInside(string folder) {
+			var all = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
+			try { return Directory.EnumerateFileSystemEntries(folder, "*", all).FirstOrDefault(e => e.Length > 259); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return folder; }
+		}
+
 		/// <summary>Why <paramref name="path"/> must not go through the shell's delete, or null when it may.</summary>
-		static string? RefuseReason(string path, ReportItem item) {
+		static string? RefuseReason(string path, ReportItem item, BinRoom room) {
 			var fi = new FileInfo(path);
 			if (!fi.Exists)
 				return "already gone";
 			if (fi.Length != item.Size || Math.Abs((fi.LastWriteTimeUtc - item.ModifiedUtc).TotalSeconds) > 2)
 				return "changed since the scan; scan again first";
-			return BinRefusal(fi.FullName, fi.Length);
+			return BinRefusal(fi.FullName, fi.Length, room);
 		}
 
 		/// <summary>
 		/// Why the Recycle Bin can't take <paramref name="fullPath"/> (<paramref name="bytes"/> in all), so the shell would delete it
 		/// for good: on a network or removable drive, a drive set to delete at once, or too big for its bin. Null when it can.
 		/// </summary>
-		internal static string? BinRefusal(string fullPath, long bytes) {
+		/// <param name="room">
+		/// The room left in each drive's bin for this batch: what's already in the bin counts, so a batch never pushes the
+		/// bin over its size, which makes Windows delete its oldest items for good (the person's own deletes among them).
+		/// Null: only the bin's size counts.
+		/// </param>
+		internal static string? BinRefusal(string fullPath, long bytes, BinRoom? room = null) {
 			string? root = Path.GetPathRoot(fullPath);
 			if (string.IsNullOrEmpty(root) || root.StartsWith(@"\\", StringComparison.Ordinal))
 				return "on a network location, which has no Recycle Bin";
@@ -138,7 +154,29 @@ namespace HEI.Agent {
 				return "this drive is set to delete files immediately instead of using the Recycle Bin";
 			if (bytes > maxBytes)
 				return $"too large for this drive's Recycle Bin ({maxBytes / (1 << 20):N0} MB); delete it yourself if you're sure";
+			if (room != null && !room.Take(root, maxBytes, bytes))
+				return "the Recycle Bin on this drive is nearly full, and Windows would delete what's already in it for good to make room; empty it, then try again";
 			return null;
+		}
+
+		/// <summary>The room left in each drive's Recycle Bin, counted down as a batch fills it.</summary>
+		internal sealed class BinRoom {
+			readonly Dictionary<string, long> left = new(StringComparer.OrdinalIgnoreCase);
+			readonly Func<string, long> used;
+
+			/// <param name="used">What a drive's bin holds now; the shell's own count (SHQueryRecycleBin) when null.</param>
+			internal BinRoom(Func<string, long>? used = null) => this.used = used ?? RecycleBinSize.Of;
+
+			/// <summary>Takes <paramref name="bytes"/> of the bin's room on <paramref name="root"/>; false, taking nothing, when they don't fit.</summary>
+			internal bool Take(string root, long maxBytes, long bytes) {
+				if (!left.TryGetValue(root, out long room)) room = maxBytes - used(root);
+				if (bytes > room) {
+					left[root] = room;
+					return false;
+				}
+				left[root] = room - bytes;
+				return true;
+			}
 		}
 
 		/// <summary>

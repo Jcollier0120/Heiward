@@ -131,6 +131,9 @@ namespace HEI.Agent {
 			}
 		}
 
+		/// <summary>What the Recycle Bin on the drive <paramref name="root"/> holds now, in bytes; 0 when Windows can't say.</summary>
+		internal static long Of(string root) => Query(root);
+
 		static long Query(string root) {
 			try {
 				var info = new SHQUERYRBINFO { cbSize = Marshal.SizeOf<SHQUERYRBINFO>() };

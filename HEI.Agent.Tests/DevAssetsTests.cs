@@ -524,4 +524,47 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.True(File.Exists(Path.Combine(repo, "Vendor", "bin", "Release", "tool.dll")));
 		Assert.True(File.Exists(Path.Combine(repo, "HEI.Core", "bin", "Debug", "HEI.Core.dll")));
 	}
+
+	[Fact]
+	public void AWorktreeWithIgnoredFilesABuildDoesntMake_IsKept() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, item) = AgentWorktree("env");
+		File.AppendAllText(Path.Combine(repo, ".git", "info", "exclude"), "\n.env\n*.tsbuildinfo\n");
+		Touch(Path.Combine(wt, "node_modules", "pkg", "x.js"));
+		Touch(Path.Combine(wt, "app.tsbuildinfo"));
+		Assert.Empty(DevScanner.KeptIgnored(wt)!);
+
+		// git worktree remove would delete the .env with the rest.
+		File.WriteAllText(Path.Combine(wt, ".env"), "TOKEN=1");
+		Assert.Equal(new[] { ".env" }, DevScanner.KeptIgnored(wt));
+		Assert.Equal("Files git ignores that aren't build output, such as .env: kept", DevScanner.WorktreeBlocker(wt));
+		Assert.Equal("Files git ignores that aren't build output, such as .env: kept", DevCleaner.Clean(item, new AgentConfig()).Error);
+		Assert.True(File.Exists(Path.Combine(wt, ".env")));
+	}
+
+	[Fact]
+	public void Clean_KeepsABuildOutputHoldingADatabase_OrFilesGitTracks() {
+		string app = Dir("p", "App");
+		Touch(Path.Combine(app, "App.csproj"));
+		Touch(Path.Combine(app, "bin", "Debug", "App.dll"), 30);
+		Touch(Path.Combine(app, "bin", "Debug", "site.db"), 30);
+		Touch(Path.Combine(app, "obj", "project.assets.json"), 20);
+		var item = new DevItem("id", DevScanner.Projects, "p", Path.Combine(root, "p"),
+			new() { Path.Combine(app, "bin"), Path.Combine(app, "obj") }, 80, null, true, null, "");
+		// The obj folder goes; the bin folder holds a database a build doesn't make again, and stays.
+		Assert.Equal(20, DevCleaner.Clean(item, new AgentConfig()).FreedBytes);
+		Assert.True(File.Exists(Path.Combine(app, "bin", "Debug", "site.db")));
+		Assert.Equal(@"App\bin kept: it holds a database, Debug\site.db",
+			DevCleaner.Clean(item with { Paths = new() { Path.Combine(app, "bin") } }, new AgentConfig()).Error);
+
+		if (Git.Exe == null) return; // the rest needs git
+		string repo = Dir("tracked");
+		G(repo, "init");
+		Touch(Path.Combine(repo, "Tool.csproj"));
+		Touch(Path.Combine(repo, "bin", "run.cmd"));
+		G(repo, "add", ".");
+		G(repo, "commit", "-m", "one");
+		Assert.Equal("git keeps files in it", DevScanner.BuildOutputKeeps(repo, Path.Combine(repo, "bin")));
+		Assert.Null(DevScanner.BuildOutputKeeps(repo, Dir("tracked", "obj")));
+	}
 }
