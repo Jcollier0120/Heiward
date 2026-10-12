@@ -41,6 +41,8 @@ namespace HEI.Agent {
 	sealed record RevealRequest(string? Path, bool Open = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
 	sealed record AutoAllowRequest(string Pair, bool Allow);
+	/// <param name="KeepData">Keep the settings and the report, for if Heiward is installed again; false deletes them too (--purge).</param>
+	sealed record UninstallRequest(bool KeepData = true);
 
 	/// <summary>
 	/// The review page on http://127.0.0.1:{port}. LOCAL ONLY, AND THE BUTTONS ARE GUARDED:
@@ -420,6 +422,20 @@ namespace HEI.Agent {
 				app.Lifetime.StopApplication();
 				return Results.Accepted();
 			});
+			// Settings > Apps' uninstall, asked on this page in a window of its own (Installer.OpenUninstallWindow): this
+			// process runs it, answers, then stops, so the folder it runs from can go.
+			app.MapPost("/api/uninstall", (UninstallRequest request) => {
+				if (!Installer.PageCanUninstall) return Results.Conflict(new { error = "This copy of Heiward isn't the installed one: uninstall it from Settings > Apps > Installed apps." });
+				if (StoreSetup.Running) return Results.Conflict(new { error = "Heiward is being set up: wait for it to finish." });
+				var (ok, lines) = Installer.UninstallFromPage(purge: !request.KeepData);
+				if (ok) _ = Task.Run(async () => {
+					await Task.Delay(1500); // the answer reaches the page first
+					app.Lifetime.StopApplication();
+					await Task.Delay(10_000);
+					Environment.Exit(0); // its folder goes only once this process has
+				});
+				return Results.Json(new { ok, lines });
+			});
 
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
@@ -453,6 +469,8 @@ namespace HEI.Agent {
 				firstRound = FirstRound.Now(),
 				// Its page has a tour at #/tour (wwwroot/tour.js), as a kit agent's ping says: Manor's hire flow offers Take the tour.
 				tour = true,
+				// Its page asks Settings > Apps' uninstall at #/uninstall (Installer.OpenUninstallWindow), and runs it.
+				uninstallPage = true,
 				// POST /api/pictures/compare's version (PicturesRoute): Heiward compares pictures by look for another agent.
 				pictures = PictureCompare.Version,
 			};

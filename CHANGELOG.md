@@ -2,6 +2,22 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.27
+
+**Uninstalling Heiward looks like setting it up, and asks before it goes.**
+
+### What's new
+
+- Uninstalling Heiward from Settings > Apps opens a window like its setup: the same banner, steps and pictures. It says what goes and what stays, and asks whether to keep your settings and the report, for if you install Heiward again. Uninstall or Cancel, then it shows how it went.
+
+### What changed
+
+- Before, uninstalling from Settings > Apps happened silently, with no window. Tools that uninstall quietly, such as winget, still do, and so does Castellan's uninstall.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.26
 
 **Heiward keeps more of your files out of harm's way when it cleans.**
