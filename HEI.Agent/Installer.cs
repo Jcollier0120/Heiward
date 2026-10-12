@@ -239,13 +239,14 @@ namespace HEI.Agent {
 				if (!dryRun) RemoveGitHubCopy();
 			}
 
-			Step(cfg.ScanEveryMinutes > 0
-				? $"Task Scheduler: '{Scheduler.ScanTask}' {Scheduler.Describe(cfg)}, '{Scheduler.OpenTask}' at sign-in"
-				: $"Task Scheduler: no scan task (scans run when you press Scan now), '{Scheduler.OpenTask}' at sign-in");
 			bool fromStore = StorePackage.IsPackaged;
+			string atSignIn = fromStore ? $"'{Scheduler.OpenTask}' at sign-in" : $"Startup apps: {Startup.LauncherExe} at sign-in (HKCU\\{Startup.RunKey})";
+			Step(cfg.ScanEveryMinutes > 0
+				? $"Task Scheduler: '{Scheduler.ScanTask}' {Scheduler.Describe(cfg)}; {atSignIn}"
+				: $"Task Scheduler: no scan task (scans run when you press Scan now); {atSignIn}");
 			if (dryRun) {
 				if (cfg.ScanEveryMinutes > 0) Console.WriteLine(Scheduler.ScanXml(cfg, TaskExe, fromStore));
-				Console.WriteLine(Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
+				Console.WriteLine(fromStore ? Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore) : Startup.Command(Startup.LauncherExe, cfg.OpenPageAtSignIn));
 			}
 			else if (RegisterTasks(cfg) is string why) throw new InvalidOperationException(why);
 
@@ -425,10 +426,11 @@ namespace HEI.Agent {
 				Say((dryRun ? "[dry run] " : "") + s);
 				Log("uninstall: " + s);
 			}
-			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'");
+			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'" + (StorePackage.IsPackaged ? "" : ", and Heiward from Startup apps"));
 			if (!dryRun) {
 				Scheduler.Remove(Scheduler.ScanTask);
 				Scheduler.Remove(Scheduler.OpenTask);
+				if (!StorePackage.IsPackaged) Startup.Remove();
 				Scheduler.Remove(Scheduler.UninstallTask); // what ran this uninstall, if anything did: it runs on regardless
 			}
 			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
@@ -537,7 +539,9 @@ namespace HEI.Agent {
 			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
 			else Scheduler.Remove(Scheduler.ScanTask);
 			// Always: it's what brings the page back after a restart. The setting decides only whether the browser opens.
-			Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
+			// The copy from GitHub's is in Windows' Startup apps, where it can be seen and turned off; the Store version's a task.
+			if (fromStore) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
+			else Startup.Register(cfg.OpenPageAtSignIn);
 			Scheduler.Forget();
 			return null;
 		}
@@ -722,7 +726,7 @@ namespace HEI.Agent {
 			DeleteOwnShortcut(StartMenuShortcut);
 			DeleteOwnShortcut(DesktopShortcut);
 			// The heiward: links' too: the Store version's own come with its package.
-			bool entryLeft = !DeleteUserKeysOutside(Toast.AppIdKey, ProtocolKey, UninstallKey);
+			bool entryLeft = !DeleteUserKeysOutside([Toast.AppIdKey, ProtocolKey, UninstallKey], [(Startup.RunKey, Startup.ValueName)]);
 			// A process that just stopped can hold its exe for a moment.
 			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
 				try { Directory.Delete(InstallDir, recursive: true); }
@@ -758,9 +762,9 @@ namespace HEI.Agent {
 		/// included. Task Scheduler starts its tasks outside any package: a one-time task deletes them.
 		/// </summary>
 		/// <returns>True once the task has run; this view can't tell whether the keys are gone.</returns>
-		static bool DeleteUserKeysOutside(params string[] keys) {
+		static bool DeleteUserKeysOutside(string[] keys, (string Key, string Value)[] values) {
 			try {
-				Scheduler.Register(Scheduler.RemoveKeysTask, Scheduler.DeleteKeysXml(keys));
+				Scheduler.Register(Scheduler.RemoveKeysTask, Scheduler.DeleteKeysXml(keys, values));
 				if (Scheduler.RunNow(Scheduler.RemoveKeysTask))
 					// The task deletes itself last.
 					for (var until = DateTime.UtcNow.AddSeconds(15); DateTime.UtcNow < until; Thread.Sleep(250))

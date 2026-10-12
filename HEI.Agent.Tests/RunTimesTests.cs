@@ -145,7 +145,8 @@ public sealed class RunTimesTests : IDisposable {
 		// As Results.Json writes it: the web defaults.
 		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ReviewServer.Ping(cfg), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 		JsonElement root = doc.RootElement;
-		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "uninstallPage", "pictures" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "uninstallPage", "pictures", "needsYou" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.Equal(0, root.GetProperty("needsYou").GetArrayLength()); // no report, so nothing waits for review (ReviewWaiting)
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("firstRound").ValueKind); // no first scan waiting or running (FirstRound)
 		Assert.Equal(1, root.GetProperty("pictures").GetInt32()); // POST /api/pictures/compare is here (PicturesRoute)
 		Assert.True(root.GetProperty("tour").GetBoolean()); // its page has a tour at #/tour (tour.js)
@@ -154,5 +155,17 @@ public sealed class RunTimesTests : IDisposable {
 		Assert.True(root.GetProperty("lastRunOk").GetBoolean());
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("nextRunAt").ValueKind); // scans only when asked
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("runningSince").ValueKind);
+	}
+
+	[Fact]
+	public void WhatWaitsForReview_IsSaidAsManorReadsItsStaff() {
+		// Manor's needsYouConditions takes an item with a string id and title, a detail list and a link to the page.
+		using var one = JsonDocument.Parse(JsonSerializer.Serialize(ReviewWaiting.Item(1, "http://heiward.localhost:18484/")));
+		Assert.Equal("review", one.RootElement.GetProperty("id").GetString());
+		Assert.Equal("A set of copies waits for your review", one.RootElement.GetProperty("title").GetString());
+		Assert.Equal(JsonValueKind.Array, one.RootElement.GetProperty("detail").ValueKind);
+		Assert.Equal("http://heiward.localhost:18484/", one.RootElement.GetProperty("url").GetString());
+		using var many = JsonDocument.Parse(JsonSerializer.Serialize(ReviewWaiting.Item(1200, "http://heiward.localhost:18484/")));
+		Assert.Equal("1,200 sets of copies wait for your review", many.RootElement.GetProperty("title").GetString());
 	}
 }

@@ -19,7 +19,7 @@ About 680 of `HEI.Agent`'s 3,700 lines, plus Windows specifics inside the scan s
 | Project | `net10.0-windows` | `net10.0`, with the Windows parts behind `OperatingSystem.IsWindows()` | same |
 | Install folder | `%LOCALAPPDATA%\Programs\Heiward` | `~/.local/bin/hei`, state in `~/.local/share/heiward` | `~/.local/bin/hei`, state in `~/Library/Application Support/Heiward` |
 | Scheduled scans | Task Scheduler | systemd user timer and service | launchd LaunchAgent (`StartInterval`) |
-| Page at sign-in | logon task | `~/.config/autostart/heiward.desktop` | LaunchAgent with `RunAtLoad` |
+| Page at sign-in | Startup apps (`HKCU\…\Run`, `Heiward.exe`); the Store version, a logon task | `~/.config/autostart/heiward.desktop` | LaunchAgent with `RunAtLoad` |
 | App menu | Start menu `.lnk` | `~/.local/share/applications/heiward.desktop` | none at first (an `.app` wrapper later) |
 | Uninstall | Apps & Features | `hei uninstall` | `hei uninstall` |
 | Notifications | toast under a registered AppUserModelID | `notify-send` / D-Bus | `osascript` at first; a proper sender needs a signed `.app` |

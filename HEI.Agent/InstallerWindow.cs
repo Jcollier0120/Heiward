@@ -73,8 +73,11 @@ namespace HEI.Agent {
 		/// <summary>The installed copy's page in setup mode, allowed to copy what the downloaded exe's folder already has.</summary>
 		internal static string[] SetupServeArguments(string downloadedFrom) => ["serve", "--setup", "--no-browser", "--reuse-from", downloadedFrom];
 
-		/// <summary>The page in an Edge app window: no tabs nor address bar, Heiward's icon and title.</summary>
-		static void OpenAppWindow(string url) {
+		/// <summary>
+		/// The page in an Edge app window: no tabs nor address bar, Heiward's icon and title, as Castellan's own page opens.
+		/// Whatever the default browser is; that browser only when Edge isn't there.
+		/// </summary>
+		internal static void OpenAppWindow(string url) {
 			if (EdgePath() is string edge) {
 				try {
 					var psi = new ProcessStartInfo(edge) { UseShellExecute = false };
@@ -85,7 +88,7 @@ namespace HEI.Agent {
 				}
 				catch (System.ComponentModel.Win32Exception) { }
 			}
-			ReviewServer.OpenBrowser(AgentConfig.Load().Port);
+			ReviewServer.OpenInDefaultBrowser(url);
 		}
 
 		internal static string[] EdgeArguments(string url) => [$"--app={url}", "--window-size=1180,820", "--no-first-run"];

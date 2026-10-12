@@ -25,8 +25,10 @@ namespace HEI.Agent {
 	/// <item><see cref="ScanTask"/>: a scan every <see cref="AgentConfig.ScanEveryMinutes"/> minutes, catching
 	/// up after the PC was off. On battery it runs only if allowed, and the scan itself steps aside in
 	/// Battery Saver or below <see cref="AgentConfig.MinBatteryPercent"/>.</item>
-	/// <item><see cref="OpenTask"/>: at sign-in, starts the review page, which stays up; and opens it in the default
-	/// browser, at most once a day and only when something waits for review (<see cref="AgentConfig.OpenPageAtSignIn"/>).</item>
+	/// <item><see cref="OpenTask"/>, the Store version's: at sign-in, starts the review page, which stays up; and opens
+	/// it in a window of its own, at most once a day and only when something waits for review (<see cref="AgentConfig.OpenPageAtSignIn"/>).
+	/// Never at a manor: Manor's page lists what waits (<see cref="ReviewWaiting"/>). The copy from GitHub does the same
+	/// from Windows' Startup apps instead (<see cref="Startup"/>), where it can be seen and turned off.</item>
 	/// </list>
 	/// Both run through conhost --headless: the console app gets its console, the user no window.
 	/// </summary>
@@ -104,7 +106,7 @@ namespace HEI.Agent {
 		/// Deletes the HKCU <paramref name="keys"/> with reg.exe, then the task itself, run once by <see cref="RunNow"/>:
 		/// Task Scheduler starts it outside the package, where the user's keys are.
 		/// </summary>
-		public static string DeleteKeysXml(IEnumerable<string> keys) => Task(
+		public static string DeleteKeysXml(IEnumerable<string> keys, IEnumerable<(string Key, string Value)>? values = null) => Task(
 			"Removes the registry entries of the copy of Heiward from GitHub, which the Microsoft Store version replaces.",
 			"",
 			"""
@@ -112,11 +114,12 @@ namespace HEI.Agent {
 			    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
 			    <ExecutionTimeLimit>PT5M</ExecutionTimeLimit>
 			""",
-			DeleteKeysAction(keys));
+			DeleteKeysAction(keys, values));
 
 		/// <summary>cmd's quotes around it all: a command that starts with a quote loses its first and last one.</summary>
-		internal static string DeleteKeysAction(IEnumerable<string> keys) =>
-			$"--headless \"{Cmd}\" /d /c \"{string.Concat(keys.Select(k => $"\"{Reg}\" delete \"HKCU\\{k}\" /f >nul 2>&1 & "))}\"{Schtasks}\" /Delete /TN \"{RemoveKeysTask}\" /F >nul\"";
+		internal static string DeleteKeysAction(IEnumerable<string> keys, IEnumerable<(string Key, string Value)>? values = null) =>
+			$"--headless \"{Cmd}\" /d /c \"{string.Concat(keys.Select(k => $"\"{Reg}\" delete \"HKCU\\{k}\" /f >nul 2>&1 & "))}" +
+			$"{string.Concat((values ?? []).Select(v => $"\"{Reg}\" delete \"HKCU\\{v.Key}\" /v \"{v.Value}\" /f >nul 2>&1 & "))}\"{Schtasks}\" /Delete /TN \"{RemoveKeysTask}\" /F >nul\"";
 
 		/// <summary>
 		/// What conhost --headless runs. Uninstalling the Store version removes the alias and runs none of

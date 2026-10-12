@@ -2,6 +2,23 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.29
+
+**Heiward starts with Windows the usual way: you'll find it in Startup apps, and it opens in its own window.**
+
+### What's new
+
+- Heiward is listed in Windows' Startup apps (Settings > Apps > Startup, and Task Manager's Startup apps), as Heiward. Turn it off there and it stays off, even after updates. Its page then starts when you open Heiward instead of when you sign in.
+
+### What changed
+
+- When duplicates wait for your review, Heiward's page opens in a window of its own (Microsoft Edge's, with no tabs or address bar), not in your default browser.
+- With Castellan, Heiward no longer opens its page when you sign in at all. Castellan's page tells you when copies wait for your review, with a link to Heiward.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The update moves Heiward from its hidden sign-in task to Startup apps.
+
 ## 1.9.27
 
 **Uninstalling Heiward looks like setting it up, and asks before it goes.**
