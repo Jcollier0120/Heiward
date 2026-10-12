@@ -85,13 +85,14 @@ namespace HEI.GUI.Tests {
 		}
 
 		[Fact]
-		public void TrashUnavailable_FallsBackToPermanentDelete() {
-			bool exists = true;
-			var outcome = DiskDeletion.DeleteOne(P, permanently: false, batchedRecycle: false, batchRecycled: false,
-				fileExists: _ => exists, deleteFile: _ => exists = false, moveToTrash: _ => false);
+		public void TrashUnavailable_LeavesTheFile() {
+			// Never a permanent delete in the trash's place: the file stays, and the person is told why.
+			bool exists = true, deleteCalled = false;
+			Assert.True(Throws(() => DiskDeletion.DeleteOne(P, permanently: false, batchedRecycle: false, batchRecycled: false,
+				fileExists: _ => exists, deleteFile: _ => { deleteCalled = true; exists = false; }, moveToTrash: _ => false)));
 
-			Assert.Equal(DiskDeletion.Outcome.Deleted, outcome);
-			Assert.False(exists);
+			Assert.False(deleteCalled);
+			Assert.True(exists);
 		}
 
 		[Fact]

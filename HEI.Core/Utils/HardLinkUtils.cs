@@ -76,6 +76,28 @@ namespace HEI.Core.Utils {
 			CreateHardLinkUnix(linkPath, existingFilePath);
 		}
 
+		/// <summary>
+		/// Replaces the file at <paramref name="path"/> with a hard link (or a symbolic link) to <paramref name="target"/>, never
+		/// losing it on the way: the link is made beside it under a name of its own first, and only then takes its place, in one
+		/// rename. A link that can't be made (another volume, a file system without links, no rights) leaves the file as it was.
+		/// </summary>
+		public static void ReplaceWithLink(string path, string target, bool hard) {
+			if (!File.Exists(target))
+				throw new IOException($"the file to keep ('{target}') isn't there any more, so '{path}' was left as it was");
+			string temp = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.heiward-link");
+			if (hard)
+				CreateHardLink(temp, target);
+			else
+				File.CreateSymbolicLink(temp, target);
+			try {
+				File.Move(temp, path, overwrite: true);
+			}
+			catch {
+				try { File.Delete(temp); } catch { /* only the new link: the file itself is untouched */ }
+				throw;
+			}
+		}
+
 		// Its own non-inlined method: the JIT resolves every type a method body mentions when it
 		// compiles the method, so with the Mono call inline, Windows needed Mono.Posix.NETStandard
 		// just to create a hard link — and on win-arm64 that package ships no assembly at all.
