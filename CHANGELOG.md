@@ -2,6 +2,27 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.25
+
+**Heiward's setup opens in a window of its own, and shows what Heiward does while it sets up.**
+
+### What's new
+
+- Run the downloaded Heiward and its setup opens in a window of its own, in place of a console window: a welcome that
+  says what Heiward does, the few questions about your PC, then the setup's steps beside pictures of what Heiward does
+  while it gets the AI ready. When it's done, **Open Heiward** turns the same window into Heiward's page.
+- The window ends with Castellan, the staff of agents Heiward is part of, and a link to castellan-software.com.
+- The Microsoft Store version's first start has the same look.
+
+### What changed
+
+- Started from a script or a command prompt, the setup still asks its questions there.
+- If the window is closed before the setup starts, nothing is left running: run the download again to set Heiward up.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.24
 
 **The home page says a word about Castellan, the household Heiward belongs to.**

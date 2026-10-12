@@ -1218,7 +1218,6 @@ function gpuSetting(s) {
 // installed from GitHub. Then the install's progress beside a slideshow of what Heiward does (tools/art/make-art.mjs
 // draws the slides), and Done, with Castellan, the staff of agents Heiward is part of. The page keeps the setup's look
 // (html.setup-mode) until Open Heiward.
-const CASTELLAN_SITE = 'https://castellan-software.com/';
 const SETUP_SLIDES = [
   ['found', 'Look-alike photos and videos, found'],
   ['npu', 'AI on your NPU, not in the cloud'],
@@ -1251,11 +1250,10 @@ const setupOnDemand = () => setupAnswers.device !== 'npu' && setupAnswers.onDema
 /** Whether the page shows the setup: until it's done, and after, until Open Heiward when this page ran it. */
 const setupShowing = (s) => s.setup.needed || setupRan;
 
+/** Castellan's site, from the page's poll (ManorCard.ManorSiteUrl), as the home page's Castellan card has it. */
 function castellanLink(text, cls) {
-  const a = el('a', cls, text);
-  a.href = CASTELLAN_SITE;
-  a.target = '_blank';
-  a.rel = 'noopener';
+  const a = outLink(text, state.setup.site);
+  if (cls) a.className = cls;
   return a;
 }
 
@@ -1366,6 +1364,7 @@ function renderSetup(s) {
   document.title = 'Set up Heiward';
   const setup = s.setup;
   $('setup-version').textContent = setup.version ? 'Version ' + setup.version : '';
+  for (const a of document.querySelectorAll('#setup a[data-castellan]')) a.href = setup.site;
   // The Store version's setup has no welcome: Heiward's Store page was that.
   if (!setup.firstRun && setupStep === 'welcome') setupStep = 'pc';
   const view = !setup.needed ? 'done' : setup.running || (setup.failed && !setupRetry) ? 'progress' : setupStep;

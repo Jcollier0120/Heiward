@@ -90,6 +90,8 @@ namespace HEI.Agent {
 					// setup, on its review page, goes straight to the questions.
 					firstRun = FirstRun,
 					version = AppBuild.Current.Split('+')[0],
+					// Castellan's site, for the setup's links to the staff Heiward is part of.
+					site = ManorCard.ManorSiteUrl,
 					running,
 					failed,
 					output = needed ? output.ToList() : new List<string>(),
