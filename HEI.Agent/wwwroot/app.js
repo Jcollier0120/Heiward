@@ -3504,7 +3504,8 @@ function renderManorCard(card) {
     staff.append(li);
   }
   box.append(staff);
-  box.append(el('p', null, 'Try every agent free for 7 days, with no card. After that, from $4 a month. ' +
+  // The launch offer's price (Household, 25% off); back to $4 when the offer ends.
+  box.append(el('p', null, 'Try every agent free for 7 days, with no card. After that, from $3 a month. ' +
     'Stop paying and keep what you have: it all keeps working, just without new versions.'));
   box.append(el('p', 'muted small', 'Heiward stays free, and works the same without it.'));
   const actions = el('div', 'manor-card-actions');
