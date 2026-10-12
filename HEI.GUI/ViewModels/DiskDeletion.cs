@@ -77,8 +77,8 @@ namespace HEI.GUI.ViewModels {
 				throw new Exception("the shell did not move the file to the recycle bin");
 			if (permanently)
 				deleteFile(path);
-			else if (!moveToTrash(path)) // Linux/macOS: system trash, fall back to permanent delete
-				deleteFile(path);
+			else if (!moveToTrash(path)) // Linux/macOS: the system trash, never a permanent delete in its place
+				throw new Exception("it couldn't be moved to the trash, so it was left where it is; delete it permanently if you're sure");
 			if (fileExists(path))
 				throw new Exception("the delete call reported success but the file is still on disk");
 			return Outcome.Deleted;
