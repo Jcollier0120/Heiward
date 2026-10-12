@@ -38,7 +38,7 @@ namespace HEI.Agent {
 	/// notification name and Apps &amp; Features, which its package has, and its tasks run the "hei" alias. Its
 	/// review page asks the questions and runs this with the answers (<c>install --yes --device ...</c>).
 	/// </summary>
-	static class Installer {
+	static partial class Installer {
 		const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward";
 		const string DisplayName = "Heiward";
 

@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- The Porter's mark: an arched gate with its portcullis half down, spikes showing. Light and Dark. -->
+  <style>
+    .back { fill: #e8ebef; stroke: #3d4957; }
+    .front { fill: #3d4957; }
+    .bars { stroke: #3d4957; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #1b2027; stroke: #b6c3d1; }
+      .front { fill: #b6c3d1; }
+      .bars { stroke: #b6c3d1; }
+    }
+  </style>
+  <path class="back" stroke-width="1.6" stroke-linejoin="round" d="M3 22V11a9 9 0 0 1 18 0v11z"/>
+  <path class="bars" fill="none" stroke-width="1.7" stroke-linecap="butt" d="M8.3 4.6v11M12 3v12.6M15.7 4.6v11M4.6 8.6h14.8M4.6 12.6h14.8"/>
+  <path class="front" d="M7.2 15.4h2.2l-1.1 2.6zM10.9 15.4h2.2l-1.1 2.6zM14.6 15.4h2.2l-1.1 2.6z"/>
+</svg>

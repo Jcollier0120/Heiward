@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- The Cellarer's mark: a barrel of the household's stores, hooped, with the cellar's key across it. Light and Dark. -->
+  <style>
+    .back { fill: #f8e6e8; stroke: #7a2e3a; }
+    .front { fill: #7a2e3a; }
+    .line { stroke: #7a2e3a; }
+    @media (prefers-color-scheme: dark) {
+      .back { fill: #3a1b21; stroke: #f0a6b2; }
+      .front { fill: #f0a6b2; }
+      .line { stroke: #f0a6b2; }
+    }
+  </style>
+  <path class="back" stroke-width="1.4" stroke-linejoin="round" d="M6.2 3h11.6c1.6 2.6 2.4 5.6 2.4 9s-.8 6.4-2.4 9H6.2C4.6 18.4 3.8 15.4 3.8 12S4.6 5.6 6.2 3z"/>
+  <path class="line" fill="none" stroke-width="1.2" stroke-linecap="round" d="M4.5 7.4h15M4.5 16.6h15"/>
+  <circle class="front" cx="9.3" cy="12" r="2.3"/>
+  <path class="front" d="M11 11.2h7.2v1.6H11zM15.2 12.8h1.5v2h-1.5zM17.2 12.8h1v1.4h-1z"/>
+</svg>

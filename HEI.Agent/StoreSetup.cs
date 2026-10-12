@@ -27,18 +27,53 @@ namespace HEI.Agent {
 	sealed record SetupRequest(string? Device, bool OnDemand, string? ScanSpeed, bool RemoveGitHubCopy = false, string? Gpu = null);
 
 	/// <summary>
-	/// The Store version's first run, which has no console: the review page asks what the GitHub exe asks
-	/// in its window, then this runs <c>hei install --yes</c> with the answers in its own process and keeps
-	/// its output for the page. The install writes <see cref="AgentPaths.StoreSetUp"/> when it's done.
+	/// The setup's questions on the review page, then <c>hei install --yes</c> with the answers in its own process,
+	/// its output kept for the page. Two first runs use it:
+	/// <list type="bullet">
+	/// <item>the Store version's, which has no console: the install writes <see cref="AgentPaths.StoreSetUp"/> when it's done;</item>
+	/// <item>the GitHub exe's, double-clicked: it copies itself to the install folder and starts that copy's page with
+	/// <c>serve --setup</c> in a window of its own (<see cref="Installer.OpenSetupWindowAsync"/>); <see cref="FirstRun"/>
+	/// holds until the install succeeds.</item>
+	/// </list>
 	/// </summary>
 	static class StoreSetup {
 		static readonly object gate = new();
 		static readonly List<string> output = new();
-		static bool running, failed;
+		static bool running, failed, installedHere;
+		static DateTime lastSeenUtc = DateTime.UtcNow;
 
-		public static bool Needed => StorePackage.IsPackaged && !File.Exists(AgentPaths.StoreSetUp);
+		/// <summary>This page was started by the GitHub exe's setup window (<c>serve --setup</c>), to set Heiward up.</summary>
+		public static bool FirstRun { get; private set; }
+
+		/// <summary>Folders the install may copy FFmpeg and the AI components from: the downloaded exe's.</summary>
+		static IReadOnlyList<string> reuseFrom = Array.Empty<string>();
+
+		/// <summary>The GitHub exe's setup window: the page asks the questions until the install has succeeded.</summary>
+		public static void BeginFirstRun(IReadOnlyList<string>? reuse) {
+			FirstRun = true;
+			reuseFrom = reuse ?? Array.Empty<string>();
+		}
+
+		public static bool Needed => StorePackage.IsPackaged ? !File.Exists(AgentPaths.StoreSetUp) : FirstRun && !installedHere;
 
 		public static bool Running { get { lock (gate) return running; } }
+
+		/// <summary>The setup window's page asked for the state: it's still open.</summary>
+		public static void Seen() { lock (gate) lastSeenUtc = DateTime.UtcNow; }
+
+		/// <summary>
+		/// The GitHub exe's setup window was closed before the install started: nothing asks for this page, so it can
+		/// stop rather than stay up for a Heiward that isn't installed. The next double-click starts it again.
+		/// </summary>
+		public static bool Abandoned(DateTime nowUtc) {
+			lock (gate) return Abandoned(FirstRun, installedHere, running, lastSeenUtc, nowUtc);
+		}
+
+		internal static bool Abandoned(bool firstRun, bool installed, bool running, DateTime lastSeenUtc, DateTime nowUtc) =>
+			firstRun && !installed && !running && nowUtc - lastSeenUtc > TimeSpan.FromMinutes(3);
+
+		/// <summary>What runs the install: the Store version's console alias, or this copy, the installed exe.</summary>
+		static string SetupExe => StorePackage.IsPackaged ? StorePackage.ConsoleExe : Environment.ProcessPath ?? Installer.InstalledExe;
 
 		/// <summary>
 		/// For the page's state poll: whether to show the questions, the NPU it found (the page names it and
@@ -51,6 +86,10 @@ namespace HEI.Agent {
 			lock (gate) {
 				return new {
 					needed,
+					// The GitHub exe's setup window, with its welcome and the version it installs; the Store version's
+					// setup, on its review page, goes straight to the questions.
+					firstRun = FirstRun,
+					version = AppBuild.Current.Split('+')[0],
 					running,
 					failed,
 					output = needed ? output.ToList() : new List<string>(),
@@ -59,7 +98,8 @@ namespace HEI.Agent {
 					npuHardware = npu ? HardwareName(NpuHardware.Name) : "",
 					// An NPU this version can't use yet, named so the page can say why the AI runs elsewhere.
 					unsupportedNpu = needed && !npu && NpuHardware.Vendor != NpuVendor.None ? HardwareName(NpuHardware.Name) : "",
-					gitHubCopy = needed && !running ? Installer.GitHubCopyVersion() : null,
+					// Only the Store version replaces a copy from GitHub: the GitHub exe's own setup is that copy.
+					gitHubCopy = needed && !running && StorePackage.IsPackaged ? Installer.GitHubCopyVersion() : null,
 					// More than one graphics card: the page asks which one does the GPU work, suggesting the recommended one.
 					gpus = cards?.Select(g => new { key = g.Key, memory = (long)g.DedicatedMemory }).ToList(),
 					recommendedGpu = cards != null ? GpuAdapters.Recommended(cards)?.Key : null,
@@ -79,7 +119,7 @@ namespace HEI.Agent {
 				if (running) return "Setup is already running.";
 				output.Clear();
 				failed = false;
-				var psi = new ProcessStartInfo(StorePackage.ConsoleExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+				var psi = new ProcessStartInfo(SetupExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
 				foreach (string a in args) psi.ArgumentList.Add(a);
 				var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
 				DataReceivedEventHandler keep = (_, e) => { if (!string.IsNullOrWhiteSpace(e.Data)) lock (gate) output.Add(e.Data.Trim()); };
@@ -90,6 +130,7 @@ namespace HEI.Agent {
 					lock (gate) {
 						running = false;
 						failed = p.ExitCode != 0;
+						if (!failed && FirstRun) installedHere = true;
 					}
 					AgentPaths.AppendLog(p.ExitCode == 0 ? "set up from the review page" : $"setup from the review page failed (exit {p.ExitCode})");
 					if (p.ExitCode == 0) setUp();
@@ -106,13 +147,15 @@ namespace HEI.Agent {
 
 		/// <summary>The install's command line for the page's answers, or null when they aren't valid.</summary>
 		/// <param name="gpus">The cards the answer may name; null: this PC's.</param>
-		internal static List<string>? Arguments(SetupRequest request, IReadOnlyList<GpuAdapter>? gpus = null) {
+		/// <param name="reuse">The folders the install may copy the components from; null: the setup window's.</param>
+		internal static List<string>? Arguments(SetupRequest request, IReadOnlyList<GpuAdapter>? gpus = null, IReadOnlyList<string>? reuse = null) {
 			if (request.ScanSpeed is null || !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return null;
 			if (request.Device is not (null or "npu" or "gpu" or "cpu")) return null;
 			var args = new List<string> { "install", "--yes", "--no-browser", "--scan-speed", request.ScanSpeed };
 			if (request.Device != null) args.AddRange(new[] { "--device", request.Device });
 			if (request.OnDemand) args.Add("--on-demand");
 			if (request.RemoveGitHubCopy) args.Add("--remove-github-copy");
+			foreach (string folder in reuse ?? reuseFrom) args.AddRange(new[] { "--reuse-from", folder });
 			if (!string.IsNullOrWhiteSpace(request.Gpu)) {
 				if (GpuAdapters.Find(request.Gpu, gpus ?? GpuAdapters.List()) is not { } card) return null;
 				args.AddRange(new[] { "--gpu", card.Key });
