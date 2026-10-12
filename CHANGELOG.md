@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.34
+
+**A release whose signing key can't be reached now stops before it builds, and says why.**
+
+### What changed
+
+- Making a release checks it can really sign before it builds: it signs a small test file first. When the signing key's cloud session has ended, it says so and how to reconnect, instead of failing after the build. A build without publishing makes unsigned files then, with a warning.
+- This release also brings 1.9.32 (the Steward's kit 2.58.0, below), which was never released on its own.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.32
 
 **It carries the Steward's kit 2.58.0: the parts every agent of the manor shares.**

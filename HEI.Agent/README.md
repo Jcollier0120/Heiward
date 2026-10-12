@@ -518,7 +518,7 @@ It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `ar
 winget install Microsoft.WindowsSDK.10.0.26100 --override "/features OptionId.SigningTools /quiet /norestart"
 ```
 
-- The certificate's key is in Certum's cloud. **SimplySign Desktop** must be running and connected (your SimplySign ID and the token from its phone app). The script checks this before it builds.
+- The certificate's key is in Certum's cloud. **SimplySign Desktop** must be running and connected (your SimplySign ID and the token from its phone app). The script checks this before it builds, by signing a small test script: SimplySign Desktop can be running with its session ended, when the certificate is still listed but its key can't be reached (signtool: "No certificates were found that met all the given criteria").
 - It always runs the **x64** signtool. SimplySign's key provider comes as x64 and x86 DLLs only, which an Arm64 process can't load; on an Arm64 PC, Windows runs the x64 signtool emulated.
 - A sign that fails is tried three times (the timestamp server fails now and then). One that hangs for 5 minutes stops the release: SimplySign's sign-in is likely waiting.
 - With `-Publish` it won't release unsigned files. `-Unsigned` builds and publishes without signing, on a PC without the certificate. Without `-Publish`, a PC that can't sign builds unsigned files and says why.

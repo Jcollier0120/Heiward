@@ -48,6 +48,21 @@ function Get-SignProblem([string]$SignTool, $Cert) {
 	if ($provider -match 'SimplySign' -and -not (Get-Process SimplySignDesktop -ErrorAction SilentlyContinue)) {
 		return 'SimplySign Desktop isn''t running, and the signing key is in its cloud: start it and connect (your SimplySign ID and the token from the phone app)'
 	}
+	# Running isn't connected: with its session ended, the certificate stays in the store but its key can't be reached,
+	# and signtool finds "no certificates that met all the given criteria". Only a signature shows the key is there, so
+	# sign a small script first (no timestamp, so the timestamp server can't fail it).
+	$probe = Join-Path ([IO.Path]::GetTempPath()) "heiward-sign-probe-$([guid]::NewGuid().ToString('N')).ps1"
+	try {
+		Set-Content $probe '# Heiward: release.ps1 checks it can sign.' -Encoding ascii
+		$r = Invoke-SignTool @('sign', '/sha1', $Thumbprint, '/fd', 'SHA256', $probe) 2
+		if (-not $r.Ok) {
+			$why = if ($r.TimedOut) { "signtool didn't finish within 2 minutes" } else { $r.Text }
+			return "The signing certificate ($Thumbprint) is here, but signing with it failed ($why). Its key is in Certum's cloud: connect SimplySign Desktop (your SimplySign ID and the token from the phone app)"
+		}
+	}
+	finally {
+		Remove-Item $probe -ErrorAction SilentlyContinue
+	}
 }
 # Quoted as one argument for Start-Process, which joins its arguments with spaces as they are.
 function ConvertTo-Argument([string]$Text) { if ($Text -match '[\s"]') { '"' + ($Text -replace '"', '\"') + '"' } else { $Text } }
