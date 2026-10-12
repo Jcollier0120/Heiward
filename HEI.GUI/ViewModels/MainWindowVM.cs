@@ -2041,9 +2041,16 @@ Non-Windows setup:
 					// shell call IS the deletion and the counting only ran afterwards.
 					// Per-file success is determined by re-checking existence.
 					bool batchedRecycle = fromDisk && !permanently && !createLinks && CoreUtils.IsWindows;
+					// What the bin can't take stays where it is, with the reason: the shell would delete it for good.
+					var binRefused = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+					var binRoom = OperatingSystem.IsWindows() ? new RecycleBin.Room() : null;
 					DiskDeletion.RunChunked(toDelete, DiskDeletion.RecycleChunkSize, batchedRecycle,
 						d => d.ItemInfo.Path, File.Exists,
-						paths => {
+						all => {
+							if (!OperatingSystem.IsWindows()) return;
+							var (paths, refused) = RecycleBin.Sort(all, binRoom);
+							foreach (var (p, why) in refused) binRefused[p] = why;
+							if (paths.Count == 0) return;
 							var fs = new FileUtils.SHFILEOPSTRUCT {
 								wFunc = FileUtils.FileOperationType.FO_DELETE,
 								pFrom = string.Join('\0', paths) + "\0\0",
@@ -2073,16 +2080,14 @@ Non-Windows setup:
 										throw new Exception($"Cannot create a link for '{dub.ItemInfo.Path}' because all items in this group are selected");
 									if (!File.Exists(keeper.ItemInfo.Path))
 										throw new Exception($"Cannot create a link for '{dub.ItemInfo.Path}' because the file to keep ('{keeper.ItemInfo.Path}') does not exist");
-									// The link target path must be free before the link can be created.
-									File.Delete(dub.ItemInfo.Path);
-									if (createHardLinksInstead)
-										HardLinkUtils.CreateHardLink(dub.ItemInfo.Path, keeper.ItemInfo.Path);
-									else
-										File.CreateSymbolicLink(dub.ItemInfo.Path, keeper.ItemInfo.Path);
+									// The link is made first, then takes the file's place: a link that fails leaves the file.
+									HardLinkUtils.ReplaceWithLink(dub.ItemInfo.Path, keeper.ItemInfo.Path, createHardLinksInstead);
 									freedBytes += CheckedSizeOf(dub);
 								}
 							}
 							else if (fromDisk) {
+								if (binRefused.TryGetValue(dub.ItemInfo.Path, out string? binWhy))
+									throw new Exception(binWhy);
 								switch (DiskDeletion.DeleteOne(dub.ItemInfo.Path, permanently, batchedRecycle,
 										wasBatchRecycled, File.Exists, File.Delete, FileUtils.MoveToTrash)) {
 									case DiskDeletion.Outcome.Deleted:

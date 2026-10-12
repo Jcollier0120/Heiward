@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.28
+
+**Deleting or linking duplicates from Heiward's page and desktop app never loses a file the Recycle Bin can't take.**
+
+### What changed
+
+- When you send duplicates to the Recycle Bin from Heiward's page or the desktop app, a file the bin can't take is left where it is, with the reason: one on a network or removable drive, on a drive set to delete files at once, too large for the bin, or one that would push the bin past its size (Windows would then delete what's already in it for good). Before, Windows deleted such files for good without asking.
+- On Linux and macOS, a file that can't go to the trash is left where it is and you're told, instead of being deleted for good.
+- Replacing a duplicate with a link to the copy you keep makes the link first and only then puts it in the duplicate's place, so a link that can't be made leaves the file as it was.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.26
 
 **Heiward keeps more of your files out of harm's way when it cleans.**

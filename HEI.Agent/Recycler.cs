@@ -15,8 +15,6 @@
 //
 
 using System.Runtime.InteropServices;
-using System.Text;
-using Microsoft.Win32;
 using HEI.Core.Utils;
 
 namespace HEI.Agent {
@@ -116,12 +114,8 @@ namespace HEI.Agent {
 			return new(recycled, failed, bytes);
 		}
 
-		/// <summary>The first path below <paramref name="folder"/> longer than the Recycle Bin takes (259 characters), or null.</summary>
-		internal static string? TooLongInside(string folder) {
-			var all = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
-			try { return Directory.EnumerateFileSystemEntries(folder, "*", all).FirstOrDefault(e => e.Length > 259); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return folder; }
-		}
+		/// <summary>The first path below <paramref name="folder"/> longer than the Recycle Bin takes (<see cref="RecycleBin.TooLongInside"/>).</summary>
+		internal static string? TooLongInside(string folder) => RecycleBin.TooLongInside(folder);
 
 		/// <summary>Why <paramref name="path"/> must not go through the shell's delete, or null when it may.</summary>
 		static string? RefuseReason(string path, ReportItem item, BinRoom room) {
@@ -133,81 +127,10 @@ namespace HEI.Agent {
 			return BinRefusal(fi.FullName, fi.Length, room);
 		}
 
-		/// <summary>
-		/// Why the Recycle Bin can't take <paramref name="fullPath"/> (<paramref name="bytes"/> in all), so the shell would delete it
-		/// for good: on a network or removable drive, a drive set to delete at once, or too big for its bin. Null when it can.
-		/// </summary>
-		/// <param name="room">
-		/// The room left in each drive's bin for this batch: what's already in the bin counts, so a batch never pushes the
-		/// bin over its size, which makes Windows delete its oldest items for good (the person's own deletes among them).
-		/// Null: only the bin's size counts.
-		/// </param>
-		internal static string? BinRefusal(string fullPath, long bytes, BinRoom? room = null) {
-			string? root = Path.GetPathRoot(fullPath);
-			if (string.IsNullOrEmpty(root) || root.StartsWith(@"\\", StringComparison.Ordinal))
-				return "on a network location, which has no Recycle Bin";
-			var drive = new DriveInfo(root);
-			if (drive.DriveType != DriveType.Fixed)
-				return $"on a {drive.DriveType.ToString().ToLowerInvariant()} drive, which has no Recycle Bin";
-			(bool nuke, long maxBytes) = BinSettings(root, drive);
-			if (nuke)
-				return "this drive is set to delete files immediately instead of using the Recycle Bin";
-			if (bytes > maxBytes)
-				return $"too large for this drive's Recycle Bin ({maxBytes / (1 << 20):N0} MB); delete it yourself if you're sure";
-			if (room != null && !room.Take(root, maxBytes, bytes))
-				return "the Recycle Bin on this drive is nearly full, and Windows would delete what's already in it for good to make room; empty it, then try again";
-			return null;
-		}
+		/// <summary>Why the Recycle Bin can't take it, so the shell would delete it for good (<see cref="RecycleBin.Refusal"/>); null when it can.</summary>
+		internal static string? BinRefusal(string fullPath, long bytes, BinRoom? room = null) => RecycleBin.Refusal(fullPath, bytes, room);
 
-		/// <summary>The room left in each drive's Recycle Bin, counted down as a batch fills it.</summary>
-		internal sealed class BinRoom {
-			readonly Dictionary<string, long> left = new(StringComparer.OrdinalIgnoreCase);
-			readonly Func<string, long> used;
-
-			/// <param name="used">What a drive's bin holds now; the shell's own count (SHQueryRecycleBin) when null.</param>
-			internal BinRoom(Func<string, long>? used = null) => this.used = used ?? RecycleBinSize.Of;
-
-			/// <summary>Takes <paramref name="bytes"/> of the bin's room on <paramref name="root"/>; false, taking nothing, when they don't fit.</summary>
-			internal bool Take(string root, long maxBytes, long bytes) {
-				if (!left.TryGetValue(root, out long room)) room = maxBytes - used(root);
-				if (bytes > room) {
-					left[root] = room;
-					return false;
-				}
-				left[root] = room - bytes;
-				return true;
-			}
-		}
-
-		/// <summary>
-		/// The volume's Recycle Bin settings from HKCU\...\BitBucket\Volume\{guid}: NukeOnDelete and
-		/// MaxCapacity (MB). Without them, assume Windows' default cap, conservatively 5% of the volume.
-		/// </summary>
-		static (bool Nuke, long MaxBytes) BinSettings(string root, DriveInfo drive) {
-			long fallback = drive.TotalSize / 20;
-			try {
-				var sb = new StringBuilder(64);
-				if (!GetVolumeNameForVolumeMountPoint(root, sb, sb.Capacity))
-					return (false, fallback);
-				// "\\?\Volume{guid}\" -> "{guid}"
-				string name = sb.ToString();
-				int open = name.IndexOf('{'), close = name.IndexOf('}');
-				if (open < 0 || close < open)
-					return (false, fallback);
-				using RegistryKey? key = Registry.CurrentUser.OpenSubKey(
-					$@"Software\Microsoft\Windows\CurrentVersion\Explorer\BitBucket\Volume\{name[open..(close + 1)]}");
-				if (key == null)
-					return (false, fallback);
-				bool nuke = key.GetValue("NukeOnDelete") is int n && n != 0;
-				long max = key.GetValue("MaxCapacity") is int mb && mb > 0 ? (long)mb << 20 : fallback;
-				return (nuke, max);
-			}
-			catch {
-				return (false, fallback);
-			}
-		}
-
-		[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-		static extern bool GetVolumeNameForVolumeMountPoint(string mountPoint, StringBuilder volumeName, int bufferLength);
+		/// <summary>The room left in each drive's Recycle Bin, counted down as a batch fills it (<see cref="RecycleBin.Room"/>).</summary>
+		internal sealed class BinRoom(Func<string, long>? used = null) : RecycleBin.Room(used);
 	}
 }

@@ -224,8 +224,10 @@ namespace HEI.Web.Services {
 					// Windows: recycle the whole batch in one shell call — one
 					// SHFileOperation per file pays the full shell round-trip each time.
 					var batchRecycled = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+					// What the bin can't take stays where it is, with the reason: the shell would delete it for good.
+					var binRefused = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 					if (!permanent && OperatingSystem.IsWindows()) {
-						var existing = list.Where(d => File.Exists(d.Path)).Select(d => d.Path).ToList();
+						(var existing, binRefused) = RecycleBin.Sort(list.Where(d => File.Exists(d.Path)).Select(d => d.Path).Distinct(StringComparer.OrdinalIgnoreCase));
 						if (existing.Count > 0) {
 							var fs = new FileUtils.SHFILEOPSTRUCT {
 								wFunc = FileUtils.FileOperationType.FO_DELETE,
@@ -257,14 +259,14 @@ namespace HEI.Web.Services {
 								result.FreedBytes += Math.Max(0, item.SizeLong);
 							}
 							else if (OperatingSystem.IsWindows()) {
-								// The batch ran but this file is still there.
-								throw new IOException("the shell did not move the file to the recycle bin");
+								// Refused before the batch, or the batch ran but this file is still there.
+								throw new IOException(binRefused.TryGetValue(item.Path, out string? why) ? why : "the shell did not move the file to the recycle bin");
 							}
 							else {
-								// System trash, falling back to permanent delete (e.g.
-								// cross-filesystem files where trashing means a full copy).
+								// The system trash; never a permanent delete in its place (a file on another file system,
+								// where trashing means a full copy, is left for the person to delete).
 								if (!FileUtils.MoveToTrash(item.Path))
-									File.Delete(item.Path);
+									throw new IOException("it couldn't be moved to the trash, so it was left where it is; delete it permanently if you're sure");
 								result.FreedBytes += Math.Max(0, item.SizeLong);
 							}
 							_engine.Duplicates.Remove(item);
@@ -365,12 +367,8 @@ namespace HEI.Web.Services {
 								if (keeper == null)
 									throw new IOException("no unselected file is left in this group to link to");
 								long size = Math.Max(0, item.SizeLong);
-								// The link target path must be free before the link can be created.
-								File.Delete(item.Path);
-								if (hardLinks)
-									HardLinkUtils.CreateHardLink(item.Path, keeper.Path);
-								else
-									File.CreateSymbolicLink(item.Path, keeper.Path);
+								// The link is made first, then takes the file's place: a link that fails leaves the file.
+								HardLinkUtils.ReplaceWithLink(item.Path, keeper.Path, hardLinks);
 								result.FreedBytes += size;
 							}
 							_engine.Duplicates.Remove(item);

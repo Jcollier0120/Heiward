@@ -14,7 +14,6 @@
 // */
 //
 
-using System.Runtime.InteropServices;
 using HEI.Core.Utils;
 
 namespace HEI.Agent {
@@ -125,33 +124,13 @@ namespace HEI.Agent {
 			lock (Gate) {
 				if (key == cachedKey && Environment.TickCount64 - cachedAt < 60_000) return cachedBytes;
 				long bytes = 0;
-				foreach (string root in roots) bytes += Query(root);
+				foreach (string root in roots) bytes += RecycleBin.Used(root);
 				(cachedBytes, cachedAt, cachedKey) = (bytes, Environment.TickCount64, key);
 				return bytes;
 			}
 		}
 
 		/// <summary>What the Recycle Bin on the drive <paramref name="root"/> holds now, in bytes; 0 when Windows can't say.</summary>
-		internal static long Of(string root) => Query(root);
-
-		static long Query(string root) {
-			try {
-				var info = new SHQUERYRBINFO { cbSize = Marshal.SizeOf<SHQUERYRBINFO>() };
-				return SHQueryRecycleBin(root, ref info) == 0 ? Math.Max(0, info.i64Size) : 0;
-			}
-			catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException or SEHException) {
-				return 0;
-			}
-		}
-
-		[StructLayout(LayoutKind.Sequential)]
-		struct SHQUERYRBINFO {
-			public int cbSize;
-			public long i64Size;
-			public long i64NumItems;
-		}
-
-		[DllImport("shell32.dll", CharSet = CharSet.Unicode, EntryPoint = "SHQueryRecycleBinW")]
-		static extern int SHQueryRecycleBin(string pszRootPath, ref SHQUERYRBINFO pSHQueryRBInfo);
+		internal static long Of(string root) => RecycleBin.Used(root);
 	}
 }
