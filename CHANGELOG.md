@@ -4,15 +4,15 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.31
 
-**It carries the Steward's kit 2.56.1: the parts every agent of the manor shares.**
+**It carries the Steward's kit 2.57.0: the parts every agent of the manor shares.**
 
 ### What changed
 
-- The Steward's kit 2.56.1: `uninstall --purge` removes only the agent's own data folder.
+- The Steward's kit 2.57.0: An agent of Manor's staff no longer starts from a hidden sign-in task: Castellan, in Windows' Startup apps, starts Manor, and Manor starts its staff.
 
 ### Before you update
 
-- Nothing for an agent: take the new kit as usual. An uninstall that's refused says why, and leaves everything as it was.
+Nothing: it updates itself as usual.
 
 ## 1.9.30
 
