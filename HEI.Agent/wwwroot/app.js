@@ -411,6 +411,8 @@ function parseRoute() {
   const h = location.hash;
   if (h === '#/settings') return { view: 'settings' };
   if (h === '#/about') return { view: 'about' };
+  // Settings > Apps' uninstall (Installer.OpenUninstallWindow); /purge: --purge, so keeping the settings starts unticked.
+  if (h === '#/uninstall' || h === '#/uninstall/purge') return { view: 'uninstall', purge: h === '#/uninstall/purge' };
   if (h === '#/dev') return { view: 'dev', cat: null };
   if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
   if (h.startsWith('#/dev/s/')) return { view: 'dev', cat: decodeURIComponent(h.slice(8)) };
@@ -1296,13 +1298,17 @@ function setupStepsRail(view) {
   const firstRun = state && state.setup.firstRun;
   const steps = SETUP_STEPS.filter(([id]) => firstRun || id !== 'welcome');
   const now = steps.findIndex(([id]) => id === view);
-  $('setup-steps').replaceChildren(...steps.map(([, label], i) => {
-    const li = el('li', i < now ? 'done' : i === now ? 'now' : null);
-    li.append(el('span', 'setup-step-dot', i < now ? '' : String(i + 1)), el('span', null, label));
-    if (i < now) li.firstChild.append(icon('check'));
-    if (i === now) li.setAttribute('aria-current', 'step');
-    return li;
-  }));
+  $('setup-steps').setAttribute('aria-label', 'Setup steps');
+  $('setup-steps').replaceChildren(...steps.map(([, label], i) => stepItem(label, i, now)));
+}
+
+/** A step on the rail under the banner: done, now, or to come. The uninstall's rail has them too. */
+function stepItem(label, i, now) {
+  const li = el('li', i < now ? 'done' : i === now ? 'now' : null);
+  li.append(el('span', 'setup-step-dot', i < now ? '' : String(i + 1)), el('span', null, label));
+  if (i < now) li.firstChild.append(icon('check'));
+  if (i === now) li.setAttribute('aria-current', 'step');
+  return li;
 }
 
 /** The NPU setup found, named as Windows lists it: the AI runs on it unless the user picks otherwise. */
@@ -1617,6 +1623,159 @@ function setupDone(s) {
     castellanLink('Meet the staff at castellan-software.com', 'btn castellan-btn'));
   more.append(pic, text);
   return [col, more];
+}
+
+// ---------------------------------------------------------------- uninstall
+
+// Settings > Apps' uninstall (Installer.OpenUninstallWindow): the setup's window and look again, at #/uninstall. It says
+// what goes and what stays, and asks whether to keep the settings and the report; then this page's own process
+// uninstalls (POST /api/uninstall) and stops, so its folder can go. Done says so, and the page asks the server nothing
+// more: no new picture either, so Done keeps the slideshow's last one.
+const UNINSTALL_STEPS = [['ask', 'Uninstall'], ['progress', 'Uninstalling'], ['done', 'Done']];
+const uninstall = { phase: 'ask', keepData: null, ok: false, lines: [], shown: null, art: null, gone: false };
+
+/** Whether the page shows the uninstall: asked for at #/uninstall, and once it's begun, until the window closes. */
+const uninstallShowing = () => route.view === 'uninstall' || uninstall.phase !== 'ask';
+
+function renderUninstall(s) {
+  for (const id of ['home', 'settingsview', 'aboutview', 'devview', 'gamesview', 'folder']) $(id).classList.add('hidden');
+  $('setup').classList.remove('hidden');
+  document.documentElement.classList.add('setup-mode');
+  document.title = 'Uninstall Heiward';
+  if (uninstall.keepData == null) uninstall.keepData = !route.purge;
+  $('setup-version').textContent = s.setup.version ? 'Version ' + s.setup.version : '';
+  for (const a of document.querySelectorAll('#setup a[data-castellan]')) a.href = s.setup.site;
+  const now = UNINSTALL_STEPS.findIndex(([id]) => id === uninstall.phase);
+  $('setup-steps').setAttribute('aria-label', 'Uninstall steps');
+  $('setup-steps').replaceChildren(...UNINSTALL_STEPS.map(([, label], i) => stepItem(label, i, now)));
+  if (uninstall.shown === uninstall.phase) return;
+  uninstall.shown = uninstall.phase;
+  setupShown = null; // the setup's card, should it show again, is built again
+  const card = $('setup-card');
+  card.className = 'setup-card setup-' + (uninstall.phase === 'ask' ? 'welcome' : uninstall.phase);
+  card.replaceChildren(...(uninstall.phase === 'ask' ? uninstallAsk() : uninstall.phase === 'progress' ? uninstallProgress() : uninstallDone()));
+  $('setup').scrollTop = 0;
+}
+
+/** The slideshow beside the uninstall, from "Nothing goes until you say so": the same one throughout, so Done needs no new picture. */
+function uninstallArt() {
+  if (!uninstall.art) {
+    uninstall.art = el('div', 'setup-col setup-art');
+    uninstall.art.append(setupSlideshow(2));
+  }
+  return uninstall.art;
+}
+
+function uninstallAsk() {
+  const text = el('div', 'setup-col');
+  text.append(el('div', 'setup-eyebrow', 'Uninstall'), el('h1', 'setup-title', 'Uninstall Heiward'),
+    el('p', 'setup-lead', 'This removes Heiward from this PC: its scheduled scans, its page, its Start menu and desktop shortcuts, ' +
+      'and its entry in Installed apps.'));
+  const facts = el('ul', 'setup-facts');
+  for (const [lead, rest] of [
+    ['Your files stay:', 'the photos and videos you kept stay where they are, and what you cleaned up stays in the Recycle Bin until you empty it.'],
+    ['Free to come back:', 'Heiward is free. Installed again, it picks up where it left off, when its settings are kept.'],
+  ]) {
+    const li = el('li');
+    li.append(icon('check'), el('span', null, ''));
+    li.lastChild.append(el('b', null, lead + ' '), document.createTextNode(rest));
+    facts.append(li);
+  }
+  const box = el('fieldset', 'setup-question');
+  box.append(el('legend', 'auto-title', 'Settings and report'));
+  const row = el('label', 'setup-option');
+  const tick = el('input');
+  tick.type = 'checkbox';
+  tick.checked = uninstall.keepData;
+  tick.addEventListener('change', () => { uninstall.keepData = tick.checked; });
+  const words = el('span');
+  words.append(el('span', 'setup-label', 'Keep Heiward\'s settings and its report'),
+    el('span', 'muted small', 'Kept, installing Heiward again picks up where it left off: your settings, what it found, and what you decided. ' +
+      'Not kept, they\'re deleted too.'));
+  row.append(tick, words);
+  box.append(row);
+  const go = el('button', 'btn setup-go', 'Uninstall');
+  go.addEventListener('click', () => runUninstall(go));
+  const cancel = el('button', 'btn secondary', 'Cancel');
+  cancel.addEventListener('click', leaveUninstall);
+  const bar = el('div', 'setup-actions setup-bar');
+  bar.append(cancel, go);
+  text.append(facts, box, bar);
+  return [text, uninstallArt()];
+}
+
+function uninstallProgress() {
+  const col = el('div', 'setup-col');
+  const bar = el('div', 'setup-bar-track');
+  bar.append(el('div', 'setup-bar-fill'));
+  bar.firstChild.style.width = '60%';
+  col.append(el('h1', 'setup-title', 'Uninstalling Heiward…'),
+    el('p', 'setup-lead', 'Turning off its scans and taking away its shortcuts. It takes a few seconds.'), bar);
+  return [col, uninstallArt()];
+}
+
+function uninstallDone() {
+  clearInterval(slideTimer);
+  const ok = uninstall.ok;
+  const col = el('div', 'setup-col setup-done-col');
+  const mark = el('div', 'setup-done-mark');
+  mark.append(icon(ok ? 'check' : 'alert'));
+  col.append(mark, el('h1', 'setup-title', ok ? 'Heiward is uninstalled' : 'Heiward couldn\'t finish uninstalling'));
+  if (ok) {
+    col.append(el('p', 'setup-lead', uninstall.keepData
+      ? 'Your settings and the report are kept, for if you install Heiward again.'
+      : 'Its settings and the report are deleted too.'),
+    el('p', 'muted', 'Your photos and videos stay where they are; what you cleaned up is in the Recycle Bin until you empty it. ' +
+      'Heiward\'s folder goes as this window closes.'));
+  } else col.append(el('p', 'setup-lead', (uninstall.lines[uninstall.lines.length - 1] || 'Something went wrong.') + ' Uninstalling again picks up where it stopped.'));
+  const details = el('details', 'setup-details');
+  const log = el('pre', 'setup-log');
+  log.textContent = uninstall.lines.join('\n');
+  details.append(el('summary', null, 'Details'), log);
+  if (!ok) details.open = true;
+  const button = el('button', 'btn setup-go', ok ? 'Close' : 'Try again');
+  button.addEventListener('click', () => {
+    if (ok) { window.close(); return; }
+    uninstall.phase = 'ask';
+    renderUninstall(state);
+  });
+  const actions = el('div', 'setup-actions');
+  actions.append(button);
+  col.append(actions, details);
+  return [col, uninstallArt()];
+}
+
+async function runUninstall(button) {
+  button.disabled = true;
+  uninstall.phase = 'progress';
+  renderUninstall(state);
+  try {
+    const r = await post('/api/uninstall', { keepData: uninstall.keepData });
+    uninstall.ok = !!(r && r.ok);
+    uninstall.lines = (r && r.lines) || [];
+  } catch (e) {
+    uninstall.ok = false;
+    uninstall.lines = [e.message];
+  }
+  // Done: the page's process stops, so nothing is asked of it again.
+  uninstall.gone = uninstall.ok;
+  if (uninstall.gone) clearTimeout(timer);
+  uninstall.phase = 'done';
+  renderUninstall(state);
+}
+
+/** Cancel: the app window the uninstall opened closes; a page opened some other way goes back to Heiward's home. */
+function leaveUninstall() {
+  window.close();
+  uninstall.phase = 'ask';
+  uninstall.shown = null;
+  clearInterval(slideTimer);
+  uninstall.art = null;
+  document.documentElement.classList.remove('setup-mode');
+  document.title = 'Heiward';
+  history.replaceState(null, '', '#/');
+  route = parseRoute();
+  renderRoute();
 }
 
 // ---------------------------------------------------------------- automatic cleanup
@@ -4451,6 +4610,7 @@ function groupCard(g, folder) {
 
 async function renderRoute() {
   if (!state) return;
+  if (uninstallShowing()) { renderUninstall(state); return; }
   if (setupShowing(state)) { renderSetup(state); return; }
   // Developer mode is off (Settings): its pages aren't there, so a link to one lands home.
   // Game mode the same way: off, the Games area isn't there.
@@ -4556,6 +4716,7 @@ async function pollProgress() {
 
 async function refresh(force) {
   clearTimeout(timer);
+  if (uninstall.gone) return; // uninstalled: the page's process has stopped
   const seq = ++refreshSeq;
   try {
     const res = await fetch('/api/state' + seenQuery());

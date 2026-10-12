@@ -67,6 +67,13 @@ public sealed class SchedulerTests {
 		Assert.Equal(@"""C:\W\conhost.exe"" --headless ""C:\x\hei.exe"" uninstall", Installer.UninstallCommand(@"C:\W\conhost.exe", @"C:\x\hei.exe"));
 
 	[Fact]
+	public void QuietUninstall_NeverAsksInAWindow_TheOtherOpensThePageAtUninstall() {
+		Assert.Equal(@"""C:\W\conhost.exe"" --headless ""C:\x\hei.exe"" uninstall --no-window", Installer.UninstallCommand(@"C:\W\conhost.exe", @"C:\x\hei.exe", quiet: true));
+		Assert.Equal("http://heiward.localhost:8765/#/uninstall", Installer.UninstallPageUrl(8765, purge: false));
+		Assert.Equal("http://heiward.localhost:8765/#/uninstall/purge", Installer.UninstallPageUrl(8765, purge: true));
+	}
+
+	[Fact]
 	public void RemoveKeysTask_DeletesEachKey_ThenItself_InOnePairOfOuterQuotes() {
 		string action = Scheduler.DeleteKeysAction(new[] { @"Software\Classes\heiward", @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward" });
 		Assert.Matches(@"^--headless "".+\\cmd\.exe"" /d /c """".+\\reg\.exe"" delete ""HKCU\\Software\\Classes\\heiward"" /f >nul 2>&1 & " +
