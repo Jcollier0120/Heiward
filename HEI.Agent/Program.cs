@@ -126,12 +126,15 @@ root.Subcommands.Add(serve);
 var ifPending = new Option<bool>("--if-pending") { Description = "Open the browser only when duplicates wait for review (look-alikes don't count)." };
 var onceADay = new Option<bool>("--once-a-day") { Description = "Open the browser at most once per day (the sign-in task uses this)." };
 var openNoBrowser = new Option<bool>("--no-browser") { Description = "Only make sure the page is up." };
-var openCmd = new Command("open", "Make sure the review page is up, and open it in the default browser.") { ifPending, onceADay, openNoBrowser };
+var openCmd = new Command("open", "Make sure the review page is up, and open it in a window of its own (Edge's, else the default browser).") { ifPending, onceADay, openNoBrowser };
 openCmd.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	string stamp = Path.Combine(AgentPaths.Home, "last-opened.txt");
 	string today = DateTime.Now.ToString("yyyy-MM-dd");
-	bool browser = !r.GetValue(openNoBrowser) && !(r.GetValue(ifPending) && PendingCount(stamp) == 0);
+	bool browser = !r.GetValue(openNoBrowser);
+	// At a manor, Manor's page says what waits (the ping's needsYou, ReviewWaiting): the sign-in task opens nothing of its own.
+	if (browser && r.GetValue(onceADay) && Manor.Load() != null) browser = false;
+	if (browser && r.GetValue(ifPending) && ReviewWaiting.Count(stamp) == 0) browser = false;
 	if (browser && r.GetValue(onceADay)) {
 		try { if (File.Exists(stamp) && File.ReadAllText(stamp).Trim() == today) browser = false; } catch { }
 	}
@@ -451,22 +454,6 @@ scope.SetAction(r => {
 root.Subcommands.Add(scope);
 
 return await root.Parse(args).InvokeAsync();
-
-/// <summary>
-/// Sets that wait for the user and call for them (<see cref="AutoCleaner.Announced"/>: not look-alikes). With
-/// automatic cleanup of duplicates on, only those listed since the page last opened this way: the sign-in page
-/// shouldn't open every day for sets the user leaves for later.
-/// </summary>
-static int PendingCount(string stamp) {
-	var report = Report.Load();
-	if (report == null) return 0;
-	var cfg = AgentConfig.Load();
-	var s = AutoCleanState.Load();
-	var waiting = AutoCleaner.WaitingForUser(cfg, report, DecisionStore.Load(), s, DateTime.UtcNow).Where(AutoCleaner.Announced).ToList();
-	if (!cfg.AutoClean.Duplicates || !File.Exists(stamp)) return waiting.Count;
-	DateTime lastOpened = File.GetLastWriteTimeUtc(stamp);
-	return waiting.Count(g => !s.FirstSeenUtc.TryGetValue("g:" + g.Key, out DateTime seen) || seen > lastOpened);
-}
 
 /// <summary>Automatic cleanup's settings and what's coming; with <paramref name="detail"/>, thing by thing.</summary>
 static void PrintAutoClean(AgentConfig cfg, bool detail) {

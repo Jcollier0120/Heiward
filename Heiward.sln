@@ -33,6 +33,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HEI.Agent", "HEI.Agent\HEI.
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HEI.Agent.Tests", "HEI.Agent.Tests\HEI.Agent.Tests.csproj", "{40685B61-F249-4DA1-9EF3-0D4C061578DB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HEI.Launcher", "HEI.Launcher\HEI.Launcher.csproj", "{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -223,6 +225,18 @@ Global
 		{40685B61-F249-4DA1-9EF3-0D4C061578DB}.Release|x64.Build.0 = Release|Any CPU
 		{40685B61-F249-4DA1-9EF3-0D4C061578DB}.Release|x86.ActiveCfg = Release|Any CPU
 		{40685B61-F249-4DA1-9EF3-0D4C061578DB}.Release|x86.Build.0 = Release|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Debug|x64.Build.0 = Debug|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Debug|x86.Build.0 = Debug|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x64.ActiveCfg = Release|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x64.Build.0 = Release|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x86.ActiveCfg = Release|Any CPU
+		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -82,6 +82,36 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
+	public void RemoveKeysTask_AlsoTakesTheCopyOutOfStartupApps() {
+		string action = Scheduler.DeleteKeysAction(new[] { @"Software\Classes\heiward" }, new[] { (Startup.RunKey, Startup.ValueName) });
+		Assert.Matches(@"""HKCU\\Software\\Classes\\heiward"" /f >nul 2>&1 & " +
+			@""".+\\reg\.exe"" delete ""HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"" /v ""Heiward"" /f >nul 2>&1 & "".+\\schtasks\.exe""", action);
+	}
+
+	[Fact]
+	public void StartupApps_RunHeiwardExe_WithTheSignInTasksArguments() {
+		Assert.Equal(@"""C:\x\Heiward.exe"" open --if-pending --once-a-day", Startup.Command(@"C:\x\Heiward.exe", openPage: true));
+		Assert.Equal(@"""C:\x\Heiward.exe"" open --no-browser", Startup.Command(@"C:\x\Heiward.exe", openPage: false));
+	}
+
+	[Fact]
+	public void HeiwardExe_IsWrittenFromHeisOwnResources_AndOnlyWhenItChanged() {
+		string dir = Path.Combine(Path.GetTempPath(), "hei-launcher-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(dir);
+		try {
+			string exe = Path.Combine(dir, "Heiward.exe");
+			Startup.WriteLauncher(exe);
+			Assert.Equal("Heiward", FileVersionInfo.GetVersionInfo(exe).FileDescription); // what Startup apps shows
+			DateTime written = new DateTime(2026, 1, 2, 3, 4, 5, DateTimeKind.Utc);
+			File.SetLastWriteTimeUtc(exe, written);
+			Startup.WriteLauncher(exe);
+			Assert.Equal(written, File.GetLastWriteTimeUtc(exe)); // the same: left alone
+			Assert.Single(Directory.GetFiles(dir));
+		}
+		finally { Directory.Delete(dir, true); }
+	}
+
+	[Fact]
 	public void Task_OfTheGitHubCopy_RunsTheExe() =>
 		Assert.Equal("--headless \"C:\\x\\hei.exe\" open", Scheduler.Action(Scheduler.OpenTask, @"C:\x\hei.exe", "open", removeWhenGone: false));
 

@@ -225,8 +225,8 @@ namespace HEI.Agent {
 		public bool ScanOnBattery { get; set; } = true;
 		public int MinBatteryPercent { get; set; } = 30;
 		/// <summary>
-		/// Open the review page in the default browser once a day at sign-in, when something waits for review.
-		/// Either way the page itself starts at sign-in, in the background.
+		/// Open the review page in a window of its own once a day at sign-in, when something waits for review; never at a
+		/// manor, whose page lists what waits instead. Either way the page itself starts at sign-in, in the background.
 		/// </summary>
 		public bool OpenPageAtSignIn { get; set; } = true;
 		/// <summary>The review page's port on 127.0.0.1: 18484, a development build's 28484 (<see cref="AgentPaths.DefaultPort"/>).</summary>

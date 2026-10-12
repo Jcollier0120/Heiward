@@ -140,7 +140,7 @@ public sealed class DevBuildTests : IDisposable {
 		Assert.Contains("-> " + Installer.InstalledExe, plan);
 		Assert.Contains("Settings: " + Path.Combine(Local, "Heiward", "settings.json"), plan);
 		Assert.Contains(Installer.InstalledExe + "&quot; scan --notify --scheduled", plan); // the scan task's XML
-		Assert.Contains(Installer.InstalledExe + "&quot; open --if-pending", plan);       // the sign-in task's
+		Assert.Contains(Startup.LauncherExe + "\" open --if-pending", plan);           // Startup apps' (Startup)
 		Assert.DoesNotContain("Heiward-dev", plan);
 		// And so does the rest of the process: the install's log, should it write one.
 		Assert.Equal(Path.Combine(Local, "Heiward"), AgentPaths.Home);

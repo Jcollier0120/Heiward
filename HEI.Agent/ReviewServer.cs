@@ -473,6 +473,8 @@ namespace HEI.Agent {
 				uninstallPage = true,
 				// POST /api/pictures/compare's version (PicturesRoute): Heiward compares pictures by look for another agent.
 				pictures = PictureCompare.Version,
+				// What waits for the person, as Manor's page lists it from its staff: at a manor, the page doesn't open at sign-in.
+				needsYou = ReviewWaiting.NeedsYou(cfg.Port),
 			};
 		}
 
@@ -879,7 +881,10 @@ namespace HEI.Agent {
 
 		public static string PageUrl(int port) => $"http://{HostName}:{port}/";
 
-		public static void OpenBrowser(int port) =>
-			Process.Start(new ProcessStartInfo(PageUrl(port)) { UseShellExecute = true });
+		/// <summary>The page in an Edge app window, as the setup's (<see cref="Installer.OpenAppWindow"/>); the default browser without Edge.</summary>
+		public static void OpenBrowser(int port) => Installer.OpenAppWindow(PageUrl(port));
+
+		internal static void OpenInDefaultBrowser(string url) =>
+			Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
 	}
 }

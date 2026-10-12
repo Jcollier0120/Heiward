@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Heiward.exe: what Windows' Startup apps lists as Heiward (HKCU's Run). hei.exe is a console program, and Windows
+       gives a console program started at sign-in a console window; this one has none, and starts hei.exe without one.
+       On the .NET Framework that every Windows 10 and 11 has: a few kilobytes, no runtime to carry. hei.exe embeds it
+       (HEI.Agent.csproj) and writes it beside itself at install (Startup.cs). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AssemblyName>Heiward</AssemblyName>
+    <RootNamespace>HEI.Launcher</RootNamespace>
+    <!-- Startup apps and Task Manager show the file's description and icon. -->
+    <AssemblyTitle>Heiward</AssemblyTitle>
+    <Product>Heiward</Product>
+    <Description>Starts Heiward's review page at sign-in.</Description>
+    <ApplicationIcon>..\HEI.Agent\heiward.ico</ApplicationIcon>
+    <GenerateSupportedRuntime>false</GenerateSupportedRuntime>
+    <AutoGenerateBindingRedirects>false</AutoGenerateBindingRedirects>
+    <!-- Any CPU, not 32-bit: Arm64 Windows runs it natively. -->
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+  </PropertyGroup>
+
+</Project>

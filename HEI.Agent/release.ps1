@@ -193,11 +193,23 @@ Get-ChildItem $Out -File | Where-Object { $_.Name -like 'Heiward-*.exe' -or $_.N
 $work = Join-Path ([IO.Path]::GetTempPath()) "heiward-release-$([guid]::NewGuid().ToString('N'))"
 
 try {
+	# Heiward.exe (HEI.Launcher), what Windows' Startup apps lists: built once (it runs on any processor), signed, and
+	# embedded in both builds of hei.exe, which write it beside themselves at install.
+	Write-Host "Building Heiward.exe..."
+	$launcherProject = Join-Path $root 'HEI.Launcher\HEI.Launcher.csproj'
+	dotnet build $launcherProject -c Release --source https://api.nuget.org/v3/index.json -o (Join-Path $work 'launcher') -nologo -v q
+	if ($LASTEXITCODE -ne 0) { throw "The Heiward.exe build failed." }
+	$launcher = Join-Path $work 'launcher\Heiward.exe'
+	if (-not $Unsigned) {
+		Write-Host "Signing Heiward.exe..."
+		Set-ReleaseSignature $launcher
+	}
 	foreach ($arch in 'x64', 'arm64') {
 		Write-Host "Building $arch..."
 		# The source is explicit so a PC whose NuGet config lists none can still fetch the runtime packs.
 		dotnet publish $project -c Release -r "win-$arch" --self-contained `
 			-p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+			"-p:HeiwardLauncher=$launcher" `
 			--source https://api.nuget.org/v3/index.json -o (Join-Path $work $arch) -nologo -v q
 		if ($LASTEXITCODE -ne 0) { throw "The $arch build failed." }
 		$exe = Join-Path $Out "Heiward-$version-$arch.exe"
