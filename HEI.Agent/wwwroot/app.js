@@ -855,7 +855,7 @@ function renderAboutCard(s) {
   $('about-card').replaceChildren(card);
 }
 
-/** Settings' Updates: updating by itself, for the copy from GitHub, and the "In a manor" card, without Manor. Hidden when neither is there. */
+/** Settings' Updates: updating by itself, for the copy from GitHub, and the Castellan card, without Manor. Hidden when neither is there. */
 function renderUpdatesCard(s) {
   const update = s.about.update || {};
   const card = el('div', 'auto-card');
@@ -881,13 +881,13 @@ function renderUpdatesCard(s) {
     updateRow.append(updateText);
     card.append(updateRow);
   }
-  // Without Manor: the home page's "In a manor" card, on until its Not now; this brings it back.
+  // Without Manor: the home page's Castellan card, on until its Not now; this brings it back.
   if (s.manorCard) {
     const manorRow = el('div', 'auto-row');
-    manorRow.append(toggleSwitch(s.manorCard.show, 'The "In a manor" card', settingsBusy, (on) => saveSettings({ manorCard: on })));
+    manorRow.append(toggleSwitch(s.manorCard.show, 'The Castellan card', settingsBusy, (on) => saveSettings({ manorCard: on })));
     const manorText = el('div', 'auto-text');
-    manorText.append(el('div', 'auto-title', 'The "In a manor" card'),
-      el('div', 'muted small', 'Last on the home page: what Manor adds to Heiward, with a link to its site. It\'s text in the page: nothing is sent anywhere for it.'));
+    manorText.append(el('div', 'auto-title', 'The Castellan card'),
+      el('div', 'muted small', 'Last on the home page: what Castellan adds to Heiward, with a link to its site. It\'s text in the page: nothing is sent anywhere for it.'));
     manorRow.append(manorText);
     card.append(manorRow);
   }
@@ -3690,9 +3690,9 @@ function renderDone(s) {
   }));
 }
 
-// ---------------------------------------------------------------- home: in a manor
+// ---------------------------------------------------------------- home: the Castellan card
 
-/** A few of the manor's staff, a line each, for the "In a manor" card. */
+/** A few of the manor's staff, a line each, for the Castellan card. */
 const MANOR_STAFF = [
   ['Porter', 'what\'s new on this PC, and who signed it.'],
   ['Clerk', 'your screenshots and scans, made searchable.'],
@@ -3702,7 +3702,7 @@ const MANOR_STAFF = [
 ];
 
 /**
- * Without Manor, the last thing on the home page: what Manor adds, in a few lines, with a link to its site and Not now, which
+ * Without Manor, the last thing on the home page: what Castellan (Manor, sold) adds, in a few lines, with a link to its site and Not now, which
  * hides it for good (settings.json's manorCard; Settings shows it again). It's text in the page: nothing is fetched or sent for
  * it. With Manor installed, card is null and there's nothing here: the title bar's "Back to <manor>" says where Heiward works.
  */
@@ -3712,7 +3712,7 @@ function renderManorCard(card) {
   if (!show) { $('manor-card').replaceChildren(); return; }
   const box = el('div', 'auto-card manor-card');
   box.append(el('p', 'manor-card-lead',
-    'Heiward is one of a household of agents that put this PC\'s NPU to work: all private, all on this PC. Manor is the house they share.'));
+    'Heiward is one of a household of agents that look after this PC, each at its own job, all on this PC. Castellan is the house they share.'));
   const staff = el('ul', 'manor-staff');
   for (const [name, does] of MANOR_STAFF) {
     const li = el('li');
@@ -3720,17 +3720,18 @@ function renderManorCard(card) {
     staff.append(li);
   }
   box.append(staff);
-  box.append(el('p', null, 'Try every agent free for 30 days, with no card. After that, from $4 a month. ' +
+  // The launch offer's price (Household, 25% off); back to $4 when the offer ends.
+  box.append(el('p', null, 'Try every agent free for 7 days, with no card. After that, from $3 a month. ' +
     'Stop paying and keep what you have: it all keeps working, just without new versions.'));
   box.append(el('p', 'muted small', 'Heiward stays free, and works the same without it.'));
   const actions = el('div', 'manor-card-actions');
-  const see = outLink('See the manor', card.url);
+  const see = outLink('See Castellan', card.url);
   see.className = 'btn';
   const later = el('button', 'btn secondary', 'Not now');
   later.addEventListener('click', async () => {
     later.disabled = true;
     try { await post('/api/settings', { manorCard: false }); } catch (e) { showError(e.message); later.disabled = false; return; }
-    showNotice('The "In a manor" card is hidden for good. Settings can show it again.', { label: 'Undo', run: () => saveSettings({ manorCard: true }) });
+    showNotice('The Castellan card is hidden for good. Settings can show it again.', { label: 'Undo', run: () => saveSettings({ manorCard: true }) });
     refresh(true);
   });
   actions.append(see, later);

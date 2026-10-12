@@ -22,10 +22,10 @@ using System.Text.Json;
 namespace HEI.Agent.Tests;
 
 /// <summary>
-/// The home page's "In a manor" card: shown without Manor, until its Not now hides it for good (settings.json's
+/// The home page's Castellan card: shown without Manor, until its Not now hides it for good (settings.json's
 /// manorCard, which Settings turns on again); never with Manor installed. Nothing here reads the real Manor's settings or
-/// Heiward's, and nothing asks Manor's site. The card is held back until launch (ManorCard.Launched): these tests show it
-/// as it'll be then (ManorCard.ShowBeforeLaunch), apart from those that check the shipped default hides it.
+/// Heiward's, and nothing asks Castellan's site. The card is launched (ManorCard.Launched): ShowBeforeLaunch is set
+/// anyway, so these tests keep running should it be held back again, apart from those that check the shipped default.
 /// </summary>
 [Collection(AgentHomeCollection.Name)] // MANOR_HOME and HEIWARD_HOME are process-wide
 public sealed class ManorCardTests : IDisposable {
@@ -57,21 +57,32 @@ public sealed class ManorCardTests : IDisposable {
 
 	static readonly Manor TheHall = new("The Hall", 19000, null);
 
-	// ---- Before launch (ManorCard.Launched off): no card and no switch, Manor or not. Turning Launched on changes these.
+	// ---- As shipped (ManorCard.Launched on): the card shows without Manor, linking to Castellan's site.
 
 	[Fact]
-	public void TheShippedDefault_HidesTheCard_WithNoManorInstalled() {
+	public void TheShippedDefault_ShowsTheCard_WithNoManorInstalled() {
 		ManorCard.ShowBeforeLaunch = false;
-		Assert.False(ManorCard.Launched);
-		Assert.Null(ManorCard.For(new AgentConfig(), null));
-		Assert.Null(ManorCard.For(new AgentConfig { ManorCard = false }, null));
+		Assert.True(ManorCard.Launched);
+		Assert.Equal(new ManorCard(true, "https://castellan-software.com"), ManorCard.For(new AgentConfig(), null));
+		Assert.Null(ManorCard.For(new AgentConfig(), TheHall));
 	}
 
 	[Fact]
-	public async Task ThePage_HasNoCardAndNoSwitch_BeforeLaunch() {
+	public async Task ThePage_ShowsTheCard_AsShipped() {
 		ManorCard.ShowBeforeLaunch = false;
 		await using Page page = await Page.StartAsync(new AgentConfig());
-		Assert.Null(await page.CardAsync());
+		Assert.Equal((true, "https://castellan-software.com"), await page.CardAsync());
+	}
+
+	[Fact]
+	public void TheCard_NamesCastellan() {
+		string script = Asset("app.js");
+		int start = script.IndexOf("function renderManorCard(", StringComparison.Ordinal);
+		string render = script[start..script.IndexOf("\nfunction ", start + 1, StringComparison.Ordinal)];
+		Assert.Contains("Castellan is the house they share", render);
+		Assert.Contains("See Castellan", render);
+		Assert.DoesNotContain("Manor", render.Replace("renderManorCard", "").Replace("MANOR_STAFF", "").Replace("manor-card", ""));
+		Assert.Contains("<h2 id=\"manor-card-title\">Castellan</h2>", Asset("index.html"));
 	}
 
 	// ---- Who sees it (as at launch)
@@ -169,7 +180,7 @@ public sealed class ManorCardTests : IDisposable {
 			return answer.StatusCode;
 		}
 
-		/// <summary>The page's poll: its "In a manor" card, null when there's none.</summary>
+		/// <summary>The page's poll: its Castellan card, null when there's none.</summary>
 		public async Task<(bool Show, string Url)?> CardAsync() {
 			using var state = JsonDocument.Parse(await http.GetStringAsync("/api/state"));
 			JsonElement card = state.RootElement.GetProperty("manorCard");

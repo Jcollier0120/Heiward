@@ -27,7 +27,7 @@ namespace HEI.Agent {
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
 	/// <param name="Gpu">The graphics card for GPU work, by name (<see cref="AgentConfig.Gpu"/>); "" for Windows' default.</param>
-	/// <param name="ManorCard">The home page's "In a manor" card: false from its "Not now", true from Settings (<see cref="AgentConfig.ManorCard"/>).</param>
+	/// <param name="ManorCard">The home page's Castellan card: false from its "Not now", true from Settings (<see cref="AgentConfig.ManorCard"/>).</param>
 	/// <param name="GameMode">Heiward's own game mode switch (<see cref="AgentConfig.GameMode"/>), unless Manor decides it.</param>
 	/// <param name="AutoUpdate">Update by itself (<see cref="AgentConfig.AutoUpdate"/>): the copy from GitHub, when nothing else updates it.</param>
 	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null, bool? ManorCard = null,
@@ -205,7 +205,7 @@ namespace HEI.Agent {
 				return Results.Json(new { cleared });
 			}));
 			// The page's own settings: history on or off, how hard scans work, developer mode (unless Manor's Developer options
-			// decide it), and the home page's "In a manor" card (ManorCard).
+			// decide it), and the home page's Castellan card (ManorCard).
 			app.MapPost("/api/settings", (SettingsRequest request) => {
 				if (request.ScanSpeed != null && !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return Results.BadRequest(new { error = "Unknown scan speed." });
 				DevMode devMode = DevMode.Now(cfg);
@@ -239,7 +239,7 @@ namespace HEI.Agent {
 					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}" +
 					(devMode.ByManor ? $" (but {devMode.Manor.Name}'s Developer options turn it {(devMode.On ? "on" : "off")})" : "") +
 					$", game mode {(saved.GameModeOn ? "on" : "off")}" + (gameMode.ByManor ? $" (but {gameMode.Manor.Name} turns it {(gameMode.On ? "on" : "off")})" : "") +
-					$", the \"In a manor\" card {(saved.ManorCard ? "shown" : "hidden")}, updating by itself {(saved.AutoUpdate ? "on" : "off")}");
+					$", the Castellan card {(saved.ManorCard ? "shown" : "hidden")}, updating by itself {(saved.AutoUpdate ? "on" : "off")}");
 				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu, saved.ManorCard,
 					GameMode = saved.GameModeOn, saved.AutoUpdate }, AgentConfig.Json);
 			});
@@ -629,7 +629,7 @@ namespace HEI.Agent {
 				},
 				dev = DevSummary(devMode, devReport, roles),
 				games = GamesSummary(gameMode, gameReport),
-				// Without Manor, the home page's "In a manor" card and its switch in Settings; with Manor, null: neither (ManorCard).
+				// Without Manor, the home page's Castellan card and its switch in Settings; with Manor, null: neither (ManorCard).
 				manorCard = ManorCard.For(cfg, manor),
 				auto = AutoView(report, devReport, decisions, gameReport),
 				drives,

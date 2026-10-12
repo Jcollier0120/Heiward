@@ -16,32 +16,29 @@
 
 namespace HEI.Agent {
 	/// <summary>
-	/// The home page's "In a manor" card, while Manor isn't installed on this PC: a few lines on what Manor adds, below
+	/// The home page's Castellan card, while Manor (sold as Castellan) isn't installed on this PC: a few lines on what it adds, below
 	/// everything else on the page, with a link to its site and a "Not now" that hides it for good
 	/// (<see cref="AgentConfig.ManorCard"/>, which Settings can turn on again). It's static text in the page: nothing is
 	/// asked of the site, and nothing is sent anywhere, unless you open the link. With Manor installed there's no card:
 	/// the title bar's "Back to &lt;manor&gt;" already says where Heiward works (<see cref="Manor.Stamp"/>). Heiward is
-	/// complete without Manor either way, and nothing here reads or runs any of Manor's code. Held back until launch: no
-	/// card shows anywhere while <see cref="Launched"/> is off.
+	/// complete without Manor either way, and nothing here reads or runs any of Manor's code. Shown since 1.9.24, when
+	/// <see cref="Launched"/> was turned on: Castellan is on sale.
 	/// </summary>
 	/// <param name="Show">The card shows on the home page: Heiward's own switch, on until "Not now".</param>
-	/// <param name="Url">Manor's site, which "See the manor" opens.</param>
+	/// <param name="Url">Castellan's site, which "See Castellan" opens.</param>
 	sealed record ManorCard(bool Show, string Url) {
-		// The launch switch. Off, there's no card and no switch for it in Settings: For is null, as with Manor installed.
-		// Turn it on when Castellan is on sale and ManorSiteUrl is its real site (see Manor's docs/SELLING.md); not before.
-		// TODO: the card's copy (wwwroot/app.js's renderManorCard, index.html, Settings' switch, the READMEs and
-		// docs/PRIVACY.md) says "Manor": it must become "Castellan", rewritten for it, when Launched is turned on.
-		public const bool Launched = false;
+		// The launch switch, on since 1.9.24. Off, there's no card and no switch for it in Settings: For is null, as with
+		// Manor installed.
+		public const bool Launched = true;
 
 		/// <summary>
-		/// For tests only: the card as if <see cref="Launched"/> were on, so its tests run before launch. Heiward itself
-		/// never sets it, so a release shows no card until <see cref="Launched"/> is turned on.
+		/// For tests only: the card as if <see cref="Launched"/> were on, whichever way it's set. Heiward itself never sets
+		/// it.
 		/// </summary>
 		internal static bool ShowBeforeLaunch { get; set; }
 
-		// TODO: Manor's site has no domain yet: it's an open decision in the manor's selling plan (docs/SELLING.md, "Open
-		// decisions": the domain). Set it here once it's chosen; nothing else names it.
-		public const string ManorSiteUrl = "https://manor.example";
+		// Castellan's site, where it's sold, with its trial; nothing else names it.
+		public const string ManorSiteUrl = "https://castellan-software.com";
 
 		/// <summary>
 		/// The card for the page: null before launch (<see cref="Launched"/>) or with Manor installed
