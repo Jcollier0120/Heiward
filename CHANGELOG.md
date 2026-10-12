@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.31
+
+**It carries the Steward's kit 2.56.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.56.1: `uninstall --purge` removes only the agent's own data folder.
+
+### Before you update
+
+- Nothing for an agent: take the new kit as usual. An uninstall that's refused says why, and leaves everything as it was.
+
 ## 1.9.29
 
 **Heiward starts with Windows the usual way: you'll find it in Startup apps, and it opens in its own window.**
