@@ -143,12 +143,13 @@ public sealed class AcceleratorsTests : IDisposable {
 				catch (Exception e) { error = e; }
 			});
 			second.Start();
-			// The second waits in the card's own line, with a ticket the others can read.
-			Until(() => Directory.Exists(line) && Directory.GetFiles(line, "*.ticket").Length == 1);
-			string ticket = Directory.GetFiles(line, "*.ticket")[0];
+			// The second waits in the card's own line, with a ticket the others can read. The line shows a ticket the
+			// moment it is created, before its writer has closed it: wait until it reads whole.
+			string ticket = "";
+			string? who = null;
+			Until(() => Directory.Exists(line) && Directory.GetFiles(line, "*.ticket") is [var t] && (who = WhoOf(ticket = t)) != null);
 			Assert.Matches(@"^1-\d{17}-\d+-[0-9a-f]{8}\.ticket$", Path.GetFileName(ticket));
-			using (var doc = JsonDocument.Parse(File.ReadAllText(ticket)))
-				Assert.Equal("heiward", doc.RootElement.GetProperty("who").GetString());
+			Assert.Equal("heiward", who);
 			Thread.Sleep(300);
 			Assert.Single(order); // still waiting
 		}
@@ -168,6 +169,19 @@ public sealed class AcceleratorsTests : IDisposable {
 		Assert.Throws<TimeoutException>(() => NpuLock.Acquire("gpu-nvidia-geforce-rtx-4090", TimeSpan.FromMilliseconds(300)));
 		Assert.Empty(Directory.GetFiles(card + ".queue", "*.ticket")); // it left the line when it gave up
 		Assert.False(Directory.Exists(npuLock));
+	}
+
+	/// <summary>
+	/// A ticket's "who", read as the other programs in line read it (sharing write and delete with its writer); null while
+	/// it is still being written. File.ReadAllText shares only reading, so it failed on a ticket its writer still had open.
+	/// </summary>
+	static string? WhoOf(string ticket) {
+		try {
+			using var file = new FileStream(ticket, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+			using var doc = JsonDocument.Parse(file);
+			return doc.RootElement.GetProperty("who").GetString();
+		}
+		catch (Exception e) when (e is IOException or JsonException or KeyNotFoundException) { return null; }
 	}
 
 	static void Until(Func<bool> check) {

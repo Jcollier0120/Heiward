@@ -14,6 +14,18 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 - Nothing for an agent: take the new kit as usual. An uninstall that's refused says why, and leaves everything as it was.
 
+## 1.9.30
+
+**A fix to Heiward's own tests: nothing changes for you.**
+
+### What changed
+
+- One of Heiward's tests, the one that checks two holders of a graphics card take turns, failed now and then on a busy PC. It read a waiting turn's file while that file was still being written. It now waits until the file is written, as the other programs in line do. Heiward itself is unchanged.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.29
 
 **Heiward starts with Windows the usual way: you'll find it in Startup apps, and it opens in its own window.**
