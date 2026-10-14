@@ -61,7 +61,11 @@ public class NpuPackTests {
 		Assert.True(new QnnPack().UsesEpContextModel);
 		string cache = Path.Combine(Path.GetTempPath(), "heiward-npu-" + Guid.NewGuid().ToString("N"));
 		try {
-			Assert.Equal(cache, new OpenVinoPack(acceptCpu: false).ProviderOptions(cache)["cache_dir"]);
+			// The OpenVINO plugin ignores cache_dir: the folder goes in load_config, as the NPU's CACHE_DIR.
+			Dictionary<string, string> openVino = new OpenVinoPack(acceptCpu: false).ProviderOptions(cache);
+			Assert.False(openVino.ContainsKey("cache_dir"));
+			using (var config = System.Text.Json.JsonDocument.Parse(openVino["load_config"]))
+				Assert.Equal(cache, config.RootElement.GetProperty("NPU").GetProperty("CACHE_DIR").GetString());
 			Dictionary<string, string> vitis = WindowsMlPack.VitisAi().ProviderOptions(cache);
 			Assert.Equal(cache, vitis["cache_dir"]);
 			Assert.Equal($"dinov2s_b{NpuComponents.NpuBatch}", vitis["cache_key"]);
