@@ -19,7 +19,7 @@ namespace HEI.Agent.Tests;
 /// <summary>The review page's right-click "Include in scans" / "Leave out of scans", and how hard scans work.</summary>
 public sealed class FolderOverrideTests : IDisposable {
 	// Under %TEMP%, which is inside AppData: the test folder is listed in "folders", as a user would.
-	readonly string root = Path.Combine(Path.GetTempPath(), "hei-override-" + Guid.NewGuid().ToString("N"));
+	readonly string root = RealTemp.Folder("hei-override-");
 
 	public FolderOverrideTests() => Directory.CreateDirectory(root);
 	public void Dispose() { try { Directory.Delete(root, true); } catch { } }

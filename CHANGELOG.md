@@ -2,6 +2,22 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.44
+
+**A folder is known by where it really is, whatever path leads to it: through a folder link, or a drive mounted in a folder.**
+
+### What changed
+
+- A worktree in use is never offered for cleanup when it's reached through a folder link (C:\worktrees pointing to another drive, say): a Claude Code session that worked in it, or a program working in it, keeps it, whichever path they used.
+- Worktrees the Steward keeps in its own folder, and folders a scheduled task uses, are recognized by where they really are, so they aren't offered either.
+- A folder reached two ways, such as C:\Projects where a Dev Drive is mounted and the drive's own letter, is scanned once, so a photo is never listed twice as two copies of itself. A drive mounted only in a folder, with no letter, is scanned too when every drive is.
+- Changes since the last scan are read from the drive a folder is really on. A Dev Drive keeps no change journal, so its folders are walked instead of being read from the wrong drive's journal.
+- Folders you list, leave out or keep for scanning on request are matched by where they really are, so a path through a link or a mounted drive counts the same as the drive's own.
+
+### Before you update
+
+- The first scan after updating may walk folders on a drive mounted in a folder, or listed through a link, once more in full: they're now listed by where they really are (C:\Projects as D:\, say). Scans after it are as quick as before.
+
 ## 1.9.43
 
 **It carries the Steward's kit 2.69.1: the parts every agent of the manor shares.**

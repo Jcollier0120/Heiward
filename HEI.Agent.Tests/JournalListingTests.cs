@@ -20,11 +20,12 @@ namespace HEI.Agent.Tests;
 
 /// <summary>
 /// Scans plan their listing from the drive's change journal: the real one, on the drive the temp
-/// folder is on (NTFS on any Windows PC; the tests let themselves off where there's none).
+/// folder really is on (NTFS on any Windows PC), or where that drive keeps none (a Dev Drive, whose
+/// journal is off), the local app data's Temp. The tests let themselves off where neither has one.
 /// </summary>
 [Collection(AgentHomeCollection.Name)]
 public sealed class JournalListingTests : IDisposable {
-	readonly string dir = Path.Combine(Path.GetTempPath(), "hei-journal-" + Guid.NewGuid().ToString("N"));
+	readonly string dir = Path.Combine(JournaledTemp(), "hei-journal-" + Guid.NewGuid().ToString("N"));
 	readonly string photos, home;
 	readonly string? homeBefore = Environment.GetEnvironmentVariable("HEIWARD_HOME");
 
@@ -38,12 +39,22 @@ public sealed class JournalListingTests : IDisposable {
 
 	public void Dispose() {
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", homeBefore);
+		foreach (string d in Directory.EnumerateDirectories(dir).Where(d => (File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0))
+			Directory.Delete(d); // a junction alone, never what it points to
 		try { Directory.Delete(dir, true); } catch { }
 	}
 
-	Settings Settings() {
+	/// <summary>The temp folder by its real path, or the local app data's Temp when the temp folder's drive keeps no journal.</summary>
+	static string JournaledTemp() {
+		string temp = RealPath.Of(Path.GetTempPath());
+		if (HasJournal(temp)) return temp;
+		string local = RealPath.Of(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Temp"));
+		return Directory.Exists(local) && HasJournal(local) ? local : temp;
+	}
+
+	Settings Settings(string? root = null) {
 		var s = new Settings { IncludeImages = true, IncludeSubDirectories = true, SkipCloudPlaceholders = true, SkipFolderLinks = true, ListingProvesExistence = true };
-		s.IncludeList.Add(photos);
+		s.IncludeList.Add(root ?? photos);
 		foreach (string marker in ScanScope.RepositoryMarkers) s.SkipFoldersContaining.Add(marker);
 		return s;
 	}
@@ -60,9 +71,9 @@ public sealed class JournalListingTests : IDisposable {
 	ListingPlan Plan(DateTime? nowUtc = null, Settings? settings = null) =>
 		ListingPlan.Make(settings ?? Settings(), Config(), nowUtc ?? DateTime.UtcNow, CancellationToken.None);
 
-	/// <summary>After a scan: what it listed, as the engine would report it.</summary>
-	void Scanned(ListingPlan plan, DateTime? nowUtc = null) {
-		var found = Directory.EnumerateFiles(photos, "*", SearchOption.AllDirectories)
+	/// <summary>After a scan: what it listed, as the engine would report it (by the scanned folder as written: <paramref name="root"/>).</summary>
+	void Scanned(ListingPlan plan, DateTime? nowUtc = null, string? root = null) {
+		var found = Directory.EnumerateFiles(root ?? photos, "*", SearchOption.AllDirectories)
 			.Where(f => !f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)).Select(f => (f, new FileInfo(f).Length)).ToList();
 		plan.Save(found, p => File.GetLastWriteTimeUtc(p), nowUtc ?? DateTime.UtcNow);
 	}
@@ -125,6 +136,43 @@ public sealed class JournalListingTests : IDisposable {
 		Scanned(Plan());
 		File.WriteAllBytes(Path.Combine(photos, "project", "logo.png"), new byte[16]);
 		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode);
+	}
+
+	/// <summary>
+	/// A scanned folder written through a junction, as C:\Projects is the drive D:\ on a PC with Dev Drives: the journal is
+	/// its real drive's, and names each change by its real path, which the plan places in the folder as the scan walks it.
+	/// </summary>
+	[Fact]
+	public void AFolderScannedThroughAJunction_SeesWhatChangedInIt() {
+		if (!HasJournal(dir)) return;
+		string link = RealTemp.Junction(Path.Combine(dir, "link"), photos);
+		Photo("a.png");
+		ListingPlan Planned() => ListingPlan.Make(Settings(link), Config(), DateTime.UtcNow, CancellationToken.None);
+
+		ListingPlan first = Planned();
+		Assert.Equal(ListingMode.Walk, Assert.Single(first.Roots).Mode);
+		Scanned(first, root: link);
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(Planned().Roots).Mode);
+
+		// A photo added in the real folder: the folder is listed again, by the path the scan knows it by.
+		Photo("b.png", 32);
+		RootPlan r = Assert.Single(Planned().Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		Assert.Equal(1, r.ChangedFolders);
+		Assert.Equal(new[] { Path.Combine(link, "a.png"), Path.Combine(link, "b.png") },
+			r.Listing!.Listed.Select(f => f.FullName).Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+
+		// A folder added in it: walked.
+		Photo(@"Trip\c.jpg");
+		Assert.Equal(ListingMode.Walk, Assert.Single(Planned().Roots).Mode);
+	}
+
+	[Fact]
+	public void AJournalRecordsRealPath_IsPlacedInTheScannedFolderAsWritten() {
+		Assert.Equal(@"C:\Projects\Photos\2019", ListingPlan.AsWalked(@"D:\Photos\2019", @"D:\", @"C:\Projects"));
+		Assert.Equal(@"C:\Projects", ListingPlan.AsWalked(@"D:\", @"D:\", @"C:\Projects\"));
+		Assert.Equal(@"C:\Photos\2019", ListingPlan.AsWalked(@"C:\Photos\2019", @"C:\Photos", @"C:\Photos"));
+		Assert.Null(ListingPlan.AsWalked(@"D:\Other", @"D:\Photos", @"C:\Projects\Photos"));
 	}
 
 	[Fact]

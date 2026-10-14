@@ -73,17 +73,18 @@ namespace HEI.Agent {
 			return root != null && ScanScope.ExemptBelow(root, full, ScanScope.ExclusionRules(cfg)) == null;
 		}
 
-		/// <summary>The full path without a trailing separator (a drive's root keeps its own: C:\), or null when it isn't one.</summary>
+		/// <summary>
+		/// The folder by its real path (<see cref="RealPath"/>), as scans walk it, without a trailing separator (a drive's root
+		/// keeps its own: C:\); null when it isn't a full path.
+		/// </summary>
 		static string? Normalize(string folder) {
 			if (string.IsNullOrWhiteSpace(folder) || !Path.IsPathFullyQualified(folder)) return null;
-			try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)); }
+			try { return RealPath.Of(Path.GetFullPath(folder)); }
 			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
 		}
 
-		static bool SamePath(string a, string b) {
-			try { return Path.TrimEndingDirectorySeparator(Path.GetFullPath(a)).Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(b)), StringComparison.OrdinalIgnoreCase); }
-			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
-		}
+		/// <summary>The same folder, whatever path each is written as.</summary>
+		static bool SamePath(string a, string b) => RealPath.Same(a, b);
 
 		static bool IsSameOrUnder(string path, string root) {
 			string r = root.TrimEnd(Path.DirectorySeparatorChar);

@@ -26,8 +26,8 @@ namespace HEI.Agent.Tests;
 [Collection(AgentHomeCollection.Name)] // MANOR_HOME, REEVE_HOME and STEWARD_HOME are process-wide
 public sealed class DevAssetsTests : IDisposable {
 	static readonly string[] Vars = ["MANOR_HOME", "REEVE_HOME", "STEWARD_HOME"];
-	readonly string root = Path.Combine(Path.GetTempPath(), "hei-dev-" + Guid.NewGuid().ToString("N"));
-	readonly string homes = Path.Combine(Path.GetTempPath(), "hei-dev-homes-" + Guid.NewGuid().ToString("N"));
+	readonly string root = RealTemp.Folder("hei-dev-");
+	readonly string homes = RealTemp.Folder("hei-dev-homes-");
 	readonly Dictionary<string, string?> saved = Vars.ToDictionary(v => v, Environment.GetEnvironmentVariable);
 
 	public DevAssetsTests() {
@@ -467,6 +467,46 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.False(listed.Blocked?.StartsWith("A Claude Code session") ?? false);
 		Assert.Equal(listed.Blocked == null, listed.Suggested);
 		G(repo, "worktree", "remove", wt);
+	}
+
+	/// <summary>
+	/// Git lists a worktree by its real path (E:\worktrees\x on a PC with Dev Drives); the session working in it was started
+	/// through a junction (C:\worktrees\x), and Claude Code names its transcripts, and the session's folder, after that.
+	/// Compared as written, the worktree in use was offered for cleanup.
+	/// </summary>
+	[Fact]
+	public void AWorktreeUsedThroughAJunction_IsntOffered() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, _) = AgentWorktree("linked");
+		string link = Path.Combine(root, "worktrees");
+		Junction(link, Path.GetDirectoryName(wt)!);
+		string viaLink = Path.Combine(link, "linked");
+		string claude = Dir("claude");
+		string transcripts = Path.Combine(claude, "projects", ClaudeSessions.Slug(viaLink));
+		Directory.CreateDirectory(transcripts);
+		File.WriteAllText(Path.Combine(transcripts, Guid.NewGuid() + ".jsonl"), "{\"type\":\"user\",\"cwd\":" + System.Text.Json.JsonSerializer.Serialize(viaLink) + "}\n");
+		DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(1), default, new FolderUse(DateTime.UtcNow, claudeHome: claude, processes: () => new())));
+		Assert.False(listed.Suggested);
+		Assert.StartsWith("A Claude Code session used it", listed.Blocked);
+
+		// A program working in it through the junction holds it too.
+		listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(1), default,
+			new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new() { new WorkingFolder(4242, "Code", Path.Combine(viaLink, "src")) })));
+		Assert.False(listed.Suggested);
+		Assert.Equal("In use: Code (process 4242) works in it", listed.Blocked);
+		G(repo, "worktree", "remove", wt);
+	}
+
+	[Fact]
+	public void ScheduledTasks_NameTheirFolders_ByTheirRealPaths() {
+		string real = Dir("tasks", "tool");
+		string link = Path.Combine(root, "tasks-link");
+		Junction(link, Path.Combine(root, "tasks"));
+		string text = $"\"Name\",\"{Path.Combine(link, "tool", "run.cmd")} --now\",\"{Path.Combine(link, "tool")}\"\r\n\"Other\",\"C:\\Windows\\System32\\cmd.exe /c exit\",\"N/A\"";
+		List<string> paths = DevScanner.TaskPaths(text);
+		Assert.Contains(Path.Combine(real, "run.cmd"), paths, StringComparer.OrdinalIgnoreCase);
+		Assert.Contains(real, paths, StringComparer.OrdinalIgnoreCase);
+		Assert.Contains(paths, p => p.StartsWith(@"C:\Windows\System32\cmd.exe", StringComparison.OrdinalIgnoreCase));
 	}
 
 	[Fact]

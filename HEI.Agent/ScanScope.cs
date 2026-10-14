@@ -90,20 +90,28 @@ namespace HEI.Agent {
 		/// An extra folder inside another is scanned with it, unless that walk never gets there (a
 		/// built-in exclusion, a code repository or a folder link on the way): then it's scanned on its
 		/// own. A folder inside one of the user's own exclusions is skipped, with a note.
+		/// <para>
+		/// Each by its real path (<see cref="RealPath"/>), so a folder is scanned once whatever path leads to it: C:\Projects,
+		/// where the drive D:\ is mounted, is D:\, which the drives' scan has already, and a scan never lists one photo twice
+		/// as two copies of itself. A walk doesn't follow a folder link or a mounted drive (it would list a folder twice);
+		/// what it skips is reached by its own path: a drive by its letter, a drive mounted only in a folder by that folder.
+		/// </para>
 		/// </summary>
 		public static List<string> Roots(AgentConfig cfg, List<string>? notes = null) {
 			var candidates = new List<string>();
-			if (cfg.ScanAllDrives)
+			if (cfg.ScanAllDrives) {
 				foreach (DriveInfo drive in FixedDrives())
 					candidates.Add(drive.RootDirectory.FullName);
+				candidates.AddRange(RealPath.DrivesWithoutLetter());
+			}
 			foreach (string folder in cfg.Folders) {
 				if (!Directory.Exists(folder)) {
 					notes?.Add($"Folder not found, skipped: {folder}");
 					continue;
 				}
-				string full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder));
+				string full = RealPath.Of(folder);
 				if (UserExclusionOver(full, cfg) is { } exclusion) {
-					notes?.Add($"Folder skipped: {full} is inside \"{exclusion}\" in excludeFolders (settings.json), which wins over folders. Remove one of the two.");
+					notes?.Add($"Folder skipped: {Path.TrimEndingDirectorySeparator(folder)} is inside \"{exclusion}\" in excludeFolders (settings.json), which wins over folders. Remove one of the two.");
 					continue;
 				}
 				candidates.Add(full);
@@ -132,7 +140,7 @@ namespace HEI.Agent {
 		internal static void Apply(Settings s, AgentConfig cfg, List<string>? notes = null) {
 			foreach (string root in Roots(cfg, notes)) s.IncludeList.Add(root);
 			foreach (string f in Exclusions()) s.SubfolderBlackList.Add(f);
-			foreach (string f in cfg.ExcludeFolders.Where(f => !string.IsNullOrWhiteSpace(f))) s.BlackList.Add(f);
+			foreach (string f in UserExclusions(cfg)) s.BlackList.Add(f);
 			foreach (string marker in RepositoryMarkers) s.SkipFoldersContaining.Add(marker);
 			s.SkipFolderLinks = true;
 		}
@@ -140,8 +148,37 @@ namespace HEI.Agent {
 		/// <summary>Folders left out: the built-in ones, other people's profiles, then the user's own.</summary>
 		internal static List<Rule> ExclusionRules(AgentConfig cfg) {
 			var rules = BuiltInRules();
-			rules.AddRange(cfg.ExcludeFolders.Where(p => !string.IsNullOrWhiteSpace(p)).Select(p => new Rule(p, UserReason)));
+			rules.AddRange(UserExclusions(cfg).Select(p => new Rule(p, UserReason)));
 			return rules;
+		}
+
+		/// <summary>
+		/// The user's exclusions (<see cref="AgentConfig.ExcludeFolders"/>), each as written and, for a path, by its real path
+		/// too: the scan walks folders by their real paths (C:\Projects\Old is D:\Old when D:\ is mounted in C:\Projects).
+		/// </summary>
+		internal static List<string> UserExclusions(AgentConfig cfg) {
+			var all = new List<string>();
+			foreach (string pattern in cfg.ExcludeFolders.Where(p => !string.IsNullOrWhiteSpace(p)))
+				foreach (string? form in new[] { pattern, RealPattern(pattern) })
+					if (form != null && !all.Contains(form, StringComparer.OrdinalIgnoreCase)) all.Add(form);
+			return all;
+		}
+
+		/// <summary>
+		/// An exclusion with its folder part by its real path: C:\Projects\Old\* as D:\Old\* (the part before the first
+		/// wildcard is resolved). Null for a folder name ("node_modules"), a pattern for every drive ("?:\Temp"), or what
+		/// doesn't resolve to anything else.
+		/// </summary>
+		internal static string? RealPattern(string pattern) {
+			if (!Path.IsPathFullyQualified(pattern) || pattern.StartsWith(@"\\", StringComparison.Ordinal)) return null;
+			string[] parts = pattern.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+			int wild = Array.FindIndex(parts, p => p.IndexOfAny(['*', '?']) >= 0);
+			if (wild == 0) return null;
+			string folder = string.Join(Path.DirectorySeparatorChar, wild < 0 ? parts : parts[..wild]);
+			if (folder.Length == 2 && folder[1] == ':') folder += Path.DirectorySeparatorChar;
+			string real = RealPath.Of(folder);
+			string formed = wild < 0 ? real : Path.Join(real, string.Join(Path.DirectorySeparatorChar, parts[wild..]));
+			return string.Equals(Path.TrimEndingDirectorySeparator(formed), Path.TrimEndingDirectorySeparator(pattern), StringComparison.OrdinalIgnoreCase) ? null : formed;
 		}
 
 		static List<Rule> BuiltInRules() {
@@ -182,7 +219,8 @@ namespace HEI.Agent {
 					try { asRead = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pattern)); }
 					catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { }
 				}
-				if (ScanEngine.IsBlackListed(folder, asRead))
+				// The scan has it by its real path too (UserExclusions).
+				if (ScanEngine.IsBlackListed(folder, asRead) || RealPattern(pattern) is { } real && ScanEngine.IsBlackListed(folder, real))
 					return pattern;
 			}
 			return null;

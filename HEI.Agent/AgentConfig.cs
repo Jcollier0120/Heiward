@@ -176,9 +176,21 @@ namespace HEI.Agent {
 		/// </summary>
 		public List<string> OnRequestDrives { get; set; } = new();
 
-		/// <summary>The path is on one of <see cref="OnRequestDrives"/>.</summary>
-		public bool IsOnRequest(string path) => OnRequestDrives.Count > 0 && DriveOf(path) is { } drive &&
-			OnRequestDrives.Any(d => string.Equals(DriveOf(d), drive, StringComparison.OrdinalIgnoreCase));
+		/// <summary>The path is on one of <see cref="OnRequestDrives"/> (<see cref="IsOnDrive"/>).</summary>
+		public bool IsOnRequest(string path) => IsOnDrive(path, OnRequestDrives);
+
+		/// <summary>
+		/// The path is on one of <paramref name="drives"/> ("D:\"): by its drive letter, or, failing that, by the drive it's
+		/// really on (C:\Projects may be the drive D:\ mounted in a folder, <see cref="RealPath.VolumeOf"/>). A path written
+		/// with one of the drives' letters is answered without reading the drive, so a sleeping disk stays asleep.
+		/// </summary>
+		public static bool IsOnDrive(string path, IEnumerable<string>? drives) {
+			var letters = (drives ?? Array.Empty<string>()).Select(DriveOf).Where(d => d != null).ToList();
+			if (letters.Count == 0) return false;
+			bool Listed(string? drive) => drive != null && letters.Any(d => string.Equals(d, drive, StringComparison.OrdinalIgnoreCase));
+			if (DriveOf(path) is not { } written) return false;
+			return Listed(written) || Listed(RealPath.VolumeOf(path));
+		}
 
 		/// <summary>A path's drive as these settings name it: "D:\".</summary>
 		public static string? DriveOf(string path) {

@@ -18,7 +18,7 @@ namespace HEI.Agent.Tests;
 
 /// <summary>The review page's drive and folder view: the scan index, the folder tree, and per-folder duplicate counts.</summary>
 public sealed class ExplorerViewTests : IDisposable {
-	readonly string root = Path.Combine(Path.GetTempPath(), "hei-explorer-" + Guid.NewGuid().ToString("N"));
+	readonly string root = RealTemp.Folder("hei-explorer-");
 
 	public ExplorerViewTests() => Directory.CreateDirectory(root);
 	public void Dispose() { try { Directory.Delete(root, true); } catch { } }

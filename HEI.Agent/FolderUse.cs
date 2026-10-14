@@ -39,7 +39,8 @@ namespace HEI.Agent {
 		readonly DateTime nowUtc;
 		readonly TimeSpan recent;
 		readonly string claudeHome;
-		readonly Lazy<List<WorkingFolder>> processes;
+		/// <summary>Each process with its working folder's real path (<see cref="RealPath"/>): a process names its folder as it was given it.</summary>
+		readonly Lazy<List<(WorkingFolder Process, string Real)>> processes;
 
 		/// <param name="claudeHome">Claude Code's own folder; by default CLAUDE_CONFIG_DIR, or %USERPROFILE%\.claude.</param>
 		/// <param name="processes">The running processes' working folders; by default read from Windows (<see cref="ProcessFolders.All"/>).</param>
@@ -47,7 +48,8 @@ namespace HEI.Agent {
 			this.nowUtc = nowUtc;
 			this.recent = recent ?? RecentSession;
 			this.claudeHome = claudeHome ?? ClaudeSessions.DefaultHome;
-			this.processes = new(processes ?? ProcessFolders.All);
+			Func<List<WorkingFolder>> read = processes ?? ProcessFolders.All;
+			this.processes = new(() => read().Select(p => (Process: p, Real: RealPath.Of(p.Folder))).ToList());
 		}
 
 		/// <summary>Why <paramref name="folder"/> is in use, for the page and the log; null when nothing is known to use it.</summary>
@@ -61,8 +63,11 @@ namespace HEI.Agent {
 			return null;
 		}
 
-		/// <summary>The running processes that work in <paramref name="folder"/> or below it.</summary>
-		public List<WorkingFolder> WorkingIn(string folder) => processes.Value.Where(p => ListingPlan.IsUnder(p.Folder, folder)).ToList();
+		/// <summary>The running processes that work in <paramref name="folder"/> or below it, by its real path and theirs.</summary>
+		public List<WorkingFolder> WorkingIn(string folder) {
+			string real = RealPath.Of(folder);
+			return processes.Value.Where(p => ListingPlan.IsUnder(p.Real, real)).Select(p => p.Process).ToList();
+		}
 
 		/// <summary>
 		/// What holds what a deletion left behind in <paramref name="root"/>: processes working in it, and those with
@@ -91,24 +96,29 @@ namespace HEI.Agent {
 			: Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude");
 
 		/// <summary>Claude Code names a folder's transcripts after its path, every character but a letter or a digit a '-'.</summary>
-		internal static string Slug(string folder) => Regex.Replace(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)), "[^a-zA-Z0-9]", "-");
+		internal static string Slug(string folder) => SlugOf(Path.TrimEndingDirectorySeparator(Path.GetFullPath(folder)));
 
 		/// <summary>Claude Code cuts a name longer than this and adds a hash of the whole path.</summary>
 		const int LongestSlug = 200;
 
-		/// <summary>A live session (its process still running, the same process that wrote the file) that works in <paramref name="folder"/> or below it.</summary>
+		/// <summary>
+		/// A live session (its process still running, the same process that wrote the file) that works in <paramref name="folder"/>
+		/// or below it, by their real paths: Claude Code writes its folder as it was started in it (C:\worktrees\x), git the real
+		/// one (E:\worktrees\x).
+		/// </summary>
 		public static WorkingFolder? LiveIn(string home, string folder) {
 			string sessions = Path.Combine(home, "sessions");
 			IEnumerable<string> files;
 			try { files = Directory.Exists(sessions) ? Directory.EnumerateFiles(sessions, "*.json").ToList() : []; }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; }
+			string? real = null;
 			foreach (string file in files) {
 				try {
 					using var doc = JsonDocument.Parse(File.ReadAllText(file));
 					JsonElement s = doc.RootElement;
 					if (s.ValueKind != JsonValueKind.Object || !s.TryGetProperty("cwd", out JsonElement cwd) || cwd.GetString() is not { Length: > 0 } dir) continue;
 					if (!s.TryGetProperty("pid", out JsonElement pidValue) || !pidValue.TryGetInt32(out int pid)) continue;
-					if (!ListingPlan.IsUnder(dir, folder)) continue;
+					if (!ListingPlan.IsUnder(RealPath.Of(dir), real ??= RealPath.Of(folder))) continue;
 					string? procStart = s.TryGetProperty("procStart", out JsonElement ps) ? ps.ValueKind == JsonValueKind.String ? ps.GetString() : ps.ToString() : null;
 					if (Running(pid, procStart) is { } name) return new WorkingFolder(pid, name, dir);
 				}
@@ -138,18 +148,32 @@ namespace HEI.Agent {
 			}
 		}
 
-		/// <summary>When a Claude Code session last wrote a transcript for <paramref name="folder"/>; null when none has.</summary>
+		/// <summary>
+		/// When a Claude Code session last wrote a transcript for <paramref name="folder"/>; null when none has. Claude Code names
+		/// the transcripts' folder after the path it was started in, which may not be the one asked about: a worktree git lists as
+		/// E:\worktrees\x has its sessions under C--worktrees-x when they were started in C:\worktrees\x, a junction to it.
+		/// </summary>
 		public static DateTime? LastUsedUtc(string home, string folder) {
 			string projects = Path.Combine(home, "projects");
-			string slug = Slug(folder);
 			try {
 				if (!Directory.Exists(projects)) return null;
-				IEnumerable<string> dirs = slug.Length <= LongestSlug
-					? new[] { Path.Combine(projects, slug) }.Where(Directory.Exists)
-					: Directory.EnumerateDirectories(projects, slug[..LongestSlug] + "-*");
+				var dirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				// Each path Windows knows the folder by: as asked, its real path, and through the folders its drive is mounted in.
+				foreach (string spelling in RealPath.Spellings(folder)) {
+					string slug = Slug(spelling);
+					dirs.UnionWith(slug.Length <= LongestSlug
+						? new[] { Path.Combine(projects, slug) }.Where(Directory.Exists)
+						: Directory.EnumerateDirectories(projects, slug[..LongestSlug] + "-*"));
+				}
+				// Through a junction: another folder's name ending the same, whose sessions worked in this very folder.
+				string leaf = SlugOf(Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)));
+				if (leaf.Trim('-').Length > 0)
+					foreach (string dir in Directory.EnumerateDirectories(projects, "*-" + leaf).Where(d => !dirs.Contains(d)).ToList())
+						if (WorkedIn(dir) is { } cwd && RealPath.Same(cwd, folder))
+							dirs.Add(dir);
 				DateTime? newest = null;
 				foreach (string dir in dirs)
-					foreach (string transcript in Directory.EnumerateFiles(dir, "*.jsonl", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, MaxRecursionDepth = 3 })) {
+					foreach (string transcript in Transcripts(dir)) {
 						DateTime written = File.GetLastWriteTimeUtc(transcript);
 						if (newest == null || written > newest) newest = written;
 					}
@@ -158,6 +182,29 @@ namespace HEI.Agent {
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
 				return null;
 			}
+		}
+
+		static IEnumerable<string> Transcripts(string dir) =>
+			Directory.EnumerateFiles(dir, "*.jsonl", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, MaxRecursionDepth = 3 });
+
+		static string SlugOf(string text) => Regex.Replace(text, "[^a-zA-Z0-9]", "-");
+
+		/// <summary>A transcript's "cwd", the folder its session worked in (written in its first lines); null when none says.</summary>
+		static readonly Regex CwdField = new("\"cwd\"\\s*:\\s*(\"(?:[^\"\\\\]|\\\\.)*\")", RegexOptions.Compiled);
+
+		/// <summary>The folder the sessions of a transcripts' folder worked in, from its newest transcripts' first lines; null when none says.</summary>
+		internal static string? WorkedIn(string dir) {
+			foreach (string transcript in Transcripts(dir).OrderByDescending(File.GetLastWriteTimeUtc).Take(3)) {
+				try {
+					using var stream = new FileStream(transcript, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+					var head = new byte[64 * 1024];
+					int read = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+					if (CwdField.Match(Encoding.UTF8.GetString(head, 0, read)) is { Success: true } m && JsonSerializer.Deserialize<string>(m.Groups[1].Value) is { Length: > 0 } cwd)
+						return cwd;
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { }
+			}
+			return null;
 		}
 	}
 

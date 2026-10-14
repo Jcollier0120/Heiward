@@ -130,13 +130,14 @@ namespace HEI.Agent {
 					stored.Roots.TryGetValue(root, out StoredRoot? last);
 					// Scanned only when asked, and not asked now: nothing on the drive is touched, not even its
 					// journal. Its photos and videos as its last scan listed them still count.
-					if (cfg.IsOnRequest(root) && !(scanNow ?? Array.Empty<string>()).Any(d => string.Equals(AgentConfig.DriveOf(d), AgentConfig.DriveOf(root), StringComparison.OrdinalIgnoreCase))) {
+					if (cfg.IsOnRequest(root) && !AgentConfig.IsOnDrive(root, scanNow)) {
 						r.Mode = ListingMode.Resting;
 						List<string> known = last != null && StoredListing.Load(last.File) is { } kept ? kept.PathsOutside(new HashSet<string>()) : new();
 						r.Listing = new ScanEngine.RootListing(Array.Empty<FileInfo>(), known);
 						continue;
 					}
-					string drive = Path.GetPathRoot(root) ?? root;
+					// The drive it's really on: C:\Projects may be the drive D:\, whose journal C:\'s doesn't hold.
+					string drive = RealPath.VolumeOf(root) ?? Path.GetPathRoot(root) ?? root;
 					if (!volumes.TryGetValue(drive, out Volume? volume))
 						volumes[drive] = volume = Volume.Open(drive);
 					if (volume == null) {
@@ -170,17 +171,20 @@ namespace HEI.Agent {
 			if (!Directory.Exists(r.Root)) { r.Why = "the folder isn't there"; return; }
 
 			bool Scanned(string folder) => IsScanned(r.Root, folder, rules, scanned);
+			// The journal names each folder by its real path (D:\Photos); the scan walks the folder as it's written (C:\Projects\Photos).
+			string realRoot = RealPath.Of(r.Root);
 			var dirty = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			r.Changes = records.Count;
 			foreach (JournalRecord record in records) {
 				ct.ThrowIfCancellationRequested();
 				// Where it happened: the folder, or for one deleted since, the nearest folder above it that's left.
-				(string? where, bool exact, bool hidden) = volume.Locate(record.Parent);
+				(string? found, bool exact, bool hidden) = volume.Locate(record.Parent);
 				if (hidden) continue; // a folder this user can't open: Windows' own, another account's
-				if (where == null) {
+				if (found == null) {
 					r.Why = "something changed in a folder that can't be found any more";
 					return;
 				}
+				if (AsWalked(found, realRoot, r.Root) is not { } where) continue; // outside the scanned folder: elsewhere on the drive
 				if (!Scanned(where)) continue; // Windows, app data, a repository, an exclusion, another drive's folder
 				if (record.IsFolder) {
 					// A folder added, deleted, moved, or made hidden or a link where scans look: what's below it changed.
@@ -210,6 +214,16 @@ namespace HEI.Agent {
 			r.ChangedFolders = relisted.Count;
 			r.Mode = relisted.Count == 0 ? ListingMode.Unchanged : ListingMode.Changed;
 			r.Listing = new ScanEngine.RootListing(listed, listing.PathsOutside(relisted));
+		}
+
+		/// <summary>
+		/// <paramref name="real"/>, a folder by its real path as the journal names it, by the path a scan of <paramref name="root"/>
+		/// (whose real path is <paramref name="realRoot"/>) reaches it by; null when it isn't in that folder.
+		/// </summary>
+		internal static string? AsWalked(string real, string realRoot, string root) {
+			if (!IsUnder(real, realRoot)) return null;
+			string rel = Path.GetRelativePath(realRoot, real);
+			return rel == "." ? Path.TrimEndingDirectorySeparator(root) : Path.Combine(root, rel);
 		}
 
 		/// <summary>A scan of <paramref name="root"/> walks into <paramref name="folder"/>, by the rules of the walk itself (<see cref="ScanScope.ExemptReason"/>).</summary>
