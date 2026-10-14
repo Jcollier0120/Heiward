@@ -104,7 +104,7 @@ namespace HEI.Agent {
 			catch (Exception e) when (e is not OperationCanceledException) {
 				AgentPaths.AppendLog("change journal not read, walking every folder: " + e.Message);
 				// Drives scanned only when asked stay unread all the same: left out of this scan.
-				foreach (string root in settings.IncludeList.Where(r => cfg.IsOnRequest(r) && !(drives ?? Array.Empty<string>()).Any(d => AgentConfig.DriveOf(d) == AgentConfig.DriveOf(r))).ToList())
+				foreach (string root in settings.IncludeList.Where(r => cfg.IsOnRequest(r) && !AgentConfig.IsOnDrive(r, drives)).ToList())
 					settings.IncludeList.Remove(root);
 			}
 			// Nothing a scan would see changed since the last one, which made this report with these

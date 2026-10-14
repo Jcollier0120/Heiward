@@ -92,7 +92,7 @@ namespace HEI.Agent {
 		/// </summary>
 		public static TreeListing? Tree(string path, bool all, AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending) {
 			if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return null;
-			string full = Path.GetFullPath(path);
+			string full = RealPath.Of(path); // as scans walk it: the roots are real paths (ScanScope.Roots)
 			var roots = ScanScope.Roots(cfg);
 			// The deepest root: a listed folder inside an exempt one is a root of its own.
 			string? root = roots.Where(r => IsSameOrUnder(full, r)).MaxBy(r => r.TrimEnd(Path.DirectorySeparatorChar).Length);

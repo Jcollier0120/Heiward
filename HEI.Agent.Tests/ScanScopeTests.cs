@@ -23,9 +23,14 @@ namespace HEI.Agent.Tests;
 public sealed class ScanScopeTests : IDisposable {
 	static readonly List<string> Excluded = ScanScope.Exclusions();
 
-	readonly string temp = Path.Combine(Path.GetTempPath(), "hei-scope-" + Guid.NewGuid().ToString("N"));
+	readonly string temp = RealTemp.Folder("hei-scope-");
 
-	public void Dispose() { try { Directory.Delete(temp, true); } catch { } }
+	public void Dispose() {
+		if (Directory.Exists(temp))
+			foreach (string d in Directory.EnumerateDirectories(temp).Where(d => (File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0))
+				Directory.Delete(d); // a junction alone, never what it points to
+		try { Directory.Delete(temp, true); } catch { }
+	}
 
 	string Dir(params string[] parts) {
 		string p = Path.Combine(new[] { temp }.Concat(parts).ToArray());
@@ -120,6 +125,34 @@ public sealed class ScanScopeTests : IDisposable {
 		string hidden = Dir("Photos", ".app", "Exports");
 		Assert.Equal(new[] { outer, hidden }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { outer, hidden } }));
 	}
+
+	/// <summary>
+	/// A folder listed by a path through a junction (C:\Projects, where the drive D:\ is mounted) is the folder it leads
+	/// to: scanned once, by its real path, and never listed twice as two copies of each photo.
+	/// </summary>
+	[Fact]
+	public void AFolderListedThroughAJunction_IsScannedOnce_ByItsRealPath() {
+		string outer = Dir("Photos"), inner = Dir("Photos", "2019");
+		string link = RealTemp.Junction(Path.Combine(temp, "Pictures"), outer);
+		Assert.Equal(new[] { outer }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { link } }));
+		Assert.Equal(new[] { outer }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { outer, link } }));
+		Assert.Equal(new[] { outer }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { Path.Combine(link, "2019"), outer } }));
+
+		// Left out by a path through the junction: the folder it leads to is left out.
+		var s = new Settings();
+		ScanScope.Apply(s, new AgentConfig { ScanAllDrives = false, Folders = { outer }, ExcludeFolders = { Path.Combine(link, "2019") } });
+		Assert.Contains(inner, s.BlackList, StringComparer.OrdinalIgnoreCase);
+		Assert.Equal(ScanScope.UserReason, ScanScope.ExemptBelow(outer, inner, ScanScope.ExclusionRules(new AgentConfig { ExcludeFolders = { Path.Combine(link, "20*") } })));
+		var notes = new List<string>();
+		Assert.Empty(ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { inner }, ExcludeFolders = { link } }, notes));
+		Assert.Contains(link, Assert.Single(notes));
+	}
+
+	[Theory]
+	[InlineData("node_modules")]
+	[InlineData(@"?:\Temp")]
+	[InlineData(@"*\Backups")]
+	public void ExclusionsThatArentAFolder_HaveNoRealPath(string pattern) => Assert.Null(ScanScope.RealPattern(pattern));
 
 	[Fact]
 	public void BuiltInExclusionOver_NamesTheLeftOutFolder() {

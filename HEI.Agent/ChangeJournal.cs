@@ -56,10 +56,13 @@ namespace HEI.Agent {
 			NextUsn = next;
 		}
 
-		/// <summary>The journal of the volume <paramref name="path"/> is on, or null: no journal (FAT, exFAT, a network drive), or not readable.</summary>
+		/// <summary>
+		/// The journal of the volume <paramref name="path"/> is really on (C:\Projects may be the drive D:\, <see cref="RealPath.VolumeOf"/>),
+		/// or null: no journal (FAT, exFAT, a network drive, a Dev Drive whose journal is off), or not readable.
+		/// </summary>
 		public static VolumeJournal? Open(string path) {
-			string? drive = Path.GetPathRoot(Path.GetFullPath(path));
-			if (drive is not { Length: 3 } || drive[1] != ':') return null; // a drive letter: not a share or a mounted folder
+			string? drive = RealPath.VolumeOf(path);
+			if (drive is not { Length: 3 } || drive[1] != ':') return null; // a drive letter: not a share, nor a drive with none
 			SafeFileHandle volume = CreateFile($@"\\.\{drive[0]}:", FileTraverse, ShareAll, IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
 			if (volume.IsInvalid) return null;
 			var data = new byte[80];

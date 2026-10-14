@@ -176,8 +176,8 @@ namespace HEI.Agent {
 					else if (reason == null) queue.Enqueue(d.FullName);
 				}
 			}
-			// A repository listed in folders is a root of its own, and the drive's walk finds it too.
-			return repos.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+			// A repository listed in folders is a root of its own, and the drive's walk finds it too: once, whatever path it was found by.
+			return repos.DistinctBy(RealPath.Of, StringComparer.OrdinalIgnoreCase).ToList();
 		}
 
 		static bool IsRepository(string folder) => ScanScope.RepositoryMarkers.Any(m => Path.Exists(Path.Combine(folder, m)));
@@ -353,7 +353,7 @@ namespace HEI.Agent {
 				string? blocked = File.Exists(Path.Combine(w, "locked")) ? "Locked in git"
 					: use.Why(path) is { } busy ? busy
 					: ToolHome(path) is { } tool ? $"Kept for the tool that made it ({tool})"
-					: ScheduledTasksText.Value.Contains(path, StringComparison.OrdinalIgnoreCase) ? "A scheduled task uses it"
+					: AScheduledTaskUses(path) ? "A scheduled task uses it"
 					: WorktreeBlocker(path);
 				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, bytes,
 					lastUsed == DateTime.MinValue ? null : lastUsed, lastUsed < staleBefore && blocked == null, blocked,
@@ -394,8 +394,8 @@ namespace HEI.Agent {
 		}
 
 		internal static bool IsLeftoverWorktree(string repo, string path) {
-			string full = Path.GetFullPath(path).TrimEnd('\\');
-			return LeftoverWorktrees(repo).Any(p => string.Equals(Path.GetFullPath(p).TrimEnd('\\'), full, StringComparison.OrdinalIgnoreCase));
+			string real = RealPath.Of(path);
+			return LeftoverWorktrees(repo).Any(p => string.Equals(RealPath.Of(p), real, StringComparison.OrdinalIgnoreCase));
 		}
 
 		/// <summary>The folders git lists as the repository's worktrees; null when git can't say.</summary>
@@ -414,10 +414,17 @@ namespace HEI.Agent {
 		/// The tool whose home holds <paramref name="path"/>: a dot-folder of the user profile
 		/// (~\.&lt;tool&gt;\checkouts\...) or app data. A tool keeps a worktree there for its own use (its
 		/// scheduled jobs may read it), so removing it would break the tool. Worktrees under a project's own folder
-		/// (repo\.claude\worktrees) are the user's.
+		/// (repo\.claude\worktrees) are the user's. Git names a worktree by its real path: one in ~\.steward\work, a
+		/// junction to E:\steward-work, is E:\steward-work\x, and still the Steward's.
 		/// </summary>
 		internal static string? ToolHome(string path) {
-			foreach (string home in new[] { Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) })
+			if (ToolHomeAsWritten(path) is { } tool) return tool;
+			string real = RealPath.Of(path);
+			return ToolHomes().FirstOrDefault(h => ListingPlan.IsUnder(real, h.Folder)).Tool;
+		}
+
+		static string? ToolHomeAsWritten(string path) {
+			foreach (string home in AppDataHomes)
 				if (!string.IsNullOrEmpty(home) && path.StartsWith(home.TrimEnd('\\') + "\\", StringComparison.OrdinalIgnoreCase))
 					return "app data";
 			string profile = Home.TrimEnd('\\') + "\\";
@@ -425,6 +432,53 @@ namespace HEI.Agent {
 			string first = path[profile.Length..].Split('\\')[0];
 			return first.StartsWith('.') ? first : null;
 		}
+
+		static string[] AppDataHomes => new[] { Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) };
+
+		static (DateTime ReadUtc, List<(string Tool, string Folder)> Homes)? toolHomes;
+
+		/// <summary>
+		/// The tools' homes by their real paths: app data, each dot-folder of the profile, and the folders a link directly
+		/// inside one leads to (~\.steward\work, a junction). Read again after a minute: tools come and go.
+		/// </summary>
+		static List<(string Tool, string Folder)> ToolHomes() {
+			if (toolHomes is { } known && DateTime.UtcNow - known.ReadUtc < TimeSpan.FromMinutes(1)) return known.Homes;
+			var homes = AppDataHomes.Where(h => !string.IsNullOrEmpty(h)).Select(h => (Tool: "app data", Folder: RealPath.Of(h))).ToList();
+			var linkOptions = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 };
+			try {
+				foreach (DirectoryInfo dot in new DirectoryInfo(Home).EnumerateDirectories(".*", linkOptions)) {
+					homes.Add((dot.Name, RealPath.Of(dot.FullName)));
+					try {
+						foreach (DirectoryInfo inside in dot.EnumerateDirectories("*", linkOptions).Where(d => (d.Attributes & FileAttributes.ReparsePoint) != 0))
+							if (RealPath.Of(inside.FullName) is var target && Path.GetPathRoot(target) != target) // a link to a whole drive holds more than the tool's
+								homes.Add((dot.Name, target));
+					}
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+				}
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
+			toolHomes = (DateTime.UtcNow, homes);
+			return homes;
+		}
+
+		/// <summary>
+		/// A scheduled task runs in <paramref name="path"/> or names something in it, by its real path: a task written with
+		/// C:\worktrees\x uses the worktree git lists as E:\worktrees\x.
+		/// </summary>
+		static bool AScheduledTaskUses(string path) {
+			if (ScheduledTasksText.Value.Contains(path, StringComparison.OrdinalIgnoreCase)) return true;
+			string real = RealPath.Of(path);
+			return ScheduledTaskPaths.Value.Any(p => ListingPlan.IsUnder(p, real));
+		}
+
+		/// <summary>The paths in the scheduled tasks' commands and start folders, each by its real path, read once.</summary>
+		static readonly Lazy<List<string>> ScheduledTaskPaths = new(() => TaskPaths(ScheduledTasksText.Value));
+
+		/// <summary>The local paths in <paramref name="text"/> ("C:\x\run.cmd" in "C:\x\run.cmd --now"), each by its real path.</summary>
+		internal static List<string> TaskPaths(string text) =>
+			Regex.Matches(text, @"(?<![A-Za-z])[A-Za-z]:\\[^""\r\n,]*?(?=\s+(?:-|/|[A-Za-z]:\\)|[""\r\n,]|$)")
+				.Select(m => m.Value.Trim()).Where(p => p.Length > 3).Distinct(StringComparer.OrdinalIgnoreCase)
+				.Select(RealPath.Of).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
 		/// <summary>Every scheduled task's command and start folder, read once: a worktree a task runs in stays.</summary>
 		static readonly Lazy<string> ScheduledTasksText = new(() => {

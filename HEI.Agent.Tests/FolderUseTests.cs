@@ -23,7 +23,7 @@ namespace HEI.Agent.Tests;
 /// real one), and a real process working in a folder.
 /// </summary>
 public sealed class FolderUseTests : IDisposable {
-	readonly string root = Path.Combine(Path.GetTempPath(), "hei-use-" + Guid.NewGuid().ToString("N"));
+	readonly string root = RealTemp.Folder("hei-use-");
 	readonly string claude, worktree;
 	static readonly DateTime Now = DateTime.UtcNow;
 
@@ -34,8 +34,15 @@ public sealed class FolderUseTests : IDisposable {
 	}
 
 	public void Dispose() {
+		// Junctions first, so cleanup can't reach through one.
+		foreach (string d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
+			if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) Directory.Delete(d);
 		try { Directory.Delete(root, true); } catch { }
 	}
+
+	/// <summary>The worktree through a junction to the folder above it: C:\worktrees\x, where git names it E:\worktrees\x.</summary>
+	string ThroughAJunction() =>
+		Path.Combine(RealTemp.Junction(Path.Combine(root, "link"), Path.GetDirectoryName(worktree)!), Path.GetFileName(worktree));
 
 	/// <summary>
 	/// The working folder of a process just started: Windows writes a new process's parameters as it starts it, so a read
@@ -128,6 +135,41 @@ public sealed class FolderUseTests : IDisposable {
 		var use = Use(new() { new WorkingFolder(4242, "Code", Path.Combine(worktree, "src")), new WorkingFolder(7, "explorer", root) });
 		Assert.Equal("In use: Code (process 4242) works in it", use.Why(worktree));
 		Assert.Equal(new[] { "Code (process 4242) works in it" }, use.Holders(worktree, Array.Empty<string>()));
+	}
+
+	/// <summary>
+	/// The worktree a cleanup asks about by the path git gives (its real one), used by sessions started through a junction:
+	/// Claude Code names the transcripts' folder, and writes the session's folder, as the session was started.
+	/// </summary>
+	[Fact]
+	public void ASessionThroughAJunction_KeepsTheWorktree() {
+		string viaLink = ThroughAJunction();
+		Assert.Null(Use().Why(worktree));
+
+		Transcript(viaLink, TimeSpan.FromHours(3) + TimeSpan.FromMinutes(1));
+		Assert.Equal("A Claude Code session used it 3 hours ago", Use().Why(worktree));
+		Assert.Equal("A Claude Code session used it 3 hours ago", Use().Why(viaLink));
+
+		using Process me = Process.GetCurrentProcess();
+		Session(me.Id, Path.Combine(viaLink, "HEI.Agent"), StartOf(me));
+		Assert.Equal($"In use: a Claude Code session works in it ({me.ProcessName}, process {me.Id})", Use().Why(worktree));
+	}
+
+	[Fact]
+	public void AnotherFoldersTranscripts_EndingTheSame_DontKeepIt() {
+		// A folder elsewhere with the worktree's name: its sessions worked there, not here.
+		string namesake = Path.Combine(root, "other", Path.GetFileName(worktree));
+		Directory.CreateDirectory(namesake);
+		Transcript(namesake, TimeSpan.FromHours(1));
+		Assert.Null(Use().Why(worktree));
+	}
+
+	[Fact]
+	public void AProcessWorkingInItThroughAJunction_KeepsIt() {
+		string viaLink = ThroughAJunction();
+		Assert.Equal("In use: Code (process 4242) works in it", Use(new() { new WorkingFolder(4242, "Code", Path.Combine(viaLink, "src")) }).Why(worktree));
+		Assert.Equal("In use: Code (process 4242) works in it", Use(new() { new WorkingFolder(4242, "Code", worktree) }).Why(viaLink));
+		Assert.Null(Use(new() { new WorkingFolder(4242, "Code", Path.Combine(root, "link")) }).Why(worktree)); // the folder above it
 	}
 
 	[Fact]
