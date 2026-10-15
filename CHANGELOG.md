@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.50
+
+**It carries the Steward's kit 2.75.2: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.75.2: Automatic updates work on a busy PC: a page slow to start after an update is waited for instead of rolled back, a rollback never leaves the new page running over the old files, and an agent's rounds make room for Manor's update.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## Unreleased (its version needs claiming on the main laptop)
 
 **An NPU whose plugin can't set the AI model up no longer ends Heiward's scan: the NPU is checked in a process of its own first, and a scan leaves an NPU that failed its check. AI matching on the processor works again on PCs where Windows has its own ONNX Runtime.**
