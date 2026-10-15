@@ -351,7 +351,7 @@ namespace HEI.Core.AI {
 	/// <summary>
 	/// Intel AI Boost (Core Ultra): Intel's OpenVINO execution provider plugin (NuGet package
 	/// Intel.ML.OnnxRuntime.EP.OpenVINO, SHA256-pinned), which carries the whole OpenVINO runtime, NPU
-	/// compiler included, in {ai}/openvino. OpenVINO caches the compiled NPU graph itself (cache_dir).
+	/// compiler included, in {ai}/openvino. OpenVINO caches the compiled NPU graph itself (CACHE_DIR).
 	/// </summary>
 	internal sealed class OpenVinoPack(bool acceptCpu) : NpuPack {
 		public const string PackageVersion = "1.7.0";
@@ -384,10 +384,16 @@ namespace HEI.Core.AI {
 
 		public override string PluginLibraryPath() => Path.Combine(Folder, Plugin);
 
-		/// <summary>OpenVINO picks FP16 on the NPU by itself; the compiled graph goes to the cache folder.</summary>
+		/// <summary>
+		/// OpenVINO picks FP16 on the NPU by itself; the compiled graph goes to the cache folder. The plugin takes the
+		/// folder as the NPU's CACHE_DIR in load_config: it ignores the cache_dir option ("Provider option cache_dir is
+		/// ignored"), which left the folder empty and every open compiling again unless the NPU driver's own cache in
+		/// %LOCALAPPDATA%\Intel\NPU still held the graph (18 s against 0.8 s on a Core Ultra 5 225U, 2026-10-14).
+		/// </summary>
 		public override Dictionary<string, string> ProviderOptions(string cacheFolder) {
 			Directory.CreateDirectory(cacheFolder);
-			return new() { ["cache_dir"] = cacheFolder };
+			var config = new Dictionary<string, Dictionary<string, string>> { ["NPU"] = new() { ["CACHE_DIR"] = cacheFolder } };
+			return new() { ["load_config"] = System.Text.Json.JsonSerializer.Serialize(config) };
 		}
 
 		public override bool Accepts(OrtHardwareDeviceType type) => type == OrtHardwareDeviceType.NPU || acceptCpu && type == OrtHardwareDeviceType.CPU;
