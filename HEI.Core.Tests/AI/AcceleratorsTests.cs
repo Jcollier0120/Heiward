@@ -34,12 +34,14 @@ public sealed class AcceleratorsTests : IDisposable {
 		npuLock = Path.Combine(root, "locks", "npu");
 		Environment.SetEnvironmentVariable("NPU_AGENT_NPU_LOCK", npuLock);
 		GpuChecks.PathOverride = Path.Combine(root, "gpu-checks.json");
+		NpuChecks.PathOverride = Path.Combine(root, "npu-checks.json");
 		Accelerators.FolderOverride = Own;
 	}
 
 	public void Dispose() {
 		Environment.SetEnvironmentVariable("NPU_AGENT_NPU_LOCK", null);
 		GpuChecks.PathOverride = null;
+		NpuChecks.PathOverride = null;
 		Accelerators.FolderOverride = null;
 		try { Directory.Delete(root, true); } catch { }
 	}
@@ -363,6 +365,85 @@ public sealed class AcceleratorsTests : IDisposable {
 		Assert.Equal(AiDevice.Cpu, AcceleratorPlan.ChooseAuto(false, Accelerators.FailureOf("npu"), true, card, GpuChecks.Passed(card), Accelerators.FailureOf(card.AcceleratorId)).Device);
 		Accelerators.Succeeded(card.AcceleratorId);
 		Assert.Equal(AiDevice.Gpu, AcceleratorPlan.ChooseAuto(false, Accelerators.FailureOf("npu"), true, card, GpuChecks.Passed(card), Accelerators.FailureOf(card.AcceleratorId)).Device);
+	}
+
+	// ---------------------------------------------------------------- the NPU's check
+
+	const string Krackan = "NPU Compute Accelerator Device", KrackanDriver = "32.0.20102.3930", VitisAi = "VitisAIExecutionProvider 1.8.75.0";
+
+	[Fact]
+	public void TheNpusCheck_HoldsForItsDriverAndPluginOnly() {
+		DateTime now = DateTime.UtcNow;
+		Assert.Null(NpuChecks.Find(Krackan, KrackanDriver, VitisAi));
+		Assert.True(NpuChecks.NeedsCheck(null, now));
+
+		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: true, nowUtc: now);
+		NpuChecks.Check passed = NpuChecks.Find(Krackan, KrackanDriver, VitisAi)!;
+		Assert.True(passed.Passed);
+		Assert.Null(passed.Reason);
+		Assert.False(NpuChecks.NeedsCheck(passed, now.AddDays(30)));
+		Assert.Null(NpuChecks.FailureOf(passed, now));
+		// A new driver, or Windows updating the plugin: no check for it yet.
+		Assert.Null(NpuChecks.Find(Krackan, "32.0.20103.1000", VitisAi));
+		Assert.Null(NpuChecks.Find(Krackan, KrackanDriver, "VitisAIExecutionProvider 1.8.80.0"));
+	}
+
+	[Fact]
+	public void ACheckThatCrashed_LeavesTheNpuForADay_AndSaysWhy() {
+		DateTime now = DateTime.UtcNow;
+		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: false,
+			"setting the model up ended its process (exit 0xC0000409) from the AMD Ryzen AI NPU's plugin\nmore", now);
+		NpuChecks.Check crashed = NpuChecks.Find(Krackan, KrackanDriver, VitisAi)!;
+		Assert.False(crashed.Passed);
+		Assert.Equal("setting the model up ended its process (exit 0xC0000409) from the AMD Ryzen AI NPU's plugin", crashed.Reason);
+
+		Assert.False(NpuChecks.NeedsCheck(crashed, now.AddHours(23)));
+		Accelerators.Failure failure = NpuChecks.FailureOf(crashed, now.AddHours(23))!;
+		Assert.StartsWith("it failed its check: setting the model up ended its process", failure.Reason);
+		Assert.Equal(crashed.AtUtc + NpuChecks.RetryFailedAfter, failure.UntilUtc); // a day, not the markers' 10 minutes
+		AcceleratorPlan plan = AcceleratorPlan.ChooseAuto(npu: true, failure, gpuPack: false, card: null, cardChecked: false, null);
+		Assert.EndsWith($"(tried again from {failure.UntilUtc.ToLocalTime():ddd HH:mm})", plan.Why); // tomorrow's time says its day
+
+		Assert.True(NpuChecks.NeedsCheck(crashed, now.AddDays(1).AddMinutes(1)));
+		Assert.Null(NpuChecks.FailureOf(crashed, now.AddDays(1).AddMinutes(1)));
+	}
+
+	[Fact]
+	public void Auto_WithTheNpusCheckFailed_FallsBackToACheckedCard_ElseTheCpu() {
+		DateTime now = DateTime.UtcNow;
+		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: false, "setting the model up ended its process (exit 0xC0000409)", now);
+		Accelerators.Failure failed = NpuChecks.FailureOf(NpuChecks.Find(Krackan, KrackanDriver, VitisAi), now)!;
+
+		AcceleratorPlan gpu = AcceleratorPlan.ChooseAuto(npu: true, failed, gpuPack: true, Card(), cardChecked: true, null);
+		Assert.Equal(AiDevice.Gpu, gpu.Device);
+		Assert.Equal("NPU", gpu.FellBackFrom);
+		Assert.StartsWith("it failed its check: setting the model up ended its process (exit 0xC0000409), at ", gpu.Why);
+
+		AcceleratorPlan cpu = AcceleratorPlan.ChooseAuto(npu: true, failed, gpuPack: false, null, cardChecked: false, null);
+		Assert.Equal(AiDevice.Cpu, cpu.Device);
+		Assert.Equal("NPU", cpu.FellBackFrom);
+	}
+
+	[Fact]
+	public void TheNpusLock_LeftByAProcessThatEnded_IsLetGo_ButNotALiveOnesNorAnothers() {
+		if (!OperatingSystem.IsWindows()) return;
+		// A pid that is not running (pids are multiples of 4 on Windows; this one is odd).
+		int dead = int.MaxValue - 2;
+		void HeldBy(int pid) {
+			Directory.CreateDirectory(npuLock);
+			File.WriteAllText(Path.Combine(npuLock, "owner.json"), $$"""{"pid":{{pid}},"since":{{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}}}""");
+		}
+
+		HeldBy(dead);
+		Assert.False(NpuLock.ReleaseIfHeldBy(Accelerators.Npu, dead - 2)); // someone else's
+		Assert.True(Directory.Exists(npuLock));
+		Assert.True(NpuLock.ReleaseIfHeldBy(Accelerators.Npu, dead));
+		Assert.False(Directory.Exists(npuLock));
+		Assert.False(NpuLock.ReleaseIfHeldBy(Accelerators.Npu, dead)); // nothing left to let go
+
+		HeldBy(Environment.ProcessId); // a live holder keeps it
+		Assert.False(NpuLock.ReleaseIfHeldBy(Accelerators.Npu, Environment.ProcessId));
+		Assert.True(Directory.Exists(npuLock));
 	}
 
 	[Fact]

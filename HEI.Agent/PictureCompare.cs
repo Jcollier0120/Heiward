@@ -306,7 +306,11 @@ namespace HEI.Agent {
 		static OnnxEmbedder Open() {
 			AgentConfig cfg = AgentConfig.Load();
 			GpuAdapters.Choose(cfg.Gpu);
-			OnnxEmbedder opened = OnnxEmbedder.Create(Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto);
+			AiDevice setting = Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto;
+			// An NPU not yet checked with its driver and plugin is checked in its own process first, as before a scan: a
+			// plugin that ends its process while it compiles would otherwise end this page's.
+			NpuCheck.EnsureAsync(setting, AgentPaths.AppendLog, CancellationToken.None).GetAwaiter().GetResult();
+			OnnxEmbedder opened = OnnxEmbedder.Create(setting);
 			AgentPaths.AppendLog($"pictures compare: the AI model opened on the {opened.DeviceName}" + (opened.Fallback != null ? $" ({opened.Fallback})" : ""));
 			return opened;
 		}

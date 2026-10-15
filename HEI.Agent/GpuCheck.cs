@@ -27,12 +27,13 @@ namespace HEI.Agent {
 	static class GpuCheck {
 		/// <summary>
 		/// The card to check now, or null: Auto would leave the NPU (none this build drives, its pack missing, or it
-		/// failed in the last 10 minutes), the GPU pack is here, and the card in use has no check with its driver (or
-		/// failed one over a day ago) and hasn't failed lately.
+		/// failed in the last 10 minutes or failed its check), the GPU pack is here, and the card in use has no check with
+		/// its driver (or failed one over a day ago) and hasn't failed lately.
 		/// </summary>
 		internal static GpuAdapter? Due(AgentConfig cfg, DateTime nowUtc) {
 			if (!GpuComponents.IsInstalled) return null;
-			bool npu = NpuComponents.IsSupportedPlatform && NpuComponents.IsInstalled && AiComponents.IsReady && Accelerators.FailureOf(Accelerators.Npu, nowUtc) == null;
+			bool npu = NpuComponents.IsSupportedPlatform && NpuComponents.IsInstalled && AiComponents.IsReady && Accelerators.FailureOf(Accelerators.Npu, nowUtc) == null
+				&& NpuChecks.FailureOf(NpuChecks.Current(), nowUtc) == null;
 			if (npu) return null;
 			return Due(GpuAdapters.InUse(cfg.Gpu, GpuAdapters.List()), nowUtc);
 		}

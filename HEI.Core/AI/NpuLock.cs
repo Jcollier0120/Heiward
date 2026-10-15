@@ -88,6 +88,23 @@ namespace HEI.Core.AI {
 		internal static string QueueDirectoryFor(string lockDir) => lockDir + ".queue";
 
 		/// <summary>
+		/// Lets go of an accelerator's lock for <paramref name="pid"/> when that process holds it and has ended: a child that
+		/// died in its turn (an NPU check its plugin killed) leaves it for the next taker to evict, and every page shows it
+		/// held by a dead process until then. True when it removed the lock.
+		/// </summary>
+		public static bool ReleaseIfHeldBy(string accelerator, int pid) {
+			string? dir = LockDirectoryFor(accelerator);
+			if (dir == null || PidAlive(pid)) return false;
+			if (ReadOwner(Path.Combine(dir, "owner.json")) is not { } owner || owner.Pid != pid) return false;
+			try {
+				Directory.Delete(dir, recursive: true);
+				Logger.Instance.Info($"Let go of the lock {dir}: its holder, process {pid}, had ended.");
+				return true;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+		}
+
+		/// <summary>
 		/// Holds the NPU lock until disposed, after waiting its turn in the NPU queue. Waits up to
 		/// <paramref name="wait"/> (default 5 min), then throws <see cref="TimeoutException"/>.
 		/// </summary>

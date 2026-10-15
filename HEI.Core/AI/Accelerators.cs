@@ -75,10 +75,13 @@ namespace HEI.Core.AI {
 
 		public static string FailureFile(string id) => Path.Combine(Folder, id + ".failed.json");
 
-		/// <summary>A failure marker: when it was written (UTC), why, and by whom (Heiward, in its own folder).</summary>
-		public sealed record Failure(DateTime SinceUtc, string Reason, string By) {
+		/// <summary>
+		/// A failure marker: when it was written (UTC), why, and by whom (Heiward, in its own folder). <paramref name="Until"/>:
+		/// when it stops counting, where that isn't 10 minutes on (a failed NPU check: <see cref="NpuChecks"/>).
+		/// </summary>
+		public sealed record Failure(DateTime SinceUtc, string Reason, string By, DateTime? Until = null) {
 			/// <summary>When it stops counting.</summary>
-			public DateTime UntilUtc => SinceUtc + FailedFor;
+			public DateTime UntilUtc => Until ?? SinceUtc + FailedFor;
 		}
 
 		/// <summary>
@@ -253,6 +256,87 @@ namespace HEI.Core.AI {
 	}
 
 	/// <summary>
+	/// Whether the NPU's plugin can set the AI model up without killing the process: <c>hei probe --device npu</c>, run in
+	/// its own process before a scan's first use of the NPU with this driver and plugin (HEI.Agent's NpuCheck). A plugin
+	/// can end the process from native code while it compiles (Windows ML's Vitis AI 1.8.75.0 on a Ryzen AI 7 350, NPU
+	/// driver 32.0.20102.3930: 0xC0000409, 2026-10-15), past any catch, leaving the scan dead and the NPU's lock with a
+	/// dead holder. A check that ends that way fails, and Auto leaves the NPU until its driver or plugin changes, or for a
+	/// day; one that passes leaves the compiled graph for the scan to load. A check that fails the ordinary way (an
+	/// exception) isn't recorded here: <see cref="OnnxEmbedder"/> marks the NPU failed for 10 minutes, as for a scan.
+	/// Kept in <c>{ai}\npu-checks.json</c>: the last check.
+	/// </summary>
+	public static class NpuChecks {
+		/// <summary>A failed check is tried again after this long (a driver or plugin update makes a new check at once).</summary>
+		public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
+
+		/// <param name="Npu">The NPU's name as Windows shows it (<see cref="NpuHardware.Name"/>).</param>
+		/// <param name="Driver">Its driver version ("" when Windows didn't say).</param>
+		/// <param name="Pack">The plugin and its version (<see cref="NpuComponents.PackVersion"/>).</param>
+		public sealed record Check(string Npu, string Driver, string Pack, bool Passed, DateTime AtUtc, string? Reason);
+
+		public static string FilePath => PathOverride ?? Path.Combine(AiComponents.AiFolder, "npu-checks.json");
+		/// <summary>Tests keep their check elsewhere.</summary>
+		internal static string? PathOverride;
+
+		/// <summary>The last check when it was of this NPU, driver and plugin; otherwise null.</summary>
+		public static Check? Find(string npu, string driver, string pack) =>
+			Load() is { } c && c.Npu == npu && c.Driver == driver && c.Pack == pack ? c : null;
+
+		/// <summary>This PC's NPU's check with its driver and plugin now, or null.</summary>
+		public static Check? Current() => Find(NpuHardware.Name, NpuHardware.Driver, NpuComponents.PackVersion);
+
+		/// <summary>No check with this driver and plugin, or one that failed a day ago or more.</summary>
+		public static bool NeedsCheck(Check? check, DateTime nowUtc) => check is null || !check.Passed && nowUtc - check.AtUtc >= RetryFailedAfter;
+
+		/// <summary>A failed check while it counts (a day), as the failure Auto leaves the NPU for; otherwise null.</summary>
+		public static Accelerators.Failure? FailureOf(Check? check, DateTime nowUtc) =>
+			check is { Passed: false } && nowUtc - check.AtUtc < RetryFailedAfter
+				? new(check.AtUtc, $"it failed its check: {check.Reason}", Accelerators.Who, check.AtUtc + RetryFailedAfter)
+				: null;
+
+		/// <summary>Records a check of this PC's NPU with its driver and plugin now, replacing the last one. Never throws.</summary>
+		public static void Record(bool passed, string? reason = null, DateTime? nowUtc = null) =>
+			Record(NpuHardware.Name, NpuHardware.Driver, NpuComponents.PackVersion, passed, reason, nowUtc);
+
+		/// <summary>Records a check, replacing the last one. Never throws.</summary>
+		public static void Record(string npu, string driver, string pack, bool passed, string? reason = null, DateTime? nowUtc = null) {
+			try {
+				var json = new MemoryStream();
+				using (var w = new Utf8JsonWriter(json, new JsonWriterOptions { Indented = true })) {
+					w.WriteStartObject();
+					w.WriteString("npu", npu);
+					w.WriteString("driver", driver);
+					w.WriteString("pack", pack);
+					w.WriteBoolean("passed", passed);
+					w.WriteString("checkedAt", (nowUtc ?? DateTime.UtcNow).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
+					if (passed) w.WriteNull("reason");
+					else w.WriteString("reason", Accelerators.OneLine(reason));
+					w.WriteEndObject();
+				}
+				Accelerators.WriteWhole(FilePath, json.ToArray());
+			}
+			catch (Exception e) {
+				Logger.Instance.Info($"Couldn't record the NPU's check: {e.Message}");
+			}
+		}
+
+		static Check? Load() {
+			try {
+				if (!File.Exists(FilePath)) return null;
+				using JsonDocument doc = JsonDocument.Parse(File.ReadAllBytes(FilePath));
+				JsonElement c = doc.RootElement;
+				if (c.ValueKind != JsonValueKind.Object) return null;
+				string Text(string name) => c.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String ? v.GetString()! : "";
+				bool passed = c.TryGetProperty("passed", out JsonElement p) && p.ValueKind == JsonValueKind.True;
+				DateTime at = DateTime.TryParse(Text("checkedAt"), CultureInfo.InvariantCulture,
+					DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out DateTime t) ? DateTime.SpecifyKind(t, DateTimeKind.Utc) : DateTime.MinValue;
+				return new Check(Text("npu"), Text("driver"), Text("pack"), passed, at, Text("reason") is { Length: > 0 } r ? r : null);
+			}
+			catch { return null; } // unreadable: never checked
+		}
+	}
+
+	/// <summary>
 	/// Where an AI session goes, decided before anything loads ONNX Runtime (a process loads one, and the GPU needs its
 	/// DirectML build): the device, the card for the GPU, and, when that isn't where the setting meant it to run, why.
 	/// </summary>
@@ -272,13 +356,19 @@ namespace HEI.Core.AI {
 						: new(AiDevice.Cpu, null, "GPU", GpuComponents.IsSupportedPlatform ? "the GPU pack is not installed" : "this PC can't run the GPU pack");
 				}
 				case AiDevice.Npu:
-					return NpuCandidate
-						? new(AiDevice.Npu, null, null, null)
-						: new(AiDevice.Cpu, null, "NPU", "no NPU this build can drive, or the NPU pack is not installed");
+					if (!NpuCandidate)
+						return new(AiDevice.Cpu, null, "NPU", "no NPU this build can drive, or the NPU pack is not installed");
+					// Asked for, and tried whatever Heiward's markers say, unless its plugin killed the check's process:
+					// the scan's would die the same way.
+					return NpuChecks.FailureOf(NpuChecks.Current(), DateTime.UtcNow) is { } crashed
+						? new(AiDevice.Cpu, null, "NPU", Failed(crashed))
+						: new(AiDevice.Npu, null, null, null);
 				default: {
 					bool gpuPack = GpuComponents.IsInstalled && AiComponents.TestOverrideModelPath == null;
 					GpuAdapter? card = gpuPack ? GpuAdapters.InUseNow() : null;
-					return ChooseAuto(NpuCandidate, Accelerators.FailureOf(Accelerators.Npu), gpuPack, card,
+					bool npu = NpuCandidate;
+					Accelerators.Failure? npuFailed = npu ? Accelerators.FailureOf(Accelerators.Npu) ?? NpuChecks.FailureOf(NpuChecks.Current(), DateTime.UtcNow) : null;
+					return ChooseAuto(npu, npuFailed, gpuPack, card,
 						card != null && GpuChecks.Passed(card), card != null ? Accelerators.FailureOf(card.AcceleratorId) : null);
 				}
 			}
@@ -292,10 +382,10 @@ namespace HEI.Core.AI {
 			AiComponents.TestOverrideModelPath == null && NpuComponents.IsSupportedPlatform && NpuComponents.IsInstalled && AiComponents.IsReady;
 
 		/// <summary>
-		/// Auto: the NPU when there is one that hasn't failed for Heiward in the last 10 minutes; else, with the GPU pack, the
-		/// card in use once it has passed a check (<see cref="GpuChecks"/>) and hasn't failed either; else the CPU. The failures
-		/// are Heiward's own markers only (<see cref="Accelerators.Folder"/>). Leaving the NPU, or a checked card, because it
-		/// failed is a fallback, and says why: the failure Heiward met.
+		/// Auto: the NPU when there is one that hasn't failed for Heiward in the last 10 minutes, nor failed its check (a day:
+		/// <see cref="NpuChecks"/>); else, with the GPU pack, the card in use once it has passed a check (<see cref="GpuChecks"/>)
+		/// and hasn't failed either; else the CPU. The failures are Heiward's own markers and checks only (<see cref="Accelerators.Folder"/>).
+		/// Leaving the NPU, or a checked card, because it failed is a fallback, and says why: the failure Heiward met.
 		/// </summary>
 		internal static AcceleratorPlan ChooseAuto(bool npu, Accelerators.Failure? npuFailed, bool gpuPack, GpuAdapter? card, bool cardChecked, Accelerators.Failure? cardFailed) {
 			if (npu && npuFailed == null)
@@ -310,8 +400,13 @@ namespace HEI.Core.AI {
 			return new(AiDevice.Cpu, null, npuWhy != null ? "NPU" : null, npuWhy);
 		}
 
-		/// <summary>"the Qualcomm Hexagon NPU pack failed to load (…), at 15:18 (tried again from 15:28)": the failure as Heiward recorded it.</summary>
-		static string Failed(Accelerators.Failure f) =>
-			$"{f.Reason}, at {f.SinceUtc.ToLocalTime():HH:mm} (tried again from {f.UntilUtc.ToLocalTime():HH:mm})";
+		/// <summary>
+		/// "the Qualcomm Hexagon NPU pack failed to load (…), at 15:18 (tried again from 15:28)": the failure as Heiward recorded
+		/// it; a retry on a later day (a failed check's, a day on) says its day too: "(tried again from Fri 14:15)".
+		/// </summary>
+		static string Failed(Accelerators.Failure f) {
+			DateTime since = f.SinceUtc.ToLocalTime(), until = f.UntilUtc.ToLocalTime();
+			return $"{f.Reason}, at {since:HH:mm} (tried again from {until.ToString(until.Date == since.Date ? "HH:mm" : "ddd HH:mm")})";
+		}
 	}
 }

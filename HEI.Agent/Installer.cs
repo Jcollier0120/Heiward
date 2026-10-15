@@ -665,9 +665,10 @@ namespace HEI.Agent {
 			}
 
 			if (NpuComponents.IsSupportedPlatform && !NpuComponents.IsInstalled) {
-				// The pack carries no version marker, so a copy has to run the model on the NPU, in its own process.
+				// The pack carries no version marker, so a copy has to run the model on the NPU, in its own process: that is
+				// the NPU's check too when the plugin ends the process (NpuCheck).
 				if (await ComponentReuse.TryCopyAsync(ComponentReuse.NpuPack, sources, CoreUtils.StateFolder,
-					async () => NpuComponents.IsInstalled && await ProbeDeviceAsync("npu", ct)) is string npuFrom)
+					async () => NpuComponents.IsInstalled && await NpuCheck.CopiedPackRunsAsync(ct)) is string npuFrom)
 					Console.WriteLine($"  NPU pack: copied from {npuFrom}");
 				else {
 					Console.WriteLine($"  NPU pack ({NpuComponents.PackDescription})...");
@@ -697,7 +698,53 @@ namespace HEI.Agent {
 		/// </summary>
 		/// <param name="gpu">The graphics card to check, by name; null or empty: Windows' default.</param>
 		/// <param name="say">Where the probe's answer goes; null: this window.</param>
-		internal static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct, string? gpu = null, Action<string>? say = null) {
+		internal static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct, string? gpu = null, Action<string>? say = null) =>
+			(await ProbeAsync(device, ct, gpu, say)).ExitCode == 0;
+
+		/// <summary>
+		/// What a probe's process did: its exit code (0 the model ran there, 1 it didn't; anything else, the process was
+		/// ended under it, as a plugin's native failure does), its id, to find a lock it may have left, and whether it hung
+		/// past <see cref="ProbeTimeout"/> and was ended.
+		/// </summary>
+		internal readonly record struct ProbeResult(int ExitCode, int Pid, bool TimedOut = false) {
+			/// <summary>The process didn't end by returning: a native failure past any catch, or a hang.</summary>
+			public bool Crashed => TimedOut || ExitCode is not (0 or 1);
+		}
+
+		/// <summary>
+		/// How long a probe may take. An NPU's first compile is about a minute and a half on a Ryzen AI 7 350 and minutes on
+		/// an Intel NPU 3720; Vitis AI's has also hung there, every thread waiting, with the NPU's lock held. Ten minutes is
+		/// as long as the lock lets anyone hold the NPU.
+		/// </summary>
+		internal static readonly TimeSpan ProbeTimeout = TimeSpan.FromMinutes(10);
+
+		/// <summary>Waits for a process, at most <paramref name="limit"/>: past it, its process tree is ended. True when it was.</summary>
+		internal static async Task<bool> EndedAfterAsync(Process p, TimeSpan limit, CancellationToken ct) {
+			using var within = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			within.CancelAfter(limit);
+			try {
+				await p.WaitForExitAsync(within.Token);
+				return false;
+			}
+			catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+				try { p.Kill(entireProcessTree: true); }
+				catch (InvalidOperationException) { } // it ended meanwhile
+				await p.WaitForExitAsync(CancellationToken.None);
+				return true;
+			}
+		}
+
+		/// <summary>
+		/// A probe's answer, or its last lines when a plugin wrote hundreds before it: Vitis AI's compiler writes some 800 lines
+		/// to the process's output, which would otherwise fill the window and heiward.log.
+		/// </summary>
+		internal static string Tail(string said, int keep = 20) {
+			string[] lines = said.Split('\n');
+			return lines.Length <= keep ? said : $"({lines.Length - keep} lines of output before these)\n" + string.Join('\n', lines[^keep..]);
+		}
+
+		/// <summary>Runs "hei probe --device {device}" in its own process, as <see cref="ProbeDeviceAsync"/>, and says how it ended.</summary>
+		internal static async Task<ProbeResult> ProbeAsync(string device, CancellationToken ct, string? gpu = null, Action<string>? say = null) {
 			var psi = new ProcessStartInfo(CurrentExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.ArgumentList.Add("probe");
 			psi.ArgumentList.Add("--device");
@@ -707,13 +754,17 @@ namespace HEI.Agent {
 				psi.ArgumentList.Add(gpu);
 			}
 			using var p = Process.Start(psi)!;
-			// ONNX Runtime writes its warnings to stderr: they go to the log when the probe fails, not the window.
-			Task<string> errors = p.StandardError.ReadToEndAsync(ct);
-			string output = await p.StandardOutput.ReadToEndAsync(ct);
-			await p.WaitForExitAsync(ct);
-			(say ?? (line => Console.WriteLine("  " + line)))(output.Trim());
-			if (p.ExitCode != 0) AgentPaths.AppendLog($"probe --device {device}{(string.IsNullOrEmpty(gpu) ? "" : $" --gpu \"{gpu}\"")} failed: {(await errors).Trim()}");
-			return p.ExitCode == 0;
+			// ONNX Runtime writes its warnings to stderr: they go to the log when the probe fails, not the window. Both are read
+			// to their end, which a hung probe's never reach until it's ended.
+			Task<string> errors = p.StandardError.ReadToEndAsync(CancellationToken.None);
+			Task<string> reading = p.StandardOutput.ReadToEndAsync(CancellationToken.None);
+			bool timedOut = await EndedAfterAsync(p, ProbeTimeout, ct);
+			string output = await reading;
+			if (output.Trim() is { Length: > 0 } said) (say ?? (line => Console.WriteLine("  " + line)))(Tail(said));
+			string probe = $"probe --device {device}{(string.IsNullOrEmpty(gpu) ? "" : $" --gpu \"{gpu}\"")}";
+			if (timedOut) AgentPaths.AppendLog($"{probe} gave no answer in {ProbeTimeout.TotalMinutes:0} minutes: ended it");
+			else if (p.ExitCode != 0) AgentPaths.AppendLog($"{probe} failed (exit 0x{p.ExitCode:X8}): {(await errors).Trim()}");
+			return new ProbeResult(p.ExitCode, p.Id, timedOut);
 		}
 
 		/// <summary>
