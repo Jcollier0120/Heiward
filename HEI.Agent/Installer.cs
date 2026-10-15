@@ -901,18 +901,8 @@ namespace HEI.Agent {
 			return false;
 		}
 
-		/// <summary>Writes the mark's picture next to the installed exe (from the page's files, which are compiled in); null if it can't.</summary>
-		static string? WriteIconPng() {
-			try {
-				using Stream? png = Assembly.GetExecutingAssembly().GetManifestResourceStream("wwwroot/heiward.png");
-				if (png == null) return null;
-				using (var file = File.Create(IconPng)) png.CopyTo(file);
-				return IconPng;
-			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
-				return null;
-			}
-		}
+		/// <summary>Writes the mark's picture next to the installed exe; null if it can't.</summary>
+		static string? WriteIconPng() => Toast.WriteIconPng(IconPng);
 
 		/// <summary>
 		/// A .lnk through WScript.Shell (always present): conhost --headless runs the console exe without a

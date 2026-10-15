@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.49
+
+**Heiward's notifications say Heiward, with its icon, however it was installed.**
+
+### What changed
+
+- Heiward's notifications (new sets of likely duplicates, an automatic cleanup) came under **Windows PowerShell** unless Heiward's own setup had installed it, for example when Castellan installed it. Now Heiward makes its name known to Windows, with its icon, the first time it notifies, wherever it came from, and the icon is on each notification too. In Windows' notification settings you can turn Heiward's notifications on or off without touching any other program's.
+
+### Before you update
+
+Nothing: it updates itself as usual. The first notification after the update makes Heiward's name known to Windows.
+
 ## Unreleased (its version needs claiming on the main laptop)
 
 **An NPU whose plugin can't set the AI model up no longer ends Heiward's scan: the NPU is checked in a process of its own first, and a scan leaves an NPU that failed its check. AI matching on the processor works again on PCs where Windows has its own ONNX Runtime.**
