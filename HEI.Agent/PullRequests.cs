@@ -525,7 +525,7 @@ fragment pulls on Repository {
 		static (string User, string Secret)? GitSignIn(string host, string? path) {
 			if (Git.Exe == null) return null;
 			var psi = new ProcessStartInfo(Git.Exe) {
-				UseShellExecute = false, CreateNoWindow = true, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+				UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
 			};
 			foreach (string a in new[] { "-c", "credential.interactive=false", "-c", "core.askPass=", "credential", "fill" }) psi.ArgumentList.Add(a);
 			psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
@@ -659,7 +659,7 @@ fragment pulls on Repository {
 
 		/// <summary>The tool's output, trimmed, when it succeeds within 20 seconds; null otherwise. It's never asked to prompt.</summary>
 		public static string? Run(string exe, params string[] args) {
-			var psi = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			var psi = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			return Run(psi);
 		}
@@ -670,7 +670,7 @@ fragment pulls on Repository {
 			// az is a batch file: cmd runs it. The arguments are fixed.
 			var psi = new ProcessStartInfo(Environment.GetEnvironmentVariable("ComSpec") ?? "cmd.exe") {
 				Arguments = $"/d /s /c \"\"{Az}\" account get-access-token --resource 499b84ac-1321-427f-aa17-267ca6975798 --query accessToken -o tsv\"",
-				UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+				UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true,
 			};
 			return Run(psi);
 		}

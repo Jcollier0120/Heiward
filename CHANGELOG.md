@@ -2,12 +2,14 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
-## Unreleased (its version needs claiming on the main laptop)
+## 1.9.46
 
-**On an Intel NPU, Heiward keeps the compiled AI model it makes, so a scan starts in under a second, not 15 to 18.**
+**A scan starts half the processes it did, one for each new file instead of two, and on an Intel NPU it starts in under a second, not 15 to 18.**
 
 ### What changed
 
+- The FFmpeg tools a scan runs for each new file (ffprobe, and ffmpeg or fpcalc when they're run as programs) share Heiward's own hidden console instead of each getting a console host (conhost.exe) of its own: 20 files probed started 41 processes, now 21, and 50 probes take 0.5 s instead of 1.0. The same goes for the git, schtasks, gh and FFmpeg checks Heiward runs itself. The desktop app, which has no console to share, starts them as before.
+- git now starts the real git.exe behind Git for Windows' launcher (`Git\cmd\git.exe`), which did nothing but start it: the developer check's git commands were three processes each, and are now one.
 - On Intel AI Boost, the compiled AI model is now saved in Heiward's own folder (`ai\openvino-cache-1.7.0`). Intel's OpenVINO 1.7.0 ignored the setting Heiward used, so the folder stayed empty, and every scan compiled the model again unless the NPU driver happened to still hold its own copy. On a Core Ultra 5 225U, opening the NPU took 15–18 s to compile and 0.8 s from the saved one, with the same results.
 
 ### Before you update

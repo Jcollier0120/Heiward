@@ -300,7 +300,7 @@ namespace HEI.Agent {
 			if (ffmpeg == null || ffprobe == null) return false;
 			try {
 				using var p = Process.Start(new ProcessStartInfo(ffmpeg, "-hide_banner -version") {
-					UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+					UseShellExecute = false, CreateNoWindow = ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true,
 				});
 				if (p == null) return false;
 				p.StandardOutput.ReadToEnd();

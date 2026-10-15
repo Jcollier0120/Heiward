@@ -16,6 +16,7 @@
 
 using System.Diagnostics;
 using System.IO.Enumeration;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -484,7 +485,7 @@ namespace HEI.Agent {
 		static readonly Lazy<string> ScheduledTasksText = new(() => {
 			try {
 				var psi = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "schtasks.exe"), "/Query /FO CSV /V") {
-					UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+					UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true,
 				};
 				using var p = Process.Start(psi)!;
 				var stderr = p.StandardError.ReadToEndAsync();
@@ -877,7 +878,31 @@ namespace HEI.Agent {
 
 	/// <summary>git, when it's installed.</summary>
 	static class Git {
-		public static readonly string? Exe = Find();
+		/// <summary>The git started: the real one behind Git for Windows' launcher (<see cref="RealBehind"/>), else the first git.exe on PATH.</summary>
+		public static readonly string? Exe = Find() is { } found ? RealBehind(found, RuntimeInformation.OSArchitecture) : null;
+
+		/// <summary>
+		/// The git.exe Git for Windows' launcher, <c>&lt;Git&gt;\cmd\git.exe</c>, starts when <paramref name="git"/> is that
+		/// launcher: <c>&lt;Git&gt;\&lt;clangarm64|mingw64|mingw32&gt;\bin\git.exe</c>. The launcher does nothing but start it, so
+		/// every git was two processes, and three with the console host each started hidden gets. The real one sets up what
+		/// the launcher would (its own folders, HOME) itself. Any other git, or none found there, as it is.
+		/// </summary>
+		internal static string RealBehind(string git, Architecture arch, Func<string, bool>? exists = null) {
+			exists ??= File.Exists;
+			string? dir = Path.GetDirectoryName(git);
+			string? top = dir == null ? null : Path.GetDirectoryName(dir);
+			if (top == null || !string.Equals(Path.GetFileName(dir), "cmd", StringComparison.OrdinalIgnoreCase)) return git;
+			string[] builds = arch switch {
+				Architecture.Arm64 => ["clangarm64", "mingw64", "mingw32"],
+				Architecture.X86 => ["mingw32", "mingw64", "clangarm64"],
+				_ => ["mingw64", "clangarm64", "mingw32"],
+			};
+			foreach (string build in builds) {
+				string real = Path.Combine(top, build, "bin", "git.exe");
+				if (exists(real)) return real;
+			}
+			return git;
+		}
 
 		static string? Find() {
 			foreach (string dir in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)) {
@@ -893,7 +918,7 @@ namespace HEI.Agent {
 
 		public static (int Code, string Output) Run(string workingDir, params string[] args) {
 			if (Exe == null) return (-1, "");
-			var psi = new ProcessStartInfo(Exe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			var psi = new ProcessStartInfo(Exe) { UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.Environment["GIT_TERMINAL_PROMPT"] = "0"; // a fetch that needs a password fails instead of waiting forever
 			// Git for Windows stops at 260 characters otherwise ("Filename too long"), and a worktree's node_modules
 			// goes deeper: removing it failed partway, after git had already let go of the worktree.

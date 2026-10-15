@@ -707,7 +707,7 @@ namespace HEI.Core.FFTools {
 			ProcessStartInfo BuildPsi(bool gridAssembly) {
 				var psi = new ProcessStartInfo {
 					FileName = FFmpegPath,
-					CreateNoWindow = true,
+					CreateNoWindow = ChildConsole.OwnConsole,
 					RedirectStandardInput = false,
 					RedirectStandardOutput = true,
 					WorkingDirectory = Path.GetDirectoryName(FFmpegPath)!,
@@ -898,7 +898,7 @@ namespace HEI.Core.FFTools {
 			ProcessStartInfo BuildPsi(string inputLabel) {
 				var psi = new ProcessStartInfo {
 					FileName = FFmpegPath,
-					CreateNoWindow = true,
+					CreateNoWindow = ChildConsole.OwnConsole,
 					RedirectStandardInput = false,
 					RedirectStandardOutput = true,
 					RedirectStandardError = true,
@@ -1234,7 +1234,7 @@ namespace HEI.Core.FFTools {
 			const int frameBytes = AI.OnnxEmbedder.InputSide * AI.OnnxEmbedder.InputSide * 3;
 			var psi = new ProcessStartInfo {
 				FileName = FFmpegPath,
-				CreateNoWindow = true,
+				CreateNoWindow = ChildConsole.OwnConsole,
 				RedirectStandardInput = false,
 				RedirectStandardOutput = true,
 				RedirectStandardError = true,
@@ -1550,7 +1550,7 @@ namespace HEI.Core.FFTools {
 			// CLI fallback: raw BGRA via stdin -> mjpeg via stdout.
 			var psi = new ProcessStartInfo {
 				FileName = FFmpegPath,
-				CreateNoWindow = true,
+				CreateNoWindow = ChildConsole.OwnConsole,
 				RedirectStandardInput = true,
 				RedirectStandardOutput = true,
 				WorkingDirectory = Path.GetDirectoryName(FFmpegPath)!,
