@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.48
+
+**A release that can't sign because SimplySign's key provider is missing now says what to do.**
+
+### What changed
+
+- When SimplySign Desktop is running but its key provider isn't there ("The specified CSP could not be found"), building a release now stops at once and says to disconnect and connect SimplySign Desktop again, instead of showing signtool's own message. The failure isn't retried.
+- This release also brings 1.9.47, which wasn't released on its own: the Steward's kit 2.74.5.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.47
 
 **It carries the Steward's kit 2.74.5: the parts every agent of the manor shares.**
