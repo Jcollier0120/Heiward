@@ -14,6 +14,7 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - The same check runs before `hei setup` opens the AI model, and before the review page's picture comparison first opens it. When setup copies the NPU pack from the installed Heiward and the plugin ends the copy's trial run, that counts as the check: the copy is kept and the model isn't compiled a second time.
 - A check that gives no answer in 10 minutes is ended and counts as failed. On the same PC, Vitis AI's compile once hung instead, every thread waiting, which left the scan waiting for good.
 - A probe's output is cut to its last 20 lines in the window and the log: Vitis AI's compiler writes about 800.
+- The Microsoft Store version needs Windows 11, version 24H2 or later: Heiward runs on .NET 10, which Microsoft supports on Windows 11 from 24H2. The package's minimum Windows (`MinVersion` in `HEI.Agent/Store/AppxManifest.xml`) was Windows 10 version 2004, and `docs/STORE.md` gave that as the listing's requirement. The Store no longer offers Heiward to an older Windows, and a Store copy already on one gets no more updates from it.
 
 ### Before you update
 

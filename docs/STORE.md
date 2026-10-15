@@ -12,7 +12,7 @@ powershell -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
 
 - **`hei.exe`** and the .NET runtime, published as separate files rather than one: the single-file exe from GitHub unpacks its native libraries into `%TEMP%` at startup, where the package's signature doesn't cover them.
 - **`Heiward.exe`**, the Start menu entry. It's `hei.exe`'s .NET app host with the Windows GUI subsystem, so it runs `hei open` without a console window.
-- **A desktop shortcut** (`desktop7:Shortcut`), which Windows adds and removes with the app, on Windows 11 (Windows 10 ignores it).
+- **A desktop shortcut** (`desktop7:Shortcut`), which Windows adds and removes with the app.
   - It starts `Heiward.exe` by its path, without the package's identity.
   - Heiward notices (its folder has an `AppxManifest.xml`) and hands over to the packaged app, as the Start menu starts it: `IApplicationActivationManager`, with the app ID worked out from the manifest's name and publisher.
   - It never takes itself for the GitHub download.
@@ -60,7 +60,7 @@ To send a release again, or to look before it goes to certification: **Actions >
 - **Privacy policy URL:** `https://github.com/Jcollier0120/Heiward/blob/master/docs/PRIVACY.md` ([PRIVACY.md](PRIVACY.md)). The Store requires one because Heiward reads the user's photos and videos.
 - **Website:** `https://castellan-software.com/heiward`
 - **Support contact info:** `https://github.com/Jcollier0120/Heiward/issues`
-- **System requirements:** Windows 10 version 2004 or later, on an x64 or Arm64 PC. An NPU (Qualcomm Snapdragon, Intel Core Ultra or AMD Ryzen AI) is recommended, not required.
+- **System requirements:** Windows 11, version 24H2 or later, on an x64 or Arm64 PC: Heiward runs on .NET 10, which Microsoft supports on Windows 11 from 24H2. The manifest's `MinVersion` (10.0.26100.0) keeps the Store from offering it to an older Windows. An NPU (Qualcomm Snapdragon, Intel Core Ultra or AMD Ryzen AI) is recommended, not required.
 
 **Age ratings:** the questionnaire's app category is the one for utilities and productivity apps, not games. Heiward has no user-to-user contact, no sharing of the user's location, no purchases and no web browsing, so every answer is No.
 
