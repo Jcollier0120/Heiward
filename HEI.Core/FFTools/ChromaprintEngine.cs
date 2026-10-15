@@ -103,7 +103,7 @@ namespace HEI.Core.FFTools {
 		static uint[]? ExtractFingerprintProcess(string filePath, bool extendedLogging, CancellationToken ct) {
 			var psi = new ProcessStartInfo {
 				FileName = FfmpegEngine.FFmpegPath,
-				CreateNoWindow = true,
+				CreateNoWindow = ChildConsole.OwnConsole,
 				RedirectStandardOutput = true,
 				RedirectStandardError = extendedLogging,
 				WindowStyle = ProcessWindowStyle.Hidden,

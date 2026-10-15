@@ -213,7 +213,7 @@ namespace HEI.Core.FFTools {
 					StartInfo = new ProcessStartInfo {
 						FileName = path,
 						Arguments = "-version",
-						CreateNoWindow = true,
+						CreateNoWindow = ChildConsole.OwnConsole,
 						RedirectStandardOutput = true,
 						RedirectStandardError = true,
 						UseShellExecute = false,

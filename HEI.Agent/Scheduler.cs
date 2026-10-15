@@ -211,7 +211,7 @@ namespace HEI.Agent {
 		public static void Forget() => cachedQuery = default;
 
 		static (int, string) Run(params string[] args) {
-			var psi = new ProcessStartInfo(Schtasks) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			var psi = new ProcessStartInfo(Schtasks) { UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			using var p = Process.Start(psi)!;
 			string output = p.StandardOutput.ReadToEnd() + p.StandardError.ReadToEnd();

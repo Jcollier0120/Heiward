@@ -35,7 +35,7 @@ namespace HEI.Core.FFTools {
 		public static MediaInfo? GetMediaInfo(string file, bool extendedLogging) {
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
-				CreateNoWindow = true,
+				CreateNoWindow = ChildConsole.OwnConsole,
 				RedirectStandardInput = false,
 				WorkingDirectory = Path.GetDirectoryName(FFprobePath)!,
 				RedirectStandardOutput = true,
@@ -107,7 +107,7 @@ namespace HEI.Core.FFTools {
 		public static byte[]? GetTagsJson(string file) {
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
-				CreateNoWindow = true,
+				CreateNoWindow = ChildConsole.OwnConsole,
 				RedirectStandardInput = false,
 				WorkingDirectory = Path.GetDirectoryName(FFprobePath)!,
 				RedirectStandardOutput = true,
@@ -144,7 +144,7 @@ namespace HEI.Core.FFTools {
 		public static DateTime? GetCreationTime(string file) {
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
-				CreateNoWindow = true,
+				CreateNoWindow = ChildConsole.OwnConsole,
 				RedirectStandardInput = false,
 				WorkingDirectory = Path.GetDirectoryName(FFprobePath)!,
 				RedirectStandardOutput = true,
