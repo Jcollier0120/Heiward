@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.47
+
+**It carries the Steward's kit 2.74.5: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.74.5: The NPU: a PC set up by an older kit gets this kit's command, Intel's NPU 3720 writes about 13% faster and holds less, AMD's runs on a 16 GB Ryzen AI (XDNA 2 verified), a known maker's NPU of a generation setup doesn't know is tried instead of refused, and the benchmark times prompts the server hasn't seen.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.46
 
 **A scan starts half the processes it did, one for each new file instead of two, and on an Intel NPU it starts in under a second, not 15 to 18.**
