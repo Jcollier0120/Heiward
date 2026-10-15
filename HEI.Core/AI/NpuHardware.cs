@@ -27,7 +27,7 @@ namespace HEI.Core.AI {
 	/// read without loading any AI runtime, because which NPU pack to download depends on it.
 	/// </summary>
 	public static class NpuHardware {
-		static readonly Lazy<(NpuVendor Vendor, string Name)> detected = new(Detect);
+		static readonly Lazy<(NpuVendor Vendor, string Name, string Driver)> detected = new(Detect);
 
 		/// <summary>Tests pick the vendor instead of the hardware.</summary>
 		internal static NpuVendor? Override;
@@ -35,6 +35,8 @@ namespace HEI.Core.AI {
 		public static NpuVendor Vendor => Override ?? detected.Value.Vendor;
 		/// <summary>The NPU's name as Windows shows it, or "" when there is none.</summary>
 		public static string Name => detected.Value.Name;
+		/// <summary>Its driver's version as Windows shows it ("32.0.20102.3930"), or "" when Windows doesn't say.</summary>
+		public static string Driver => detected.Value.Driver;
 
 		/// <summary>The vendor a device's manufacturer and name point to.</summary>
 		public static NpuVendor Classify(string? manufacturer, string? name) {
@@ -49,18 +51,18 @@ namespace HEI.Core.AI {
 			return NpuVendor.None;
 		}
 
-		static (NpuVendor, string) Detect() {
-			if (!CoreUtils.IsWindows) return (NpuVendor.None, "");
+		static (NpuVendor, string, string) Detect() {
+			if (!CoreUtils.IsWindows) return (NpuVendor.None, "", "");
 			try {
-				foreach (var (manufacturer, name) in ComputeAccelerators()) {
+				foreach (var (manufacturer, name, driver) in ComputeAccelerators()) {
 					NpuVendor vendor = Classify(manufacturer, name);
-					if (vendor != NpuVendor.None) return (vendor, name);
+					if (vendor != NpuVendor.None) return (vendor, name, driver);
 				}
 			}
 			catch (Exception e) {
 				Logger.Instance.Info($"Could not list NPUs: {e.Message}");
 			}
-			return (NpuVendor.None, "");
+			return (NpuVendor.None, "", "");
 		}
 
 		// ---- SetupAPI: the present devices of the ComputeAccelerator class --------------------------
@@ -88,8 +90,21 @@ namespace HEI.Core.AI {
 		[DllImport("setupapi.dll")]
 		static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
 
-		static List<(string Manufacturer, string Name)> ComputeAccelerators() {
-			var result = new List<(string, string)>();
+		[StructLayout(LayoutKind.Sequential)]
+		struct DEVPROPKEY {
+			public Guid fmtid;
+			public uint pid;
+		}
+
+		/// <summary>DEVPKEY_Device_DriverVersion: the version Device Manager shows on the driver's tab.</summary>
+		static readonly DEVPROPKEY DriverVersionKey = new() { fmtid = new("A8B865DD-2E3D-4094-AD97-E593A70C75D6"), pid = 3 };
+
+		[DllImport("setupapi.dll", SetLastError = true)]
+		static extern bool SetupDiGetDevicePropertyW(IntPtr set, ref SP_DEVINFO_DATA data, ref DEVPROPKEY key,
+			out uint type, byte[]? buffer, uint size, out uint required, uint flags);
+
+		static List<(string Manufacturer, string Name, string Driver)> ComputeAccelerators() {
+			var result = new List<(string, string, string)>();
 			Guid cls = ComputeAcceleratorClass;
 			IntPtr set = SetupDiGetClassDevsW(ref cls, IntPtr.Zero, IntPtr.Zero, DIGCF_PRESENT);
 			if (set == InvalidHandle) return result;
@@ -97,13 +112,22 @@ namespace HEI.Core.AI {
 				var data = new SP_DEVINFO_DATA { cbSize = (uint)Marshal.SizeOf<SP_DEVINFO_DATA>() };
 				for (uint i = 0; SetupDiEnumDeviceInfo(set, i, ref data); i++) {
 					string name = Property(set, ref data, SPDRP_FRIENDLYNAME) ?? Property(set, ref data, SPDRP_DEVICEDESC) ?? "";
-					result.Add((Property(set, ref data, SPDRP_MFG) ?? "", name));
+					result.Add((Property(set, ref data, SPDRP_MFG) ?? "", name, DriverVersion(set, ref data) ?? ""));
 				}
 			}
 			finally {
 				SetupDiDestroyDeviceInfoList(set);
 			}
 			return result;
+		}
+
+		static string? DriverVersion(IntPtr set, ref SP_DEVINFO_DATA data) {
+			DEVPROPKEY key = DriverVersionKey;
+			SetupDiGetDevicePropertyW(set, ref data, ref key, out _, null, 0, out uint required, 0);
+			if (required == 0) return null;
+			var buffer = new byte[required];
+			if (!SetupDiGetDevicePropertyW(set, ref data, ref key, out _, buffer, required, out _, 0)) return null;
+			return Encoding.Unicode.GetString(buffer).TrimEnd('\0');
 		}
 
 		static string? Property(IntPtr set, ref SP_DEVINFO_DATA data, uint property) {

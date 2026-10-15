@@ -160,8 +160,10 @@ setup.SetAction(async (r, ct) => {
 		await Installer.EnsurePrerequisitesAsync(sources, dryRun: false, ct);
 		var cfg = AgentConfig.Load();
 		AiDevice setting = Enum.TryParse(cfg.AiDevice, ignoreCase: true, out AiDevice d) ? d : AiDevice.Auto;
-		// The card the settings name, as a scan takes it; and, for Auto without a working NPU, checked first if it hasn't been.
+		// The card the settings name, as a scan takes it; the NPU checked in its own process first if it hasn't been with its
+		// driver and plugin; and, for Auto without a working NPU, the card checked first if it hasn't been.
 		GpuAdapters.Choose(cfg.Gpu);
+		await NpuCheck.EnsureAsync(setting, line => Console.WriteLine("  " + line), ct);
 		if (setting == AiDevice.Auto) await GpuCheck.EnsureAsync(cfg, line => Console.WriteLine("  " + line), ct);
 		using var embedder = OnnxEmbedder.Create(setting);
 		Console.WriteLine($"Ready. AI matching runs on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
@@ -194,7 +196,8 @@ install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetVal
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime). A GPU check is
 // recorded for the card (GpuChecks: Auto takes a card that passed one), and a card that fails it gets
-// Heiward's own failure marker, which its Auto skips for 10 minutes.
+// Heiward's own failure marker, which its Auto skips for 10 minutes. An NPU check that runs is recorded
+// (NpuChecks); one whose plugin ends this process is recorded by whoever started it (NpuCheck).
 var probeDevice = new Option<AiDevice>("--device") { Description = "npu, gpu or cpu.", DefaultValueFactory = _ => AiDevice.Auto };
 var probeGpu = new Option<string?>("--gpu") { Description = "The graphics card, by name (settings.json's gpu). Default: Windows' default." };
 var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice, probeGpu };
@@ -210,6 +213,7 @@ probe.SetAction(r => {
 		Console.WriteLine($"The AI model runs on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
 		bool ran = wanted is AiDevice.Auto || string.Equals(embedder.DeviceName, wanted.ToString(), StringComparison.OrdinalIgnoreCase);
 		if (card != null) GpuChecks.Record(card, ran, embedder.FallbackReason);
+		if (wanted == AiDevice.Npu && ran) NpuChecks.Record(passed: true);
 		return ran ? 0 : 1;
 	}
 	catch (Exception e) {
