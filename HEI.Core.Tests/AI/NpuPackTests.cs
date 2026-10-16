@@ -77,6 +77,44 @@ public class NpuPackTests {
 	}
 
 	[Fact]
+	public void Vitis_AI_runs_one_image_per_run_through_its_junction_and_its_checks_say_so() {
+		// At batch 8 its graph gave only the first image of each run the right embedding (Ryzen AI 7 350, 2026-10-15).
+		Assert.Equal(1, WindowsMlPack.VitisAi().Batch);
+		// Part of what its check holds for: a check that failed with the plugin in its own folder doesn't hold.
+		Assert.Equal("batch 1, through vitisai-plugin", WindowsMlPack.VitisAi().CheckedSetup);
+		// Not one of the pack's folders: copying the pack would copy the plugin through it.
+		Assert.DoesNotContain("vitisai-plugin", WindowsMlPack.VitisAi().Folders);
+		// The other packs load their plugin from where it is, and their checks hold as before.
+		Assert.Equal("", new QnnPack().CheckedSetup);
+		Assert.Equal("", new OpenVinoPack(acceptCpu: false).CheckedSetup);
+		Assert.Equal("", WindowsMlPack.QnnForTests().CheckedSetup);
+	}
+
+	/// <summary>Where Windows ML had the Vitis AI plugin on a Ryzen AI 7 350 (2026-10-15), whose catalog said 1.8.75.0 once it was in the process.</summary>
+	internal const string VitisAiLibrary = @"C:\Program Files\WindowsApps\Microsoft.WinML.AMD.NPU.EP.Framework.2_1.8.75.0_x64__8wekyb3d8bbwe\ExecutionProvider\onnxruntime_vitisai_ep.dll";
+
+	[Theory]
+	[InlineData(VitisAiLibrary, "1.8.75.0")]
+	// In the package's root, a package for Arm, one with a resource ID, and forward slashes.
+	[InlineData(@"C:\Program Files\WindowsApps\Microsoft.WinML.AMD.NPU.EP.Framework.2_1.8.75.0_x64__8wekyb3d8bbwe\onnxruntime_vitisai_ep.dll", "1.8.75.0")]
+	[InlineData(@"C:\Program Files\WindowsApps\Contoso.WinML.NPU.EP_2.1.0.0_arm64__8wekyb3d8bbwe\ExecutionProvider\plugin.dll", "2.1.0.0")]
+	[InlineData(@"D:\WindowsApps\Contoso.Plugin_2.0.10.0_neutral_split.scale-100_8wekyb3d8bbwe\bin\x64\plugin.dll", "2.0.10.0")]
+	[InlineData("C:/Program Files/WindowsApps/Contoso.Plugin_3.0.0.1_x64__8wekyb3d8bbwe/plugin.dll", "3.0.0.1")]
+	// The nearest package folder, when one is inside another.
+	[InlineData(@"C:\Contoso.Outer_1.0.0.0_x64__8wekyb3d8bbwe\Contoso.Inner_2.0.0.0_x64__8wekyb3d8bbwe\plugin.dll", "2.0.0.0")]
+	// Not in a package's folder: through Heiward's junction, a folder that only has underscores, a version of three parts,
+	// a publisher ID that's too short, and the file's own name.
+	[InlineData(@"C:\Users\me\AppData\Local\Programs\Heiward\ai\vitisai-plugin\onnxruntime_vitisai_ep.dll", "")]
+	[InlineData(@"C:\tools\my_plugin_1.2.3.4_x64\plugin.dll", "")]
+	[InlineData(@"C:\Program Files\WindowsApps\Microsoft.WinML.AMD.NPU.EP.Framework.2_1.8.75_x64__8wekyb3d8bbwe\plugin.dll", "")]
+	[InlineData(@"C:\Program Files\WindowsApps\Microsoft.WinML.AMD.NPU.EP.Framework.2_1.8.75.0_x64__8wekyb3d8\plugin.dll", "")]
+	[InlineData(@"C:\plugins\Contoso.Plugin_3.0.0.1_x64__8wekyb3d8bbwe", "")]
+	[InlineData("", "")]
+	[InlineData(null, "")]
+	public void A_Windows_ML_plugin_s_version_is_its_package_s_from_its_folder(string? libraryPath, string expected) =>
+		Assert.Equal(expected, WindowsMlPack.PackageVersionIn(libraryPath));
+
+	[Fact]
 	public void The_OpenVINO_test_mode_also_takes_the_CPU_device() {
 		Assert.True(new OpenVinoPack(acceptCpu: false).Accepts(OrtHardwareDeviceType.NPU));
 		Assert.False(new OpenVinoPack(acceptCpu: false).Accepts(OrtHardwareDeviceType.CPU));

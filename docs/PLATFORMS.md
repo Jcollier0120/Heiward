@@ -52,4 +52,4 @@ About 680 of `HEI.Agent`'s 3,700 lines, plus Windows specifics inside the scan s
 - **macOS:** a Mac with Apple Silicon.
 - **Windows NPUs:**
   - An Intel Core Ultra PC: install and scan, nothing else. An older Intel PC has no NPU, so Heiward rightly uses its GPU or CPU; setting `HEI_NPU_TEST=openvino-cpu` makes it run the Intel pack on the CPU instead, which tests everything but the NPU itself.
-  - An AMD Ryzen AI PC on Windows 11 24H2 or later: install and scan. The Windows ML route it uses is tested on a Snapdragon PC with `HEI_NPU_TEST=winml-qnn` (same 82 groups on the 600-photo test set as Qualcomm's own pack).
+  - An AMD Ryzen AI PC on Windows 11 24H2 or later: install and scan. A Ryzen AI 7 350 (XDNA 2, NPU driver 32.0.20102.3930, Windows ML's Vitis AI plugin 1.8.75.0) runs the model at batch 1 through a dev build's NPU check and `HEI.Benchmarks --probe-npu`, with cosine ≥ 0.9979 to FP32 on the CPU; a released build's install and scan there, and any other Ryzen AI, are still to try. The Windows ML route it uses is tested on a Snapdragon PC with `HEI_NPU_TEST=winml-qnn` (same 82 groups on the 600-photo test set as Qualcomm's own pack).

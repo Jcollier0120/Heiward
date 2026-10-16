@@ -19,6 +19,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.ML.OnnxRuntime;
 using HEI.Core.Utils;
 
@@ -115,6 +116,13 @@ namespace HEI.Core.AI {
 		/// (<see cref="NpuChecks"/>) holds for this one only. "" without an NPU this build drives.
 		/// </summary>
 		public static string PackVersion => Pack is { } p ? $"{p.EpName} {p.Version}".Trim() : "";
+
+		/// <summary>
+		/// What an NPU check holds for (<see cref="NpuChecks"/>): <see cref="PackVersion"/>, and how Heiward sets the plugin up
+		/// where that changed what a check finds (<see cref="NpuPack.CheckedSetup"/>). A check that Vitis AI failed when it was
+		/// loaded from its own folder doesn't hold for it through a junction.
+		/// </summary>
+		public static string CheckedPack => Pack is { CheckedSetup: { Length: > 0 } setup } ? $"{PackVersion} ({setup})" : PackVersion;
 
 		/// <summary>
 		/// Deletes the compiled graphs (<see cref="ContextCacheFolder"/>), so the next open compiles from the model: after a
@@ -288,6 +296,11 @@ namespace HEI.Core.AI {
 		/// chunk is padded. 8 where it hasn't been measured.
 		/// </summary>
 		public virtual int Batch => 8;
+		/// <summary>
+		/// How Heiward sets the plugin up, where that changed what an NPU check finds ("batch 1, through vitisai-plugin"); ""
+		/// where nothing did. Part of what a check holds for (<see cref="NpuComponents.CheckedPack"/>).
+		/// </summary>
+		public virtual string CheckedSetup => "";
 		/// <summary>Per-run options that set how hard the NPU works at either pace; null to leave it to the plugin.</summary>
 		public virtual Dictionary<string, string>? RunConfig(bool fullSpeed) => null;
 		/// <summary>The pack's folders under {ai}, and one file there that shows the pack is complete.</summary>
@@ -437,30 +450,42 @@ namespace HEI.Core.AI {
 	/// Windows ML's catalog DLL (NuGet package Microsoft.Windows.AI.MachineLearning, SHA256-pinned) into
 	/// {ai}/winml, and asks the catalog for the plugin. Windows 11 24H2 or later.
 	/// </summary>
-	internal sealed class WindowsMlPack : NpuPack {
+	internal sealed partial class WindowsMlPack : NpuPack {
 		public const string PackageVersion = "2.4.89";
 		const string PackageSha256 = "5c68ecfb947223267abf159a023f5192ad42725e4e9cc995e7c1470dd54dff63";
 		const string PackageUrl = "https://api.nuget.org/v3-flatcontainer/microsoft.windows.ai.machinelearning/2.4.89/microsoft.windows.ai.machinelearning.2.4.89.nupkg";
 
 		readonly string provider, epName, displayName, modelKey, cacheFolderName;
 		readonly Func<string, Dictionary<string, string>> options;
+		readonly int batch;
+		readonly string? linkFolder;
 
 		WindowsMlPack(string provider, string epName, string displayName, string modelKey, string cacheFolderName,
-			Func<string, Dictionary<string, string>> options) {
+			Func<string, Dictionary<string, string>> options, int batch = 8, string? linkFolder = null) {
 			this.provider = provider;
 			this.epName = epName;
 			this.displayName = displayName;
 			this.modelKey = modelKey;
 			this.cacheFolderName = cacheFolderName;
 			this.options = options;
+			this.batch = batch;
+			this.linkFolder = linkFolder;
 		}
 
-		/// <summary>AMD Ryzen AI: Windows ML runs the FP32 model in BF16 on the NPU; Vitis AI caches the compiled graph.</summary>
+		/// <summary>
+		/// AMD Ryzen AI: Windows ML runs the FP32 model in BF16 on the NPU (all 650 of its operators); Vitis AI caches the
+		/// compiled graph. The plugin is loaded through a junction in {ai} (<see cref="PluginLink"/>): from its own folder in
+		/// WindowsApps, its compiler can't open itself and ends the process. One image per run: compiled for 8, the graph
+		/// gives the first image of each run its embedding and the other seven wrong ones (cosine to FP32 on the CPU 0.17–0.27),
+		/// with nothing to say so. At batch 1 on a Ryzen AI 7 350 (plugin 1.8.75.0, 2026-10-15): cosine to FP32 on the CPU
+		/// ≥ 0.9979 (median 0.9986), 8–17 ms per image, a compile of about 75 s and a cached open of about 2 s.
+		/// </summary>
 		public static WindowsMlPack VitisAi() => new("VitisAI", "VitisAIExecutionProvider", "AMD Ryzen AI NPU", "dinov2s-vitisai-bf16", "vitisai-cache",
 			cache => {
 				Directory.CreateDirectory(cache);
 				return new() { ["cache_dir"] = cache, ["cache_key"] = $"dinov2s_b{NpuComponents.NpuBatch}" };
-			});
+			},
+			batch: 1, linkFolder: "vitisai-plugin");
 
 		/// <summary>Test mode: Qualcomm's plugin through Windows ML, so a Snapdragon PC exercises this path.</summary>
 		public static WindowsMlPack QnnForTests() => new("QNN", QnnPack.QnnEpName, "Qualcomm Hexagon NPU (Windows ML)", "dinov2s-winml-qnn-fp16", "winml-qnn-cache",
@@ -478,15 +503,26 @@ namespace HEI.Core.AI {
 		public override string Description => $"Windows ML {PackageVersion} catalog (the {provider} plugin comes from Windows) + model";
 		public override string ModelKey => modelKey;
 		public override string CacheFolderName => cacheFolderName;
+		public override int Batch => batch;
+		public override string CheckedSetup => linkFolder != null ? $"batch {batch}, through {linkFolder}" : "";
+		/// <summary>The junction isn't one of them: a copy of the pack makes its own, to its PC's plugin.</summary>
 		public override IReadOnlyList<string> Folders => new[] { "winml", cacheFolderName };
 
-		/// <summary>The plugin build Windows has installed ("1.8.75.0"), which Windows updates by itself; "" when it has none.</summary>
+		/// <summary>
+		/// The plugin build Windows has installed ("1.8.75.0"), which Windows updates by itself; "" when it has none. The catalog
+		/// says it only once the plugin is in this process (<see cref="WindowsMlCatalog.Provider.EnsureReady"/>): before that the
+		/// plugin is NotReady, with no version and no library path (Windows ML 2.4.89, plugin 1.8.75.0, 2026-10-15). So the agent
+		/// keyed the NPU's check "VitisAIExecutionProvider" and the probe that ran it "VitisAIExecutionProvider 1.8.75.0", and a
+		/// check never held. The plugin is added first (it's installed: 1–2 ms), as a scan's first NPU session adds it anyway.
+		/// </summary>
 		public override string Version {
 			get {
 				if (!File.Exists(CatalogDll)) return "";
 				try {
 					using var catalog = new WindowsMlCatalog(CatalogDll);
-					return catalog.Find(epName) is { } p && p.State != WindowsMlCatalog.ReadyState.NotPresent ? p.Version : "";
+					if (catalog.Find(epName) is not { } p || p.State == WindowsMlCatalog.ReadyState.NotPresent) return "";
+					if (p.State == WindowsMlCatalog.ReadyState.NotReady) p.EnsureReady();
+					return VersionOf(p);
 				}
 				catch (Exception e) {
 					Logger.Instance.Info($"Windows ML couldn't say its {provider} plugin's version: {e.Message}");
@@ -516,9 +552,34 @@ namespace HEI.Core.AI {
 			WindowsMlCatalog.Provider p = catalog.Find(epName) ?? throw new InvalidOperationException($"Windows ML offers no {provider} provider for this PC.");
 			p.EnsureReady(); // quick once installed: adds the plugin's package to this process
 			string path = p.LibraryPath;
-			Logger.Instance.Info($"Windows ML {provider} plugin {p.Version}: {path}");
+			if (linkFolder != null)
+				path = PluginLink.Through(path, Ai(linkFolder));
+			Logger.Instance.Info($"Windows ML {provider} plugin {VersionOf(p)}: {path}");
 			return path;
 		}
+
+		/// <summary>
+		/// A plugin's version once it's in this process: the catalog's, else the one in its package's full name. The entry that
+		/// was found before <see cref="WindowsMlCatalog.Provider.EnsureReady"/> has its library path after it, but still no
+		/// version. The package's version is the one the catalog gives an entry found after. The DLL's own file version is
+		/// another number (1.8.0.6 in package 1.8.75.0).
+		/// </summary>
+		static string VersionOf(WindowsMlCatalog.Provider p) => p.Version is { Length: > 0 } v ? v : PackageVersionIn(p.LibraryPath);
+
+		/// <summary>
+		/// The version in the full name of the package folder that holds <paramref name="libraryPath"/>, the nearest one up
+		/// ("…\WindowsApps\Microsoft.WinML.AMD.NPU.EP.Framework.2_1.8.75.0_x64__8wekyb3d8bbwe\ExecutionProvider\…" gives
+		/// "1.8.75.0"); "" when no folder on the path is one. A full name is name_version_architecture_resource_publisher ID.
+		/// </summary>
+		internal static string PackageVersionIn(string? libraryPath) {
+			string[] parts = (libraryPath ?? "").Split('\\', '/');
+			for (int i = parts.Length - 2; i >= 0; i--) // the folders, nearest first
+				if (PackageFullName().Match(parts[i]) is { Success: true } m) return m.Groups["version"].Value;
+			return "";
+		}
+
+		[GeneratedRegex(@"^[A-Za-z0-9.\-]+_(?<version>\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5})_[A-Za-z0-9]*_[^_]*_[a-z0-9]{13}$", RegexOptions.CultureInvariant)]
+		private static partial Regex PackageFullName();
 
 		public override Dictionary<string, string> ProviderOptions(string cacheFolder) => options(cacheFolder);
 
