@@ -4,15 +4,15 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.50
 
-**It carries the Steward's kit 2.75.2: the parts every agent of the manor shares.**
+**It carries the Steward's kit 2.77.6: the parts every agent of the manor shares.**
 
 ### What changed
 
-- The Steward's kit 2.75.2: Automatic updates work on a busy PC: a page slow to start after an update is waited for instead of rolled back, a rollback never leaves the new page running over the old files, and an agent's rounds make room for Manor's update.
+- The Steward's kit 2.77.6: Each accelerator's servers stop when that accelerator has been idle, whatever the others do. Before, a let-go of any accelerator's lock counted as use of all of them, so Reeve indexing on a graphics card kept the NPU's servers loaded, and the NPU kept a card's.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual. The keeper of a PC that runs on more than one accelerator now stops each one's servers on its own idle time.
 
 ## Unreleased (its version needs claiming on the main laptop)
 
