@@ -37,7 +37,7 @@ static class NpuEmbedProbe {
 		// The scan's pace, which sets how hard the NPU works (NpuPack.RunConfig).
 		Pace.FullSpeed = Arg("--pace") != "background";
 		int count = int.Parse(Arg("--frames") ?? "1024");
-		byte[][] frames = Enumerable.Range(0, count).Select(Frame).ToArray();
+		byte[][] frames = Enumerable.Range(0, count).Select(EmbeddingCheck.Picture).ToArray(); // the NPU check's pictures
 
 		var open = Stopwatch.StartNew();
 		using OnnxEmbedder embedder = OnnxEmbedder.Create(AiDevice.Npu);
@@ -90,22 +90,5 @@ static class NpuEmbedProbe {
 			Console.WriteLine($"Cosine to {Path.GetFileName(compare)}: min {cosines[0]:F5}, median {cosines[cosines.Length / 2]:F5}, mean {cosines.Average():F5}");
 		}
 		return 0;
-	}
-
-	/// <summary>A deterministic 224×224 RGB24 frame with smooth regions, edges and fine noise, so no two embed alike.</summary>
-	static byte[] Frame(int seed) {
-		const int side = OnnxEmbedder.InputSide;
-		var rng = new Random(seed);
-		var frame = new byte[side * side * 3];
-		int cx = rng.Next(side), cy = rng.Next(side), radius = 20 + rng.Next(80);
-		for (int y = 0; y < side; y++)
-			for (int x = 0; x < side; x++) {
-				int i = (y * side + x) * 3;
-				bool disc = (x - cx) * (x - cx) + (y - cy) * (y - cy) < radius * radius;
-				frame[i] = (byte)(disc ? 230 : x + seed * 13);
-				frame[i + 1] = (byte)(y * 2 + seed * 7);
-				frame[i + 2] = (byte)(disc ? 40 : 128 + rng.Next(-24, 25));
-			}
-		return frame;
 	}
 }

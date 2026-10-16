@@ -260,8 +260,9 @@ namespace HEI.Core.AI {
 	/// its own process before a scan's first use of the NPU with this driver and plugin (HEI.Agent's NpuCheck). A plugin
 	/// can end the process from native code while it compiles (Windows ML's Vitis AI 1.8.75.0 on a Ryzen AI 7 350, NPU
 	/// driver 32.0.20102.3930: 0xC0000409, 2026-10-15), past any catch, leaving the scan dead and the NPU's lock with a
-	/// dead holder. A check that ends that way fails, and Auto leaves the NPU until its driver or plugin changes, or for a
-	/// day; one that passes leaves the compiled graph for the scan to load. A check that fails the ordinary way (an
+	/// dead holder. A check that ends that way fails, and so does one whose NPU runs the model and gives wrong embeddings
+	/// (<see cref="EmbeddingCheck"/>): Auto leaves the NPU until its driver or plugin changes, or for a day. One that passes
+	/// leaves the compiled graph for the scan to load. A check that fails the ordinary way (an
 	/// exception) isn't recorded here: <see cref="OnnxEmbedder"/> marks the NPU failed for 10 minutes, as for a scan.
 	/// Kept in <c>{ai}\npu-checks.json</c>: the last check.
 	/// </summary>

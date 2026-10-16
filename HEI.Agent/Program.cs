@@ -197,7 +197,9 @@ install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetVal
 // check runs this in its own process: a process can only load one ONNX Runtime). A GPU check is
 // recorded for the card (GpuChecks: Auto takes a card that passed one), and a card that fails it gets
 // Heiward's own failure marker, which its Auto skips for 10 minutes. An NPU check that runs is recorded
-// (NpuChecks); one whose plugin ends this process is recorded by whoever started it (NpuCheck).
+// (NpuChecks); one whose plugin ends this process is recorded by whoever started it (NpuCheck). On the NPU,
+// the pictures' embeddings are compared with the FP32 model's on the processor (EmbeddingCheck): a plugin
+// can run the model and still get it wrong, which fails the check as a crash does.
 var probeDevice = new Option<AiDevice>("--device") { Description = "npu, gpu or cpu.", DefaultValueFactory = _ => AiDevice.Auto };
 var probeGpu = new Option<string?>("--gpu") { Description = "The graphics card, by name (settings.json's gpu). Default: Windows' default." };
 var probe = new Command("probe", "Check where the AI model runs on this PC.") { probeDevice, probeGpu };
@@ -209,11 +211,32 @@ probe.SetAction(r => {
 	GpuAdapter? card = wanted == AiDevice.Gpu && GpuComponents.IsInstalled ? GpuAdapters.InUseNow() : null;
 	try {
 		using var embedder = OnnxEmbedder.Create(wanted);
-		embedder.EmbedBatch(new[] { new byte[OnnxEmbedder.InputSide * OnnxEmbedder.InputSide * 3] });
+		byte[][] pictures = EmbeddingCheck.Pictures(embedder.FixedBatch);
+		float[][] embeddings = embedder.EmbedBatch(pictures);
+		embedder.YieldAccelerator();
 		Console.WriteLine($"The AI model runs on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
 		bool ran = wanted is AiDevice.Auto || string.Equals(embedder.DeviceName, wanted.ToString(), StringComparison.OrdinalIgnoreCase);
 		if (card != null) GpuChecks.Record(card, ran, embedder.FallbackReason);
-		if (wanted == AiDevice.Npu && ran) NpuChecks.Record(passed: true);
+		if (wanted == AiDevice.Npu && ran) {
+			float[][]? processor = null;
+			try {
+				using var cpu = new OnnxEmbedder(NpuComponents.ModelPath);
+				processor = cpu.EmbedBatch(pictures);
+			}
+			catch (Exception e) {
+				// Nothing to compare with isn't the NPU's fault: it ran, which is all a check found before the comparison.
+				Console.WriteLine($"Its embeddings couldn't be compared with the processor's: {Accelerators.OneLine(e.Message)}");
+			}
+			if (processor != null) {
+				EmbeddingCheck.Result compared = EmbeddingCheck.Compare(embeddings, processor, embedder.FixedBatch);
+				Console.WriteLine(char.ToUpperInvariant(compared.Summary[0]) + compared.Summary[1..] + ".");
+				if (!compared.Passed) {
+					NpuChecks.Record(passed: false, compared.Summary);
+					return Installer.ProbeWrongEmbeddings;
+				}
+			}
+			NpuChecks.Record(passed: true);
+		}
 		return ran ? 0 : 1;
 	}
 	catch (Exception e) {
