@@ -389,6 +389,19 @@ public sealed class AcceleratorsTests : IDisposable {
 	}
 
 	[Fact]
+	public void TheNpusCheck_ThatTheProbeRecorded_HoldsForTheVersionInThePluginsPackageFolder() {
+		// The probe has the plugin in its process and records the catalog's version. The agent, which asks before it loads the
+		// plugin, may have the version only from the plugin's package folder: it's the same, so the check holds.
+		string setup = WindowsMlPack.VitisAi().CheckedSetup;
+		NpuChecks.Record(Krackan, KrackanDriver, $"{VitisAi} ({setup})", passed: true);
+		string fromFolder = $"VitisAIExecutionProvider {WindowsMlPack.PackageVersionIn(NpuPackTests.VitisAiLibrary)} ({setup})";
+		Assert.Equal("VitisAIExecutionProvider 1.8.75.0 (batch 1, through vitisai-plugin)", fromFolder);
+		Assert.True(NpuChecks.Find(Krackan, KrackanDriver, fromFolder)?.Passed);
+		// Without a version it doesn't, which is how every scan checked the NPU again.
+		Assert.Null(NpuChecks.Find(Krackan, KrackanDriver, $"VitisAIExecutionProvider ({setup})"));
+	}
+
+	[Fact]
 	public void ACheckThatCrashed_LeavesTheNpuForADay_AndSaysWhy() {
 		DateTime now = DateTime.UtcNow;
 		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: false,

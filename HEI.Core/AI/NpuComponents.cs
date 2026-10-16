@@ -19,6 +19,7 @@ using System.Linq;
 using System.Net.Http;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using Microsoft.ML.OnnxRuntime;
 using HEI.Core.Utils;
 
@@ -449,7 +450,7 @@ namespace HEI.Core.AI {
 	/// Windows ML's catalog DLL (NuGet package Microsoft.Windows.AI.MachineLearning, SHA256-pinned) into
 	/// {ai}/winml, and asks the catalog for the plugin. Windows 11 24H2 or later.
 	/// </summary>
-	internal sealed class WindowsMlPack : NpuPack {
+	internal sealed partial class WindowsMlPack : NpuPack {
 		public const string PackageVersion = "2.4.89";
 		const string PackageSha256 = "5c68ecfb947223267abf159a023f5192ad42725e4e9cc995e7c1470dd54dff63";
 		const string PackageUrl = "https://api.nuget.org/v3-flatcontainer/microsoft.windows.ai.machinelearning/2.4.89/microsoft.windows.ai.machinelearning.2.4.89.nupkg";
@@ -507,13 +508,21 @@ namespace HEI.Core.AI {
 		/// <summary>The junction isn't one of them: a copy of the pack makes its own, to its PC's plugin.</summary>
 		public override IReadOnlyList<string> Folders => new[] { "winml", cacheFolderName };
 
-		/// <summary>The plugin build Windows has installed ("1.8.75.0"), which Windows updates by itself; "" when it has none.</summary>
+		/// <summary>
+		/// The plugin build Windows has installed ("1.8.75.0"), which Windows updates by itself; "" when it has none. The catalog
+		/// says it only once the plugin is in this process (<see cref="WindowsMlCatalog.Provider.EnsureReady"/>): before that the
+		/// plugin is NotReady, with no version and no library path (Windows ML 2.4.89, plugin 1.8.75.0, 2026-10-15). So the agent
+		/// keyed the NPU's check "VitisAIExecutionProvider" and the probe that ran it "VitisAIExecutionProvider 1.8.75.0", and a
+		/// check never held. The plugin is added first (it's installed: 1–2 ms), as a scan's first NPU session adds it anyway.
+		/// </summary>
 		public override string Version {
 			get {
 				if (!File.Exists(CatalogDll)) return "";
 				try {
 					using var catalog = new WindowsMlCatalog(CatalogDll);
-					return catalog.Find(epName) is { } p && p.State != WindowsMlCatalog.ReadyState.NotPresent ? p.Version : "";
+					if (catalog.Find(epName) is not { } p || p.State == WindowsMlCatalog.ReadyState.NotPresent) return "";
+					if (p.State == WindowsMlCatalog.ReadyState.NotReady) p.EnsureReady();
+					return VersionOf(p);
 				}
 				catch (Exception e) {
 					Logger.Instance.Info($"Windows ML couldn't say its {provider} plugin's version: {e.Message}");
@@ -545,9 +554,32 @@ namespace HEI.Core.AI {
 			string path = p.LibraryPath;
 			if (linkFolder != null)
 				path = PluginLink.Through(path, Ai(linkFolder));
-			Logger.Instance.Info($"Windows ML {provider} plugin {p.Version}: {path}");
+			Logger.Instance.Info($"Windows ML {provider} plugin {VersionOf(p)}: {path}");
 			return path;
 		}
+
+		/// <summary>
+		/// A plugin's version once it's in this process: the catalog's, else the one in its package's full name. The entry that
+		/// was found before <see cref="WindowsMlCatalog.Provider.EnsureReady"/> has its library path after it, but still no
+		/// version. The package's version is the one the catalog gives an entry found after. The DLL's own file version is
+		/// another number (1.8.0.6 in package 1.8.75.0).
+		/// </summary>
+		static string VersionOf(WindowsMlCatalog.Provider p) => p.Version is { Length: > 0 } v ? v : PackageVersionIn(p.LibraryPath);
+
+		/// <summary>
+		/// The version in the full name of the package folder that holds <paramref name="libraryPath"/>, the nearest one up
+		/// ("…\WindowsApps\Microsoft.WinML.AMD.NPU.EP.Framework.2_1.8.75.0_x64__8wekyb3d8bbwe\ExecutionProvider\…" gives
+		/// "1.8.75.0"); "" when no folder on the path is one. A full name is name_version_architecture_resource_publisher ID.
+		/// </summary>
+		internal static string PackageVersionIn(string? libraryPath) {
+			string[] parts = (libraryPath ?? "").Split('\\', '/');
+			for (int i = parts.Length - 2; i >= 0; i--) // the folders, nearest first
+				if (PackageFullName().Match(parts[i]) is { Success: true } m) return m.Groups["version"].Value;
+			return "";
+		}
+
+		[GeneratedRegex(@"^[A-Za-z0-9.\-]+_(?<version>\d{1,5}\.\d{1,5}\.\d{1,5}\.\d{1,5})_[A-Za-z0-9]*_[^_]*_[a-z0-9]{13}$", RegexOptions.CultureInvariant)]
+		private static partial Regex PackageFullName();
 
 		public override Dictionary<string, string> ProviderOptions(string cacheFolder) => options(cacheFolder);
 
