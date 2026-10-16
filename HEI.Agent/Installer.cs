@@ -778,7 +778,8 @@ namespace HEI.Agent {
 			DeleteOwnShortcut(DesktopShortcut);
 			// The heiward: links' too: the Store version's own come with its package.
 			bool entryLeft = !DeleteUserKeysOutside([Toast.AppIdKey, ProtocolKey, UninstallKey], [(Startup.RunKey, Startup.ValueName)]);
-			// A process that just stopped can hold its exe for a moment.
+			// A process that just stopped can hold its exe for a moment. And .NET's first pass over the Vitis AI plugin's
+			// junction (ai\vitisai-plugin, PluginLink) removes it and then throws: the next pass deletes the rest.
 			for (int i = 0; i < 5 && Directory.Exists(InstallDir); i++) {
 				try { Directory.Delete(InstallDir, recursive: true); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { Thread.Sleep(1000); }

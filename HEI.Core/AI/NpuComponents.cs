@@ -117,6 +117,13 @@ namespace HEI.Core.AI {
 		public static string PackVersion => Pack is { } p ? $"{p.EpName} {p.Version}".Trim() : "";
 
 		/// <summary>
+		/// What an NPU check holds for (<see cref="NpuChecks"/>): <see cref="PackVersion"/>, and how Heiward sets the plugin up
+		/// where that changed what a check finds (<see cref="NpuPack.CheckedSetup"/>). A check that Vitis AI failed when it was
+		/// loaded from its own folder doesn't hold for it through a junction.
+		/// </summary>
+		public static string CheckedPack => Pack is { CheckedSetup: { Length: > 0 } setup } ? $"{PackVersion} ({setup})" : PackVersion;
+
+		/// <summary>
 		/// Deletes the compiled graphs (<see cref="ContextCacheFolder"/>), so the next open compiles from the model: after a
 		/// compile killed its process, what it left half-written may be what kills the next one. Never throws.
 		/// </summary>
@@ -288,6 +295,11 @@ namespace HEI.Core.AI {
 		/// chunk is padded. 8 where it hasn't been measured.
 		/// </summary>
 		public virtual int Batch => 8;
+		/// <summary>
+		/// How Heiward sets the plugin up, where that changed what an NPU check finds ("batch 1, through vitisai-plugin"); ""
+		/// where nothing did. Part of what a check holds for (<see cref="NpuComponents.CheckedPack"/>).
+		/// </summary>
+		public virtual string CheckedSetup => "";
 		/// <summary>Per-run options that set how hard the NPU works at either pace; null to leave it to the plugin.</summary>
 		public virtual Dictionary<string, string>? RunConfig(bool fullSpeed) => null;
 		/// <summary>The pack's folders under {ai}, and one file there that shows the pack is complete.</summary>
@@ -444,23 +456,35 @@ namespace HEI.Core.AI {
 
 		readonly string provider, epName, displayName, modelKey, cacheFolderName;
 		readonly Func<string, Dictionary<string, string>> options;
+		readonly int batch;
+		readonly string? linkFolder;
 
 		WindowsMlPack(string provider, string epName, string displayName, string modelKey, string cacheFolderName,
-			Func<string, Dictionary<string, string>> options) {
+			Func<string, Dictionary<string, string>> options, int batch = 8, string? linkFolder = null) {
 			this.provider = provider;
 			this.epName = epName;
 			this.displayName = displayName;
 			this.modelKey = modelKey;
 			this.cacheFolderName = cacheFolderName;
 			this.options = options;
+			this.batch = batch;
+			this.linkFolder = linkFolder;
 		}
 
-		/// <summary>AMD Ryzen AI: Windows ML runs the FP32 model in BF16 on the NPU; Vitis AI caches the compiled graph.</summary>
+		/// <summary>
+		/// AMD Ryzen AI: Windows ML runs the FP32 model in BF16 on the NPU (all 650 of its operators); Vitis AI caches the
+		/// compiled graph. The plugin is loaded through a junction in {ai} (<see cref="PluginLink"/>): from its own folder in
+		/// WindowsApps, its compiler can't open itself and ends the process. One image per run: compiled for 8, the graph
+		/// gives the first image of each run its embedding and the other seven wrong ones (cosine to FP32 on the CPU 0.17–0.27),
+		/// with nothing to say so. At batch 1 on a Ryzen AI 7 350 (plugin 1.8.75.0, 2026-10-15): cosine to FP32 on the CPU
+		/// ≥ 0.9979 (median 0.9986), 8–17 ms per image, a compile of about 75 s and a cached open of about 2 s.
+		/// </summary>
 		public static WindowsMlPack VitisAi() => new("VitisAI", "VitisAIExecutionProvider", "AMD Ryzen AI NPU", "dinov2s-vitisai-bf16", "vitisai-cache",
 			cache => {
 				Directory.CreateDirectory(cache);
 				return new() { ["cache_dir"] = cache, ["cache_key"] = $"dinov2s_b{NpuComponents.NpuBatch}" };
-			});
+			},
+			batch: 1, linkFolder: "vitisai-plugin");
 
 		/// <summary>Test mode: Qualcomm's plugin through Windows ML, so a Snapdragon PC exercises this path.</summary>
 		public static WindowsMlPack QnnForTests() => new("QNN", QnnPack.QnnEpName, "Qualcomm Hexagon NPU (Windows ML)", "dinov2s-winml-qnn-fp16", "winml-qnn-cache",
@@ -478,6 +502,9 @@ namespace HEI.Core.AI {
 		public override string Description => $"Windows ML {PackageVersion} catalog (the {provider} plugin comes from Windows) + model";
 		public override string ModelKey => modelKey;
 		public override string CacheFolderName => cacheFolderName;
+		public override int Batch => batch;
+		public override string CheckedSetup => linkFolder != null ? $"batch {batch}, through {linkFolder}" : "";
+		/// <summary>The junction isn't one of them: a copy of the pack makes its own, to its PC's plugin.</summary>
 		public override IReadOnlyList<string> Folders => new[] { "winml", cacheFolderName };
 
 		/// <summary>The plugin build Windows has installed ("1.8.75.0"), which Windows updates by itself; "" when it has none.</summary>
@@ -516,6 +543,8 @@ namespace HEI.Core.AI {
 			WindowsMlCatalog.Provider p = catalog.Find(epName) ?? throw new InvalidOperationException($"Windows ML offers no {provider} provider for this PC.");
 			p.EnsureReady(); // quick once installed: adds the plugin's package to this process
 			string path = p.LibraryPath;
+			if (linkFolder != null)
+				path = PluginLink.Through(path, Ai(linkFolder));
 			Logger.Instance.Info($"Windows ML {provider} plugin {p.Version}: {path}");
 			return path;
 		}
