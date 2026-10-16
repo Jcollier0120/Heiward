@@ -67,6 +67,11 @@ function Get-SignFailure([string]$Text) {
 	if ($Text -match 'No certificates were found that met all the given criteria') {
 		return "signtool can't reach the signing certificate's key ($Thumbprint): SimplySign Desktop isn't connected. Connect it (your SimplySign ID and the token from the phone app)"
 	}
+	# The key's provider (SimplySign CSP) is gone from under the certificate: SimplySign Desktop is running without its
+	# virtual card (disconnected, or half started), or was installed without its x64 provider.
+	if ($Text -match 'The specified CSP could not be found') {
+		return "signtool can't load the signing key's provider, SimplySign CSP ($Thumbprint): SimplySign Desktop is running but not connected. Disconnect and connect it again (your SimplySign ID and the token from the phone app); if that doesn't do it, reinstall SimplySign Desktop, x64"
+	}
 	"signtool couldn't sign a trial file: $Text"
 }
 # Quoted as one argument for Start-Process, which joins its arguments with spaces as they are.
@@ -98,7 +103,7 @@ function Set-ReleaseSignature([string]$File) {
 		$r = Invoke-SignTool $sign 5
 		if ($r.Ok) { break }
 		# A key out of reach stays so: only the timestamp server's hiccups are worth another try.
-		if ($r.Text -match 'No certificates were found') { throw "Couldn't sign $(Split-Path $File -Leaf): $(Get-SignFailure $r.Text)." }
+		if ($r.Text -match 'No certificates were found|The specified CSP could not be found') { throw "Couldn't sign $(Split-Path $File -Leaf): $(Get-SignFailure $r.Text)." }
 		if ($r.TimedOut -or $try -ge 3) { throw "Couldn't sign $(Split-Path $File -Leaf): $($r.Text)" }
 		Write-Warning "Signing $(Split-Path $File -Leaf) failed (try $try of 3), trying again in 15 s: $($r.Text)"
 		Start-Sleep -Seconds 15

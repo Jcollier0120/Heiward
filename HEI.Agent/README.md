@@ -10,7 +10,7 @@ Heiward is free software under the GNU AGPL v3 ([License](../README.md#license))
   - **Intel AI Boost** (Core Ultra, Intel/AMD build): Intel's OpenVINO plugin, OpenVINO included;
   - **AMD Ryzen AI** (Intel/AMD build, Windows 11 24H2 or later): AMD's Vitis AI plugin, which Windows ML downloads and keeps updated.
 
-  Intel and AMD support is new and hasn't been tried on those NPUs yet. On any other PC, or if the NPU can't run the model, AI matching falls back to the GPU or CPU;
+  Intel and AMD support is new: each has run on one PC's NPU so far, a Core Ultra 5 225U's and a Ryzen AI 7 350's. On any other PC, or if the NPU can't run the model, AI matching falls back to the GPU or CPU;
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 
@@ -518,7 +518,7 @@ It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `ar
 winget install Microsoft.WindowsSDK.10.0.26100 --override "/features OptionId.SigningTools /quiet /norestart"
 ```
 
-- The certificate's key is in Certum's cloud. **SimplySign Desktop** must be running and connected (your SimplySign ID and the token from its phone app). The script checks this before it builds, by signing a throwaway copy of signtool: SimplySign Desktop left running after its session has ended keeps the certificate in the store, but signtool can't reach its key ("No certificates were found that met all the given criteria"). That failure isn't tried again: it stops at once and says to connect.
+- The certificate's key is in Certum's cloud. **SimplySign Desktop** must be running and connected (your SimplySign ID and the token from its phone app). The script checks this before it builds, by signing a throwaway copy of signtool: SimplySign Desktop left running after its session has ended keeps the certificate in the store, but signtool can't reach its key ("No certificates were found that met all the given criteria"). Nor can it when SimplySign Desktop runs without its virtual card ("The specified CSP could not be found": the key's provider, SimplySign CSP, isn't there): disconnect and connect it again, or reinstall it if that doesn't help. Neither failure is tried again: it stops at once and says to connect.
 - It always runs the **x64** signtool. SimplySign's key provider comes as x64 and x86 DLLs only, which an Arm64 process can't load; on an Arm64 PC, Windows runs the x64 signtool emulated.
 - A sign that fails is tried three times (the timestamp server fails now and then). One that hangs for 5 minutes stops the release: SimplySign's sign-in is likely waiting.
 - With `-Publish` it won't release unsigned files. `-Unsigned` builds and publishes without signing, on a PC without the certificate. Without `-Publish`, a PC that can't sign builds unsigned files and says why.

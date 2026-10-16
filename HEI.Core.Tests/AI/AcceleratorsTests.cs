@@ -389,6 +389,19 @@ public sealed class AcceleratorsTests : IDisposable {
 	}
 
 	[Fact]
+	public void TheNpusCheck_ThatTheProbeRecorded_HoldsForTheVersionInThePluginsPackageFolder() {
+		// The probe has the plugin in its process and records the catalog's version. The agent, which asks before it loads the
+		// plugin, may have the version only from the plugin's package folder: it's the same, so the check holds.
+		string setup = WindowsMlPack.VitisAi().CheckedSetup;
+		NpuChecks.Record(Krackan, KrackanDriver, $"{VitisAi} ({setup})", passed: true);
+		string fromFolder = $"VitisAIExecutionProvider {WindowsMlPack.PackageVersionIn(NpuPackTests.VitisAiLibrary)} ({setup})";
+		Assert.Equal("VitisAIExecutionProvider 1.8.75.0 (batch 1, through vitisai-plugin)", fromFolder);
+		Assert.True(NpuChecks.Find(Krackan, KrackanDriver, fromFolder)?.Passed);
+		// Without a version it doesn't, which is how every scan checked the NPU again.
+		Assert.Null(NpuChecks.Find(Krackan, KrackanDriver, $"VitisAIExecutionProvider ({setup})"));
+	}
+
+	[Fact]
 	public void ACheckThatCrashed_LeavesTheNpuForADay_AndSaysWhy() {
 		DateTime now = DateTime.UtcNow;
 		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: false,
@@ -406,6 +419,29 @@ public sealed class AcceleratorsTests : IDisposable {
 
 		Assert.True(NpuChecks.NeedsCheck(crashed, now.AddDays(1).AddMinutes(1)));
 		Assert.Null(NpuChecks.FailureOf(crashed, now.AddDays(1).AddMinutes(1)));
+	}
+
+	[Fact]
+	public void AProbesFailedCheck_IsRecordedAgain_UnderThePluginAsTheScansProcessFindsIt() {
+		DateTime now = DateTime.UtcNow;
+		// The probe's process found the plugin's version; the agent's didn't (Windows ML, before the plugin's package is ready).
+		const string Probes = VitisAi + " (batch 1, through vitisai-plugin)", Agents = "VitisAIExecutionProvider (batch 1, through vitisai-plugin)";
+		NpuChecks.Record(Krackan, KrackanDriver, Probes, passed: false, "7 of 9 pictures came back wrong, in batch slots 2-8 of 8", now);
+		Assert.Null(NpuChecks.Find(Krackan, KrackanDriver, Agents)); // the scan would use the NPU
+
+		NpuChecks.RecordProbesFailure(Krackan, KrackanDriver, Agents, "its embeddings didn't match the processor's", now);
+
+		NpuChecks.Check again = NpuChecks.Find(Krackan, KrackanDriver, Agents)!;
+		Assert.False(again.Passed);
+		Assert.Equal("7 of 9 pictures came back wrong, in batch slots 2-8 of 8", again.Reason); // the probe's, which says which pictures
+		Assert.NotNull(NpuChecks.FailureOf(again, now));
+	}
+
+	[Fact]
+	public void AProbesFailure_WithoutAFailedCheckRecorded_GivesTheAgentsReason() {
+		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: true);
+		NpuChecks.RecordProbesFailure(Krackan, KrackanDriver, VitisAi, "its embeddings didn't match the processor's");
+		Assert.Equal("its embeddings didn't match the processor's", NpuChecks.Find(Krackan, KrackanDriver, VitisAi)!.Reason);
 	}
 
 	[Fact]
