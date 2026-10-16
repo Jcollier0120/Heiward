@@ -77,9 +77,12 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// A probe whose NPU ran the model and gave wrong embeddings: it recorded its failed check itself, with which pictures,
-		/// and the graphs it compiled are deleted, so the next check compiles them afresh.
+		/// and it's recorded again here under the plugin as this process finds it, which is how the scan looks it up (on a
+		/// Ryzen AI 7 350 the probe found the Vitis AI plugin's version and the agent didn't, so the scan used the NPU anyway).
+		/// The graphs it compiled are deleted, so the next check compiles them afresh.
 		/// </summary>
 		static string WrongEmbeddings() {
+			NpuChecks.RecordProbesFailure("its embeddings didn't match the processor's");
 			NpuComponents.DropCompiledGraphs();
 			return $"the {NpuComponents.NpuName} ran the AI model but its embeddings didn't match the processor's";
 		}

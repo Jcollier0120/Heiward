@@ -299,6 +299,18 @@ namespace HEI.Core.AI {
 		public static void Record(bool passed, string? reason = null, DateTime? nowUtc = null) =>
 			Record(NpuHardware.Name, NpuHardware.Driver, NpuComponents.CheckedPack, passed, reason, nowUtc);
 
+		/// <summary>
+		/// Records a failed check of this PC's NPU now, for a probe that recorded its own in its process: with the probe's reason
+		/// when the last check recorded failed, else <paramref name="otherwise"/>. The probe's process keyed its check by the
+		/// plugin as it found it, which can differ from this process's (Windows ML gives the Vitis AI plugin's version only once
+		/// its package is ready in that process), and a scan here looks the check up by this process's. Never throws.
+		/// </summary>
+		public static void RecordProbesFailure(string otherwise, DateTime? nowUtc = null) =>
+			RecordProbesFailure(NpuHardware.Name, NpuHardware.Driver, NpuComponents.CheckedPack, otherwise, nowUtc);
+
+		internal static void RecordProbesFailure(string npu, string driver, string pack, string otherwise, DateTime? nowUtc = null) =>
+			Record(npu, driver, pack, passed: false, Load() is { Passed: false, Reason: { } said } ? said : otherwise, nowUtc);
+
 		/// <summary>Records a check, replacing the last one. Never throws.</summary>
 		public static void Record(string npu, string driver, string pack, bool passed, string? reason = null, DateTime? nowUtc = null) {
 			try {
