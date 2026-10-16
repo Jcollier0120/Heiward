@@ -77,6 +77,20 @@ public class NpuPackTests {
 	}
 
 	[Fact]
+	public void Vitis_AI_runs_one_image_per_run_through_its_junction_and_its_checks_say_so() {
+		// At batch 8 its graph gave only the first image of each run the right embedding (Ryzen AI 7 350, 2026-10-15).
+		Assert.Equal(1, WindowsMlPack.VitisAi().Batch);
+		// Part of what its check holds for: a check that failed with the plugin in its own folder doesn't hold.
+		Assert.Equal("batch 1, through vitisai-plugin", WindowsMlPack.VitisAi().CheckedSetup);
+		// Not one of the pack's folders: copying the pack would copy the plugin through it.
+		Assert.DoesNotContain("vitisai-plugin", WindowsMlPack.VitisAi().Folders);
+		// The other packs load their plugin from where it is, and their checks hold as before.
+		Assert.Equal("", new QnnPack().CheckedSetup);
+		Assert.Equal("", new OpenVinoPack(acceptCpu: false).CheckedSetup);
+		Assert.Equal("", WindowsMlPack.QnnForTests().CheckedSetup);
+	}
+
+	[Fact]
 	public void The_OpenVINO_test_mode_also_takes_the_CPU_device() {
 		Assert.True(new OpenVinoPack(acceptCpu: false).Accepts(OrtHardwareDeviceType.NPU));
 		Assert.False(new OpenVinoPack(acceptCpu: false).Accepts(OrtHardwareDeviceType.CPU));

@@ -10,7 +10,7 @@ Heiward is free software under the GNU AGPL v3 ([License](../README.md#license))
   - **Intel AI Boost** (Core Ultra, Intel/AMD build): Intel's OpenVINO plugin, OpenVINO included;
   - **AMD Ryzen AI** (Intel/AMD build, Windows 11 24H2 or later): AMD's Vitis AI plugin, which Windows ML downloads and keeps updated.
 
-  Intel and AMD support is new and hasn't been tried on those NPUs yet. On any other PC, or if the NPU can't run the model, AI matching falls back to the GPU or CPU;
+  Intel and AMD support is new: each has run on one PC's NPU so far, a Core Ultra 5 225U's and a Ryzen AI 7 350's. On any other PC, or if the NPU can't run the model, AI matching falls back to the GPU or CPU;
 - your **GPU** (any DirectX 12 GPU, through DirectML), if you choose it: scans every 6 hours on AC power, or only when you ask;
 - the **CPU**: the same choice as the GPU.
 

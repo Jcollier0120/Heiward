@@ -271,7 +271,7 @@ namespace HEI.Core.AI {
 
 		/// <param name="Npu">The NPU's name as Windows shows it (<see cref="NpuHardware.Name"/>).</param>
 		/// <param name="Driver">Its driver version ("" when Windows didn't say).</param>
-		/// <param name="Pack">The plugin and its version (<see cref="NpuComponents.PackVersion"/>).</param>
+		/// <param name="Pack">The plugin and its version, and how it's set up (<see cref="NpuComponents.CheckedPack"/>).</param>
 		public sealed record Check(string Npu, string Driver, string Pack, bool Passed, DateTime AtUtc, string? Reason);
 
 		public static string FilePath => PathOverride ?? Path.Combine(AiComponents.AiFolder, "npu-checks.json");
@@ -283,7 +283,7 @@ namespace HEI.Core.AI {
 			Load() is { } c && c.Npu == npu && c.Driver == driver && c.Pack == pack ? c : null;
 
 		/// <summary>This PC's NPU's check with its driver and plugin now, or null.</summary>
-		public static Check? Current() => Find(NpuHardware.Name, NpuHardware.Driver, NpuComponents.PackVersion);
+		public static Check? Current() => Find(NpuHardware.Name, NpuHardware.Driver, NpuComponents.CheckedPack);
 
 		/// <summary>No check with this driver and plugin, or one that failed a day ago or more.</summary>
 		public static bool NeedsCheck(Check? check, DateTime nowUtc) => check is null || !check.Passed && nowUtc - check.AtUtc >= RetryFailedAfter;
@@ -296,7 +296,7 @@ namespace HEI.Core.AI {
 
 		/// <summary>Records a check of this PC's NPU with its driver and plugin now, replacing the last one. Never throws.</summary>
 		public static void Record(bool passed, string? reason = null, DateTime? nowUtc = null) =>
-			Record(NpuHardware.Name, NpuHardware.Driver, NpuComponents.PackVersion, passed, reason, nowUtc);
+			Record(NpuHardware.Name, NpuHardware.Driver, NpuComponents.CheckedPack, passed, reason, nowUtc);
 
 		/// <summary>Records a check, replacing the last one. Never throws.</summary>
 		public static void Record(string npu, string driver, string pack, bool passed, string? reason = null, DateTime? nowUtc = null) {
