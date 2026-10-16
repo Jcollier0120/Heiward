@@ -74,6 +74,19 @@ public sealed class NpuCheckTests {
 	}
 
 	[Fact]
+	public void AProbeWhoseNpuGaveWrongEmbeddings_SaysSo_AndDidntCrash() {
+		var wrong = new Installer.ProbeResult(Installer.ProbeWrongEmbeddings, Pid: 4242);
+		Assert.True(wrong.WrongEmbeddings);
+		Assert.False(wrong.Crashed); // it recorded its own failed check: nothing to clean up after a dead process
+		Assert.False(new Installer.ProbeResult(0, 4242).WrongEmbeddings);
+		Assert.False(new Installer.ProbeResult(1, 4242).WrongEmbeddings);
+		// Ended after 10 minutes, whatever code Windows gave it: a hang, not an answer.
+		var hung = new Installer.ProbeResult(Installer.ProbeWrongEmbeddings, 4242, TimedOut: true);
+		Assert.True(hung.Crashed);
+		Assert.False(hung.WrongEmbeddings);
+	}
+
+	[Fact]
 	public void AnNpuThatFailedLately_IsLeftAlone() {
 		var marker = new Accelerators.Failure(Now.AddMinutes(-2), "the AMD Ryzen AI NPU could not run the model", "heiward");
 		Assert.False(NpuCheck.Due(AiDevice.Auto, true, marker, check: null, Now));

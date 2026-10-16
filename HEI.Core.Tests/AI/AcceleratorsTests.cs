@@ -422,6 +422,29 @@ public sealed class AcceleratorsTests : IDisposable {
 	}
 
 	[Fact]
+	public void AProbesFailedCheck_IsRecordedAgain_UnderThePluginAsTheScansProcessFindsIt() {
+		DateTime now = DateTime.UtcNow;
+		// The probe's process found the plugin's version; the agent's didn't (Windows ML, before the plugin's package is ready).
+		const string Probes = VitisAi + " (batch 1, through vitisai-plugin)", Agents = "VitisAIExecutionProvider (batch 1, through vitisai-plugin)";
+		NpuChecks.Record(Krackan, KrackanDriver, Probes, passed: false, "7 of 9 pictures came back wrong, in batch slots 2-8 of 8", now);
+		Assert.Null(NpuChecks.Find(Krackan, KrackanDriver, Agents)); // the scan would use the NPU
+
+		NpuChecks.RecordProbesFailure(Krackan, KrackanDriver, Agents, "its embeddings didn't match the processor's", now);
+
+		NpuChecks.Check again = NpuChecks.Find(Krackan, KrackanDriver, Agents)!;
+		Assert.False(again.Passed);
+		Assert.Equal("7 of 9 pictures came back wrong, in batch slots 2-8 of 8", again.Reason); // the probe's, which says which pictures
+		Assert.NotNull(NpuChecks.FailureOf(again, now));
+	}
+
+	[Fact]
+	public void AProbesFailure_WithoutAFailedCheckRecorded_GivesTheAgentsReason() {
+		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: true);
+		NpuChecks.RecordProbesFailure(Krackan, KrackanDriver, VitisAi, "its embeddings didn't match the processor's");
+		Assert.Equal("its embeddings didn't match the processor's", NpuChecks.Find(Krackan, KrackanDriver, VitisAi)!.Reason);
+	}
+
+	[Fact]
 	public void Auto_WithTheNpusCheckFailed_FallsBackToACheckedCard_ElseTheCpu() {
 		DateTime now = DateTime.UtcNow;
 		NpuChecks.Record(Krackan, KrackanDriver, VitisAi, passed: false, "setting the model up ended its process (exit 0xC0000409)", now);

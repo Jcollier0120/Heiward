@@ -702,14 +702,19 @@ namespace HEI.Agent {
 			(await ProbeAsync(device, ct, gpu, say)).ExitCode == 0;
 
 		/// <summary>
-		/// What a probe's process did: its exit code (0 the model ran there, 1 it didn't; anything else, the process was
-		/// ended under it, as a plugin's native failure does), its id, to find a lock it may have left, and whether it hung
-		/// past <see cref="ProbeTimeout"/> and was ended.
+		/// What a probe's process did: its exit code (0 the model ran there, 1 it didn't, <see cref="ProbeWrongEmbeddings"/>
+		/// it ran on the NPU and gave wrong embeddings; anything else, the process was ended under it, as a plugin's native
+		/// failure does), its id, to find a lock it may have left, and whether it hung past <see cref="ProbeTimeout"/> and was ended.
 		/// </summary>
 		internal readonly record struct ProbeResult(int ExitCode, int Pid, bool TimedOut = false) {
 			/// <summary>The process didn't end by returning: a native failure past any catch, or a hang.</summary>
-			public bool Crashed => TimedOut || ExitCode is not (0 or 1);
+			public bool Crashed => TimedOut || ExitCode is not (0 or 1 or ProbeWrongEmbeddings);
+			/// <summary>The model ran on the NPU, and its embeddings didn't match the processor's (<see cref="EmbeddingCheck"/>).</summary>
+			public bool WrongEmbeddings => !TimedOut && ExitCode == ProbeWrongEmbeddings;
 		}
+
+		/// <summary>The probe's exit code when the NPU ran the model and its embeddings were wrong: it recorded the failed check itself.</summary>
+		internal const int ProbeWrongEmbeddings = 2;
 
 		/// <summary>
 		/// How long a probe may take. An NPU's first compile is about a minute and a half on a Ryzen AI 7 350 and minutes on

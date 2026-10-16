@@ -260,8 +260,9 @@ namespace HEI.Core.AI {
 	/// its own process before a scan's first use of the NPU with this driver and plugin (HEI.Agent's NpuCheck). A plugin
 	/// can end the process from native code while it compiles (Windows ML's Vitis AI 1.8.75.0 on a Ryzen AI 7 350, NPU
 	/// driver 32.0.20102.3930: 0xC0000409, 2026-10-15), past any catch, leaving the scan dead and the NPU's lock with a
-	/// dead holder. A check that ends that way fails, and Auto leaves the NPU until its driver or plugin changes, or for a
-	/// day; one that passes leaves the compiled graph for the scan to load. A check that fails the ordinary way (an
+	/// dead holder. A check that ends that way fails, and so does one whose NPU runs the model and gives wrong embeddings
+	/// (<see cref="EmbeddingCheck"/>): Auto leaves the NPU until its driver or plugin changes, or for a day. One that passes
+	/// leaves the compiled graph for the scan to load. A check that fails the ordinary way (an
 	/// exception) isn't recorded here: <see cref="OnnxEmbedder"/> marks the NPU failed for 10 minutes, as for a scan.
 	/// Kept in <c>{ai}\npu-checks.json</c>: the last check.
 	/// </summary>
@@ -297,6 +298,18 @@ namespace HEI.Core.AI {
 		/// <summary>Records a check of this PC's NPU with its driver and plugin now, replacing the last one. Never throws.</summary>
 		public static void Record(bool passed, string? reason = null, DateTime? nowUtc = null) =>
 			Record(NpuHardware.Name, NpuHardware.Driver, NpuComponents.CheckedPack, passed, reason, nowUtc);
+
+		/// <summary>
+		/// Records a failed check of this PC's NPU now, for a probe that recorded its own in its process: with the probe's reason
+		/// when the last check recorded failed, else <paramref name="otherwise"/>. The probe's process keyed its check by the
+		/// plugin as it found it, which can differ from this process's (Windows ML gives the Vitis AI plugin's version only once
+		/// its package is ready in that process), and a scan here looks the check up by this process's. Never throws.
+		/// </summary>
+		public static void RecordProbesFailure(string otherwise, DateTime? nowUtc = null) =>
+			RecordProbesFailure(NpuHardware.Name, NpuHardware.Driver, NpuComponents.CheckedPack, otherwise, nowUtc);
+
+		internal static void RecordProbesFailure(string npu, string driver, string pack, string otherwise, DateTime? nowUtc = null) =>
+			Record(npu, driver, pack, passed: false, Load() is { Passed: false, Reason: { } said } ? said : otherwise, nowUtc);
 
 		/// <summary>Records a check, replacing the last one. Never throws.</summary>
 		public static void Record(string npu, string driver, string pack, bool passed, string? reason = null, DateTime? nowUtc = null) {

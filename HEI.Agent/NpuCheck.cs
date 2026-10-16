@@ -55,6 +55,8 @@ namespace HEI.Agent {
 			}
 			if (probe.Crashed)
 				say($"  {Crashed(probe)}: AI matching leaves the NPU (checked again after a driver or plugin update, or in a day)");
+			else if (probe.WrongEmbeddings)
+				say($"  {WrongEmbeddings()}: AI matching leaves the NPU (checked again after a driver or plugin update, or in a day)");
 			else if (probe.ExitCode != 0)
 				say("  the NPU couldn't run the AI model (see the log): scans leave it for 10 minutes");
 			else
@@ -62,15 +64,27 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// Whether a copied NPU pack runs the model (setup's reuse): the probe in its own process. A probe the plugin ended is
-		/// the plugin's failure, not the copy's: it's recorded as the NPU's check (so it isn't compiled again straight after)
-		/// and the copy is kept, as a download would only meet the same plugin.
+		/// Whether a copied NPU pack runs the model (setup's reuse): the probe in its own process. A probe the plugin ended, or
+		/// whose NPU gave wrong embeddings, is the plugin's failure, not the copy's: it's recorded as the NPU's check (so it
+		/// isn't compiled again straight after) and the copy is kept, as a download would only meet the same plugin.
 		/// </summary>
 		public static async Task<bool> CopiedPackRunsAsync(CancellationToken ct) {
 			Installer.ProbeResult probe = await Installer.ProbeAsync("npu", ct);
-			if (!probe.Crashed) return probe.ExitCode == 0;
-			Console.WriteLine($"  {Crashed(probe)}: AI matching leaves the NPU (checked again after a driver or plugin update, or in a day)");
+			if (!probe.Crashed && !probe.WrongEmbeddings) return probe.ExitCode == 0;
+			Console.WriteLine($"  {(probe.Crashed ? Crashed(probe) : WrongEmbeddings())}: AI matching leaves the NPU (checked again after a driver or plugin update, or in a day)");
 			return true;
+		}
+
+		/// <summary>
+		/// A probe whose NPU ran the model and gave wrong embeddings: it recorded its failed check itself, with which pictures,
+		/// and it's recorded again here under the plugin as this process finds it, which is how the scan looks it up (on a
+		/// Ryzen AI 7 350 the probe found the Vitis AI plugin's version and the agent didn't, so the scan used the NPU anyway).
+		/// The graphs it compiled are deleted, so the next check compiles them afresh.
+		/// </summary>
+		static string WrongEmbeddings() {
+			NpuChecks.RecordProbesFailure("its embeddings didn't match the processor's");
+			NpuComponents.DropCompiledGraphs();
+			return $"the {NpuComponents.NpuName} ran the AI model but its embeddings didn't match the processor's";
 		}
 
 		/// <summary>A probe the plugin ended: its failed check recorded, the compiled graphs it left deleted, the NPU's lock it died holding let go.</summary>
