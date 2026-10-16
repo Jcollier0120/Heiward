@@ -101,9 +101,10 @@ public class PluginLinkTests : IDisposable {
 		string plugin = Plugin("1.8.75.0"), install = Path.Combine(root, "Heiward");
 		PluginLink.Through(plugin, Path.Combine(install, "ai", "vitisai-plugin"));
 
-		// .NET unmounts a junction with DeleteVolumeMountPoint, which a standard user may not call: it removes the junction,
-		// then throws. The GitHub copy's removal (Installer.RemoveGitHubCopy) tries again, and the second pass deletes the rest.
-		try { Directory.Delete(install, recursive: true); } catch (UnauthorizedAccessException) { }
+		// .NET unmounts a junction with DeleteVolumeMountPoint first, which fails for a junction to a folder (access denied for
+		// a standard user, another error for an administrator, as on CI): it still removes the junction, then throws. The GitHub
+		// copy's removal (Installer.RemoveGitHubCopy) catches both and tries again, and the second pass deletes the rest.
+		try { Directory.Delete(install, recursive: true); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 		Assert.True(File.Exists(plugin));
 		if (Directory.Exists(install)) Directory.Delete(install, recursive: true);
 
