@@ -15,6 +15,24 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 Nothing: it updates itself as usual.
 
+## Unreleased (its version needs claiming on the main laptop)
+
+**An NPU whose plugin can't set the AI model up no longer ends Heiward's scan: the NPU is checked in a process of its own first, and a scan leaves an NPU that failed its check. AI matching on the processor works again on PCs where Windows has its own ONNX Runtime.**
+
+### What changed
+
+- Before a scan first uses the NPU with its driver and plugin, Heiward checks it in its own process (`hei probe --device npu`), as it already did for a graphics card. On a Ryzen AI 7 350 (NPU driver 32.0.20102.3930), Windows ML's Vitis AI plugin 1.8.75.0 ended Heiward's process from native code while it compiled the AI model, past Heiward's own fallback to the processor, so the first scan never finished, tried again every hour, and left the NPU's lock held by a process that had ended (Castellan showed the NPU in use by Heiward). Now a check that ends that way is recorded in `ai\npu-checks.json`: scans leave the NPU, for the graphics card once it has passed its check or else the processor, until the NPU's driver or Heiward's NPU pack changes, or for a day. (Windows ML gives no version for the Vitis AI plugin, so on an AMD NPU a plugin update alone waits for the day.) The check's half-compiled model is deleted, and the NPU's lock it died holding is let go.
+- AI matching on the processor ended Heiward's process (0xC0000005) when it was the first thing in that process to use ONNX Runtime, on a PC whose Windows has its own ONNX Runtime in System32 (version 1.17, from a Windows 11 update in October 2026). Heiward loaded that one instead of its own 1.27, and it can't serve Heiward. This is what an NPU that failed its check, or a PC without an NPU, falls back to. Heiward now always loads its own.
+- A check that passes leaves the compiled model for the scan, which then loads it instead of compiling it.
+- The same check runs before `hei setup` opens the AI model, and before the review page's picture comparison first opens it. When setup copies the NPU pack from the installed Heiward and the plugin ends the copy's trial run, that counts as the check: the copy is kept and the model isn't compiled a second time.
+- A check that gives no answer in 10 minutes is ended and counts as failed. On the same PC, Vitis AI's compile once hung instead, every thread waiting, which left the scan waiting for good.
+- A probe's output is cut to its last 20 lines in the window and the log: Vitis AI's compiler writes about 800.
+- The Microsoft Store version needs Windows 11, version 24H2 or later: Heiward runs on .NET 10, which Microsoft supports on Windows 11 from 24H2. The package's minimum Windows (`MinVersion` in `HEI.Agent/Store/AppxManifest.xml`) was Windows 10 version 2004, and `docs/STORE.md` gave that as the listing's requirement. The Store no longer offers Heiward to an older Windows, and a Store copy already on one gets no more updates from it.
+
+### Before you update
+
+Nothing: it updates itself as usual. The first scan after updating checks the NPU once, which takes as long as compiling the model: a few seconds on a Snapdragon or an Intel NPU, about a minute and a half on an AMD one.
+
 ## 1.9.47
 
 **It carries the Steward's kit 2.74.5: the parts every agent of the manor shares.**

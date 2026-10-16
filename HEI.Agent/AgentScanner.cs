@@ -117,8 +117,12 @@ namespace HEI.Agent {
 			}
 			AgentPaths.AppendLog($"scan started {(fullSpeed ? "at full speed" : $"in the background, at most {cpuCap:0.#}% of the processor")} ({settings.MaxDegreeOfParallelism} at once{(paced ? "" : ", pace not fully set")}): " +
 				(plan?.Describe() ?? string.Join("; ", settings.IncludeList)));
-			// Auto with no working NPU takes the graphics card once it has passed a check: one it hasn't, checked now, in its
-			// own process (this one's ONNX Runtime must stay unloaded until the scan picks its device).
+			// The NPU, with a driver or plugin it hasn't been checked with, is checked first in its own process: a plugin that
+			// ends its process while it compiles the model then ends the check's, not the scan's. Auto with no working NPU
+			// takes the graphics card once it has passed a check: one it hasn't, checked now, in its own process too (this
+			// one's ONNX Runtime must stay unloaded until the scan picks its device).
+			if (settings.UseAiMatching)
+				await NpuCheck.EnsureAsync(settings.AiDevice, AgentPaths.AppendLog, ct);
 			if (settings.UseAiMatching && settings.AiDevice == AiDevice.Auto)
 				await GpuCheck.EnsureAsync(cfg, AgentPaths.AppendLog, ct);
 			// The card the scan's GPU work runs on, whose 3D engines a game would compete for.

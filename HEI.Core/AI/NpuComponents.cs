@@ -110,6 +110,27 @@ namespace HEI.Core.AI {
 		internal static string ContextCacheFolder => Path.Combine(AiComponents.AiFolder, Pack!.CacheFolderName);
 		internal static bool UsesEpContextModel => Pack?.UsesEpContextModel ?? false;
 
+		/// <summary>
+		/// The plugin that compiles the model, with its version ("VitisAIExecutionProvider 1.8.75.0"): an NPU check
+		/// (<see cref="NpuChecks"/>) holds for this one only. "" without an NPU this build drives.
+		/// </summary>
+		public static string PackVersion => Pack is { } p ? $"{p.EpName} {p.Version}".Trim() : "";
+
+		/// <summary>
+		/// Deletes the compiled graphs (<see cref="ContextCacheFolder"/>), so the next open compiles from the model: after a
+		/// compile killed its process, what it left half-written may be what kills the next one. Never throws.
+		/// </summary>
+		internal static void DropCompiledGraphs() {
+			try {
+				if (Pack == null || !Directory.Exists(ContextCacheFolder)) return;
+				Directory.Delete(ContextCacheFolder, recursive: true);
+				Logger.Instance.Info($"Deleted the compiled NPU graphs in {ContextCacheFolder}: the next open compiles the model again.");
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				Logger.Instance.Info($"Couldn't delete the compiled NPU graphs in {ContextCacheFolder}: {e.Message}");
+			}
+		}
+
 		static readonly object registerLock = new();
 		static bool registered;
 		static IReadOnlyList<OrtEpDevice>? npuDevices;
@@ -253,6 +274,8 @@ namespace HEI.Core.AI {
 		public abstract string DisplayName { get; }
 		public abstract string Description { get; }
 		public abstract string ModelKey { get; }
+		/// <summary>The plugin's version (an NPU check holds for it only); "" when it can't be told.</summary>
+		public virtual string Version => "";
 		/// <summary>Where compiled graphs are kept, under {ai}.</summary>
 		public abstract string CacheFolderName { get; }
 		/// <summary>
@@ -311,6 +334,7 @@ namespace HEI.Core.AI {
 		public override string DisplayName => "Qualcomm Hexagon NPU";
 		public override string Description => $"Qualcomm QNN {PackageVersion} + model, ~230 MB";
 		public override string ModelKey => QnnModelKey;
+		public override string Version => PackageVersion;
 		public override string CacheFolderName => $"qnn-cache-{PackageVersion}";
 		public override bool UsesEpContextModel => true;
 		/// <summary>
@@ -367,6 +391,7 @@ namespace HEI.Core.AI {
 		public override string DisplayName => "Intel AI Boost NPU";
 		public override string Description => $"Intel OpenVINO {PackageVersion} + model, ~210 MB";
 		public override string ModelKey => "dinov2s-openvino-fp16";
+		public override string Version => PackageVersion;
 		public override string CacheFolderName => $"openvino-cache-{PackageVersion}";
 		public override IReadOnlyList<string> Folders => new[] { "openvino", CacheFolderName };
 		public override string KeyFile => Path.Combine("openvino", Plugin);
@@ -454,6 +479,21 @@ namespace HEI.Core.AI {
 		public override string ModelKey => modelKey;
 		public override string CacheFolderName => cacheFolderName;
 		public override IReadOnlyList<string> Folders => new[] { "winml", cacheFolderName };
+
+		/// <summary>The plugin build Windows has installed ("1.8.75.0"), which Windows updates by itself; "" when it has none.</summary>
+		public override string Version {
+			get {
+				if (!File.Exists(CatalogDll)) return "";
+				try {
+					using var catalog = new WindowsMlCatalog(CatalogDll);
+					return catalog.Find(epName) is { } p && p.State != WindowsMlCatalog.ReadyState.NotPresent ? p.Version : "";
+				}
+				catch (Exception e) {
+					Logger.Instance.Info($"Windows ML couldn't say its {provider} plugin's version: {e.Message}");
+					return "";
+				}
+			}
+		}
 		public override string KeyFile => Path.Combine("winml", WindowsMlCatalog.DllName);
 
 		/// <summary>The catalog DLL is here and Windows has the plugin (it may still need adding to this process).</summary>

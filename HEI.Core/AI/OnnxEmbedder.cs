@@ -40,6 +40,11 @@ namespace HEI.Core.AI {
 		static readonly float[] Mean = { 0.485f, 0.456f, 0.406f };
 		static readonly float[] Std = { 0.229f, 0.224f, 0.225f };
 
+		// The runtime is routed to {ai}'s before any field here touches it: runOptions' initializer runs before a
+		// constructor's body, and a process whose first ONNX Runtime call was there loaded whatever Windows finds by
+		// name instead: System32's 1.17 since a 2026-10 update, which has no API 23 (0xC0000005 in RunOptions).
+		static OnnxEmbedder() => AiComponents.EnsureResolverInstalled();
+
 		readonly InferenceSession session;
 		readonly string[] inputNames;
 		readonly string[] outputNames;

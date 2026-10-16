@@ -26,8 +26,8 @@
   </Properties>
 
   <Dependencies>
-    <!-- 2004: the oldest Windows 10 that passes Parameters to a desktop app (uap10). -->
-    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.28000.0" />
+    <!-- Windows 11 24H2: the oldest consumer Windows that .NET 10, which Heiward runs on, supports. -->
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.26100.0" MaxVersionTested="10.0.28000.0" />
   </Dependencies>
 
   <Resources>
@@ -45,7 +45,7 @@
         Square44x44Logo="Assets\Square44x44Logo.png" />
       <Extensions>
         <!-- A desktop shortcut to the review page, as the GitHub copy's installer makes. Windows adds it with the
-             package and removes it with the package (Windows 11; Windows 10 ignores it). -->
+             package and removes it with the package. -->
         <desktop7:Extension Category="windows.shortcut">
           <desktop7:Shortcut File="[{Desktop}]\Heiward.lnk" Icon="[{Package}]\Assets\heiward.ico" Description="Review duplicate photos and videos, and stale developer files" />
         </desktop7:Extension>
