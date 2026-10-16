@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.49
+
+**Heiward's notifications say Heiward, with its icon, however it was installed.**
+
+### What changed
+
+- Heiward's notifications (new sets of likely duplicates, an automatic cleanup) came under **Windows PowerShell** unless Heiward's own setup had installed it, for example when Castellan installed it. Now Heiward makes its name known to Windows, with its icon, the first time it notifies, wherever it came from, and the icon is on each notification too. In Windows' notification settings you can turn Heiward's notifications on or off without touching any other program's.
+
+### Before you update
+
+Nothing: it updates itself as usual. The first notification after the update makes Heiward's name known to Windows.
+
 ## 1.9.48
 
 **A release that can't sign because SimplySign's key provider is missing now says what to do.**
