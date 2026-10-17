@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.52
+
+**It carries the Steward's kit 2.78.22: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.78.22: seneschal.ts knows the Seneschal's other PCs (Seneschal 0.2.0): a task running on another PC isn't timed out, results name the PC they ran on and say flaky or confirmed, a failure's try on another PC can be waited for, `seneschalWork` is the worker's side, and a whole suite can be cut into shards.
+
+### Before you update
+
+- Nothing for an agent to do: `seneschalTurn` answers as before where no other PC runs its tasks. An agent that switches on its answer should handle `{ failed }`.
+
 ## 1.9.51
 
 **It carries the Steward's kit 2.78.12: the parts every agent of the manor shares.**
