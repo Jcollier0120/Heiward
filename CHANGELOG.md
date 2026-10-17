@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.51
+
+**It carries the Steward's kit 2.78.12: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.78.12: npu-reports.ts counts a report against the model its generation runs (`routeFor`), so an X2's reports on its 2B count, and its reports on the route's 4B are stale. tools/kit.ts warns when a pin is a kit that has no release. Also brings 2.78.10, which wasn't released on its own.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.50
 
 **It carries the Steward's kit 2.77.6: the parts every agent of the manor shares.**
