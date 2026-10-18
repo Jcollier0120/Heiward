@@ -388,6 +388,10 @@ Heiward measures the PC's disks for the whole manor, so the other agents ask it 
 | `sameAs` | For a Claude package copy that shows exactly the same files as the cache it's named after (a reading from a process whose AppData is redirected there): that cache's name. It isn't counted twice |
 | `cachesBytes` | All the caches together, each counted once |
 
+### The drives at a glance for Manor: `GET /api/glance`
+
+Manor's disk tile asks once a minute for the home page's "At a glance": `{"glance": …}`, the same object as `/api/state`'s `glance`. That's the drives' size, used and free space, the used space by kind, the photos and videos by type, the drives nearly full, and what could be reclaimed (duplicates, developer items, games, the Recycle Bin). It reads only what the glance needs: the report, the index, your decisions, and the developer and games reports when those modes are on. It leaves out the review lists, the History and the settings `/api/state` reads and sends: on this PC, about 1 KB against 77 KB. It's read-only, for this PC only and needs no token, as `/api/disk` is. The Recycle Bin's size is read at most every 5 minutes, and again after Heiward moves files there.
+
 ### Pictures compared by look: `POST /api/pictures/compare`
 
 Heiward lends its eye for pictures to the other agents on this PC. Chamberlain asks it when it finds two documents with the same words: two documents are duplicates only when they hold the same pictures too, so it takes the pictures out of both (a Word document's or a presentation's images, a PDF's) and, when their bytes differ, asks Heiward whether they are the same pictures. Nothing of this needs Manor or Chamberlain: any program on this PC with the page's token may ask.
