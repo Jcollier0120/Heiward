@@ -107,6 +107,9 @@ namespace HEI.Core.AI {
 		public int FixedBatch => fixedBatch;
 		/// <summary>Where the time went, for the scan's log.</summary>
 		public EmbedderStats Stats { get; } = new();
+		long lastRunTicks;
+		/// <summary>When the model last ran (on <see cref="DeviceName"/>), or null before its first run: the page says "Running on the NPU" only just after one.</summary>
+		public DateTime? LastRunUtc => Interlocked.Read(ref lastRunTicks) is > 0 and long ticks ? new DateTime(ticks, DateTimeKind.Utc) : null;
 
 		public OnnxEmbedder(string modelPath) {
 			AiComponents.EnsureResolverInstalled();
@@ -395,6 +398,7 @@ namespace HEI.Core.AI {
 			long run = Stopwatch.GetTimestamp();
 			using IDisposableReadOnlyCollection<OrtValue> results = session.Run(CurrentRunOptions, inputNames, input, outputNames);
 			Interlocked.Add(ref Stats.ModelTicks, Stopwatch.GetTimestamp() - run);
+			Interlocked.Exchange(ref lastRunTicks, DateTime.UtcNow.Ticks);
 			Interlocked.Increment(ref Stats.Runs);
 			Interlocked.Add(ref Stats.Images, count);
 			Interlocked.Add(ref Stats.Slots, batch);

@@ -139,6 +139,10 @@ namespace HEI.Core {
 		public string? AiCardUsed { get; private set; }
 		/// <summary>Why the last search's AI didn't run where its setting meant it to, or stopped (<see cref="AI.OnnxEmbedder.Fallback"/>); null when it did.</summary>
 		public string? AiFallback { get; private set; }
+		/// <summary>The AI model this search took up last: the files' embeddings, then the videos' keyframes (partial clips).</summary>
+		AI.OnnxEmbedder? aiEmbedder;
+		/// <summary>Where that model ran ("NPU", "GPU", "CPU") and when it last did; null before it has.</summary>
+		public (string Device, DateTime Utc)? AiLastRun => aiEmbedder is { LastRunUtc: DateTime at } e ? (e.DeviceName, at) : null;
 		// What reading the files cost the last search: files decoded and the workers' time on them, photos and videos apart.
 		int photosRead, videosRead;
 		long photoTicks, videoTicks;
@@ -429,6 +433,7 @@ namespace HEI.Core {
 						var embedder = AI.OnnxEmbedder.Create(Settings.AiDevice);
 						unionEmbeddingStore = AI.UnionEmbeddingStore.Load(embedder.CacheKey);
 						aiEmbeddingPipeline = new AI.EmbeddingPipeline(embedder, unionEmbeddingStore, cancelationTokenSource.Token);
+						aiEmbedder = embedder;
 						AiDeviceUsed = embedder.DeviceName;
 						AiCacheKeyUsed = embedder.CacheKey;
 						AiAcceleratorUsed = embedder.AcceleratorId;
@@ -559,6 +564,7 @@ namespace HEI.Core {
 		}
 
 		void PrepareSearch() {
+			aiEmbedder = null;
 			AiDeviceUsed = null;
 			AiCacheKeyUsed = null;
 			AiSummary = null;

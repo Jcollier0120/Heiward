@@ -72,6 +72,7 @@ namespace HEI.Core {
 			// ── Phase A: dense keyframe embeddings (sidecar-cached) ─────────────
 			// The embedder first: the device it landed on picks the sidecar (models never mix).
 			OnnxEmbedder denseEmbedder = OnnxEmbedder.Create(Settings.AiDevice);
+			aiEmbedder = denseEmbedder;
 			Logger.Instance.Info($"AI partial detection: keyframe embeddings run on the {denseEmbedder.DeviceName}.");
 			AiFallback ??= denseEmbedder.Fallback;
 			var store = DenseEmbeddingStore.Load(denseEmbedder.CacheKey);

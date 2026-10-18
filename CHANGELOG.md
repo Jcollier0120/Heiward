@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.58
+
+**The badge says "Running on the NPU" only while a scan is using the NPU.**
+
+### What changed
+
+- The badge at the top of the page read "Running on the NPU" whenever the last scan had used the NPU: through every minute of a long scan, and after it ended. A scan uses the NPU only while it matches pictures and video frames. It spends most of its time listing, reading and comparing files, and making the report, and the NPU rests then. The badge now says "Running on the NPU" only within seconds of the NPU working for the scan, as Manor's Accelerators card does, and "NPU ready" the rest of the time.
+- The badge's tip says which it is: the NPU matching pictures for this scan now, set up for this scan and used only while it matches pictures, or the NPU that ran the last scan.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.57
 
 **It carries the Steward's kit 2.84.0: the parts every agent of the manor shares.**
