@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.56
+
+**It carries the Steward's kit 2.83.2: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.83.2: A file an agent only reads is now parsed once while it is unchanged, not on every read. The Steward reads Manor's staff list (64 KB) and its own settings every two seconds, and now parses them only when they change.
+
+### Before you update
+
+- Nothing: it updates itself as usual. If your agent calls `readJsonShared`, don't change what it returns: it is frozen.
+
 ## 1.9.55
 
 **It carries the Steward's kit 2.83.0: the parts every agent of the manor shares.**
