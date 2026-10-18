@@ -178,6 +178,31 @@ public class FileUtilsTests {
 	}
 
 	[Fact]
+	public void GetFilesRecursive_KnowsARepositoryFromItsOwnListing_WhereverItsMarkerComes() {
+		string dir = NewTempTree();
+		try {
+			// Listed by name, "a.mp4" comes before "_darcs": what was found before the marker goes with the folder.
+			Directory.CreateDirectory(Path.Combine(dir, "darcs", "_darcs"));
+			File.WriteAllBytes(Path.Combine(dir, "darcs", "a.mp4"), new byte[] { 1 });
+			Directory.CreateDirectory(Path.Combine(dir, "darcs", "sub"));
+			File.WriteAllBytes(Path.Combine(dir, "darcs", "sub", "b.mp4"), new byte[] { 1 });
+			// A worktree: its marker a file, its subfolders left out with it.
+			Directory.CreateDirectory(Path.Combine(dir, "worktree", "assets"));
+			File.WriteAllBytes(Path.Combine(dir, "worktree", ".git"), new byte[] { 1 });
+			File.WriteAllBytes(Path.Combine(dir, "worktree", "assets", "c.mp4"), new byte[] { 1 });
+			// A folder named like a marker's start isn't one.
+			Directory.CreateDirectory(Path.Combine(dir, "Clips", ".github"));
+			File.WriteAllBytes(Path.Combine(dir, "Clips", "kept.mp4"), new byte[] { 1 });
+			var files = FileUtils.GetFilesRecursive(dir, false, false, recursive: true, includeImages: false,
+				new List<string>(), CancellationToken.None, skipFoldersContaining: new[] { ".git", "_darcs" });
+			Assert.Equal("kept.mp4", Assert.Single(files).Name);
+		}
+		finally {
+			DeleteTempTree(dir);
+		}
+	}
+
+	[Fact]
 	public void GetFilesRecursive_SkipFolderLinks_LeavesOutJunctions() {
 		if (!OperatingSystem.IsWindows()) return; // junctions are Windows-only
 		string dir = NewTempTree();

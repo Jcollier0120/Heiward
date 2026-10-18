@@ -53,14 +53,17 @@ namespace HEI.Agent {
 	/// (<see cref="VolumeJournal"/>), so a scan doesn't walk a drive to find out. Each change is placed in
 	/// its folder; folders a scan never walks (Windows, programs, app data, repositories, exclusions) are
 	/// let be. Folders the scan does walk are listed again, one by one, and compared with the last
-	/// listing: a document saved in Documents changes nothing a scan sees. When no drive has a change a
-	/// scan would see, a scheduled scan doesn't run at all, and a sleeping hard disk stays asleep.
+	/// listing: a document saved in Documents changes nothing a scan sees. A folder added, moved in or
+	/// made visible where scans look is listed with what's below it, and no more; one deleted or moved
+	/// away takes what was listed in it with it, as does one made a repository, hidden or a link. When
+	/// no drive has a change a scan would see, a scheduled scan doesn't run at all, and a sleeping hard
+	/// disk stays asleep.
 	///
 	/// A drive is walked as before when its journal can't vouch for the last listing: the first scan, no
-	/// journal (FAT, exFAT, network drives), a journal made again or overwritten past the last scan
-	/// (the PC was off a long time, or the drive very busy), settings changed or Heiward lists differently
-	/// (<see cref="ListingPlan.ListingFormat"/>; a new build alone doesn't), folders
-	/// were added, moved or deleted where scans look, and once a week regardless.
+	/// journal (FAT, exFAT, network drives), a journal made again or overwritten past the last scan and the
+	/// review page's last look (<see cref="ListingPlan.Keep"/>: the PC was off a long time, or the drive very busy), settings changed or Heiward lists differently
+	/// (<see cref="ListingPlan.ListingFormat"/>; a new build alone doesn't), a change in a folder that
+	/// can't be found, and once a week regardless.
 	/// </summary>
 	sealed class ListingPlan {
 		/// <summary>A drive the journal has vouched for this long is walked anyway.</summary>
@@ -76,7 +79,7 @@ namespace HEI.Agent {
 		/// settings that decide a listing are in the key already, the built-in exclusions among them
 		/// (Settings.SubfolderBlackList).
 		/// </summary>
-		internal const int ListingFormat = 1;
+		internal const int ListingFormat = 2;
 
 		const uint FileCreate = 0x100, FileDelete = 0x200, BasicInfoChange = 0x8000, RenameOldName = 0x1000, RenameNewName = 0x2000, ReparsePointChange = 0x100000;
 		/// <summary>A folder created, deleted, moved, or made hidden or a link: what's below it changes for a scan.</summary>
@@ -164,46 +167,49 @@ namespace HEI.Agent {
 			if (last.Key != key) { r.Why = "settings changed, or how Heiward lists"; return; }
 			if (last.JournalId != volume.Journal.Id) { r.Why = "the drive's journal was made again"; return; }
 			if (nowUtc - last.FullWalkUtc > FullWalkEvery) { r.Why = "a week since the last full listing"; return; }
-			if (volume.RecordsFrom(last.Usn) is not { } records) { r.Why = "the journal no longer reaches back to the last scan"; return; }
+			// The review page found a reason to walk between scans (Keep).
+			if (last.Pending?.Walk is { } walk) { r.Why = walk; return; }
+			if (volume.RecordsFrom(last.Usn) is not { } records) { r.Why = Unread(volume.Journal, "the last scan"); return; }
 			if (StoredListing.Load(last.File) is not { } listing) { r.Why = "the last listing is missing"; return; }
 
 			// The scanned folder renamed, moved or gone (or one above it): the last listing's paths are no more.
 			if (!Directory.Exists(r.Root)) { r.Why = "the folder isn't there"; return; }
 
-			bool Scanned(string folder) => IsScanned(r.Root, folder, rules, scanned);
-			// The journal names each folder by its real path (D:\Photos); the scan walks the folder as it's written (C:\Projects\Photos).
-			string realRoot = RealPath.Of(r.Root);
-			var dirty = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			r.Changes = records.Count;
-			foreach (JournalRecord record in records) {
-				ct.ThrowIfCancellationRequested();
-				// Where it happened: the folder, or for one deleted since, the nearest folder above it that's left.
-				(string? found, bool exact, bool hidden) = volume.Locate(record.Parent);
-				if (hidden) continue; // a folder this user can't open: Windows' own, another account's
-				if (found == null) {
-					r.Why = "something changed in a folder that can't be found any more";
-					return;
-				}
-				if (AsWalked(found, realRoot, r.Root) is not { } where) continue; // outside the scanned folder: elsewhere on the drive
-				if (!Scanned(where)) continue; // Windows, app data, a repository, an exclusion, another drive's folder
-				if (record.IsFolder) {
-					// A folder added, deleted, moved, or made hidden or a link where scans look: what's below it changed.
-					if ((record.Reason & FolderReshaped) == 0) continue;
-					r.Why = $"folders were added, moved or deleted in {where}";
-					return;
-				}
-				if (!exact) {
-					r.Why = $"files changed in a folder deleted from {where}";
-					return;
-				}
-				dirty.Add(where);
-			}
+			// What the review page placed between scans, and what changed since.
+			Placed placed = Placed.From(last.Pending);
+			if (Place(r.Root, records, volume, rules, scanned, placed, ct) is { } why) { r.Why = why; return; }
+			r.Changes = placed.Changes;
+			string? LeftOut(string folder) => FirstLeftOut(r.Root, folder, rules, scanned);
+			// A folder placed a while ago (by the page) may have become a repository, or gone, since: judged as it is now.
+			foreach (string folder in placed.Subtrees.Concat(placed.Dirty))
+				if (LeftOut(folder) is { } notWalked) placed.LeftOut.Add(notWalked);
 
-			// Each folder with changes, listed again: is it still the same photos and videos?
+			// The last listing's folders whose files this listing replaces, and the files listed again.
+			var comparer = StringComparer.OrdinalIgnoreCase;
+			var relisted = new HashSet<string>(comparer);
 			var listed = new List<FileInfo>();
-			var relisted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			foreach (string folder in dirty) {
+			foreach (string folder in placed.LeftOut)
+				relisted.UnionWith(listing.FoldersUnder(folder));
+			foreach (string folder in placed.Emptied)
+				relisted.UnionWith(listing.FoldersUnder(folder).Where(f => !Directory.Exists(f)));
+			// A folder added inside another one added is listed with it.
+			List<string> subtrees = placed.Subtrees.Where(s => LeftOut(s) == null).ToList();
+			List<string> outermost = subtrees.Where(s => !subtrees.Any(o => !comparer.Equals(o, s) && IsUnder(s, o))).ToList();
+			// As the engine walks a scanned folder: the exclusions judge each folder below it.
+			var walkedOut = settings.BlackList.Concat(settings.SubfolderBlackList).ToList();
+			foreach (string folder in outermost) {
 				ct.ThrowIfCancellationRequested();
+				List<FileInfo> now = Directory.Exists(folder) ? FileUtils.GetFilesRecursive(folder, settings.IgnoreReadOnlyFolders, settings.IgnoreReparsePoints,
+					settings.IncludeSubDirectories, settings.IncludeImages, walkedOut, ct, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
+					settings.SkipFoldersContaining, settings.SkipFolderLinks) : new();
+				if (listing.SameBelow(folder, now)) continue;
+				relisted.UnionWith(listing.FoldersUnder(folder));
+				listed.AddRange(now);
+			}
+			// Each other folder with changes, listed again: is it still the same photos and videos?
+			foreach (string folder in placed.Dirty) {
+				ct.ThrowIfCancellationRequested();
+				if (LeftOut(folder) != null || outermost.Any(s => IsUnder(folder, s))) continue;
 				List<FileInfo> now = FileUtils.GetFilesRecursive(folder, settings.IgnoreReadOnlyFolders, settings.IgnoreReparsePoints, recursive: false,
 					settings.IncludeImages, new List<string>(), ct, settings.SkipCloudPlaceholders, settings.ExcludedExtensions,
 					settings.SkipFoldersContaining, settings.SkipFolderLinks);
@@ -211,9 +217,127 @@ namespace HEI.Agent {
 				relisted.Add(folder);
 				listed.AddRange(now);
 			}
-			r.ChangedFolders = relisted.Count;
-			r.Mode = relisted.Count == 0 ? ListingMode.Unchanged : ListingMode.Changed;
+			var changed = new HashSet<string>(relisted, comparer);
+			foreach (FileInfo file in listed) changed.Add(file.DirectoryName ?? "");
+			r.ChangedFolders = changed.Count;
+			r.Mode = changed.Count == 0 ? ListingMode.Unchanged : ListingMode.Changed;
 			r.Listing = new ScanEngine.RootListing(listed, listing.PathsOutside(relisted));
+		}
+
+		/// <summary>Why the journal's changes since <paramref name="since"/> couldn't be read: overwritten since, or Windows wouldn't read them.</summary>
+		static string Unread(VolumeJournal journal, string since) => journal.ReadError == 0
+			? $"the journal no longer reaches back to {since}"
+			: $"the journal couldn't be read (Windows error {journal.ReadError})";
+
+		/// <summary>
+		/// Places each of <paramref name="records"/> in the folder of <paramref name="root"/> it happened in, as a scan
+		/// walks it, into <paramref name="placed"/>: nothing is listed. Returns why the folder must be walked instead, or null.
+		/// </summary>
+		static string? Place(string root, List<JournalRecord> records, Volume volume, IReadOnlyList<ScanScope.Rule> rules,
+			Dictionary<string, bool> scanned, Placed placed, CancellationToken ct) {
+			string? LeftOut(string folder) => FirstLeftOut(root, folder, rules, scanned);
+			// The journal names each folder by its real path (D:\Photos); the scan walks the folder as it's written (C:\Projects\Photos).
+			string realRoot = RealPath.Of(root);
+			placed.Changes += records.Count;
+			// Most changes come in a few folders (an app's cache, a build's output): each folder is placed once.
+			var spots = new Dictionary<FileId, (string? Where, bool Exact, string? NotWalked, bool Lost)>();
+			foreach (JournalRecord record in records) {
+				ct.ThrowIfCancellationRequested();
+				if (!spots.TryGetValue(record.Parent, out var spot)) {
+					// Where it happened: the folder, or for one deleted since, the nearest folder above it that's left.
+					// Hidden: a folder this user can't open (Windows' own, another account's); outside the scanned
+					// folder: elsewhere on the drive.
+					(string? found, bool foundExact, bool hidden) = volume.Locate(record.Parent);
+					string? at = hidden || found == null ? null : AsWalked(found, realRoot, root);
+					spots[record.Parent] = spot = (at, foundExact, at == null ? null : LeftOut(at), !hidden && found == null);
+				}
+				if (spot.Lost) return "something changed in a folder that can't be found any more";
+				if (spot.Where is not { } where) continue;
+				bool exact = spot.Exact;
+				// Windows, app data, a repository, an exclusion: not walked. One that has just become so (a
+				// folder made a repository) takes what the last scan listed in it with it.
+				if (spot.NotWalked is { } notWalked) {
+					placed.LeftOut.Add(notWalked);
+					continue;
+				}
+				if (record.IsFolder) {
+					// A folder added, deleted, moved, or made hidden or a link where scans look: what's below it
+					// changed, and nothing else. Where it is now is listed with what's below it.
+					if ((record.Reason & FolderReshaped) == 0) continue;
+					(string? now, bool nowExact, _) = volume.Locate(record.File);
+					string? self = nowExact && now != null ? AsWalked(now, realRoot, root) : null;
+					if (self != null) {
+						if (LeftOut(self) is { } selfLeftOut) placed.LeftOut.Add(selfLeftOut);
+						else placed.Subtrees.Add(self);
+					}
+					// Where it was: deleted, renamed or moved away (to elsewhere, or where scans don't look).
+					if (self == null || (record.Reason & (FileDelete | RenameOldName)) != 0) placed.Emptied.Add(where);
+					continue;
+				}
+				if (!exact) {
+					placed.Emptied.Add(where); // files changed in a folder deleted since
+					continue;
+				}
+				placed.Dirty.Add(where);
+			}
+			return null;
+		}
+
+		/// <summary>
+		/// The review page's look at the journals between scans (<see cref="JournalKeeper"/>): each scanned folder's changes
+		/// since the last scan (or look) are placed, and kept in listing\index.json with where the journal was read up to, so
+		/// the next scan reads only what came after. A busy drive's journal can be overwritten within the hour between two
+		/// scans, and a scan that finds it so walks the whole drive. Only a journal at risk is read: one a quarter full of
+		/// changes since then (a quiet drive's waits for the scan). Nothing is listed, and nothing is written while a scan runs:
+		/// a scan's own listing always wins. Returns what is worth a line in the log: a folder the next scan walks, and why.
+		/// </summary>
+		/// <param name="atRisk">How full of changes since the last scan or look a journal is when it's read: a quarter.</param>
+		internal static List<string> Keep(AgentConfig cfg, DateTime nowUtc, Func<bool> scanRunning, CancellationToken ct, double atRisk = 0.25) {
+			var kept = new List<string>();
+			if (scanRunning()) return kept;
+			Stored stored = Stored.Load();
+			var rules = ScanScope.ExclusionRules(cfg);
+			var scanned = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			var volumes = new Dictionary<string, Volume?>(StringComparer.OrdinalIgnoreCase);
+			var updated = new Dictionary<string, (StoredRoot Was, StoredRoot Now)>(StringComparer.OrdinalIgnoreCase);
+			try {
+				foreach ((string root, StoredRoot last) in stored.Roots) {
+					// No journal, a drive scanned only when asked (whose journal isn't touched), or one the next scan walks anyway.
+					if (last.JournalId == null || cfg.IsOnRequest(root) || last.Pending?.Walk != null || nowUtc - last.FullWalkUtc > FullWalkEvery) continue;
+					if (!Directory.Exists(root)) continue;
+					string drive = RealPath.VolumeOf(root) ?? Path.GetPathRoot(root) ?? root;
+					if (!volumes.TryGetValue(drive, out Volume? volume))
+						volumes[drive] = volume = Volume.Open(drive);
+					if (volume == null || volume.Journal.Id != last.JournalId) continue;
+					// Not at risk yet: the next scan reads it, as it would without the page. Placed now, while it's a quarter
+					// full of changes since the last scan or look, it isn't overwritten before the next look.
+					long unread = volume.Journal.NextUsn - last.Usn;
+					if (volume.Journal.MaximumSize > 0 && unread >= 0 && unread < volume.Journal.MaximumSize * atRisk) continue;
+					Placed placed = Placed.From(last.Pending);
+					string? walk = volume.RecordsFrom(last.Usn) is { } records
+						? Place(root, records, volume, rules, scanned, placed, ct)
+						: Unread(volume.Journal, "the last scan or the page's last look");
+					// A read Windows refused may work next time: the next look, or scan, tries again from the same place.
+					if (walk != null && volume.Journal.ReadError != 0) {
+						kept.Add($"{root}: {walk}");
+						continue;
+					}
+					if (walk == null && placed.Changes == (last.Pending?.Changes ?? 0)) continue; // nothing new
+					updated[root] = (last, last with { Usn = volume.Journal.NextUsn, Pending = placed.ToStored(walk) });
+					if (walk != null) kept.Add($"{root}: {walk}");
+				}
+			}
+			finally {
+				foreach (Volume? v in volumes.Values) v?.Dispose();
+			}
+			if (updated.Count == 0 || scanRunning()) return kept;
+			// Only over what it read: a scan that saved since has the last word.
+			Stored now = Stored.Load();
+			foreach ((string root, (StoredRoot was, StoredRoot keep)) in updated)
+				if (now.Roots.TryGetValue(root, out StoredRoot? current) && current.SameListing(was))
+					now.Roots[root] = keep;
+			now.Save();
+			return kept;
 		}
 
 		/// <summary>
@@ -226,19 +350,22 @@ namespace HEI.Agent {
 			return rel == "." ? Path.TrimEndingDirectorySeparator(root) : Path.Combine(root, rel);
 		}
 
-		/// <summary>A scan of <paramref name="root"/> walks into <paramref name="folder"/>, by the rules of the walk itself (<see cref="ScanScope.ExemptReason"/>).</summary>
-		internal static bool IsScanned(string root, string folder, IReadOnlyList<ScanScope.Rule> rules, Dictionary<string, bool> scanned) {
-			if (!IsUnder(folder, root)) return false;
+		/// <summary>
+		/// The first folder on the way from <paramref name="root"/> down to <paramref name="folder"/> inside it (the
+		/// folder itself included, the root not) that a scan doesn't walk into, by the rules of the walk itself
+		/// (<see cref="ScanScope.ExemptReason"/>); null when it gets there.
+		/// </summary>
+		internal static string? FirstLeftOut(string root, string folder, IReadOnlyList<ScanScope.Rule> rules, Dictionary<string, bool> scanned) {
 			string rel = Path.GetRelativePath(root, folder);
-			if (rel == ".") return true;
+			if (rel == ".") return null;
 			string current = Path.TrimEndingDirectorySeparator(root);
 			foreach (string part in rel.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries)) {
 				current = Path.Combine(current, part);
 				if (!scanned.TryGetValue(current, out bool walks))
 					scanned[current] = walks = ScanScope.ExemptReason(new DirectoryInfo(current), rules) == null;
-				if (!walks) return false;
+				if (!walks) return current;
 			}
-			return true;
+			return null;
 		}
 
 		/// <summary><paramref name="path"/> is <paramref name="folder"/> or inside it (a drive's root holds everything on the drive).</summary>
@@ -279,7 +406,7 @@ namespace HEI.Agent {
 			Stored stored = Stored.Load();
 			foreach (RootPlan r in Roots)
 				if (r.JournalId != null && stored.Roots.TryGetValue(r.Root, out StoredRoot? last))
-					stored.Roots[r.Root] = last with { Usn = r.Usn };
+					stored.Roots[r.Root] = last with { Usn = r.Usn, Pending = null }; // what the page placed was read too
 			stored.Save();
 		}
 
@@ -318,23 +445,38 @@ namespace HEI.Agent {
 			readonly Dictionary<FileId, (string? Path, bool Denied)> paths = new();
 			/// <summary>Each folder record's folder: where a folder deleted since was.</summary>
 			readonly Dictionary<FileId, FileId> parentOf = new();
+			/// <summary>
+			/// Folders the journal saw deleted: gone for good (an id isn't given again), so Windows isn't asked where they are.
+			/// Most folders a busy hour's changes come in are a build's or an installer's, made and deleted within it.
+			/// </summary>
+			readonly HashSet<FileId> deleted = new();
 
 			public required string Drive { get; init; }
-			bool readOn;
+			/// <summary>Where <see cref="ReadOn"/> has read the journal on to, past this scan's part: 0 before it has.</summary>
+			long readOnTo;
 
 			public static Volume? Open(string drive) => VolumeJournal.Open(drive) is { } journal ? new Volume { Journal = journal, Drive = drive } : null;
 
 			/// <summary>
 			/// Folders deleted or moved since this scan opened the journal: a folder emptied before then and
 			/// removed just after has its files' records in this scan's part, and its own in the next part.
+			/// Read on again from where it stopped each time a folder can't be found: on a busy drive, folders
+			/// are deleted while the changes are placed.
 			/// </summary>
 			void ReadOn() {
-				if (readOn) return;
-				readOn = true;
 				using VolumeJournal? now = VolumeJournal.Open(Drive);
 				if (now == null || now.Id != Journal.Id) return;
-				foreach (JournalRecord r in now.Read(Journal.NextUsn) ?? new())
-					if (r.IsFolder) parentOf.TryAdd(r.File, r.Parent);
+				long from = Math.Max(readOnTo, Journal.NextUsn);
+				if (from >= now.NextUsn) return;
+				foreach (JournalRecord r in now.Read(from) ?? new())
+					if (r.IsFolder) Saw(r, overwrite: false);
+				readOnTo = now.NextUsn;
+			}
+
+			void Saw(JournalRecord folder, bool overwrite) {
+				if (overwrite) parentOf[folder.File] = folder.Parent;
+				else parentOf.TryAdd(folder.File, folder.Parent);
+				if ((folder.Reason & FileDelete) != 0) deleted.Add(folder.File);
 			}
 
 			/// <summary>The changes since <paramref name="usn"/>, or null when the journal no longer has them all.</summary>
@@ -343,16 +485,18 @@ namespace HEI.Agent {
 					records = Journal.Read(usn);
 					readFrom = usn;
 					parentOf.Clear();
-					readOn = false;
+					deleted.Clear();
+					readOnTo = 0;
 					foreach (JournalRecord r in records ?? new())
-						if (r.IsFolder) parentOf[r.File] = r.Parent;
+						if (r.IsFolder) Saw(r, overwrite: true);
 				}
 				return records?.Where(r => r.Usn >= usn).ToList();
 			}
 
 			(string? Path, bool Denied) PathOf(FileId id) {
 				if (!paths.TryGetValue(id, out var found)) {
-					string? path = Journal.PathOf(id, out bool denied);
+					bool denied = false;
+					string? path = deleted.Contains(id) ? null : Journal.PathOf(id, out denied);
 					paths[id] = found = (path, denied);
 				}
 				return found;
@@ -374,7 +518,7 @@ namespace HEI.Agent {
 						if (above != null) return (above, false, false);
 						if (aboveDenied) return (null, false, true);
 					}
-					ReadOn(); // gone since the journal was opened: its own record comes after
+					if (attempt == 0) ReadOn(); // gone since the journal was opened: its own record comes after
 				}
 				return (null, false, false);
 			}
@@ -384,7 +528,45 @@ namespace HEI.Agent {
 
 		/// <param name="File">The listing's file in <see cref="StoredListing.Folder"/>.</param>
 		/// <param name="JournalId">Null for a drive without a journal: its listing is kept, but it's walked every time it's scanned.</param>
-		internal sealed record StoredRoot(ulong? JournalId, long Usn, string Key, DateTime FullWalkUtc, string File);
+		/// <param name="Pending">What the review page placed since the last scan (<see cref="Keep"/>), up to <paramref name="Usn"/>.</param>
+		internal sealed record StoredRoot(ulong? JournalId, long Usn, string Key, DateTime FullWalkUtc, string File, PendingChanges? Pending = null) {
+			/// <summary>The same listing, read up to the same place: no scan has saved since.</summary>
+			public bool SameListing(StoredRoot o) => JournalId == o.JournalId && Usn == o.Usn && Key == o.Key && FullWalkUtc == o.FullWalkUtc && File == o.File;
+		}
+
+		/// <summary>
+		/// What the review page placed between scans, for the next scan to list (folders as the scan walks them, as
+		/// <see cref="Placed"/> holds them); <paramref name="Walk"/>, why the next scan walks instead.
+		/// </summary>
+		internal sealed record PendingChanges(List<string> Dirty, List<string> Subtrees, List<string> Emptied, List<string> LeftOut, string? Walk, int Changes);
+
+		/// <summary>The changes the journal named where a scan looks, placed in their folders (<see cref="Place"/>) but not listed yet.</summary>
+		sealed class Placed {
+			static readonly StringComparer Paths = StringComparer.OrdinalIgnoreCase;
+			/// <summary>Folders where files changed: each listed again by itself.</summary>
+			public HashSet<string> Dirty { get; } = new(Paths);
+			/// <summary>Folders added, moved in or made visible: each listed with what's below it.</summary>
+			public HashSet<string> Subtrees { get; } = new(Paths);
+			/// <summary>Folders below which one was deleted or moved away: the last listing's folders below them that are gone go.</summary>
+			public HashSet<string> Emptied { get; } = new(Paths);
+			/// <summary>The first folder on the way that scans don't walk into, for each change in one: what the last listing held in it goes.</summary>
+			public HashSet<string> LeftOut { get; } = new(Paths);
+			/// <summary>The journal's records placed since the last scan, the page's and the scan's own.</summary>
+			public int Changes { get; set; }
+
+			public static Placed From(PendingChanges? kept) {
+				var placed = new Placed { Changes = kept?.Changes ?? 0 };
+				if (kept == null) return placed;
+				placed.Dirty.UnionWith(kept.Dirty ?? new());
+				placed.Subtrees.UnionWith(kept.Subtrees ?? new());
+				placed.Emptied.UnionWith(kept.Emptied ?? new());
+				placed.LeftOut.UnionWith(kept.LeftOut ?? new());
+				return placed;
+			}
+
+			public PendingChanges ToStored(string? walk) =>
+				new(Dirty.Order(Paths).ToList(), Subtrees.Order(Paths).ToList(), Emptied.Order(Paths).ToList(), LeftOut.Order(Paths).ToList(), walk, Changes);
+		}
 
 		/// <summary>Where each scanned folder's journal was read up to, and its listing's file (listing\index.json).</summary>
 		sealed class Stored {
@@ -408,6 +590,42 @@ namespace HEI.Agent {
 				Directory.CreateDirectory(StoredListing.Folder);
 				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(this, AgentConfig.Json));
 			}
+		}
+	}
+
+	/// <summary>
+	/// The review page's clock for <see cref="ListingPlan.Keep"/>: every ten minutes while it's up. C:\'s journal holds
+	/// 32 MB, which a developer's PC can write in about 80 minutes on a busy afternoon. Scans an hour apart found it
+	/// overwritten five times in one day, and walked the whole drive each time. Read every ten minutes, the journal holds
+	/// everything since the last look.
+	/// </summary>
+	static class JournalKeeper {
+		internal static readonly TimeSpan Every = TimeSpan.FromMinutes(10);
+
+		public static async Task RunAsync(Func<bool> scanRunning, CancellationToken ct) {
+			string lastLogged = "";
+			try {
+				while (!ct.IsCancellationRequested) {
+					await Task.Delay(Every, ct);
+					List<string> notes;
+					try {
+						notes = await Task.Factory.StartNew(() => {
+							ThreadPriority was = Thread.CurrentThread.Priority;
+							Thread.CurrentThread.Priority = ThreadPriority.BelowNormal;
+							try { return ListingPlan.Keep(AgentConfig.Load(), DateTime.UtcNow, scanRunning, ct); }
+							finally { Thread.CurrentThread.Priority = was; }
+						}, ct, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+					}
+					catch (Exception e) when (e is not OperationCanceledException) {
+						notes = new() { "not read: " + e.Message };
+					}
+					// Once each: a read Windows refuses is tried again every ten minutes.
+					string line = string.Join("; ", notes);
+					if (line.Length > 0 && line != lastLogged) AgentPaths.AppendLog("change journal, between scans: " + line);
+					lastLogged = line;
+				}
+			}
+			catch (OperationCanceledException) { /* the page is closing */ }
 		}
 	}
 
@@ -453,7 +671,17 @@ namespace HEI.Agent {
 		/// <summary>The folder holds the same photos and videos as last time: names, sizes and last-modified times.</summary>
 		public bool Same(string folder, List<FileInfo> now) {
 			byFolder.TryGetValue(Path.TrimEndingDirectorySeparator(folder), out var before);
-			before ??= new();
+			return Same(before ?? new(), now);
+		}
+
+		/// <summary>The folder and the folders below it hold the same photos and videos as last time.</summary>
+		public bool SameBelow(string folder, List<FileInfo> now) =>
+			Same(FoldersUnder(folder).SelectMany(f => byFolder[f]).ToList(), now);
+
+		/// <summary>The folders listed last time that are <paramref name="folder"/> or below it.</summary>
+		public List<string> FoldersUnder(string folder) => byFolder.Keys.Where(f => ListingPlan.IsUnder(f, folder)).ToList();
+
+		static bool Same(List<(string Path, long Size, DateTime ModifiedUtc)> before, List<FileInfo> now) {
 			if (before.Count != now.Count) return false;
 			var then = before.ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase);
 			foreach (FileInfo file in now)

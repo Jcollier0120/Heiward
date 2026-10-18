@@ -123,11 +123,12 @@ public sealed class DiskWatchTests : IDisposable {
 	}
 
 	[Fact]
-	public void AReading_IsDue_HourlyFromTheLast() {
+	public void AReading_IsDue_DailyFromTheLast() {
 		DateTime now = new(2026, 10, 4, 13, 0, 0, DateTimeKind.Utc);
+		Assert.Equal(24 * 60, DiskWatch.EveryMinutes);
 		Assert.True(DiskWatch.Due(null, now));
-		Assert.False(DiskWatch.Due(new DiskReading { MeasuredAtUtc = now.AddMinutes(-59) }, now));
-		Assert.True(DiskWatch.Due(new DiskReading { MeasuredAtUtc = now.AddMinutes(-60) }, now));
+		Assert.False(DiskWatch.Due(new DiskReading { MeasuredAtUtc = now.AddHours(-23).AddMinutes(-59) }, now));
+		Assert.True(DiskWatch.Due(new DiskReading { MeasuredAtUtc = now.AddHours(-24) }, now));
 		Assert.True(DiskWatch.Due(new DiskReading { MeasuredAtUtc = now.AddHours(2) }, now)); // the clock was set back
 	}
 
@@ -151,6 +152,21 @@ public sealed class DiskWatchTests : IDisposable {
 		(status, warnings) = Of(new DiskReading { Drives = [Drive(@"C:\", 40), Drive(@"D:\", 5)] });
 		Assert.Equal("alert", status);
 		Assert.StartsWith(@"D:\ is below 10% free", Assert.Single(warnings));
+	}
+
+	[Fact]
+	public void TheAnswer_TakesTheDrivesAsTheyAreNow_AndTheCachesFromTheReading() {
+		DiskDrive Drive(string root, double pct) => DiskWatch.DriveOf(root, "", 1000L << 30, (long)((1000L << 30) * pct / 100));
+		var reading = new DiskReading { Drives = [Drive(@"C:\", 40)], Caches = [new("gradle", "g", 9L << 30, 1, 6L << 30)] };
+		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(DiskWatch.Answer(reading, [Drive(@"C:\", 5)])));
+		JsonElement root = doc.RootElement;
+		Assert.Equal("alert", root.GetProperty("status").GetString());
+		Assert.Equal(5.0, root.GetProperty("drives")[0].GetProperty("percentFree").GetDouble());
+		Assert.Equal(2, root.GetProperty("warnings").GetArrayLength()); // C:\ as it is now, and gradle's growth by the reading
+		// Before the first reading: the drives alone.
+		using var first = JsonDocument.Parse(JsonSerializer.Serialize(DiskWatch.Answer(null, [Drive(@"C:\", 40)])));
+		Assert.Equal("ok", first.RootElement.GetProperty("status").GetString());
+		Assert.Equal(0, first.RootElement.GetProperty("caches").GetArrayLength());
 	}
 
 	// ---- GET /api/disk
@@ -194,20 +210,18 @@ public sealed class DiskWatchTests : IDisposable {
 			Assert.Equal("heiward", root.GetProperty("app").GetString());
 			Assert.Equal("2026-10-04T13:00:00Z", root.GetProperty("measuredAt").GetString());
 			Assert.Equal("2026-10-04T12:00:00Z", root.GetProperty("previousAt").GetString());
-			Assert.Equal(60, root.GetProperty("everyMinutes").GetInt32());
-			Assert.Equal("warn", root.GetProperty("status").GetString());
-			Assert.Equal(2, root.GetProperty("warnings").GetArrayLength());
+			Assert.Equal(24 * 60, root.GetProperty("everyMinutes").GetInt32());
+			// The drives are this PC's own, as they are now; gradle's growth is the reading's.
+			Assert.NotEqual("ok", root.GetProperty("status").GetString());
+			Assert.Contains(root.GetProperty("warnings").EnumerateArray(), w => w.GetString()!.StartsWith("gradle grew ", StringComparison.Ordinal));
 			JsonElement thresholds = root.GetProperty("thresholds");
 			Assert.Equal(10, thresholds.GetProperty("alertPercentFree").GetDouble());
 			Assert.Equal(15, thresholds.GetProperty("warnPercentFree").GetDouble());
 			Assert.Equal(5L << 30, thresholds.GetProperty("cacheGrowthBytes").GetInt64());
-			JsonElement c = root.GetProperty("drives")[0];
+			JsonElement c = root.GetProperty("drives").EnumerateArray().Single(d => d.GetProperty("root").GetString() == DiskWatch.Drives().First().Root);
 			Assert.Equal(new[] { "root", "label", "totalBytes", "freeBytes", "percentFree", "level" }, c.EnumerateObject().Select(p => p.Name));
-			Assert.Equal(@"C:\", c.GetProperty("root").GetString());
-			Assert.Equal(1000L << 30, c.GetProperty("totalBytes").GetInt64());
-			Assert.Equal(120L << 30, c.GetProperty("freeBytes").GetInt64());
-			Assert.Equal(12.0, c.GetProperty("percentFree").GetDouble());
-			Assert.Equal("warn", c.GetProperty("level").GetString());
+			Assert.True(c.GetProperty("totalBytes").GetInt64() > 0);
+			Assert.InRange(c.GetProperty("freeBytes").GetInt64(), 0, c.GetProperty("totalBytes").GetInt64());
 			JsonElement gradle = root.GetProperty("caches")[0];
 			Assert.Equal(new[] { "name", "path", "bytes", "files", "grewBytes", "sameAs" }, gradle.EnumerateObject().Select(p => p.Name));
 			Assert.Equal("gradle", gradle.GetProperty("name").GetString());
@@ -229,15 +243,15 @@ public sealed class DiskWatchTests : IDisposable {
 	}
 
 	[Fact]
-	public async Task TheEndpoint_BeforeTheFirstReading_SaysSo() {
+	public async Task TheEndpoint_BeforeTheFirstReading_GivesTheDrivesAlone() {
 		var (port, server) = await StartPageAsync();
 		try {
 			using var http = new HttpClient();
 			using var doc = JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/api/disk"));
 			JsonElement root = doc.RootElement;
 			Assert.Equal(JsonValueKind.Null, root.GetProperty("measuredAt").ValueKind);
-			Assert.Equal("unknown", root.GetProperty("status").GetString());
-			Assert.Equal(0, root.GetProperty("drives").GetArrayLength());
+			Assert.NotEqual("unknown", root.GetProperty("status").GetString());
+			Assert.Equal(DiskWatch.Drives().Count, root.GetProperty("drives").GetArrayLength());
 			Assert.Equal(0, root.GetProperty("caches").GetArrayLength());
 		}
 		finally { await StopPageAsync(port, server); }

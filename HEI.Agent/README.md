@@ -338,10 +338,13 @@ hei uninstall       [--purge] [--dry-run]
 
 Other tools (such as Manor) can drive Heiward with these: `hei status --json` to see where it stands, `hei pause` and `hei resume` to stop and restart its scheduled scans (its page stays up either way), and `hei open --no-browser` to make sure its review page is up.
 
-While the review page is up, its `GET /api/ping` answers `{"app":"heiward","store":…,"exe":…}` and its scans at a glance, the same four fields the Steward's kit gives the other agents, for Manor's employee cards. Times are UTC or `null`; it reads only small files Heiward keeps, and asks Task Scheduler at most once a minute:
+While the review page is up, its `GET /api/ping` answers `{"app":"heiward","store":…,"exe":…}`, where it stands as `hei status --json` says it, and its scans at a glance, the same four fields the Steward's kit gives the other agents, for Manor's employee cards. Times are UTC or `null`. It reads only small files Heiward keeps, counts the sets that wait again only when the report, the decisions, automatic cleanup's state or the settings change (or half an hour on), and keeps Task Scheduler's answer for half an hour, or until the run it names has come:
 
 | Field | |
 |---|---|
+| `running` | On duty: scheduled scans aren't paused by `hei pause`, as in `hei status --json`. With it in the ping, Manor needn't run `hei status` every round |
+| `stoppedSince` | When the pause began; `null` (but there) while on duty |
+| `summary` | `hei status --json`'s one-line summary: "Scans every hour, next at 15:00. 3 sets to review." |
 | `lastRunAt` | When the last scan ended, whoever started it (`last-scan.json`, which each scan writes as it ends). A scheduled scan that skipped itself (paused, on battery) or found another running didn't run. Before any scan wrote that file: when the last report was written; `null` before the first scan |
 | `lastRunOk` | Whether that scan went through: a fresh report, or nothing new to scan. `false` when it failed, found none of its folders, or was stopped; `null` when unknown |
 | `nextRunAt` | The scan task's next run, from Task Scheduler (a time already past moves on by the interval); `null` while paused, with scans only when asked, with no scan task (a development build has none), or when Task Scheduler's wording isn't a time this PC reads |
@@ -351,14 +354,14 @@ While the review page is up, its `GET /api/ping` answers `{"app":"heiward","stor
 
 ### Disk space for the manor: `GET /api/disk`
 
-Heiward measures the PC's disks for the whole manor, so the other agents ask it rather than measure again (the Surveyor's PC check reads it, and it replaces Reeve's disk-caches job). Once an hour, starting a minute after the review page starts, its process takes a reading on a thread below normal priority: every fixed drive's size and free space, and the size of the big tool caches. The reading is saved to `disk.json` in Heiward's folder, and `GET /api/disk` answers from it: nothing is measured for a request. It's read-only and for this PC only, like the rest of the page: it answers only on 127.0.0.1 and to its own names (a foreign `Host` gets 421), sends no CORS headers (another web page can't read it), and needs no token, as `/api/ping` doesn't (a POST without the page's token gets 403, as everywhere on the page).
+Heiward measures the PC's disks for the whole manor, so the other agents ask it rather than measure again (the Surveyor's PC check reads it, and it replaces Reeve's disk-caches job). Once a day, starting a minute after the review page starts, its process measures the big tool caches on a thread below normal priority. The reading is saved to `disk.json` in Heiward's folder, and `GET /api/disk` answers from it, with each fixed drive's size and free space as Windows gives them at the request: nothing is measured for a request. It's read-only and for this PC only, like the rest of the page: it answers only on 127.0.0.1 and to its own names (a foreign `Host` gets 421), sends no CORS headers (another web page can't read it), and needs no token, as `/api/ping` doesn't (a POST without the page's token gets 403, as everywhere on the page).
 
 ```json
 {
   "app": "heiward",
   "measuredAt": "2026-10-04T13:00:00Z",
-  "previousAt": "2026-10-04T12:00:00Z",
-  "everyMinutes": 60,
+  "previousAt": "2026-10-03T13:00:00Z",
+  "everyMinutes": 1440,
   "status": "warn",
   "warnings": ["C:\\ is below 15% free: 120 GB free of 1000 GB (12%)", "gradle grew 6 GB since the reading before (1 GB to 7 GB)"],
   "thresholds": { "alertPercentFree": 10, "warnPercentFree": 15, "cacheGrowthBytes": 5368709120 },
@@ -375,12 +378,12 @@ Heiward measures the PC's disks for the whole manor, so the other agents ask it 
 
 | Field | |
 |---|---|
-| `measuredAt` | When the reading was taken (UTC); `null` before the first, and then `status` is `"unknown"` and the lists are empty |
+| `measuredAt` | When the caches were measured (UTC); `null` before the first reading, and then `caches` is empty (`status` is `"unknown"` only when Windows gave no drive either) |
 | `previousAt` | The reading before, which `grewBytes` compares with; `null` for the first |
-| `everyMinutes` | How often a reading is taken: 60 |
+| `everyMinutes` | How often the caches are measured: 1440, once a day |
 | `status` | `"alert"` when a drive is below `alertPercentFree`; `"warn"` when one is below `warnPercentFree`, or a cache grew more than `cacheGrowthBytes` since the reading before; else `"ok"`. The thresholds are those Reeve's disk-caches job had: 10%, 15% and 5 GB |
 | `warnings` | One line for each of those, drives first |
-| `drives` | Every fixed drive that's ready: `root` (`C:\`), `label`, `totalBytes`, `freeBytes` (free to this user), `percentFree` (one decimal) and `level` (`ok`, `warn` or `alert`, by the thresholds) |
+| `drives` | Every fixed drive that's ready, as it is at the request: `root` (`C:\`), `label`, `totalBytes`, `freeBytes` (free to this user), `percentFree` (one decimal) and `level` (`ok`, `warn` or `alert`, by the thresholds) |
 | `caches` | The caches that exist, with `bytes` and `files` (links aren't followed, so nothing is counted twice), and `grewBytes` since the reading before (less than 0 when it shrank; `null` when that reading didn't have it). By the names Reeve's job used: `foundry` (`~\.foundry`), `geniex-cache` (`~\.cache\geniex`), `reeve` (`~\.reeve`), `gradle` (`~\.gradle`), `npm-cache` (`npm_config_cache`, else `%LOCALAPPDATA%\npm-cache`), `pnpm` (`%LOCALAPPDATA%\pnpm`), `android-sdk` (`%LOCALAPPDATA%\Android\Sdk`); and `nuget` (`~\.nuget\packages`) and `pip` (`%LOCALAPPDATA%\pip\Cache`). Where the Claude app is installed, `npm-cache`, `pnpm` and `android-sdk` are also measured in its package's `LocalCache\Local`, as `npm-cache (Claude package)` and so on: AppData writes made from a Claude session land there. |
 | `sameAs` | For a Claude package copy that shows exactly the same files as the cache it's named after (a reading from a process whose AppData is redirected there): that cache's name. It isn't counted twice |
 | `cachesBytes` | All the caches together, each counted once |

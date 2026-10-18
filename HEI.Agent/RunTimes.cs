@@ -48,8 +48,8 @@ namespace HEI.Agent {
 	/// <summary>
 	/// Heiward's scans at a glance, as /api/ping gives them for Manor's employee cards: the same four fields the
 	/// Steward's kit gives the other agents. Manor polls every few seconds, so this reads only small files Heiward
-	/// keeps anyway; the one question for Task Scheduler is <see cref="Scheduler.NextRun"/>'s, asked at most once a
-	/// minute. Times are UTC.
+	/// keeps anyway; the one question for Task Scheduler is <see cref="Scheduler.NextRun"/>'s, whose answer is kept
+	/// for half an hour. Times are UTC.
 	/// </summary>
 	/// <param name="LastRunAt">When the last scan ended (<see cref="LastScan"/>). Before any scan wrote that: when the last report was written, then null.</param>
 	/// <param name="LastRunOk">Whether that scan went through (<see cref="LastScan.Ok"/>); null when unknown (only a report to go by).</param>
@@ -58,12 +58,17 @@ namespace HEI.Agent {
 	sealed record RunTimes(DateTime? LastRunAt, bool? LastRunOk, DateTime? NextRunAt, DateTime? RunningSince) {
 		public static RunTimes Now(AgentConfig cfg) {
 			DateTime now = DateTime.UtcNow;
+			return Now(cfg, now, AgentPause.Load(now));
+		}
+
+		/// <param name="pause">The pause as of <paramref name="now"/> (<see cref="AgentPause.Load(DateTime)"/>), which the ping gives too.</param>
+		public static RunTimes Now(AgentConfig cfg, DateTime now, AgentPause? pause) {
 			LastScan? last = LastScan.Load();
 			DateTime? reportAt = null;
 			if (last == null)
 				try { reportAt = File.Exists(AgentPaths.Report) ? File.GetLastWriteTimeUtc(AgentPaths.Report) : null; }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-			bool paused = AgentPause.Load(now) != null;
+			bool paused = pause != null;
 			// A development build has no scan task: the installed copy's runs the installed copy.
 			int every = DevBuild.Current ? 0 : cfg.ScanEveryMinutes;
 			string? nextRun = paused || every <= 0 ? null : Scheduler.NextRun();
@@ -86,7 +91,7 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// Task Scheduler's next run as UTC. A time already past (the answer is up to a minute old, or the PC slept
+		/// Task Scheduler's next run as UTC. A time already past (the answer is kept a while, or the PC slept
 		/// through it) moves on by the scan interval, as the task repeats.
 		/// </summary>
 		static DateTime? NextUtc(string? nextRun, DateTime nowUtc, int everyMinutes) {

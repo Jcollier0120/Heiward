@@ -15,6 +15,7 @@
 //
 
 using System.Diagnostics;
+using System.Globalization;
 using System.Security;
 
 namespace HEI.Agent {
@@ -182,16 +183,22 @@ namespace HEI.Agent {
 			return "scans " + every + (cfg.ScanOnBattery ? "" : " on AC power");
 		}
 
-		static (DateTime At, string? Next) cachedQuery;
+		/// <summary>When Task Scheduler was last asked, what it said, and when that next run is, if it was still to come.</summary>
+		static (DateTime At, string? Next, DateTime? DueUtc) cachedQuery;
+
+		/// <summary>How long <see cref="NextRun"/>'s answer is kept, unless the run it names comes first.</summary>
+		internal static readonly TimeSpan NextRunKept = TimeSpan.FromMinutes(30);
 
 		/// <summary>
 		/// "Next Run Time" of the scan task, or null when it isn't registered or someone disabled it in Task
-		/// Scheduler: either way no scheduled scan comes. Cached for a minute. A development build has none: the
-		/// task runs the installed copy, with that copy's settings.
+		/// Scheduler: either way no scheduled scan comes. Kept for half an hour, or until that run's time has come:
+		/// each question starts schtasks.exe, and Manor's ping asks every round (<see cref="Forget"/> when the tasks
+		/// change). A development build has none: the task runs the installed copy, with that copy's settings.
 		/// </summary>
 		public static string? NextRun() {
 			if (DevBuild.Current) return null;
-			if (DateTime.UtcNow - cachedQuery.At < TimeSpan.FromMinutes(1)) return cachedQuery.Next;
+			DateTime now = DateTime.UtcNow;
+			if (Kept(cachedQuery.At, cachedQuery.DueUtc, now)) return cachedQuery.Next;
 			string? next = null;
 			try {
 				(int code, string output) = Run("/Query", "/TN", ScanTask, "/FO", "LIST", "/V");
@@ -203,9 +210,19 @@ namespace HEI.Agent {
 				}
 			}
 			catch { }
-			cachedQuery = (DateTime.UtcNow, next);
+			// A time already past (a run missed while the PC slept) isn't waited for: it would ask again every time.
+			DateTime? due = DateTime.TryParse(next, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out DateTime local)
+				&& local.ToUniversalTime() > now ? local.ToUniversalTime() : null;
+			cachedQuery = (now, next, due);
 			return next;
 		}
+
+		/// <summary>
+		/// An answer Task Scheduler gave at <paramref name="askedUtc"/> still stands: it's under half an hour old, and the
+		/// run it named (<paramref name="dueUtc"/>) hasn't come, with half a minute for Task Scheduler to move on to the next.
+		/// </summary>
+		internal static bool Kept(DateTime askedUtc, DateTime? dueUtc, DateTime nowUtc) =>
+			nowUtc >= askedUtc && nowUtc - askedUtc < NextRunKept && !(dueUtc is { } due && nowUtc >= due.AddSeconds(30));
 
 		/// <summary>The next <see cref="NextRun"/> asks Task Scheduler again (the tasks just changed).</summary>
 		public static void Forget() => cachedQuery = default;

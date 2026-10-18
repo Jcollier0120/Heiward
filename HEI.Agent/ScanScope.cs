@@ -16,6 +16,7 @@
 
 using HEI.Core;
 using HEI.Core.Utils;
+using System.Text.RegularExpressions;
 
 namespace HEI.Agent {
 	/// <summary>
@@ -31,12 +32,12 @@ namespace HEI.Agent {
 	/// settle a contradiction in a tool that suggests deleting them.
 	/// </para>
 	/// </summary>
-	static class ScanScope {
+	static partial class ScanScope {
 		/// <summary>A folder left out of scans, and the reason shown for it on the review page.</summary>
 		internal readonly record struct Rule(string Pattern, string Reason);
 
 		const string SystemReason = "Windows", Programs = "Installed programs", AppData = "App data", Games = "Game library",
-			Code = "Code", PhotoApp = "Photo app library", Drivers = "Drivers", DevTools = "Developer tools";
+			Code = "Code", PhotoApp = "Photo app library", Drivers = "Drivers", DevTools = "Developer tools", PackageCache = "Package cache";
 		internal const string UserReason = "Excluded in settings";
 
 		/// <summary>
@@ -190,8 +191,69 @@ namespace HEI.Agent {
 			if (!string.IsNullOrEmpty(windows))
 				rules.Add(new(windows, SystemReason));
 			rules.AddRange(OtherProfiles().Select(p => new Rule(p, WindowsProfiles.Contains(Path.GetFileName(p)) ? SystemReason : "Another account")));
+			rules.AddRange(PackageCaches().Select(p => new Rule(p, PackageCache)));
 			return rules;
 		}
+
+		/// <summary>
+		/// The variables that move a package manager's cache, or a toolchain's home, out of its usual place. A Dev Drive is
+		/// set up this way (Microsoft's guide moves npm's, NuGet's, pip's, Cargo's, vcpkg's, Gradle's and Maven's there). In
+		/// their usual places they're dot-folders or in AppData, which scans leave out already; moved, they're plain folders
+		/// ("packages\nuget") full of package icons, and a scan walked them and listed the icons as duplicates of each other.
+		/// </summary>
+		internal static readonly string[] PackageCacheVariables = {
+			"npm_config_cache", "npm_config_store_dir", "YARN_CACHE_FOLDER", "BUN_INSTALL_CACHE_DIR",
+			"NUGET_PACKAGES", "NUGET_HTTP_CACHE_PATH", "NUGET_PLUGINS_CACHE_PATH",
+			"PIP_CACHE_DIR", "UV_CACHE_DIR", "POETRY_CACHE_DIR",
+			"CARGO_HOME", "RUSTUP_HOME", "GOMODCACHE", "GOCACHE",
+			"VCPKG_DEFAULT_BINARY_CACHE", "CONAN_HOME", "GRADLE_USER_HOME",
+		};
+
+		/// <summary>
+		/// The package caches this account's environment names (<see cref="PackageCacheVariables"/>, and Maven's
+		/// -Dmaven.repo.local in MAVEN_OPTS), each as written and by its real path. One that is, or holds, the profile or one
+		/// of the user's own folders (a variable set to %USERPROFILE% by mistake) is never left out: that would hide their photos.
+		/// </summary>
+		internal static List<string> PackageCaches(Func<string, string?>? read = null) {
+			read ??= EnvironmentValue;
+			var found = new List<string>();
+			foreach (string name in PackageCacheVariables)
+				Add(read(name));
+			if (read("MAVEN_OPTS") is { } opts && MavenRepository().Match(opts) is { Success: true } m)
+				Add(m.Groups[1].Value.Trim('"'));
+			return found;
+
+			void Add(string? value) {
+				if (string.IsNullOrWhiteSpace(value)) return;
+				string path = Environment.ExpandEnvironmentVariables(value.Trim().Trim('"'));
+				if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\", StringComparison.Ordinal)) return;
+				try { path = Path.TrimEndingDirectorySeparator(Path.GetFullPath(path)); }
+				catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return; }
+				if (Path.GetPathRoot(path) is { } root && string.Equals(Path.TrimEndingDirectorySeparator(root), path, StringComparison.OrdinalIgnoreCase)) return;
+				if (UsersOwnFolders().Any(own => IsSameOrUnder(own, path))) return;
+				foreach (string form in new[] { path, RealPath.Of(path) })
+					if (!found.Contains(form, StringComparer.OrdinalIgnoreCase)) found.Add(form);
+			}
+		}
+
+		/// <summary>A variable from this process's environment, else the account's own (a scan started before it was set).</summary>
+		static string? EnvironmentValue(string name) =>
+			Environment.GetEnvironmentVariable(name) is { Length: > 0 } v ? v
+			: OperatingSystem.IsWindows() ? Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) : null;
+
+		/// <summary>The profile and the folders people keep their own pictures and videos in.</summary>
+		static IEnumerable<string> UsersOwnFolders() {
+			string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+			foreach (string f in new[] {
+				profile, Path.Combine(profile, "Downloads"),
+				Environment.GetFolderPath(Environment.SpecialFolder.MyPictures), Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+				Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+				Environment.GetEnvironmentVariable("OneDrive") ?? "" })
+				if (!string.IsNullOrEmpty(f) && f.Length > 3) yield return Path.TrimEndingDirectorySeparator(f);
+		}
+
+		[GeneratedRegex(@"-Dmaven\.repo\.local=(""[^""]+""|\S+)")]
+		private static partial Regex MavenRepository();
 
 		/// <summary>
 		/// The folder, or the one above it, that a built-in rule leaves out, and the rule: for a listed

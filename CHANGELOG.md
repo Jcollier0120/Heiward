@@ -2,6 +2,27 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.59
+
+**Scans leave package caches out, list a folder that was added, moved or deleted by itself instead of walking the whole drive, and keep up with a busy drive's journal. The review page uses less of the processor while it waits.**
+
+### What changed
+
+- Package caches moved out of their usual places are left out of scans, shown as "Package cache" on the review page. By default npm's, NuGet's, pip's, Cargo's and other package managers' caches are dot-folders or live in AppData, and scans already leave those out. A Dev Drive set up by Microsoft's guide moves them to plain folders (D:\packages\nuget and the like), named by variables such as NUGET_PACKAGES and npm_config_cache. Scans walked those folders and listed the packages' icons as duplicates of each other: on one PC, 76 of the report's 94 paths. Heiward now reads those variables (and Maven's -Dmaven.repo.local in MAVEN_OPTS) and leaves the folders out. It ignores a variable that names your profile or one of your own folders.
+- A folder added, moved in or made visible where scans look is now listed by itself, with what's below it. Before, one new folder anywhere a scan looks (a clone, an unpacked download, a build's output) made the next scan walk the whole drive, 58 to 96 s on C:\. A folder that is deleted, moved away, or made a code repository, hidden or a link now drops its photos and videos from the listing. A folder created empty changes nothing, so a scheduled scan still doesn't run.
+- The review page now checks each drive's change journal every ten minutes. Once a quarter of the journal holds changes the next scan hasn't read, the page reads them and keeps what changed where scans look, and where it read up to. The journal on C:\ holds 32 MB, about 80 minutes of a busy afternoon. Scans an hour apart found it overwritten five times on one day, and each of those scans walked all of C:\. A scan now reads only what came after the page's last look. A look at a full journal takes about a second at low priority, and a quiet drive's journal isn't read at all. The page writes nothing while a scan runs, and never over a listing a scan saved since it looked.
+- Placing an hour's changes takes half the time it did: most of the folders they happened in are a build's or an installer's, made and deleted within the hour, and Heiward no longer asks Windows where a folder the journal saw deleted is.
+- A folder deleted elsewhere on the drive while a scan placed its changes no longer makes that scan walk the whole drive.
+- The log now tells an overwritten journal from one Windows wouldn't read ("the journal couldn't be read (Windows error 87)"). Before, both read "the journal no longer reaches back to the last scan".
+- A walk lists each folder once, and gets its photos and videos, its subfolders, and whether it's a code repository from that one listing. It used to list each folder twice and ask every subfolder about a dozen repository markers, one at a time: 84,728 lookups for the 7,057 folders of C:\Projects. Walking C:\Projects with its package caches went from a median of 1.8 to 2.0 s down to 0.2 to 0.4 s.
+- The review page's process uses less of the processor while it waits. It took about 3.4 s an hour while idle, three-quarters of that measuring the tool caches' sizes every hour (71,000 files in 13,400 folders). It now measures them once a day, and gives each drive's free space as Windows reports it when a program asks.
+- The review page's ping now says whether Heiward is on duty, since when it has been paused, and its one-line status, as `hei status --json` does. Manor used to run `hei status` every two minutes to learn them, starting Heiward and Task Scheduler each time: about 20 to 30 s of processor time an hour. With them in the ping, Manor doesn't need to.
+- The page now asks Task Scheduler for the next scan every half hour, or once that scan's time has come, instead of every minute. It counts the sets waiting for review again only when the report, your decisions, automatic cleanup or your settings change, or every half hour.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The first scan after the update walks each drive once, because Heiward lists differently and the new exclusions are part of the listing's key. Later scans go by the drive's journal again.
+
 ## 1.9.58
 
 **The badge says "Running on the NPU" only while a scan is using the NPU.**

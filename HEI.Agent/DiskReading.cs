@@ -58,12 +58,17 @@ namespace HEI.Agent {
 	/// <summary>
 	/// Disk measurement for the whole manor: free space on every fixed drive, and the sizes of the big tool caches (the
 	/// same ones, by the same names, as Reeve's disk-caches job measured, plus NuGet's and pip's), with how much each grew
-	/// since the reading before. Taken by the review page's process, which stays up: a minute after it starts, then once
-	/// an hour, on a thread below normal priority. Never for a request: GET /api/disk answers from the last reading
-	/// (disk.json). Read-only: it lists folders, never follows a link, and changes nothing.
+	/// since the reading before. The caches are measured by the review page's process, which stays up: a minute after it
+	/// starts, then once a day, on a thread below normal priority. Never for a request: GET /api/disk answers with the last
+	/// reading (disk.json), and each drive's free space as it is then, which Windows answers at once. Read-only: it lists
+	/// folders, never follows a link, and changes nothing.
 	/// </summary>
 	static class DiskWatch {
-		public const int EveryMinutes = 60;
+		/// <summary>
+		/// Minutes between readings of the caches: a day. Measured hourly, they took three-quarters of the page process's
+		/// time (71,000 files in 13,400 folders, 2.6 to 2.8 s each hour), for sizes that change by the day.
+		/// </summary>
+		public const int EveryMinutes = 24 * 60;
 		public const double AlertPercentFree = 10, WarnPercentFree = 15;
 		/// <summary>A cache that grew more than this since the reading before is worth a warning.</summary>
 		public const long GrowthBytes = 5L << 30;
@@ -112,8 +117,8 @@ namespace HEI.Agent {
 		/// <summary>"alert", "warn" or "ok", for a drive this much of which is free.</summary>
 		internal static string LevelOf(double percentFree) => percentFree < AlertPercentFree ? "alert" : percentFree < WarnPercentFree ? "warn" : "ok";
 
-		/// <summary>Every fixed drive that's ready, as Windows lists them.</summary>
-		static List<DiskDrive> Drives() {
+		/// <summary>Every fixed drive that's ready, as Windows lists them: its size and free space, asked for, not measured.</summary>
+		internal static List<DiskDrive> Drives() {
 			var drives = new List<DiskDrive>();
 			foreach (DriveInfo d in DriveInfo.GetDrives()) {
 				try {
@@ -182,13 +187,14 @@ namespace HEI.Agent {
 			};
 		}
 
-		/// <summary>A reading is due: none yet, the last an hour old or more, or one from a clock set back.</summary>
+		/// <summary>A reading is due: none yet, the last a day old or more, or one from a clock set back.</summary>
 		internal static bool Due(DiskReading? last, DateTime nowUtc) =>
 			last == null || nowUtc - last.MeasuredAtUtc >= TimeSpan.FromMinutes(EveryMinutes) || last.MeasuredAtUtc > nowUtc.AddMinutes(5);
 
 		/// <summary>
-		/// The review page's own clock: a minute after it starts, then whenever a reading is due, until it stops. Each
-		/// reading runs on a thread below normal priority, and is saved to disk.json.
+		/// The review page's own clock: a minute after it starts, then whenever a reading is due, until it stops. It looks
+		/// at least hourly, so a PC that slept doesn't put a reading off by as long. Each reading runs on a thread below
+		/// normal priority, and is saved to disk.json.
 		/// </summary>
 		public static async Task RunAsync(CancellationToken ct) {
 			try {
@@ -214,24 +220,28 @@ namespace HEI.Agent {
 					}
 					DateTime next = (last?.MeasuredAtUtc ?? DateTime.UtcNow).AddMinutes(EveryMinutes);
 					TimeSpan wait = next - DateTime.UtcNow;
-					await Task.Delay(wait < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : wait > TimeSpan.FromMinutes(EveryMinutes) ? TimeSpan.FromMinutes(EveryMinutes) : wait, ct);
+					await Task.Delay(wait < TimeSpan.FromMinutes(1) ? TimeSpan.FromMinutes(1) : wait > TimeSpan.FromHours(1) ? TimeSpan.FromHours(1) : wait, ct);
 				}
 			}
 			catch (OperationCanceledException) { /* the page is closing */ }
 		}
 
-		/// <summary>GET /api/disk's answer, from the last reading (null before the first): see the README.</summary>
-		internal static object Answer(DiskReading? r) {
+		/// <summary>
+		/// GET /api/disk's answer, from the last reading (null before the first), with <paramref name="drivesNow"/>' free
+		/// space in place of the reading's (<see cref="Drives"/>, asked for at the request): see the README.
+		/// </summary>
+		internal static object Answer(DiskReading? r, IReadOnlyList<DiskDrive>? drivesNow = null) {
 			var warnings = new List<string>();
 			string status = "unknown";
-			if (r != null) {
-				foreach (DiskDrive d in r.Drives)
+			IReadOnlyList<DiskDrive> drives = drivesNow ?? r?.Drives ?? new();
+			if (r != null || drives.Count > 0) {
+				foreach (DiskDrive d in drives)
 					if (d.Level != "ok")
 						warnings.Add($"{d.Root} is below {(d.Level == "alert" ? AlertPercentFree : WarnPercentFree)}% free: {Format.Bytes(d.FreeBytes)} free of {Format.Bytes(d.TotalBytes)} ({d.PercentFree}%)");
-				foreach (DiskCache c in r.Caches)
+				foreach (DiskCache c in r?.Caches ?? new())
 					if (c.GrewBytes > GrowthBytes)
 						warnings.Add($"{c.Name} grew {Format.Bytes(c.GrewBytes.Value)} since the reading before ({Format.Bytes(c.Bytes - c.GrewBytes.Value)} to {Format.Bytes(c.Bytes)})");
-				status = r.Drives.Any(d => d.Level == "alert") ? "alert" : warnings.Count > 0 ? "warn" : "ok";
+				status = drives.Any(d => d.Level == "alert") ? "alert" : warnings.Count > 0 ? "warn" : "ok";
 			}
 			return new {
 				app = "heiward",
@@ -241,7 +251,7 @@ namespace HEI.Agent {
 				status,
 				warnings,
 				thresholds = new { alertPercentFree = AlertPercentFree, warnPercentFree = WarnPercentFree, cacheGrowthBytes = GrowthBytes },
-				drives = (r?.Drives ?? new()).Select(d => new { root = d.Root, label = d.Label, totalBytes = d.TotalBytes, freeBytes = d.FreeBytes, percentFree = d.PercentFree, level = d.Level }),
+				drives = drives.Select(d => new { root = d.Root, label = d.Label, totalBytes = d.TotalBytes, freeBytes = d.FreeBytes, percentFree = d.PercentFree, level = d.Level }),
 				caches = (r?.Caches ?? new()).Select(c => new { name = c.Name, path = c.Path, bytes = c.Bytes, files = c.Files, grewBytes = c.GrewBytes, sameAs = c.SameAs }),
 				cachesBytes = (r?.Caches ?? new()).Where(c => c.SameAs == null).Sum(c => c.Bytes),
 			};

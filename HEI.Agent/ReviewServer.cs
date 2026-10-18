@@ -124,12 +124,12 @@ namespace HEI.Agent {
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/tour.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("tour.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));
-			// The manor's disk measurement: the drives' free space and the big tool caches, from the last hourly reading
-			// (DiskWatch), never measured for a request. Read-only, and like every GET here, for this PC only: the Host check
+			// The manor's disk measurement: the drives' free space as Windows gives it now, and the big tool caches from the
+			// last daily reading (DiskWatch), never measured for a request. Read-only, and like every GET here, for this PC only: the Host check
 			// above, and no CORS, so another web page can't read it.
 			app.MapGet("/api/disk", (HttpContext ctx) => {
 				ctx.Response.Headers.CacheControl = "no-store";
-				return Results.Json(DiskWatch.Answer(DiskReading.Load()));
+				return Results.Json(DiskWatch.Answer(DiskReading.Load(), DiskWatch.Drives()));
 			});
 			// Heiward's eye for pictures, lent to another agent on this PC (Chamberlain, finding duplicate documents): are these
 			// two sets of pictures the same pictures? Behind the token like every POST; 503 with Retry-After while the model is
@@ -441,6 +441,8 @@ namespace HEI.Agent {
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
 			_ = DiskWatch.RunAsync(app.Lifetime.ApplicationStopping);
+			// The drives' change journals, read between scans so the next one needn't walk a drive whose journal moved on.
+			_ = JournalKeeper.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			// The copy from GitHub keeps itself up to date, once a day, never during a scan (SelfUpdate).
 			_ = SelfUpdate.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
@@ -453,17 +455,28 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// /api/ping's answer. exe: whose page this is. Copies share a port (all but a development build), so the
-		/// installer asks another copy's to close (/api/quit). Then the scans at a glance, for Manor's employee cards
+		/// installer asks another copy's to close (/api/quit). running, stoppedSince and summary: as <c>hei status --json</c>
+		/// says them (<see cref="AgentStatus"/>). Then the scans at a glance, for Manor's employee cards
 		/// (<see cref="RunTimes"/>): lastRunAt, lastRunOk, nextRunAt and runningSince, UTC times or null. pictures: the version of
 		/// /api/pictures/compare (<see cref="PicturesRoute"/>), for an agent that asks Heiward to compare pictures.
 		/// </summary>
 		internal static object Ping(AgentConfig cfg) {
+			DateTime now = DateTime.UtcNow;
+			AgentPause? pause = null;
 			RunTimes runs;
+			string? summary = null;
 			// The ping says the page is up whatever else fails (and isn't logged: it's asked every few seconds).
-			try { runs = RunTimes.Now(cfg); }
+			try { pause = AgentPause.Load(now); }
+			catch { }
+			try { runs = RunTimes.Now(cfg, now, pause); }
 			catch { runs = new RunTimes(null, null, null, null); }
+			try { summary = AgentStatus.PingSummary(cfg, now, pause, runs); }
+			catch { }
 			return new {
 				app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath,
+				// On duty (not paused), since when it's been stopped (always there, null while on duty), and the same in a
+				// sentence: a ping that says them spares Manor running hei status --json every round to learn them.
+				running = pause == null, stoppedSince = AgentStatus.Utc(pause?.SinceUtc), summary,
 				lastRunAt = runs.LastRunAt, lastRunOk = runs.LastRunOk, nextRunAt = runs.NextRunAt, runningSince = runs.RunningSince,
 				// Its first scan in the manor's first-round line, as a kit agent's rounds say it (the Steward's kit 2.43.0).
 				firstRound = FirstRound.Now(),
