@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.62
+
+**It carries the Steward's kit 2.88.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.88.0: FFmpeg and making a video smaller are now in the kit: finding FFmpeg, fetching the manor's build once for every agent, choosing the video encoder, and re-encoding one video with its checks. The Miller and the Chronicler each carried their own copy of this, pinned to different builds. Nothing changes for either until it takes the kit's up.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.61
 
 **A drive written in settings.json by its letter alone, such as "D:", now means the whole drive.**
