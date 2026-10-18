@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Text.Json;
 using HEI.Core;
 using HEI.Core.Utils;
 
@@ -227,6 +228,118 @@ public sealed class JournalListingTests : IDisposable {
 		r = Assert.Single(Planned().Roots);
 		Assert.Equal(ListingMode.Changed, r.Mode);
 		Assert.Equal(new[] { Path.Combine(link, "Trip", "c.jpg") }, r.Listing!.Listed.Select(f => f.FullName), StringComparer.OrdinalIgnoreCase);
+	}
+
+	string Index => Path.Combine(home, "listing", "index.json");
+
+	/// <summary>The scanned folder's entry in listing\index.json.</summary>
+	JsonElement Kept() => JsonDocument.Parse(File.ReadAllText(Index)).RootElement.GetProperty("roots").GetProperty(photos).Clone();
+
+	static bool HasPending(JsonElement kept) => kept.TryGetProperty("pending", out JsonElement p) && p.ValueKind != JsonValueKind.Null;
+
+	static string[] PendingIn(JsonElement kept, string set) =>
+		kept.GetProperty("pending").GetProperty(set).EnumerateArray().Select(e => e.GetString()!).ToArray();
+
+	/// <summary>The page's look, at once: a test's few changes never put the journal at risk.</summary>
+	List<string> Keep(Func<bool>? scanRunning = null) =>
+		ListingPlan.Keep(Config(), DateTime.UtcNow, scanRunning ?? (() => false), CancellationToken.None, atRisk: 0);
+
+	[Fact]
+	public void ThePageLeavesAJournalNotAtRisk_ForTheScan() {
+		if (!HasJournal(dir)) return;
+		using (VolumeJournal? journal = VolumeJournal.Open(dir))
+			if (journal!.MaximumSize < 1 << 20) return; // a journal so small a test's changes could fill a quarter of it
+		Photo("a.png");
+		Scanned(Plan());
+		Photo("b.png", 32);
+		string before = File.ReadAllText(Index);
+		Assert.Empty(ListingPlan.Keep(Config(), DateTime.UtcNow, () => false, CancellationToken.None));
+		Assert.Equal(before, File.ReadAllText(Index));
+	}
+
+	[Fact]
+	public void ThePageKeepsTheJournalsPlace_AndTheNextScanListsWhatItPlaced() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png");
+		Scanned(Plan());
+		long usn = Kept().GetProperty("usn").GetInt64();
+		string b = Photo("b.png", 32), c = Photo(@"Trip\c.jpg");
+
+		Assert.Empty(Keep());
+		JsonElement kept = Kept();
+		Assert.True(kept.GetProperty("usn").GetInt64() > usn);
+		Assert.Contains(photos, PendingIn(kept, "dirty"), StringComparer.OrdinalIgnoreCase);
+		Assert.Contains(Path.Combine(photos, "Trip"), PendingIn(kept, "subtrees"), StringComparer.OrdinalIgnoreCase);
+
+		// The scan reads the journal from the page's look on, and lists what the page placed with what came after.
+		string d = Photo(@"Trip\d.jpg", 48);
+		ListingPlan plan = Plan();
+		RootPlan r = Assert.Single(plan.Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		AssertHanded(r, new[] { a, b, c, d }, Array.Empty<string>());
+		Scanned(plan);
+		Assert.False(HasPending(Kept())); // read by the scan, and gone with its listing
+	}
+
+	[Fact]
+	public void AFolderThePagePlaced_IsJudgedAsItIsWhenTheScanLists() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png");
+		Scanned(Plan());
+		Photo(@"Art\b.png");
+		Keep();
+		// A new folder when the page looked, a repository by the time the scan lists it.
+		Directory.CreateDirectory(Path.Combine(photos, "Art", ".git"));
+		RootPlan r = Assert.Single(Plan().Roots);
+		Assert.Equal(ListingMode.Unchanged, r.Mode);
+		AssertHanded(r, Array.Empty<string>(), new[] { a });
+	}
+
+	[Fact]
+	public void ThePageWritesNothingWhileAScanRuns_NorOverAScanThatSavedSince() {
+		if (!HasJournal(dir)) return;
+		Photo("a.png");
+		Scanned(Plan());
+		Photo("b.png", 32);
+		string before = File.ReadAllText(Index);
+		Keep(() => true);
+		Assert.Equal(before, File.ReadAllText(Index));
+
+		// A scan saves while the page reads the journal: the scan's listing stands.
+		int asked = 0;
+		Keep(() => {
+			if (++asked == 2) Scanned(Plan());
+			return false;
+		});
+		Assert.Equal(2, asked);
+		Assert.False(HasPending(Kept()));
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode);
+	}
+
+	[Fact]
+	public void AJournalOverwritten_IsWalked_AndARefusedRead_IsToldApart() {
+		if (!HasJournal(dir)) return;
+		using (VolumeJournal? journal = VolumeJournal.Open(dir))
+			if (journal!.FirstUsn <= 1) return; // a journal that still holds everything since it was made
+		Photo("a.png");
+		Scanned(Plan());
+		string saved = File.ReadAllText(Index);
+		string usn = $"\"usn\": {Kept().GetProperty("usn").GetInt64()}";
+		Assert.Contains(usn, saved);
+
+		// Overwritten past the last scan: the page keeps the reason, and the next scan walks for it.
+		File.WriteAllText(Index, saved.Replace(usn, "\"usn\": 1"));
+		const string overwritten = "the journal no longer reaches back to the last scan or the page's last look";
+		Assert.Equal($"{photos}: {overwritten}", Assert.Single(Keep()));
+		RootPlan r = Assert.Single(Plan().Roots);
+		Assert.Equal((ListingMode.Walk, overwritten), (r.Mode, r.Why));
+
+		// A read Windows refuses: not kept as a reason to walk (the next look tries again), and the scan says which it was.
+		File.WriteAllText(Index, saved.Replace(usn, "\"usn\": 9000000000000000000"));
+		Assert.Equal($"{photos}: the journal couldn't be read (Windows error 87)", Assert.Single(Keep()));
+		Assert.Equal(9000000000000000000, Kept().GetProperty("usn").GetInt64());
+		r = Assert.Single(Plan().Roots);
+		Assert.Equal((ListingMode.Walk, "the journal couldn't be read (Windows error 87)"), (r.Mode, r.Why));
 	}
 
 	[Fact]

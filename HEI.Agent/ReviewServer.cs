@@ -441,6 +441,8 @@ namespace HEI.Agent {
 			Console.WriteLine($"Review page: {PageUrl(port)}");
 			AgentPaths.AppendLog($"review page up on port {port}");
 			_ = DiskWatch.RunAsync(app.Lifetime.ApplicationStopping);
+			// The drives' change journals, read between scans so the next one needn't walk a drive whose journal moved on.
+			_ = JournalKeeper.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			// The copy from GitHub keeps itself up to date, once a day, never during a scan (SelfUpdate).
 			_ = SelfUpdate.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);

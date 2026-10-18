@@ -37,9 +37,11 @@ namespace HEI.Agent {
 	/// </summary>
 	sealed class VolumeJournal : IDisposable {
 		const uint FileTraverse = 0x20, FileReadAttributes = 0x80, ShareAll = 7, OpenExisting = 3, BackupSemantics = 0x02000000;
-		const uint FsctlQueryUsnJournal = 0x000900F4, FsctlReadUnprivilegedUsnJournal = 0x000903AB;
+		const uint FsctlQueryUsnJournal = 0x000900F4, FsctlReadUnprivilegedUsnJournal = 0x000903AB, VolumeNameNone = 0x4;
 
 		readonly SafeFileHandle volume, root;
+		/// <summary>The volume's drive letter and colon ("D:"): where each path <see cref="PathOf"/> finds is.</summary>
+		readonly string letter;
 
 		/// <summary>The journal's instance: a new one (deleted and made again) starts from scratch.</summary>
 		public ulong Id { get; }
@@ -47,13 +49,17 @@ namespace HEI.Agent {
 		public long FirstUsn { get; }
 		/// <summary>Where the next change will go: reading up to here reads everything so far.</summary>
 		public long NextUsn { get; }
+		/// <summary>How much the journal holds before its oldest changes are overwritten, in bytes (32 MB on a system drive); 0 when unknown.</summary>
+		public long MaximumSize { get; }
 
-		VolumeJournal(SafeFileHandle volume, SafeFileHandle root, ulong id, long first, long next) {
+		VolumeJournal(SafeFileHandle volume, SafeFileHandle root, string letter, ulong id, long first, long next, long maximumSize) {
 			this.volume = volume;
 			this.root = root;
+			this.letter = letter;
 			Id = id;
 			FirstUsn = first;
 			NextUsn = next;
+			MaximumSize = maximumSize;
 		}
 
 		/// <summary>
@@ -76,16 +82,32 @@ namespace HEI.Agent {
 				volume.Dispose();
 				return null;
 			}
-			return new VolumeJournal(volume, root, BinaryPrimitives.ReadUInt64LittleEndian(data),
-				BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(8)), BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(16)));
+			// USN_JOURNAL_DATA: its id, first and next USN, the lowest valid one, the highest, then its maximum size.
+			return new VolumeJournal(volume, root, drive[..2], BinaryPrimitives.ReadUInt64LittleEndian(data),
+				BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(8)), BinaryPrimitives.ReadInt64LittleEndian(data.AsSpan(16)),
+				got >= 48 ? (long)BinaryPrimitives.ReadUInt64LittleEndian(data.AsSpan(40)) : 0);
 		}
 
 		/// <summary>
+		/// Why the last <see cref="Read"/> came back empty-handed: 0 when the journal had moved on past where it was asked
+		/// to start (overwritten), else the Windows error that stopped it.
+		/// </summary>
+		public int ReadError { get; private set; }
+
+		const int ErrorInvalidParameter = 87, ErrorInvalidData = 13, ErrorJournalEntryDeleted = 1181;
+
+		/// <summary>
 		/// The changes from <paramref name="from"/> up to <see cref="NextUsn"/> as it was when the journal
-		/// was opened. Null when they can't all be read (the journal moved on past <paramref name="from"/>).
+		/// was opened. Null when they can't all be read: the journal moved on past <paramref name="from"/>,
+		/// or Windows wouldn't read it (<see cref="ReadError"/> says which).
 		/// </summary>
 		public List<JournalRecord>? Read(long from) {
-			if (from < FirstUsn || from > NextUsn) return null;
+			ReadError = 0;
+			if (from < FirstUsn) return null;
+			if (from > NextUsn) {
+				ReadError = ErrorInvalidParameter;
+				return null;
+			}
 			var records = new List<JournalRecord>();
 			var input = new byte[48];
 			var output = new byte[1 << 16];
@@ -99,13 +121,19 @@ namespace HEI.Agent {
 				BinaryPrimitives.WriteUInt64LittleEndian(input.AsSpan(32), Id);
 				BinaryPrimitives.WriteUInt16LittleEndian(input.AsSpan(40), 2);         // USN_RECORD_V2 ...
 				BinaryPrimitives.WriteUInt16LittleEndian(input.AsSpan(42), 3);         // ... or V3 (128-bit ids)
-				if (!DeviceIoControl(volume, FsctlReadUnprivilegedUsnJournal, input, input.Length, output, output.Length, out int got, IntPtr.Zero))
+				if (!DeviceIoControl(volume, FsctlReadUnprivilegedUsnJournal, input, input.Length, output, output.Length, out int got, IntPtr.Zero)) {
+					int error = Marshal.GetLastWin32Error();
+					ReadError = error == ErrorJournalEntryDeleted ? 0 : error; // overwritten while it was read
 					return null;
+				}
 				long next = BinaryPrimitives.ReadInt64LittleEndian(output);
 				for (int pos = 8; pos + 8 <= got;) {
 					ReadOnlySpan<byte> r = output.AsSpan(pos, got - pos);
 					int length = (int)BinaryPrimitives.ReadUInt32LittleEndian(r);
-					if (length < 8 || length > r.Length) return null;
+					if (length < 8 || length > r.Length) {
+						ReadError = ErrorInvalidData;
+						return null;
+					}
 					if (Parse(r[..length]) is { } record && record.Usn < NextUsn)
 						records.Add(record);
 					pos += length;
@@ -146,11 +174,12 @@ namespace HEI.Agent {
 				denied = Marshal.GetLastWin32Error() == 5; // ERROR_ACCESS_DENIED
 				return null;
 			}
+			// Its path on the volume (\Users\Jo) on the drive letter the volume was opened by, as RealPath names it: asked
+			// for with the drive's name, Windows asks the mount manager for that every time, most of a look's time.
 			var path = new StringBuilder(1024);
-			uint length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, 0);
-			if (length == 0 || length >= path.Capacity) return null;
-			string full = path.ToString();
-			return full.StartsWith(@"\\?\UNC\", StringComparison.Ordinal) ? null : full.StartsWith(@"\\?\", StringComparison.Ordinal) ? full[4..] : full;
+			uint length = GetFinalPathNameByHandle(handle, path, (uint)path.Capacity, VolumeNameNone);
+			if (length == 0 || length >= path.Capacity || path[0] != '\\') return null;
+			return letter + path.ToString();
 		}
 
 		public void Dispose() {
