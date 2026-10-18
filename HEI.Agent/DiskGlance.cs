@@ -108,11 +108,13 @@ namespace HEI.Agent {
 	}
 
 	/// <summary>
-	/// How much is in the Recycle Bin on this PC's fixed drives, read at most once a minute: the page polls
-	/// every few seconds, and the Recycle Bin can hold many files. Drives scanned only when asked are left
-	/// out, so a disk that sleeps isn't woken for it.
+	/// How much is in the Recycle Bin on this PC's fixed drives, read at most every 5 minutes, and again once Heiward has
+	/// moved files there itself (<see cref="Forget"/>): the page polls every 20 seconds and Manor's disk tile every minute,
+	/// and the Recycle Bin can hold many files. Drives scanned only when asked are left out, so a disk that sleeps isn't
+	/// woken for it.
 	/// </summary>
 	static class RecycleBinSize {
+		const long KeepMs = 5 * 60_000;
 		static readonly object Gate = new();
 		static long cachedBytes;
 		static long cachedAt = long.MinValue;
@@ -122,13 +124,16 @@ namespace HEI.Agent {
 			var roots = drives.Where(d => d.Type == "fixed" && !d.OnRequest && d.TotalBytes > 0).Select(d => d.Root).ToList();
 			string key = string.Join("|", roots);
 			lock (Gate) {
-				if (key == cachedKey && Environment.TickCount64 - cachedAt < 60_000) return cachedBytes;
+				if (key == cachedKey && Environment.TickCount64 - cachedAt < KeepMs) return cachedBytes;
 				long bytes = 0;
 				foreach (string root in roots) bytes += RecycleBin.Used(root);
 				(cachedBytes, cachedAt, cachedKey) = (bytes, Environment.TickCount64, key);
 				return bytes;
 			}
 		}
+
+		/// <summary>Heiward moved files to the Recycle Bin: the next glance reads it again.</summary>
+		public static void Forget() { lock (Gate) cachedKey = ""; }
 
 		/// <summary>What the Recycle Bin on the drive <paramref name="root"/> holds now, in bytes; 0 when Windows can't say.</summary>
 		internal static long Of(string root) => RecycleBin.Used(root);

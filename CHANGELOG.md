@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.60
+
+**Manor's disk tile asks Heiward for the drives at a glance alone, not for everything the review page shows.**
+
+### What changed
+
+- Heiward's page has a new `GET /api/glance`, which answers with the home page's "At a glance" alone: the drives' size and free space, the used space by kind, and what could be reclaimed. Manor's disk tile asks for it once a minute. It used to ask for `/api/state`, everything the review page draws: the review lists, the History, the settings, the graphics cards and the schedule. On this PC that was 77 KB a minute, of which Manor kept 1 KB. The glance reads only the report, the index, your decisions, and the developer and games reports. It takes about half the processor time per request that `/api/state` does: 7 million cycles against 13 million, measured over 300 requests in a row.
+- The Recycle Bin's size is read at most every 5 minutes, and again as soon as Heiward moves files there. It used to be read once a minute, so Manor's tile, asking once a minute too, read it every time.
+- The graphics cards are looked up at most every 5 minutes instead of every minute, for the review page's settings.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Manor uses the glance from its next version on, and asks an older Heiward for `/api/state` as before.
+
 ## 1.9.59
 
 **Scans leave package caches out, list a folder that was added, moved or deleted by itself instead of walking the whole drive, and keep up with a busy drive's journal. The review page uses less of the processor while it waits.**

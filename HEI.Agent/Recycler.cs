@@ -62,6 +62,7 @@ namespace HEI.Agent {
 						 FileUtils.FileOperationFlags.FOF_NOERRORUI | FileUtils.FileOperationFlags.FOF_SILENT,
 			};
 			int rc = FileUtils.SHFileOperation(ref op);
+			RecycleBinSize.Forget();
 			var recycled = new List<string>();
 			long bytes = 0;
 			foreach (string p in ok) {
@@ -101,6 +102,7 @@ namespace HEI.Agent {
 						 FileUtils.FileOperationFlags.FOF_NOERRORUI | FileUtils.FileOperationFlags.FOF_SILENT,
 			};
 			int rc = FileUtils.SHFileOperation(ref op);
+			RecycleBinSize.Forget();
 			var recycled = new List<string>();
 			long bytes = 0;
 			foreach (var (p, size) in ok) {

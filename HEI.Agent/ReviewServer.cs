@@ -141,6 +141,12 @@ namespace HEI.Agent {
 				StoreSetup.Seen();
 				return Results.Json(State(cfg), AgentConfig.Json);
 			});
+			// Manor's disk tile, once a minute: the glance alone, as /api/state gives it, without the review lists, the History
+			// and the settings it reads and sends. Not the page's poll, so it leaves the page's marks (seen, the setup) alone.
+			app.MapGet("/api/glance", (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-store";
+				return Results.Json(new { glance = Glance(cfg) }, AgentConfig.Json);
+			});
 			// While a scan runs, the page asks for its progress alone, every second or two: the scan status file, the lock and
 			// the pause, not the report, the index and the rest that /api/state reads (that every 20 seconds).
 			app.MapGet("/api/progress", (bool? seen) => {
@@ -539,10 +545,10 @@ namespace HEI.Agent {
 		static IReadOnlyList<GpuAdapter> gpus = Array.Empty<GpuAdapter>();
 		static long gpusAt = -1;
 
-		/// <summary>The graphics cards, looked up at most once a minute: the page asks on every poll, and cards rarely come or go.</summary>
+		/// <summary>The graphics cards, looked up at most every 5 minutes: the page asks on every poll, and cards rarely come or go.</summary>
 		static IReadOnlyList<GpuAdapter> Gpus() {
 			lock (gpusLock) {
-				if (gpusAt < 0 || Environment.TickCount64 - gpusAt > 60_000) {
+				if (gpusAt < 0 || Environment.TickCount64 - gpusAt > 5 * 60_000) {
 					gpus = GpuAdapters.List();
 					gpusAt = Environment.TickCount64;
 				}
@@ -599,6 +605,30 @@ namespace HEI.Agent {
 		/// <summary>A running scan's progress, and whether scans are paused or it is stopping: what the page's light poll draws.</summary>
 		internal static object Progress(AgentConfig cfg) => new { scan = ScanView(), agent = AgentView(cfg) };
 
+		/// <summary>
+		/// This PC's drives at a glance alone, for Manor's disk tile (/api/glance): read as <see cref="State"/> reads it, the
+		/// report, the index, the decisions and the developer and games reports, and nothing else.
+		/// </summary>
+		static DiskGlance Glance(AgentConfig cfg) {
+			ScanIndex? index = ScanIndex.Load();
+			var decisions = DecisionStore.Load();
+			var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
+			Manor? manor = Manor.Load();
+			DevReport? devReport = DevMode.Of(cfg, manor).On ? ManorRoles.Now().View(DevReport.Load()) : null;
+			GameReport? gameReport = GameMode.Of(cfg, manor).On ? GameReport.Load() : null;
+			return Glance(ExplorerView.Drives(cfg, index, pending), index, pending, devReport, gameReport);
+		}
+
+		/// <summary>This PC's drives at a glance, from what's here already (<see cref="DiskGlance"/>).</summary>
+		static DiskGlance Glance(IReadOnlyList<DriveCard> drives, ScanIndex? index, List<ReportGroup> pending, DevReport? devReport, GameReport? gameReport) {
+			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
+			// The games: what's installed, and what they left (a game installed twice or idle is installed already).
+			var gameItems = gameReport?.Items.Where(i => !i.Info).ToList() ?? [];
+			long gamesBytes = (gameReport?.Games.Sum(g => g.Bytes) ?? 0) + gameItems.Sum(i => i.Bytes);
+			return DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
+				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives), gamesBytes, gameItems.Where(i => i.Suggested && i.Blocked == null).Sum(i => i.Bytes));
+		}
+
 		/// <summary>Everything the page draws, in one poll.</summary>
 		static object State(AgentConfig cfg) {
 			// The last report, whichever build made it, read once; the page shows this build's own (Report.Load).
@@ -619,13 +649,7 @@ namespace HEI.Agent {
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
 			var drives = ExplorerView.Drives(cfg, index, pending);
-			// This PC's drives at a glance, from what's here already (DiskGlance).
-			var devItems = devReport?.Categories.SelectMany(c => c.Items).ToList() ?? [];
-			// The games: what's installed, and what they left (a game installed twice or idle is installed already).
-			var gameItems = gameReport?.Items.Where(i => !i.Info).ToList() ?? [];
-			long gamesBytes = (gameReport?.Games.Sum(g => g.Bytes) ?? 0) + gameItems.Sum(i => i.Bytes);
-			var glance = DiskGlance.Build(drives, index, devItems.Sum(i => i.Bytes), devItems.Where(i => i.Suggested).Sum(i => i.Bytes),
-				pending.Sum(g => g.ReclaimBytes), RecycleBinSize.Of(drives), gamesBytes, gameItems.Where(i => i.Suggested && i.Blocked == null).Sum(i => i.Bytes));
+			var glance = Glance(drives, index, pending, devReport, gameReport);
 			AiStatus? ai = AiStatus.Load();
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
