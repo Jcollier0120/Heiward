@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.59
+
+**Scans leave package caches out, and list a folder that was added, moved or deleted by itself instead of walking the whole drive.**
+
+### What changed
+
+- Package caches moved out of their usual places are left out of scans, shown as "Package cache" on the review page. By default npm's, NuGet's, pip's, Cargo's and other package managers' caches are dot-folders or live in AppData, and scans already leave those out. A Dev Drive set up by Microsoft's guide moves them to plain folders (D:\packages\nuget and the like), named by variables such as NUGET_PACKAGES and npm_config_cache. Scans walked those folders and listed the packages' icons as duplicates of each other: on one PC, 76 of the report's 94 paths. Heiward now reads those variables (and Maven's -Dmaven.repo.local in MAVEN_OPTS) and leaves the folders out. It ignores a variable that names your profile or one of your own folders.
+- A folder added, moved in or made visible where scans look is now listed by itself, with what's below it. Before, one new folder anywhere a scan looks (a clone, an unpacked download, a build's output) made the next scan walk the whole drive, 58 to 96 s on C:\. A folder that is deleted, moved away, or made a code repository, hidden or a link now drops its photos and videos from the listing. A folder created empty changes nothing, so a scheduled scan still doesn't run.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The first scan after the update walks each drive once, because Heiward lists differently and the new exclusions are part of the listing's key. Later scans go by the drive's journal again.
+
 ## 1.9.58
 
 **The badge says "Running on the NPU" only while a scan is using the NPU.**

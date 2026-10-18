@@ -164,6 +164,45 @@ public sealed class ScanScopeTests : IDisposable {
 	}
 
 	[Fact]
+	public void PackageCaches_TheEnvironmentNames_AreLeftOut() {
+		string npm = Dir("packages", "npm"), nuget = Dir("packages", "nuget"), maven = Dir("packages", "maven repo");
+		string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		var env = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+			["npm_config_cache"] = npm,
+			["NUGET_PACKAGES"] = nuget + Path.DirectorySeparatorChar,
+			["MAVEN_OPTS"] = $"-Xmx1g -Dmaven.repo.local=\"{maven}\" -B",
+			["CARGO_HOME"] = @"packages\cargo", // not a full path: nothing to leave out
+			["PIP_CACHE_DIR"] = profile, // set to the profile by mistake: never left out
+			["GOCACHE"] = @"C:\", // a whole drive: never left out
+		};
+		List<string> caches = ScanScope.PackageCaches(name => env.GetValueOrDefault(name));
+
+		foreach (string cache in new[] { npm, nuget, maven })
+			Assert.Contains(caches, p => FileUtils.IsExcludedFolder(p, new DirectoryInfo(cache)));
+		Assert.DoesNotContain(caches, p => FileUtils.IsExcludedFolder(p, new DirectoryInfo(profile)));
+		Assert.DoesNotContain(caches, p => FileUtils.IsExcludedFolder(p, new DirectoryInfo(Path.Combine(profile, "Pictures"))));
+		Assert.DoesNotContain(caches, p => p.Length <= 3 || p.EndsWith("cargo", StringComparison.OrdinalIgnoreCase));
+		// Only the cache itself: the folder beside it is scanned.
+		Assert.DoesNotContain(caches, p => FileUtils.IsExcludedFolder(p, new DirectoryInfo(Dir("packages", "my photos"))));
+	}
+
+	[Fact]
+	public void PackageCaches_AreBuiltInExclusions_NamedAsSuch() {
+		string cache = Dir("dev drive", "packages", "nuget");
+		string? before = Environment.GetEnvironmentVariable("NUGET_PACKAGES");
+		Environment.SetEnvironmentVariable("NUGET_PACKAGES", cache);
+		try {
+			var over = ScanScope.BuiltInExclusionOver(Path.Combine(cache, "microsoft.ml.onnxruntime", "1.27.0"));
+			Assert.NotNull(over);
+			Assert.Equal("Package cache", over.Value.Rule.Reason);
+			Assert.Contains(ScanScope.Exclusions(), p => FileUtils.IsExcludedFolder(p, new DirectoryInfo(cache)));
+		}
+		finally {
+			Environment.SetEnvironmentVariable("NUGET_PACKAGES", before);
+		}
+	}
+
+	[Fact]
 	public void ExtraFolders_UnderAScannedDrive_AreNotScannedTwice() {
 		string temp = Path.GetTempPath();
 		var roots = ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { temp, Path.Combine(temp, ".") } });

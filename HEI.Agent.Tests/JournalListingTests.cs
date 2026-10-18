@@ -15,6 +15,7 @@
 //
 
 using HEI.Core;
+using HEI.Core.Utils;
 
 namespace HEI.Agent.Tests;
 
@@ -71,11 +72,19 @@ public sealed class JournalListingTests : IDisposable {
 	ListingPlan Plan(DateTime? nowUtc = null, Settings? settings = null) =>
 		ListingPlan.Make(settings ?? Settings(), Config(), nowUtc ?? DateTime.UtcNow, CancellationToken.None);
 
-	/// <summary>After a scan: what it listed, as the engine would report it (by the scanned folder as written: <paramref name="root"/>).</summary>
+	/// <summary>After a scan: what it listed, as the engine would walk it (by the scanned folder as written: <paramref name="root"/>).</summary>
 	void Scanned(ListingPlan plan, DateTime? nowUtc = null, string? root = null) {
-		var found = Directory.EnumerateFiles(root ?? photos, "*", SearchOption.AllDirectories)
-			.Where(f => !f.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)).Select(f => (f, new FileInfo(f).Length)).ToList();
+		Settings s = Settings(root);
+		var found = FileUtils.GetFilesRecursive(root ?? photos, s.IgnoreReadOnlyFolders, s.IgnoreReparsePoints, recursive: true, s.IncludeImages,
+			s.BlackList.Concat(s.SubfolderBlackList).ToList(), CancellationToken.None, s.SkipCloudPlaceholders, s.ExcludedExtensions, s.SkipFoldersContaining,
+			s.SkipFolderLinks).Select(f => (f.FullName, f.Length)).ToList();
 		plan.Save(found, p => File.GetLastWriteTimeUtc(p), nowUtc ?? DateTime.UtcNow);
+	}
+
+	/// <summary>What a plan hands the engine for the scanned folder: the files listed again, and those it vouches for.</summary>
+	static void AssertHanded(RootPlan r, string[] listed, string[] unchanged) {
+		Assert.Equal(listed.Order(StringComparer.OrdinalIgnoreCase), r.Listing!.Listed.Select(f => f.FullName).Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+		Assert.Equal(unchanged.Order(StringComparer.OrdinalIgnoreCase), r.Listing.Unchanged.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
 	}
 
 	static bool HasJournal(string path) {
@@ -114,14 +123,64 @@ public sealed class JournalListingTests : IDisposable {
 	}
 
 	[Fact]
-	public void AFolderAdded_WhereScansLook_IsWalked() {
+	public void AFolderAdded_WhereScansLook_IsListedWithWhatsBelowIt_AndNothingElse() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png");
+		Scanned(Plan());
+		string b = Photo(@"Trip\b.jpg"), c = Photo(@"Trip\Day 2\c.jpg");
+		RootPlan r = Assert.Single(Plan().Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		AssertHanded(r, new[] { c, b }, new[] { a });
+	}
+
+	[Fact]
+	public void AnEmptyFolderAdded_ChangesNothing() {
 		if (!HasJournal(dir)) return;
 		Photo("a.png");
 		Scanned(Plan());
+		Directory.CreateDirectory(Path.Combine(photos, "New folder"));
+		ListingPlan plan = Plan();
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(plan.Roots).Mode);
+		Assert.True(plan.NothingChanged); // a scheduled scan doesn't run
+	}
+
+	[Fact]
+	public void AFolderDeleted_TakesWhatWasListedInIt_AndNothingElse() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png");
 		Photo(@"Trip\b.jpg");
+		Photo(@"Trip\Day 2\c.jpg");
+		Scanned(Plan());
+		Directory.Delete(Path.Combine(photos, "Trip"), true);
 		RootPlan r = Assert.Single(Plan().Roots);
-		Assert.Equal(ListingMode.Walk, r.Mode);
-		Assert.StartsWith("folders were added", r.Why);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		AssertHanded(r, Array.Empty<string>(), new[] { a });
+	}
+
+	[Fact]
+	public void AFolderRenamed_IsListedByItsNewName() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png");
+		Photo(@"Trip\b.jpg");
+		Scanned(Plan());
+		Directory.Move(Path.Combine(photos, "Trip"), Path.Combine(photos, "Holiday"));
+		RootPlan r = Assert.Single(Plan().Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		AssertHanded(r, new[] { Path.Combine(photos, "Holiday", "b.jpg") }, new[] { a });
+	}
+
+	[Fact]
+	public void AFolderMovedOut_OrMadeARepository_TakesWhatWasListedInIt() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png");
+		Photo(@"Trip\b.jpg");
+		Photo(@"Art\c.png");
+		Scanned(Plan());
+		Directory.Move(Path.Combine(photos, "Trip"), Path.Combine(dir, "Trip"));
+		Directory.CreateDirectory(Path.Combine(photos, "Art", ".git"));
+		RootPlan r = Assert.Single(Plan().Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		AssertHanded(r, Array.Empty<string>(), new[] { a });
 	}
 
 	[Fact]
@@ -132,7 +191,7 @@ public sealed class JournalListingTests : IDisposable {
 		// A code repository: scans leave it out, whatever happens in it.
 		Directory.CreateDirectory(Path.Combine(photos, "project", ".git"));
 		File.WriteAllBytes(Path.Combine(photos, "project", "icon.png"), new byte[16]);
-		Assert.Equal(ListingMode.Walk, Assert.Single(Plan().Roots).Mode); // the repository's folder is new where scans look
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode); // new where scans look, but a repository
 		Scanned(Plan());
 		File.WriteAllBytes(Path.Combine(photos, "project", "logo.png"), new byte[16]);
 		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode);
@@ -162,9 +221,12 @@ public sealed class JournalListingTests : IDisposable {
 		Assert.Equal(new[] { Path.Combine(link, "a.png"), Path.Combine(link, "b.png") },
 			r.Listing!.Listed.Select(f => f.FullName).Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
 
-		// A folder added in it: walked.
+		// A folder added in it: listed, by the path the scan knows it by.
+		Scanned(Planned(), root: link);
 		Photo(@"Trip\c.jpg");
-		Assert.Equal(ListingMode.Walk, Assert.Single(Planned().Roots).Mode);
+		r = Assert.Single(Planned().Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		Assert.Equal(new[] { Path.Combine(link, "Trip", "c.jpg") }, r.Listing!.Listed.Select(f => f.FullName), StringComparer.OrdinalIgnoreCase);
 	}
 
 	[Fact]
