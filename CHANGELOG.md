@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.55
+
+**It carries the Steward's kit 2.83.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.83.0: Graphics that share the PC's memory, and the processor, now chat and see with one Qwen3-VL-2B server in place of Qwen3-4B and Qwen3-VL-4B: about twice as fast, about 2 GB less memory than Qwen3-VL-4B alone, and the same scores. Cards with memory of their own keep the 4B models. On the Adreno, setup takes llama.cpp b11715 or later.
+
+### Before you update
+
+- Nothing in an agent's code. A PC set up before keeps its models until its local AI is set up again (Manor's Set up local AI). That run downloads the 2B (1.55 GB with its projector) and, on the Adreno, a build from b11715 on. The keeper's look never downloads, so it doesn't make this change by itself.
+- Code that read `ModelFile.kind` from `findModels` or `planSetup`'s `models` reads `model`.
+
 ## 1.9.54
 
 **It carries the Steward's kit 2.82.4: the parts every agent of the manor shares.**
