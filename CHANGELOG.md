@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.57
+
+**It carries the Steward's kit 2.84.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.84.0: An agent can now tell when a vendor's screen saver keeps putting the PC to sleep, and say which setting stops it. spec/ROUND.md no longer takes Windows' SleepButton / SC_MONITORPOWER for a sleep the person chose.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Showing the line is up to each agent; nothing calls `saverSleeps()` by itself.
+
 ## 1.9.56
 
 **It carries the Steward's kit 2.83.2: the parts every agent of the manor shares.**
