@@ -4,7 +4,7 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.59
 
-**Scans leave package caches out, list a folder that was added, moved or deleted by itself instead of walking the whole drive, and keep up with a busy drive's journal.**
+**Scans leave package caches out, list a folder that was added, moved or deleted by itself instead of walking the whole drive, and keep up with a busy drive's journal. The review page uses less of the processor while it waits.**
 
 ### What changed
 
@@ -15,6 +15,9 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - A folder deleted elsewhere on the drive while a scan placed its changes no longer makes that scan walk the whole drive.
 - The log now tells an overwritten journal from one Windows wouldn't read ("the journal couldn't be read (Windows error 87)"). Before, both read "the journal no longer reaches back to the last scan".
 - A walk lists each folder once, and gets its photos and videos, its subfolders, and whether it's a code repository from that one listing. It used to list each folder twice and ask every subfolder about a dozen repository markers, one at a time: 84,728 lookups for the 7,057 folders of C:\Projects. Walking C:\Projects with its package caches went from a median of 1.8 to 2.0 s down to 0.2 to 0.4 s.
+- The review page's process uses less of the processor while it waits. It took about 3.4 s an hour while idle, three-quarters of that measuring the tool caches' sizes every hour (71,000 files in 13,400 folders). It now measures them once a day, and gives each drive's free space as Windows reports it when a program asks.
+- The review page's ping now says whether Heiward is on duty, since when it has been paused, and its one-line status, as `hei status --json` does. Manor used to run `hei status` every two minutes to learn them, starting Heiward and Task Scheduler each time: about 20 to 30 s of processor time an hour. With them in the ping, Manor doesn't need to.
+- The page now asks Task Scheduler for the next scan every half hour, or once that scan's time has come, instead of every minute. It counts the sets waiting for review again only when the report, your decisions, automatic cleanup or your settings change, or every half hour.
 
 ### Before you update
 

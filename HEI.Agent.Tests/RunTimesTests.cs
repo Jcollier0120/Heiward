@@ -145,7 +145,12 @@ public sealed class RunTimesTests : IDisposable {
 		// As Results.Json writes it: the web defaults.
 		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ReviewServer.Ping(cfg), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 		JsonElement root = doc.RootElement;
-		Assert.Equal(new[] { "app", "store", "exe", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "uninstallPage", "pictures", "needsYou" }, root.EnumerateObject().Select(p => p.Name));
+		Assert.Equal(new[] { "app", "store", "exe", "running", "stoppedSince", "summary", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "uninstallPage", "pictures", "needsYou" },
+			root.EnumerateObject().Select(p => p.Name));
+		// As hei status --json says them, so Manor needn't run it every round: on duty, never stopped (null, but there), and in a sentence.
+		Assert.True(root.GetProperty("running").GetBoolean());
+		Assert.Equal(JsonValueKind.Null, root.GetProperty("stoppedSince").ValueKind);
+		Assert.Equal("Scans only when you press Scan now. No scan yet.", root.GetProperty("summary").GetString());
 		Assert.Equal(0, root.GetProperty("needsYou").GetArrayLength()); // no report, so nothing waits for review (ReviewWaiting)
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("firstRound").ValueKind); // no first scan waiting or running (FirstRound)
 		Assert.Equal(1, root.GetProperty("pictures").GetInt32()); // POST /api/pictures/compare is here (PicturesRoute)
@@ -155,6 +160,47 @@ public sealed class RunTimesTests : IDisposable {
 		Assert.True(root.GetProperty("lastRunOk").GetBoolean());
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("nextRunAt").ValueKind); // scans only when asked
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("runningSince").ValueKind);
+	}
+
+	static JsonElement PingNow(AgentConfig cfg) {
+		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ReviewServer.Ping(cfg), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+		return doc.RootElement.Clone();
+	}
+
+	[Fact]
+	public void ThePing_SaysItsPaused_AndSinceWhen_AsHeiStatusDoes() {
+		var cfg = new AgentConfig { ScanEveryMinutes = 0 };
+		AgentPause.Start(null, Now);
+		JsonElement ping = PingNow(cfg);
+		Assert.False(ping.GetProperty("running").GetBoolean());
+		Assert.Equal("2026-10-03T12:00:00Z", ping.GetProperty("stoppedSince").GetString());
+		Assert.Equal(AgentStatus.Build(cfg, DateTime.UtcNow, pageUp: false, nextRun: null).Summary, ping.GetProperty("summary").GetString());
+		Assert.StartsWith("Paused until you resume", ping.GetProperty("summary").GetString());
+	}
+
+	[Fact]
+	public void ThePingsCount_IsMadeAgain_WhenWhatItsMadeFromChanges() {
+		var cfg = new AgentConfig { ScanEveryMinutes = 0 };
+		static ReportGroup Set(string key) => new(key, "copies", "image", @"C:\Pictures\" + key + ".jpg", "kept", 100, 99.9f, new());
+		Assert.EndsWith("No scan yet.", PingNow(cfg).GetProperty("summary").GetString());
+		new Report(Report.CurrentVersion, Now.AddHours(-2), 1, "NPU", 10, new(), new(), new(), new() { Set("a"), Set("b"), Set("c") }, AppBuild.Current).Save();
+		Assert.EndsWith("3 sets to review.", PingNow(cfg).GetProperty("summary").GetString());
+		Assert.Equal(new ReviewWaiting.Counts(true, false, 3, ReviewWaiting.Count()), ReviewWaiting.Now());
+		DecisionStore.Set("b", new Decision("kept", Now, new(), 0));
+		Assert.EndsWith("2 sets to review.", PingNow(cfg).GetProperty("summary").GetString());
+	}
+
+	[Fact]
+	public void TaskSchedulersAnswer_IsKeptHalfAnHour_OrUntilTheRunItNamesComes() {
+		DateTime asked = Now;
+		Assert.True(Scheduler.Kept(asked, null, asked.AddMinutes(29)));
+		Assert.False(Scheduler.Kept(asked, null, asked.AddMinutes(30)));
+		// A next run 10 minutes on: once it has come (and half a minute for Task Scheduler to move on), it's asked again.
+		Assert.True(Scheduler.Kept(asked, asked.AddMinutes(47), asked.AddMinutes(25)));
+		Assert.True(Scheduler.Kept(asked, asked.AddMinutes(10), asked.AddMinutes(10).AddSeconds(29)));
+		Assert.False(Scheduler.Kept(asked, asked.AddMinutes(10), asked.AddMinutes(10).AddSeconds(30)));
+		Assert.False(Scheduler.Kept(asked, null, asked.AddMinutes(-1))); // the clock was set back
+		Assert.False(Scheduler.Kept(default, null, Now)); // never asked, or forgotten (Scheduler.Forget)
 	}
 
 	[Fact]

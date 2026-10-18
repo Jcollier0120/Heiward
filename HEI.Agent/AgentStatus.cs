@@ -68,7 +68,7 @@ namespace HEI.Agent {
 			}
 			bool scheduled = cfg.ScanEveryMinutes > 0 && nextRun != null;
 			bool scanning = AgentScanner.IsRunning();
-			string summary = Summarize(cfg, nowUtc, pause, scheduled, nextRun, scanning, report, toReview, devBuild);
+			string summary = Summarize(cfg, nowUtc, pause, scheduled, Local(nextRun), scanning, report != null, report == null && Report.IsStale(), toReview, devBuild);
 			// Where the AI ran, from the one small file the last scan (or the install, or setup) wrote: nothing is loaded to guess.
 			AiStatus? ai = AiStatus.Load();
 			string? device = ai?.Kind;
@@ -81,37 +81,53 @@ namespace HEI.Agent {
 				devMode.On, devMode.ByManor ? "manor" : "heiward");
 		}
 
+		/// <summary>
+		/// The summary alone, for the review page's ping (Manor's card shows it): from the counts the page keeps
+		/// (<see cref="ReviewWaiting.Now"/>), and the next run as <paramref name="runs"/> moved it on past a run gone by.
+		/// </summary>
+		internal static string PingSummary(AgentConfig cfg, DateTime nowUtc, AgentPause? pause, RunTimes runs) {
+			// Task Scheduler's answer is kept (Scheduler.NextRun): RunTimes has just asked for it.
+			string? nextRun = pause != null || cfg.ScanEveryMinutes <= 0 ? null : Scheduler.NextRun();
+			ReviewWaiting.Counts counts = ReviewWaiting.Now();
+			return Summarize(cfg, nowUtc, pause, cfg.ScanEveryMinutes > 0 && nextRun != null, runs.NextRunAt?.ToLocalTime() ?? Local(nextRun),
+				AgentScanner.IsRunning(), counts.HasReport, counts.Stale, counts.ToReview, DevBuild.Current);
+		}
+
 		/// <summary>One line, for a pipe: camelCase, nulls written out, anything but ASCII escaped.</summary>
 		public string ToJson() => JsonSerializer.Serialize(this, Json);
 
 		static readonly JsonSerializerOptions Json = new(AgentConfig.Json) { WriteIndented = false };
 
 		/// <summary>"Scans every hour, next at 15:00. 3 sets to review.", "Paused until you resume. Nothing to review."</summary>
-		static string Summarize(AgentConfig cfg, DateTime nowUtc, AgentPause? pause, bool scheduled, string? nextRun, bool scanning, Report? report, int toReview, bool devBuild) {
+		/// <param name="next">The scan task's next run, local time; null when Task Scheduler's wording isn't a time.</param>
+		/// <param name="stale">Without a report from this build, an older build's is there.</param>
+		static string Summarize(AgentConfig cfg, DateTime nowUtc, AgentPause? pause, bool scheduled, DateTime? next, bool scanning, bool hasReport, bool stale,
+			int toReview, bool devBuild) {
 			string schedule = Scheduler.Describe(cfg);
 			string duty = pause != null ? "Paused " + pause.Describe(nowUtc)
 				: cfg.ScanEveryMinutes > 0 && !scheduled && devBuild ? "No scheduled scans: a development build has none"
 				: cfg.ScanEveryMinutes > 0 && !scheduled ? "No scheduled scans: the scan task is missing or turned off"
-				: char.ToUpperInvariant(schedule[0]) + schedule[1..] + (scheduled && NextAt(nextRun, nowUtc) is { } at ? ", next " + at : "");
-			string review = report == null ? (Report.IsStale() ? "Heiward was updated: the next scan lists the sets again" : "No scan yet")
+				: char.ToUpperInvariant(schedule[0]) + schedule[1..] + (scheduled && NextAt(next, nowUtc) is { } at ? ", next " + at : "");
+			string review = !hasReport ? (stale ? "Heiward was updated: the next scan lists the sets again" : "No scan yet")
 				: toReview == 0 ? "Nothing to review"
 				: toReview == 1 ? "1 set to review"
 				: $"{toReview} sets to review";
 			return (scanning ? "Scanning now. " : "") + duty + ". " + review + ".";
 		}
 
-		/// <summary>
-		/// "at 15:00", "tomorrow at 08:00", "on Fri 3 Oct at 08:00", from Task Scheduler's local time; null when it
-		/// isn't a time (Task Scheduler's own wording, in another language than this process's).
-		/// </summary>
-		static string? NextAt(string? nextRun, DateTime nowUtc) {
-			if (!DateTime.TryParse(nextRun, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out DateTime next)) return null;
+		/// <summary>Task Scheduler's local time; null when it isn't a time (Task Scheduler's own wording, in another language than this process's).</summary>
+		static DateTime? Local(string? nextRun) =>
+			DateTime.TryParse(nextRun, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out DateTime next) ? next : null;
+
+		/// <summary>"at 15:00", "tomorrow at 08:00", "on Fri 3 Oct at 08:00", from a local time.</summary>
+		static string? NextAt(DateTime? local, DateTime nowUtc) {
+			if (local is not { } next) return null;
 			DateTime today = nowUtc.ToLocalTime().Date;
 			return next.Date == today ? $"at {next:t}" : next.Date == today.AddDays(1) ? $"tomorrow at {next:t}" : $"on {next:ddd d MMM} at {next:t}";
 		}
 
 		/// <summary>As UTC, so the JSON says so: a time read back without its zone was written as UTC.</summary>
-		static DateTime? Utc(DateTime? t) => t is not { } v ? null : v.Kind switch {
+		internal static DateTime? Utc(DateTime? t) => t is not { } v ? null : v.Kind switch {
 			DateTimeKind.Local => v.ToUniversalTime(),
 			DateTimeKind.Unspecified => DateTime.SpecifyKind(v, DateTimeKind.Utc),
 			_ => v,

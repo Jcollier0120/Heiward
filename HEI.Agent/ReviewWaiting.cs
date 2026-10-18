@@ -36,22 +36,53 @@ namespace HEI.Agent {
 			return waiting.Count(g => !s.FirstSeenUtc.TryGetValue("g:" + g.Key, out DateTime seen) || seen > lastOpened);
 		}
 
+		/// <summary>What the last report holds for the person, as the ping gives it (needsYou, and its summary's count).</summary>
+		/// <param name="HasReport">A report from this build: before one, <paramref name="Stale"/> says whether an older build's is there.</param>
+		/// <param name="ToReview">Sets with no decision yet, as <c>hei status</c> counts them.</param>
+		/// <param name="Waiting">Those that call for the person (<see cref="Count"/>).</param>
+		internal readonly record struct Counts(bool HasReport, bool Stale, int ToReview, int Waiting);
+
 		static readonly object gate = new();
-		static (long At, int Count) last = (-1, 0);
+		static (string Inputs, long At, Counts Counts)? last;
+
+		/// <summary>How long <see cref="Now"/>'s counts stand while the files they're made from stay the same: sets come due for automatic cleanup with time.</summary>
+		internal const int KeptMinutes = 30;
 
 		/// <summary>
-		/// The ping's needsYou, as Manor reads it from its staff (kind, title, detail, url): one item while sets wait.
-		/// Counted at most once a minute: Manor asks every few seconds, and reading the report isn't free.
+		/// The counts now. Counted again only when one of the files they're made from changes (the report, the decisions,
+		/// automatic cleanup's state, the settings), or after <see cref="KeptMinutes"/>: Manor's ping asks every round, and
+		/// reading the report isn't free.
 		/// </summary>
-		internal static object[] NeedsYou(int port) {
-			int count;
+		internal static Counts Now() {
+			string inputs = Inputs();
 			lock (gate) {
-				if (last.At < 0 || Environment.TickCount64 - last.At > 60_000) {
-					try { last = (Environment.TickCount64, Count()); }
-					catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { last = (Environment.TickCount64, 0); }
-				}
-				count = last.Count;
+				if (last is { } l && l.Inputs == inputs && Environment.TickCount64 - l.At < KeptMinutes * 60_000L) return l.Counts;
+				Counts counts;
+				try { counts = CountNow(); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Text.Json.JsonException) { counts = default; }
+				last = (inputs, Environment.TickCount64, counts);
+				return counts;
 			}
+		}
+
+		/// <summary>Each file the counts are made from, when it was written and how long it is ("-": it isn't there).</summary>
+		static string Inputs() => string.Join("|", new[] { AgentPaths.Report, AgentPaths.Decisions, AutoCleanState.FilePath, AgentPaths.Config }.Select(f => {
+			var file = new FileInfo(f);
+			return file.Exists ? $"{f}:{file.LastWriteTimeUtc.Ticks}:{file.Length}" : f + ":-";
+		}));
+
+		static Counts CountNow() {
+			var report = Report.Load();
+			if (report == null) return new Counts(false, Report.IsStale(), 0, 0);
+			var cfg = AgentConfig.Load();
+			var decisions = DecisionStore.Load();
+			int waiting = AutoCleaner.WaitingForUser(cfg, report, decisions, AutoCleanState.Load(), DateTime.UtcNow).Count(AutoCleaner.Announced);
+			return new Counts(true, false, report.Groups.Count(g => !decisions.ContainsKey(g.Key)), waiting);
+		}
+
+		/// <summary>The ping's needsYou, as Manor reads it from its staff (kind, title, detail, url): one item while sets wait (<see cref="Now"/>).</summary>
+		internal static object[] NeedsYou(int port) {
+			int count = Now().Waiting;
 			return count == 0 ? [] : [Item(count, ReviewServer.PageUrl(port))];
 		}
 
