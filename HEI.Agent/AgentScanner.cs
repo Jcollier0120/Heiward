@@ -27,8 +27,11 @@ namespace HEI.Agent {
 	/// <param name="Phase"><see cref="ScanPhase"/>: what the scan is doing now.</param>
 	/// <param name="Listed">Of <paramref name="Roots"/>, those whose files are listed (while <paramref name="Phase"/> is "listing").</param>
 	/// <param name="Drives">Each drive's files checked so far, from "checking" on: only drives with files in this scan.</param>
+	/// <param name="AiDevice">Where the scan's AI model last ran ("NPU", "GPU", "CPU"), with <paramref name="AiRanUtc"/>; null before it has.</param>
+	/// <param name="AiRanUtc">When it last ran: the page says "Running on the NPU" only just after, not for the whole scan.</param>
 	sealed record ScanStatus(int Pid, DateTime StartedUtc, string Stage, int Position, int Max, bool FullSpeed = false, IReadOnlyList<string>? Roots = null,
-		string Phase = ScanPhase.Listing, IReadOnlyList<string>? Listed = null, IReadOnlyList<DriveCheck>? Drives = null);
+		string Phase = ScanPhase.Listing, IReadOnlyList<string>? Listed = null, IReadOnlyList<DriveCheck>? Drives = null,
+		string? AiDevice = null, DateTime? AiRanUtc = null);
 
 	/// <summary>One drive's part of checking the files: done of total, as files and as bytes.</summary>
 	sealed record DriveCheck(string Root, int Done, int Total, long DoneBytes, long TotalBytes);
@@ -156,9 +159,11 @@ namespace HEI.Agent {
 				string stage = !string.IsNullOrEmpty(e?.CurrentStage) ? e.CurrentStage : phase switch {
 					ScanPhase.Listing => "Finding files", ScanPhase.Checking => "Checking files", ScanPhase.Comparing => "Comparing", _ => "Finishing",
 				};
+				var ai = engine.AiLastRun;
 				WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? 0, e?.MaxPosition ?? 0, fullSpeed, reading,
 					phase, phase == ScanPhase.Listing ? engine.ListingTimes.Keys.ToList() : null,
-					driveCounts?.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList()));
+					driveCounts?.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList(),
+					ai?.Device, ai?.Utc));
 			}
 			await using var status = new StatusFile(Write);
 			try {

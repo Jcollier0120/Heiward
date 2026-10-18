@@ -443,18 +443,32 @@ window.addEventListener('hashchange', () => {
 
 // ---------------------------------------------------------------- header and command bar
 
+/** A scan's AI model ran this recently (scan-status.json's aiRanUtc): it's running now, as the manor's Accelerators card would say. */
+const AI_RUNNING_MS = 10000;
+
+/** Whether the running scan's AI model is at work on the NPU now: a model run in the last few seconds, not just a scan under way. */
+function npuRunningNow(scan) {
+  const st = scan && scan.running && scan.status;
+  return !!(st && st.aiDevice === 'NPU' && st.aiRanUtc && Date.now() - Date.parse(st.aiRanUtc) < AI_RUNNING_MS);
+}
+
 // Where AI matching runs, from ai-status.json: the install and "hei setup" write it, then every scan,
-// with the device it actually used. Green only when the NPU is set up and (after a scan) really ran. The commands, the
-// settings file and the log are named only with developer mode on (dev); otherwise it says the same in plain words.
-function renderAiBadge(ai, dev) {
+// with the device it actually used. Green only when the NPU is set up and (after a scan) really ran; "Running on the NPU"
+// only while a scan's model is at work there (scan), since a scan spends most of its time listing, reading and comparing
+// files. The commands, the settings file and the log are named only with developer mode on (dev); otherwise it says the
+// same in plain words.
+function renderAiBadge(ai, dev, scan) {
   const badge = $('ai-badge');
   if (!ai) { badge.classList.add('hidden'); return; }
   const npu = ai.npuDisplayName || ai.npuName || 'The NPU';
   let text, tone, tip;
   if (ai.device === 'NPU') {
     tone = 'good';
-    text = ai.source === 'scan' ? 'Running on the NPU' : 'NPU ready';
-    tip = ai.source === 'scan' ? npu + ' ran the last scan.' : npu + ' is set up; scans run on it.';
+    const now = npuRunningNow(scan);
+    text = now ? 'Running on the NPU' : 'NPU ready';
+    tip = now ? npu + ' is matching pictures and video frames for this scan now.'
+      : scan && scan.running ? npu + ' is set up; this scan uses it only while it matches pictures and video frames.'
+      : ai.source === 'scan' ? npu + ' ran the last scan; scans run on it.' : npu + ' is set up; scans run on it.';
   } else if (ai.device === 'off') {
     tone = 'warn';
     text = 'AI matching off';
@@ -517,7 +531,7 @@ function renderHeader(s) {
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
   setText($('subtitle'), parts.join(' · '));
-  renderAiBadge(s.ai, s.dev.enabled);
+  renderAiBadge(s.ai, s.dev.enabled, s.scan);
 
   const running = s.scan.running;
   // Just started: running from the click, though it can't be stopped until its process has begun.

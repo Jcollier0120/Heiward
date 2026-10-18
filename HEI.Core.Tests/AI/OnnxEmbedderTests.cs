@@ -110,6 +110,18 @@ public class OnnxEmbedderTests {
 			Assert.Equal(embedder.EmbedBatch(new[] { frames[i] })[0], together[i]);
 	}
 
+	// The page says "Running on the NPU" only just after a run, not for the whole scan.
+	[Fact]
+	public void LastRun_IsNoneBeforeTheFirstRun_ThenWhenItRan() {
+		using var embedder = new OnnxEmbedder(TestModels.TinyEmbedderPath);
+		Assert.Null(embedder.LastRunUtc);
+		DateTime before = DateTime.UtcNow;
+		embedder.EmbedBatch(new[] { PatternFrame(300) });
+		Assert.NotNull(embedder.LastRunUtc);
+		Assert.InRange(embedder.LastRunUtc!.Value, before, DateTime.UtcNow);
+		Assert.Equal(DateTimeKind.Utc, embedder.LastRunUtc.Value.Kind);
+	}
+
 	[Fact]
 	public async Task EmbeddingPipeline_SaysWhereTheTimeWent() {
 		var entry = new FileEntry { Folder = @"D:\media" };

@@ -51,9 +51,10 @@ public sealed class ProgressPollTests : IDisposable {
 		}
 		cfg.ScanEveryMinutes = 0; // the page starts no scan of its own
 		cfg.Save();
+		var ran = new DateTime(2026, 10, 18, 17, 30, 0, DateTimeKind.Utc);
 		AgentPaths.WriteAtomic(AgentPaths.ScanStatus, JsonSerializer.Serialize(
 			new ScanStatus(Environment.ProcessId, DateTime.UtcNow, "checking files", 0, 0, Roots: [@"C:\"], Phase: ScanPhase.Checking,
-				Drives: [new DriveCheck(@"C:\", 89_144, 133_456, 0, 0)]), AgentConfig.Json));
+				Drives: [new DriveCheck(@"C:\", 89_144, 133_456, 0, 0)], AiDevice: "NPU", AiRanUtc: ran), AgentConfig.Json));
 		Task<int> server = ReviewServer.RunAsync(cfg, openBrowser: false, CancellationToken.None);
 		try {
 			for (int i = 0; i < 40 && !await ReviewServer.IsUpAsync(cfg.Port); i++) await Task.Delay(250);
@@ -64,6 +65,9 @@ public sealed class ProgressPollTests : IDisposable {
 			JsonElement status = root.GetProperty("scan").GetProperty("status");
 			Assert.Equal("checking", status.GetProperty("phase").GetString());
 			Assert.Equal(89_144, status.GetProperty("drives")[0].GetProperty("done").GetInt32());
+			// Where and when the scan's AI model last ran: the badge says "Running on the NPU" only just after.
+			Assert.Equal("NPU", status.GetProperty("aiDevice").GetString());
+			Assert.Equal(ran, status.GetProperty("aiRanUtc").GetDateTime().ToUniversalTime());
 			Assert.False(root.GetProperty("agent").GetProperty("paused").GetBoolean());
 		}
 		finally {
