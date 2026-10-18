@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.61
+
+**A drive written in settings.json by its letter alone, such as "D:", now means the whole drive.**
+
+### What changed
+
+- A folder written in settings.json as a drive letter alone, such as `"folders": ["D:"]`, is now scanned as that whole drive, the same as `"D:\\"`. Windows reads "D:" as the folder Heiward's process is working in on that drive, which on the drive it was started from is rarely the root. A scan could then look at one folder of the drive instead of all of it. Heiward's own page always saves a drive with its backslash, so only a hand-edited settings.json was affected.
+- The same applies wherever Heiward checks which drive a folder is really on, for a drive mounted in a folder or a junction. No part of Heiward asks that about a bare drive letter today, but a test that did failed on a PC where C:\Projects is a drive mounted in a folder.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.60
 
 **Manor's disk tile asks Heiward for the drives at a glance alone, not for everything the review page shows.**
