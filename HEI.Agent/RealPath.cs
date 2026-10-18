@@ -35,7 +35,7 @@ namespace HEI.Agent {
 		/// </summary>
 		public static string Of(string path) {
 			string full;
-			try { full = Path.GetFullPath(path); }
+			try { full = Full(path); }
 			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return path; }
 			full = Path.TrimEndingDirectorySeparator(full);
 			if (full.StartsWith(@"\\", StringComparison.Ordinal) || Path.GetPathRoot(full) is not { Length: 3 } root || root[1] != ':')
@@ -51,6 +51,13 @@ namespace HEI.Agent {
 			}
 		}
 
+		/// <summary>
+		/// <paramref name="path"/> made full, with a drive written by its letter alone ("D:", as settings.json and people write
+		/// one) as that drive's root. Windows would read "D:" as the folder this process last worked in on that drive.
+		/// </summary>
+		static string Full(string path) =>
+			Path.GetFullPath(path.Length == 2 && path[1] == ':' && char.IsAsciiLetter(path[0]) ? path + @"\" : path);
+
 		/// <summary>The two paths are the same folder (or file): their real paths match, ignoring case.</summary>
 		public static bool Same(string a, string b) => string.Equals(Of(a), Of(b), StringComparison.OrdinalIgnoreCase);
 
@@ -64,7 +71,7 @@ namespace HEI.Agent {
 		/// </summary>
 		public static string? VolumeOf(string path) {
 			string full;
-			try { full = Path.GetFullPath(path); }
+			try { full = Full(path); }
 			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return null; }
 			if (full.StartsWith(@"\\", StringComparison.Ordinal) || Path.GetPathRoot(full) is not { Length: 3 } root || root[1] != ':') return null;
 			if (Path.TrimEndingDirectorySeparator(full).Length <= 3 || GetDriveType(root) is not (DriveFixed or DriveRemovable or DriveRamDisk))

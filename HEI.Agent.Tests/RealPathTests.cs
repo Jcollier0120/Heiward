@@ -65,6 +65,20 @@ public sealed class RealPathTests : IDisposable {
 	}
 
 	[Fact]
+	public void ADriveByItsLetterAlone_IsThatDrive_NotTheFolderThisProcessIsInThere() {
+		// Windows reads "C:" as the folder this process is in on C:, here the tests' own folder, below the root. On a PC
+		// with C:\Projects a drive mounted in a folder, a checkout there made "c:" the drive C:\Projects.
+		string drive = Path.GetPathRoot(Environment.CurrentDirectory)!.ToUpperInvariant();
+		if (drive.Length != 3 || drive[1] != ':') return; // tests run from a network share
+		string letter = drive[..2];
+		Assert.NotEqual(drive, Path.GetFullPath(letter), StringComparer.OrdinalIgnoreCase);
+		Assert.Equal(drive, RealPath.Of(letter.ToLowerInvariant()), StringComparer.OrdinalIgnoreCase);
+		Assert.Equal(drive, RealPath.VolumeOf(letter.ToLowerInvariant()));
+		// "folders": ["C:"] in settings.json scans the drive.
+		Assert.Equal(new[] { drive }, ScanScope.Roots(new AgentConfig { ScanAllDrives = false, Folders = { letter } }), StringComparer.OrdinalIgnoreCase);
+	}
+
+	[Fact]
 	public void TheDriveAFolderIsOn_IsTheDriveItReallyIsOn() {
 		Assert.Equal(RealPath.VolumeOf(real), RealPath.VolumeOf(Path.Combine(link, "wt")));
 		Assert.Equal(Path.GetPathRoot(real)!.ToUpperInvariant(), RealPath.VolumeOf(Path.Combine(link, "wt")));
