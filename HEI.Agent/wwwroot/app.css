@@ -1081,7 +1081,12 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
 }
 
 /* The tour (tour.js): a card at the bottom right, and the part it is about outlined on the page. */
-.tour { position: fixed; right: 16px; bottom: 16px; z-index: 60; max-width: min(420px, calc(100vw - 32px)); }
+/* The tour holds the page, as Manor's welcome does: dimmed and inert under it (tour.js's holdPage) until it's answered or skipped. */
+.tour { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, 0.45); }
+.tour > .tour-card { width: min(520px, 100%); max-height: calc(100vh - 32px); overflow: auto; }
+/* Walking the page's parts: the card in the corner, the page only lightly dimmed so the part it names shows. */
+.tour.docked { align-items: flex-end; justify-content: flex-end; background: rgba(0, 0, 0, 0.12); }
+.tour.docked > .tour-card { width: min(420px, 100%); }
 .tour-card { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22); padding: 16px 18px 14px; outline: none; }
 .tour-card h2 { font-size: 17px; font-weight: 600; margin: 4px 0 8px; }
 .tour-card p { margin: 0 0 8px; }

@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.65
+
+**The tour holds the page until you answer it or skip it.**
+
+### What changed
+
+- While Heiward's tour shows, the page under it is dimmed and can't be clicked, as Castellan's own welcome does: each step is answered, or the tour skipped, before you go on. Walking the page's parts, the card sits in the corner and the page is only lightly dimmed, so the part it names stays easy to see. Escape still skips it.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.64
 
 **A new install waits for you before its first scan.**

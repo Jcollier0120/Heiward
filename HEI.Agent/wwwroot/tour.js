@@ -3,7 +3,8 @@
 // by itself the first time the page is opened after setup (once per browser), and again at #/tour. Manor's hire
 // flow opens #/tour?from=<the role's card>, and the last step then offers Back to Manor beside Done. While a new
 // install's first scan waits for the person (FirstScanWait), one more step ends it and asks when that scan runs:
-// Scan now, or Scan by itself (with the next scheduled scan), or Later.
+// Scan now, or Scan by itself (with the next scheduled scan), or Later. Like Manor's welcome, it holds the page while
+// it shows: the page is dimmed and can't be clicked or tabbed to, so the tour is answered, or skipped, first.
 // Loaded after app.js, whose state, el(), icon(), toggleSwitch() and saveSettings() it uses.
 'use strict';
 
@@ -83,12 +84,18 @@ function startTour(from) {
   drawTour();
 }
 
+/** The page under the tour: inert while it shows (no clicks, no Tab), as Manor's welcome holds its page. */
+function holdPage(on) {
+  for (const c of document.body.children) if (c.id !== 'tour') c.inert = on;
+}
+
 function endTour(back) {
   markToured();
   tourStep = null;
   clearTourFocus();
   const box = $('tour');
   if (box) box.remove();
+  holdPage(false);
   if (back && tourFrom) location.href = tourFrom;
   tourFrom = null;
 }
@@ -113,10 +120,11 @@ function drawTour() {
     box = el('div', 'tour');
     box.id = 'tour';
     box.setAttribute('role', 'dialog');
-    box.setAttribute('aria-modal', 'false');
+    box.setAttribute('aria-modal', 'true');
     box.setAttribute('aria-labelledby', 'tour-title');
     document.body.append(box);
   }
+  holdPage(true);
   // Counted from the start, so step 2 knows it isn't the last; again after Developer mode changes what shows.
   if (!tourParts.length) tourParts = partsShowing();
   // A new install's first scan waits for the person: a last step asks when it runs, answered by its buttons.
@@ -232,6 +240,8 @@ function drawTour() {
   buttons.append(next);
 
   card.append(step, title, body, buttons);
+  // Walking the page's parts, the card sits in the corner and the page is only lightly dimmed, so the part shows.
+  box.classList.toggle('docked', stage === 3 && !!tourParts[tourStep - 2]);
   box.replaceChildren(card);
   next.focus();
 }
