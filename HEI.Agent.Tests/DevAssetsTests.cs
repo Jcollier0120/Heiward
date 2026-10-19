@@ -180,6 +180,23 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Equal(new[] { @"a\repo1", @"b\deep\repo2" }, repos);
 	}
 
+	[Fact]
+	public void FindRepositories_LeavesOutTempFolders() {
+		Dir("work", "app", ".git");
+		Dir("tmp", "npu-checkout-files-x", "origin", ".git"); // a test's leftover
+		var rules = ScanScope.ExclusionRules(new AgentConfig { ScanAllDrives = false }).Concat(ScanScope.TempFolders(Path.Combine(root, "tmp"))).ToList();
+		var repos = DevScanner.FindRepositories(new[] { root }, rules, default).Select(r => Path.GetRelativePath(root, r)).ToList();
+		Assert.Equal(new[] { @"work\app" }, repos);
+	}
+
+	[Fact]
+	public void TempFolders_NeverTheProfileOrADrive() {
+		string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		foreach (string temp in new[] { profile, Path.GetDirectoryName(profile)!, @"C:\" })
+			Assert.Equal(new[] { @"?:\Temp", @"?:\Tmp" }, ScanScope.TempFolders(temp).Select(r => r.Pattern));
+		Assert.Contains(ScanScope.TempFolders(@"C:\Work\Temp\").Select(r => r.Pattern), p => p == @"C:\Work\Temp");
+	}
+
 	[Theory]
 	[InlineData(@"~\.npu-agent\checkouts\gamernexus", ".npu-agent")] // a tool's jobs read this one
 	[InlineData(@"%L\SomeTool\wt\main", "app data")]

@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.66
+
+**The Developer area no longer lists repositories that tests left in your Temp folder.**
+
+### What changed
+
+- The Developer area leaves out repositories inside a Temp folder: your account's Temp, and a Temp or Tmp folder at the root of a drive. Tests and tools make throwaway repositories there by the thousand and leave them behind; they buried your own projects in the list. Their space is still offered for cleanup under Temporary files once they're old enough.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.65
 
 **The tour holds the page until you answer it or skip it.**
