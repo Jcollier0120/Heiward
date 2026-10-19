@@ -33,10 +33,27 @@ jobs:
     - name: Run Heiward Tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q
+    # FFmpeg 9.0.2's essentials build, the one Chocolatey's ffmpeg package carried, from its maker's own GitHub
+    # releases (Gyan's codexffmpeg) and checked against its SHA-256. Chocolatey's community feed answered 503 from
+    # 2026-10-19, and choco still exited 0, so the integration tests ran without FFmpeg and 92 failed. Here a download
+    # or a check that fails, fails this step.
     - name: Install FFmpeg
       id: ffmpeg
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: choco install ffmpeg -y --no-progress
+      env:
+        FFMPEG_URL: https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/ffmpeg-9.0.2-essentials_build.zip
+        FFMPEG_SHA256: 60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba
+      run: |
+        $zip = Join-Path $env:RUNNER_TEMP 'ffmpeg.zip'
+        $into = Join-Path $env:RUNNER_TEMP 'ffmpeg'
+        Invoke-WebRequest $env:FFMPEG_URL -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 10
+        $got = (Get-FileHash $zip -Algorithm SHA256).Hash
+        if ($got -ne $env:FFMPEG_SHA256) { throw "ffmpeg.zip's SHA-256 is $got, not $env:FFMPEG_SHA256" }
+        Expand-Archive $zip -DestinationPath $into
+        $bin = (Get-ChildItem $into -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+        if (-not $bin) { throw "the archive has no ffmpeg.exe" }
+        (& (Join-Path $bin 'ffmpeg.exe') -hide_banner -version)[0]
+        Add-Content $env:GITHUB_PATH $bin
     - name: Run Integration Tests
       if: ${{ !cancelled() && steps.ffmpeg.outcome == 'success' }}
       run: dotnet test HEI.IntegrationTests/HEI.IntegrationTests.csproj -c Release -v normal
