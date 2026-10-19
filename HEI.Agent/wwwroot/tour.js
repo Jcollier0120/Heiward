@@ -1,7 +1,9 @@
 // The tour of the review page, for someone who has just installed Heiward: what it does, the few choices that are
 // theirs on day one, then the page, part by part. It's Heiward's own, so it works with or without Manor: it opens
 // by itself the first time the page is opened after setup (once per browser), and again at #/tour. Manor's hire
-// flow opens #/tour?from=<the role's card>, and the last step then offers Back to Manor beside Done.
+// flow opens #/tour?from=<the role's card>, and the last step then offers Back to Manor beside Done. While a new
+// install's first scan waits for the person (FirstScanWait), one more step ends it and asks when that scan runs:
+// Scan now, or Scan by itself (with the next scheduled scan), or Later.
 // Loaded after app.js, whose state, el(), icon(), toggleSwitch() and saveSettings() it uses.
 'use strict';
 
@@ -117,11 +119,15 @@ function drawTour() {
   }
   // Counted from the start, so step 2 knows it isn't the last; again after Developer mode changes what shows.
   if (!tourParts.length) tourParts = partsShowing();
-  const total = 2 + tourParts.length;
+  // A new install's first scan waits for the person: a last step asks when it runs, answered by its buttons.
+  const firstScan = !!state.agent.firstScanWaits && !state.scan.running;
+  const total = 2 + tourParts.length + (firstScan ? 1 : 0);
+  const asks = firstScan && tourStep === total - 1;
+  const stage = tourStep < 2 ? tourStep + 1 : asks ? 4 : 3;
   const card = el('div', 'tour-card');
   card.tabIndex = -1;
-  const step = el('div', 'muted small tour-count', 'Step ' + (Math.min(tourStep, 2) + 1) + ' of 3' +
-    (tourStep >= 2 && tourParts.length > 1 ? ' · ' + (tourStep - 1) + ' of ' + tourParts.length : ''));
+  const step = el('div', 'muted small tour-count', 'Step ' + stage + ' of ' + (firstScan ? 4 : 3) +
+    (stage === 3 && tourParts.length > 1 ? ' · ' + (tourStep - 1) + ' of ' + tourParts.length : ''));
   const title = el('h2');
   title.id = 'tour-title';
   const body = el('div', 'tour-body');
@@ -167,6 +173,12 @@ function drawTour() {
     auto.append(autoText);
     list.append(scope, auto);
     body.append(list);
+  } else if (asks) {
+    title.textContent = 'Its first scan';
+    body.append(el('p', null, 'Heiward has not scanned anything yet: it waits for you. Its first scan reads every drive, so it takes longer than the ones after it, which only look at what changed.'),
+      el('p', null, scansByItself(state)
+        ? 'Scan now starts it straight away, at full speed while this page is open. Or let it scan by itself: the first runs with the next scheduled scan, ' + state.schedule.text + '. Until you choose, nothing scans.'
+        : 'Scan now starts it straight away, at full speed while this page is open. Until you press it, nothing scans.'));
   } else {
     const part = tourParts[tourStep - 2];
     if (part) {
@@ -196,13 +208,27 @@ function drawTour() {
     back.addEventListener('click', () => { tourStep--; drawTour(); });
     buttons.append(back);
   }
-  if (last && tourFrom) {
+  if (asks) {
+    // Later: the page's banner (and Manor's, at a manor) keeps asking.
+    const later = el('button', 'btn secondary', 'Later');
+    later.addEventListener('click', () => endTour(true));
+    buttons.append(later);
+    if (scansByItself(state)) {
+      const auto = el('button', 'btn secondary', 'Scan by itself');
+      auto.addEventListener('click', () => { endTour(false); firstScanByItself(); });
+      buttons.append(auto);
+    }
+  } else if (last && tourFrom) {
     const manor = el('button', 'btn secondary', 'Back to Manor');
     manor.addEventListener('click', () => endTour(true));
     buttons.append(manor);
   }
-  const next = el('button', 'btn', last ? 'Done' : 'Next');
-  next.addEventListener('click', () => { if (last) endTour(false); else { tourStep++; drawTour(); } });
+  const next = el('button', 'btn', asks ? 'Scan now' : last ? 'Done' : 'Next');
+  next.addEventListener('click', () => {
+    if (asks) { endTour(false); scanNow(); }
+    else if (last) endTour(false);
+    else { tourStep++; drawTour(); }
+  });
   buttons.append(next);
 
   card.append(step, title, body, buttons);

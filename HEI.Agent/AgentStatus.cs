@@ -108,7 +108,8 @@ namespace HEI.Agent {
 				: cfg.ScanEveryMinutes > 0 && !scheduled && devBuild ? "No scheduled scans: a development build has none"
 				: cfg.ScanEveryMinutes > 0 && !scheduled ? "No scheduled scans: the scan task is missing or turned off"
 				: char.ToUpperInvariant(schedule[0]) + schedule[1..] + (scheduled && NextAt(next, nowUtc) is { } at ? ", next " + at : "");
-			string review = !hasReport ? (stale ? "Heiward was updated: the next scan lists the sets again" : "No scan yet")
+			string review = !hasReport ? (stale ? "Heiward was updated: the next scan lists the sets again"
+					: FirstScanWait.Waiting ? "Its first scan waits for you on its page" : "No scan yet")
 				: toReview == 0 ? "Nothing to review"
 				: toReview == 1 ? "1 set to review"
 				: $"{toReview} sets to review";

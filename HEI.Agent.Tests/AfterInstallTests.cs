@@ -17,8 +17,9 @@
 namespace HEI.Agent.Tests;
 
 /// <summary>
-/// What the install starts once it's done: the first scan with scheduled scans; with scans only on demand (the setup's
-/// "Only when I press Scan now", or an update keeping it), the page alone, and no scan until the person asks.
+/// What the install starts once it's done: a new install, the page alone, its first scan waiting for the person (Scan
+/// now, or Scan by itself); an update with scheduled scans, its scan; with scans only on demand (the setup's "Only when
+/// I press Scan now", or an update keeping it), the page alone, and no scan until the person asks.
 /// </summary>
 public sealed class AfterInstallTests {
 	static bool Scans(List<string[]> starts) => starts.Any(a => a[0] == "scan");
@@ -45,8 +46,21 @@ public sealed class AfterInstallTests {
 	public void OnDemandOnly_AnotherCopysPage_StartsNothing() =>
 		Assert.Empty(Installer.AfterInstall(openPage: false, pageFree: false, onDemandOnly: true));
 
+	[Theory]
+	[InlineData(true, true)]
+	[InlineData(false, true)]
+	[InlineData(false, false)]
+	public void ANewInstall_StartsNoScan_UntilThePersonSays(bool openPage, bool pageFree) =>
+		Assert.False(Scans(Installer.AfterInstall(openPage, pageFree, onDemandOnly: false, firstScanWaits: true)));
+
 	[Fact]
-	public void Scheduled_TheFirstScanStarts_WaitingItsTurn() {
+	public void ANewInstall_OpensThePage_OrKeepsItUp() {
+		Assert.Equal(["open"], Assert.Single(Installer.AfterInstall(openPage: true, pageFree: true, onDemandOnly: false, firstScanWaits: true)));
+		Assert.Equal(["serve", "--no-browser"], Assert.Single(Installer.AfterInstall(openPage: false, pageFree: true, onDemandOnly: false, firstScanWaits: true)));
+	}
+
+	[Fact]
+	public void AnUpdate_Scheduled_ScansWaitingItsTurn() {
 		var starts = Installer.AfterInstall(openPage: true, pageFree: true, onDemandOnly: false);
 		Assert.Equal(["scan", "--open", "--wait-turn"], Assert.Single(starts));
 		starts = Installer.AfterInstall(openPage: false, pageFree: true, onDemandOnly: false);

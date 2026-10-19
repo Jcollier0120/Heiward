@@ -307,6 +307,7 @@ namespace HEI.Agent {
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				string? drive = AgentConfig.DriveOf(request.Root ?? "");
 				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
+				FirstScanWait.End("Scan this drive now, on the review page");
 				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
 				return Results.Accepted();
 			});
@@ -417,8 +418,16 @@ namespace HEI.Agent {
 			app.MapPost("/api/scan", () => {
 				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
+				FirstScanWait.End("Scan now, on the review page");
 				ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
 				return Results.Accepted();
+			});
+			// "Scan by itself", the other answer to a new install's first scan (FirstScanWait), on the tour's last step or the
+			// page's banner: the next scheduled scan starts it. Scan now is /api/scan.
+			app.MapPost("/api/first-scan/auto", () => {
+				if (ScanEveryMinutes(AgentConfig.Load()) <= 0) return Results.Conflict(new { error = "Scans run only when you press Scan now: Settings turns on scheduled scans." });
+				FirstScanWait.End("the person let it scan by itself");
+				return Results.Json(AgentView(cfg), AgentConfig.Json);
 			});
 			// Another copy's installer wants the port for its own page (AskToCloseAsync). Only the page closes: scans
 			// run in processes of their own. Not during the Store version's setup, whose progress only this page shows.
@@ -730,6 +739,8 @@ namespace HEI.Agent {
 				pausedText = pause?.Describe(now),
 				// Its first scan in the manor's first-round line (FirstRound): "waiting" or "running", else null.
 				firstRound = FirstRound.Now(),
+				// A new install's first scan waits for the person (FirstScanWait): the tour's last step and the banner ask.
+				firstScanWaits = FirstScanWait.Waiting,
 				dev = DevBuild.Current,
 				scheduleMissing = !DevBuild.Current && cfg.ScanEveryMinutes > 0 && Scheduler.NextRun() == null,
 				stopping = AgentScanner.IsRunning() && ScanStop.Requested(AgentScanner.ReadStatus()?.StartedUtc ?? DateTime.MinValue),

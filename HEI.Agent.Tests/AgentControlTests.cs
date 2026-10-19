@@ -56,6 +56,34 @@ public sealed class AgentControlTests : IDisposable {
 		Assert.Equal(Now.AddMinutes(AgentPause.MaxMinutes), AgentPause.Start(1_000_000, Now).UntilUtc);
 
 	[Fact]
+	public void TheFirstScanWaits_OnlyForANewInstall() {
+		Assert.True(FirstScanWait.ForInstall(update: false, scannedBefore: false));
+		Assert.False(FirstScanWait.ForInstall(update: true, scannedBefore: false));
+		Assert.False(FirstScanWait.ForInstall(update: false, scannedBefore: true));
+	}
+
+	[Fact]
+	public void TheFirstScanWaits_UntilThePersonSays() {
+		Assert.False(FirstScanWait.Waiting);
+		FirstScanWait.Begin();
+		Assert.True(FirstScanWait.Waiting);
+		FirstScanWait.End("Scan now, in a test");
+		Assert.False(FirstScanWait.Waiting);
+		FirstScanWait.End("again"); // nothing left to end
+		Assert.False(FirstScanWait.Waiting);
+	}
+
+	[Fact]
+	public void AWaitingFirstScan_IsWhatManorLists() {
+		Assert.Empty(ReviewWaiting.NeedsYou(AgentPaths.InstalledPort));
+		FirstScanWait.Begin();
+		object item = Assert.Single(ReviewWaiting.NeedsYou(AgentPaths.InstalledPort));
+		using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(item));
+		Assert.Equal("first-scan", doc.RootElement.GetProperty("id").GetString());
+		Assert.Equal("Heiward's first scan waits for you", doc.RootElement.GetProperty("title").GetString());
+	}
+
+	[Fact]
 	public void AStopRequest_CountsOnlyForTheScanItWasMadeFor() {
 		ScanStop.Request();
 		Assert.True(ScanStop.Requested(DateTime.UtcNow.AddMinutes(-1)));

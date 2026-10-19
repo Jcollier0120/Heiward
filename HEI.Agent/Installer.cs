@@ -31,7 +31,8 @@ namespace HEI.Agent {
 	/// <item>write settings.json: hourly scans on an NPU; without one, only if the user agrees, daily on the CPU;</item>
 	/// <item>register the scan task and the sign-in "open the review page" task;</item>
 	/// <item>add Start menu and desktop shortcuts to the review page, the name and icon its notifications show, and an Apps &amp; Features entry (so Windows can uninstall it);</item>
-	/// <item>start the first scan and open the review page; with scans only on demand, open the page and scan nothing (<see cref="AfterInstall"/>).</item>
+	/// <item>open the review page, where the first scan waits for the person: Scan now, or Scan by itself on the tour's last
+	/// step (<see cref="FirstScanWait"/>); an update starts its scan, or none with scans only on demand (<see cref="AfterInstall"/>).</item>
 	/// </list>
 	/// <c>--dry-run</c> prints every step without changing anything.
 	/// The Store version (<see cref="StorePackage"/>) is installed already: it skips the copy, the shortcuts, the
@@ -227,8 +228,12 @@ namespace HEI.Agent {
 			PickGpu(forAi: false);
 			cfg.ScanSpeed = scanSpeed ?? AskSpeed(assumeYes, cfg.ScanSpeed);
 			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}, {SpeedText(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
+			// A new install scans nothing until the person says so on the page (FirstScanWait); an update scans as before.
+			bool firstScanWaits = FirstScanWait.ForInstall(keepSettings, FirstRound.Done());
+			if (firstScanWaits) Step("First scan: waits until you press Scan now on the review page, or choose there to let it scan by itself");
 			if (!dryRun) {
 				cfg.Save();
+				if (firstScanWaits) FirstScanWait.Begin();
 				// What the install found, for the review page's badge until the first scan says otherwise.
 				AiStatus.Record(cfg, npu ? "NPU" : cfg.AiDevice == "gpu" ? "GPU" : "CPU", "install");
 			}
@@ -276,9 +281,11 @@ namespace HEI.Agent {
 			Console.WriteLine();
 			Console.WriteLine(onDemandOnly
 				? openPage ? "Installed. Scans run when you press Scan now on the review page, which opens in your browser." : "Installed. Scans run when you press Scan now on the review page."
+				: firstScanWaits
+					? openPage ? "Installed. The review page opens in your browser: the first scan starts when you press Scan now there, or let it scan by itself." : "Installed. The first scan starts when you press Scan now on the review page, or let it scan by itself there."
 				: openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
 			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
-			foreach (string[] args in AfterInstall(openPage, pageFree, onDemandOnly)) StartDetached(args);
+			foreach (string[] args in AfterInstall(openPage, pageFree, onDemandOnly, firstScanWaits)) StartDetached(args);
 			return 0;
 		}
 
@@ -286,14 +293,17 @@ namespace HEI.Agent {
 		/// What the install starts once it's done, each a command line for <see cref="StartDetached"/>. Scheduled scans:
 		/// the first scan, which waits its turn among the manor's agents' first rounds (FirstRound), where there is a manor,
 		/// and the page (the scan's <c>--open</c> opens it). Scans only on demand: the page alone, and no scan until the
-		/// person presses Scan now; an update with that choice doesn't scan either.
+		/// person presses Scan now; an update with that choice doesn't scan either. A new install's first scan waits for
+		/// the person in the same way (<see cref="FirstScanWait"/>): the page alone, until they press Scan now or let it
+		/// scan by itself.
 		/// </summary>
 		/// <param name="openPage">Open the review page in the browser.</param>
 		/// <param name="pageFree">No other copy's page holds the port: this one's page can start.</param>
 		/// <param name="onDemandOnly">No scheduled scans (<see cref="AgentConfig.ScanEveryMinutes"/> 0).</param>
-		internal static List<string[]> AfterInstall(bool openPage, bool pageFree, bool onDemandOnly) {
+		/// <param name="firstScanWaits">A new install: its first scan waits for the person (<see cref="FirstScanWait.ForInstall"/>).</param>
+		internal static List<string[]> AfterInstall(bool openPage, bool pageFree, bool onDemandOnly, bool firstScanWaits = false) {
 			var starts = new List<string[]>();
-			if (onDemandOnly) {
+			if (onDemandOnly || firstScanWaits) {
 				if (openPage) starts.Add(["open"]);
 				else if (pageFree) starts.Add(["serve", "--no-browser"]);
 				return starts;

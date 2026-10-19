@@ -69,6 +69,34 @@ namespace HEI.Agent {
 	}
 
 	/// <summary>
+	/// A new install's first scan waits for the person: nothing scans until they have opened Heiward's page, seen its
+	/// tour, and pressed Scan now there, or chosen on the tour's last step (or the page's banner) to let it scan by
+	/// itself. Until then the install starts no scan, and scheduled scans skip themselves. An update, or a PC where a
+	/// scan has finished before, doesn't wait.
+	/// </summary>
+	static class FirstScanWait {
+		public static bool Waiting => File.Exists(AgentPaths.FirstScanWaits);
+
+		/// <summary>Whether an install's first scan waits: not an update (<paramref name="update"/>), and no scan finished before.</summary>
+		public static bool ForInstall(bool update, bool scannedBefore) => !update && !scannedBefore;
+
+		public static void Begin() {
+			AgentPaths.WriteAtomic(AgentPaths.FirstScanWaits, DateTime.UtcNow.ToString("O"));
+			AgentPaths.AppendLog("first scan: waits for the person (Scan now, or Scan by itself, on the review page)");
+		}
+
+		/// <param name="how">What ended the wait, for the log.</param>
+		public static void End(string how) {
+			try {
+				if (!File.Exists(AgentPaths.FirstScanWaits)) return;
+				File.Delete(AgentPaths.FirstScanWaits);
+				AgentPaths.AppendLog("first scan: no longer waits: " + how);
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+		}
+	}
+
+	/// <summary>
 	/// Stopping a scan that's running in another process: the page (or <c>hei stop</c>) leaves a request, and the
 	/// scan checks for one every second and stops the way Ctrl+C would, without writing a report.
 	/// </summary>
