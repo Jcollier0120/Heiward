@@ -364,6 +364,26 @@ namespace HEI.Agent {
 			}
 		}
 
+		internal const string TempReason = "Temporary files";
+
+		/// <summary>
+		/// Temp folders, left out where the Developer area looks for repositories: this account's (TEMP, as written and by its
+		/// real path) and a Temp or Tmp at a drive's root. A repository in one is a throwaway that tests and tools make by the
+		/// thousand and leave behind, never one of the person's projects; its space is listed under Temporary files instead.
+		/// A TEMP set to a drive's root, or to the profile or a folder above it, is never left out: that would hide every project.
+		/// </summary>
+		internal static List<Rule> TempFolders(string? temp = null) {
+			var rules = new List<Rule> { new(@"?:\Temp", TempReason), new(@"?:\Tmp", TempReason) };
+			string t = Path.TrimEndingDirectorySeparator(temp ?? Path.GetTempPath());
+			string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+			if (!Path.IsPathFullyQualified(t) || t.StartsWith(@"\\", StringComparison.Ordinal) || Path.GetPathRoot(t) == t + Path.DirectorySeparatorChar
+				|| (profile.Length > 0 && IsSameOrUnder(profile, t)))
+				return rules;
+			foreach (string form in new[] { t, Path.TrimEndingDirectorySeparator(RealPath.Of(t)) })
+				if (!rules.Any(r => r.Pattern.Equals(form, StringComparison.OrdinalIgnoreCase))) rules.Add(new(form, TempReason));
+			return rules;
+		}
+
 		static bool IsSameOrUnder(string path, string root) {
 			string r = root.EndsWith(Path.DirectorySeparatorChar) ? root : root + Path.DirectorySeparatorChar;
 			return path.Equals(root.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ||
