@@ -2,7 +2,7 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
-## 1.9.66
+## 1.9.68
 
 **The Developer area no longer lists repositories that tests left in your Temp folder.**
 
@@ -13,6 +13,19 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 ### Before you update
 
 Nothing: it updates itself as usual.
+
+## 1.9.67
+
+**It carries the Steward's kit 2.91.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.91.0: The kit's own helper programs are signed, and a start that Smart App Control blocked gets one more try.
+
+### Before you update
+
+- Nothing in an agent's code. The prebuilt helpers come with the kit's node part, about 70 KB in `src\kit\prebuilt\`.
+- A helper already compiled on a PC stays in its folder, unused once the signed one is there.
 
 ## 1.9.65
 
