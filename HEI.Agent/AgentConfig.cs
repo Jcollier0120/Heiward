@@ -107,6 +107,8 @@ namespace HEI.Agent {
 		public static string StoreSetUp => Path.Combine(StorePackage.Storage, "setup.txt");
 		/// <summary>Touched while the review page is open and showing (it polls): scans run at full speed then.</summary>
 		public static string PageSeen => Path.Combine(Home, "page-seen");
+		/// <summary>A new install's first scan waits for the person (<see cref="HEI.Agent.FirstScanWait"/>).</summary>
+		public static string FirstScanWaits => Path.Combine(Home, "first-scan-waits.txt");
 
 		/// <summary>Writes a file atomically (temp file, then replace), so readers never see half of it.</summary>
 		public static void WriteAtomic(string path, string contents) {

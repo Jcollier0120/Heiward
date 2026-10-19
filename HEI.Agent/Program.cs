@@ -66,6 +66,10 @@ scan.SetAction(async (r, ct) => {
 		// The page stays up, paused or not: should it have gone (a crash, a stopped install), it's back within a
 		// scan's interval. Before the scan sets its pace, so the page doesn't start capped or at a low priority.
 		ReviewServer.EnsureRunningInBackground(cfg);
+		if (FirstScanWait.Waiting) {
+			AgentPaths.AppendLog("scheduled scan skipped: the first scan waits for the person (Scan now, or Scan by itself, on the review page)");
+			return 0;
+		}
 		if (AgentPause.Load() is { } pause) {
 			AgentPaths.AppendLog("scheduled scan skipped: scans are paused " + pause.Describe(DateTime.UtcNow));
 			return 0;
@@ -74,6 +78,14 @@ scan.SetAction(async (r, ct) => {
 			AgentPaths.AppendLog("scheduled scan skipped: " + why);
 			return 0;
 		}
+	}
+	if (FirstScanWait.Waiting) {
+		// The install's own scan (an older setup's) waits too; a scan the person starts ends the wait.
+		if (r.GetValue(waitTurn)) {
+			AgentPaths.AppendLog("install's scan skipped: the first scan waits for the person");
+			return 0;
+		}
+		FirstScanWait.End("hei scan");
 	}
 	if (r.GetValue(open)) {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.

@@ -289,23 +289,35 @@ async function startSchedule() {
   try { await post('/api/agent/schedule'); refresh(true); } catch (e) { showError(e.message); }
 }
 
-/** One banner at a time; rebuilt only when it says something else, so a poll doesn't steal the focus. */
+/** "Scan by itself": a new install's first scan starts with the next scheduled scan, not now. */
+async function firstScanByItself() {
+  try { await post('/api/first-scan/auto'); refresh(true); } catch (e) { showError(e.message); }
+}
+
+/** Whether "Scan by itself" can be offered: scheduled scans are on (a development build has none). */
+const scansByItself = (s) => !!(s.schedule && s.schedule.everyMinutes > 0);
+
+/**
+ * One banner at a time; rebuilt only when it says something else, so a poll doesn't steal the focus. action: a
+ * [label, run] pair, or a list of them (the first is the main one).
+ */
 function showAgentBanner(text, action, down) {
   const banner = $('agent-banner');
   banner.classList.toggle('hidden', !text);
   banner.classList.toggle('down', !!down);
-  const key = text ? text + '|' + (action ? action[0] : '') : '';
+  const actions = !action ? [] : Array.isArray(action[0]) ? action : [action];
+  const key = text ? text + '|' + actions.map((a) => a[0]).join('|') : '';
   if (banner.dataset.key === key) return;
   banner.dataset.key = key;
   if (!text) { banner.replaceChildren(); return; }
   const parts = [el('span', null, text)];
-  if (action) {
-    const [label, run] = action;
-    const b = typeof run === 'string' ? el('a', 'btn', label) : el('button', 'btn', label);
+  actions.forEach(([label, run], i) => {
+    const cls = i === 0 ? 'btn' : 'btn secondary';
+    const b = typeof run === 'string' ? el('a', cls, label) : el('button', cls, label);
     if (typeof run === 'string') b.href = run;
     else b.addEventListener('click', run);
     parts.push(b);
-  }
+  });
   banner.replaceChildren(...parts);
 }
 
@@ -326,6 +338,12 @@ function renderAgent(s) {
   if (s.setup.needed) showAgentBanner(null);
   else if (a.paused) {
     showAgentBanner('Scans are paused ' + a.pausedText + ': scheduled scans skip themselves. Scan now still works.', ['Resume scans', resumeScans]);
+  } else if (a.firstScanWaits && !s.scan.running) {
+    // A new install scans nothing until the person says (the tour's last step asks the same).
+    showAgentBanner(scansByItself(s)
+      ? 'Heiward\'s first scan waits for you. Scan now starts it at full speed; or let it scan by itself: the first runs with the next scheduled scan, ' + s.schedule.text + '.'
+      : 'Heiward\'s first scan waits for you: Scan now starts it.',
+    scansByItself(s) ? [['Scan now', scanNow], ['Scan by itself', firstScanByItself]] : ['Scan now', scanNow]);
   } else if (a.scheduleMissing) {
     showAgentBanner('Scheduled scans aren\'t running: Heiward\'s scan task is missing, or turned off in Task Scheduler.', ['Turn them back on', startSchedule]);
   } else if (a.dev) {
@@ -1463,7 +1481,7 @@ function setupForm(s) {
   function sync() {
     advice.classList.toggle('hidden', !setup.npu || setupAnswers.device === 'npu');
     when.classList.toggle('hidden', setupAnswers.device === 'npu');
-    go.textContent = setupOnDemand() ? 'Set up' : 'Set up and scan';
+    go.textContent = 'Set up';
   }
   const where = setupChoice('Where should the AI run?', 'setup-device', devices, setupAnswers.device, (v) => { setupAnswers.device = v; sync(); });
   where.append(advice);
@@ -1592,7 +1610,7 @@ function renderSetupProgress(setup, s) {
   r.lead.textContent = setup.failed
     ? 'Something went wrong; Details says what.' + (s.dev.enabled ? ' heiward.log has the rest.' : '')
     : 'Getting the AI ready and finding where it runs best. It takes a minute or two.' + (setupOnDemand()
-      ? ' Then Scan now starts the first scan.' : ' The first scan starts right after.');
+      ? ' Then Scan now starts the first scan.' : ' Then you choose when the first scan runs.');
   r.again.classList.toggle('hidden', !setup.failed);
   if (setup.failed) r.details.open = true;
   const atBottom = r.log.scrollTop + r.log.clientHeight >= r.log.scrollHeight - 4;
@@ -1609,7 +1627,7 @@ function setupDone(s) {
   col.append(mark, el('h1', 'setup-title', 'Heiward is set up'),
     el('p', 'setup-lead', onDemand
       ? 'Press Scan now on Heiward\'s page whenever you like: nothing scans until you do.'
-      : 'Its first scan has started. Heiward lists what it finds on its page, and looks again on its own.'),
+      : 'Its first scan waits for you: Open Heiward, and its tour ends by asking whether to scan now or let it scan by itself.'),
     el('p', 'muted', 'Open it any time from the Start menu or your desktop: Heiward.'));
   const open = el('button', 'btn setup-go', 'Open Heiward');
   open.addEventListener('click', () => {

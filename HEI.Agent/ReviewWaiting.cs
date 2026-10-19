@@ -80,11 +80,23 @@ namespace HEI.Agent {
 			return new Counts(true, false, report.Groups.Count(g => !decisions.ContainsKey(g.Key)), waiting);
 		}
 
-		/// <summary>The ping's needsYou, as Manor reads it from its staff (kind, title, detail, url): one item while sets wait (<see cref="Now"/>).</summary>
+		/// <summary>
+		/// The ping's needsYou, as Manor reads it from its staff (kind, title, detail, url): one item while a new install's
+		/// first scan waits for the person (<see cref="FirstScanWait"/>), else one while sets wait (<see cref="Now"/>).
+		/// </summary>
 		internal static object[] NeedsYou(int port) {
+			if (FirstScanWait.Waiting) return [FirstScanItem(ReviewServer.PageUrl(port))];
 			int count = Now().Waiting;
 			return count == 0 ? [] : [Item(count, ReviewServer.PageUrl(port))];
 		}
+
+		internal static object FirstScanItem(string url) => new {
+			id = "first-scan",
+			kind = "first-scan",
+			title = "Heiward's first scan waits for you",
+			detail = new[] { "It scans nothing until you say. Open its page: press Scan now, or let it scan by itself on its schedule." },
+			url,
+		};
 
 		internal static object Item(int count, string url) => new {
 			id = "review",
