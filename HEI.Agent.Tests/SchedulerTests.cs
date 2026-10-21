@@ -15,6 +15,7 @@
 //
 
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace HEI.Agent.Tests;
 
@@ -78,7 +79,8 @@ public sealed class SchedulerTests {
 		string action = Scheduler.DeleteKeysAction(new[] { @"Software\Classes\heiward", @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Heiward" });
 		Assert.Matches(@"^--headless "".+\\cmd\.exe"" /d /c """".+\\reg\.exe"" delete ""HKCU\\Software\\Classes\\heiward"" /f >nul 2>&1 & " +
 			@""".+\\reg\.exe"" delete ""HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\Heiward"" /f >nul 2>&1 & " +
-			@""".+\\schtasks\.exe"" /Delete /TN ""Heiward\\Remove GitHub copy"" /F >nul""$", action);
+			@""".+\\schtasks\.exe"" /Delete /TN """ + Regex.Escape(Scheduler.RemoveKeysTask) + @""" /F >nul""$", action);
+		Assert.Equal(Scheduler.Folder + @"\Remove GitHub copy", Scheduler.RemoveKeysTask);
 	}
 
 	[Fact]
@@ -112,32 +114,15 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
-	public void Register_RefusedInHeiwardsFolder_MovesThisAccountsTasksToAFolderOfItsOwn() {
-		// Task names are the PC's: another account of the PC holds Heiward\Scan, and Task Scheduler says "Access is denied".
+	public void Register_TriesOnce_InThisAccountsFolder_AndSaysWhyItWasRefused() {
+		// Each account has a folder of its own: no other account's task can hold the name, so there's no other folder to try.
 		var tried = new List<(string Name, string Xml)>();
-		string before = Scheduler.TaskFolder;
-		Scheduler.TaskFolder = Scheduler.Folder;
-		try {
-			Scheduler.Register(() => Scheduler.ScanTask, () => $"<xml for {Scheduler.ScanTask}>",
-				(name, xml) => { tried.Add((name, xml)); return name == @"Heiward\Scan" ? (1, "ERROR: Access is denied.") : (0, "SUCCESS"); });
-			string own = @"Heiward\" + Environment.UserName;
-			Assert.Equal(new[] { (@"Heiward\Scan", @"<xml for Heiward\Scan>"), (own + @"\Scan", $@"<xml for {own}\Scan>") }, tried);
-			Assert.Equal(own + @"\Scan", Scheduler.ScanTask);
-			Assert.Equal(own + @"\Open review page", Scheduler.OpenTask);
-		}
-		finally { Scheduler.TaskFolder = before; }
-	}
-
-	[Fact]
-	public void Register_RefusedInBothFolders_SaysWhyTheFirstWasRefused_AndStaysInHeiwardsFolder() {
-		string before = Scheduler.TaskFolder;
-		Scheduler.TaskFolder = Scheduler.Folder;
-		try {
-			var e = Assert.Throws<InvalidOperationException>(() => Scheduler.Register(() => Scheduler.ScanTask, () => "x", (_, _) => (1, "ERROR: Access is denied.\r\n")));
-			Assert.Equal(@"Task Scheduler refused 'Heiward\Scan': ERROR: Access is denied.", e.Message);
-			Assert.Equal(Scheduler.Folder, Scheduler.TaskFolder);
-		}
-		finally { Scheduler.TaskFolder = before; }
+		var e = Assert.Throws<InvalidOperationException>(() => Scheduler.Register(Scheduler.ScanTask, "<xml>", (name, xml) => {
+			tried.Add((name, xml));
+			return (1, "ERROR: Access is denied.\r\n");
+		}));
+		Assert.Equal([(Scheduler.Folder + @"\Scan", "<xml>")], tried);
+		Assert.Equal($"Task Scheduler refused '{Scheduler.Folder}\\Scan': ERROR: Access is denied.", e.Message);
 	}
 
 	[Fact]
@@ -149,7 +134,7 @@ public sealed class SchedulerTests {
 		string action = Scheduler.Action(Scheduler.ScanTask, @"C:\Users\me\AppData\Local\Microsoft\WindowsApps\hei.exe", "scan --notify --scheduled", removeWhenGone: true);
 		Assert.Matches(@"^--headless "".+\\cmd\.exe"" /d /c if exist ""C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\hei\.exe"" " +
 			@"\(""C:\\Users\\me\\AppData\\Local\\Microsoft\\WindowsApps\\hei\.exe"" scan --notify --scheduled\) " +
-			@"else "".+\\schtasks\.exe"" /Delete /TN ""Heiward\\Scan"" /F$", action);
+			@"else "".+\\schtasks\.exe"" /Delete /TN """ + Regex.Escape(Scheduler.ScanTask) + @"""" + " /F$", action);
 	}
 
 	[Theory]
@@ -165,7 +150,7 @@ public sealed class SchedulerTests {
 	public void TaskXml_OfTheStoreVersion_EscapesTheAction() {
 		string xml = Scheduler.OpenXml(@"C:\a&b\hei.exe", removeWhenGone: true);
 		Assert.Contains("if exist &quot;C:\\a&amp;b\\hei.exe&quot;", xml);
-		Assert.Contains("/TN &quot;Heiward\\Open review page&quot;", xml);
+		Assert.Contains($"/TN &quot;{System.Security.SecurityElement.Escape(Scheduler.OpenTask)}&quot;", xml);
 	}
 
 	[Theory]

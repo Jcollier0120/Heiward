@@ -17,6 +17,8 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Security;
+using System.Security.Principal;
+using System.Text.RegularExpressions;
 
 namespace HEI.Agent {
 	/// <summary>
@@ -35,27 +37,110 @@ namespace HEI.Agent {
 	/// </summary>
 	static class Scheduler {
 		/// <summary>
-		/// Heiward's folder in Task Scheduler. Task names are the PC's, not each account's: where another account of the PC
-		/// registered Heiward's tasks first, Task Scheduler refused this account's under the same names ("Access is denied"),
-		/// and the install stopped there. This account's tasks then go in a folder of its own, Heiward\&lt;account&gt;
-		/// (<see cref="Register"/>), and are looked for there from then on (<see cref="TaskFolder"/>).
+		/// This account's folder in Task Scheduler, \Heiward (&lt;account&gt;), as Manor and the Steward's kit name each
+		/// program's (<see cref="Account"/>). Task Scheduler's names are the PC's, not each account's: with one folder for
+		/// every account, two accounts of a PC had one Heiward\Scan between them, and the second one's install was refused.
+		/// Each account makes its own folder. Older Heiwards' names (<see cref="OldNames"/>) are moved off (<see cref="DropOld"/>).
 		/// </summary>
-		public const string Folder = @"Heiward";
-		static string AccountFolder => Folder + @"\" + Environment.UserName;
-		static string? taskFolder;
+		public static readonly string Folder = $@"\Heiward ({Account(Environment.GetEnvironmentVariable("USERPROFILE"), Environment.GetEnvironmentVariable("USERNAME"))})";
 
-		/// <summary>Where this account's tasks are: Heiward's folder, or the account's own once it has tasks there.</summary>
-		internal static string TaskFolder {
-			get => taskFolder ??= Exists(AccountFolder + @"\Scan") || Exists(AccountFolder + @"\Open review page") ? AccountFolder : Folder;
-			set => taskFolder = value;
+		/// <summary>
+		/// The account a folder is named for: its profile folder's name, which renaming the account doesn't change, else the
+		/// user's name, else "user", with what a task's name can't hold as _. Manor and the Steward's kit name it the same way,
+		/// so all three find one account's folder.
+		/// </summary>
+		internal static string Account(string? profile, string? userName) {
+			string path = (profile ?? "").TrimEnd('\\', '/');
+			int cut = path.LastIndexOfAny(['\\', '/']);
+			string name = cut >= 0 ? path[(cut + 1)..] : path.Length >= 2 && path[1] == ':' && char.IsAsciiLetter(path[0]) ? path[2..] : path;
+			if (name.Length == 0) name = userName ?? "";
+			return Regex.Replace(name.Length > 0 ? name : "user", @"[\\/:*?""<>|]", "_");
 		}
 
-		public static string ScanTask => TaskFolder + @"\Scan";
-		public static string OpenTask => TaskFolder + @"\Open review page";
+		const string Scan = "Scan", Open = "Open review page", Uninstall = "Uninstall", RemoveKeys = "Remove GitHub copy";
+		static readonly string[] Tasks = [Scan, Open, Uninstall, RemoveKeys];
+
+		public static string ScanTask => Folder + @"\" + Scan;
+		public static string OpenTask => Folder + @"\" + Open;
 		/// <summary>One run of the uninstall, which <see cref="Installer.Uninstall"/> hands over to Task Scheduler.</summary>
-		public static string UninstallTask => TaskFolder + @"\Uninstall";
+		public static string UninstallTask => Folder + @"\" + Uninstall;
 		/// <summary>One run of reg.exe for the Store version, which removes a GitHub copy (<see cref="Installer.RemoveGitHubCopy"/>).</summary>
-		public static string RemoveKeysTask => TaskFolder + @"\Remove GitHub copy";
+		public static string RemoveKeysTask => Folder + @"\" + RemoveKeys;
+
+		/// <summary>
+		/// The names Heiward gave <paramref name="task"/> before 1.9.72: in one Heiward folder for every account, or, where
+		/// another account held that name, in a folder inside it named after the user.
+		/// </summary>
+		internal static string[] OldNames(string task) => [$@"\Heiward\{task}", $@"\Heiward\{Environment.UserName}\{task}"];
+
+		/// <summary>This user's SID, as Task Scheduler keeps a task's principal; null when Windows won't say.</summary>
+		static readonly Lazy<string?> Sid = new(() => {
+			try { return WindowsIdentity.GetCurrent().User?.Value; }
+			catch (Exception e) when (e is SecurityException or UnauthorizedAccessException) { return null; }
+		});
+
+		/// <summary>
+		/// Whether a task's XML (schtasks /Query /XML) is this user's: the user it runs as, its principal, which Task Scheduler
+		/// keeps as a SID (or a name), is <paramref name="sid"/> or <paramref name="user"/>; without one, its author is.
+		/// </summary>
+		internal static bool Owned(string xml, string? sid, string user) {
+			Match principal = Regex.Match(xml, @"<Principal\b.*?</Principal>", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+			Match m = Regex.Match(principal.Value, @"<UserId>\s*([^<]+?)\s*</UserId>", RegexOptions.IgnoreCase);
+			if (!m.Success && !principal.Value.Contains("<GroupId>", StringComparison.OrdinalIgnoreCase))
+				m = Regex.Match(xml, @"<Author>\s*([^<]+?)\s*</Author>", RegexOptions.IgnoreCase);
+			if (!m.Success) return false;
+			string owner = m.Groups[1].Value;
+			if (owner.StartsWith("S-1-", StringComparison.OrdinalIgnoreCase)) return sid != null && owner.Equals(sid, StringComparison.OrdinalIgnoreCase);
+			static string Name(string u) => u[(u.LastIndexOf('\\') + 1)..];
+			return owner.Equals(user, StringComparison.OrdinalIgnoreCase)
+				|| (!owner.Contains('\\') || !user.Contains('\\')) && Name(owner).Equals(Name(user), StringComparison.OrdinalIgnoreCase);
+		}
+
+		/// <summary>Whether the task is there and this account's own (<see cref="Owned"/>).</summary>
+		internal static bool IsOwn(string name, Func<string[], (int, string)>? run = null) {
+			(int code, string xml) = (run ?? Run)(["/Query", "/TN", name, "/XML"]);
+			return code == 0 && Owned(xml, Sid.Value, Environment.UserDomainName + @"\" + Environment.UserName);
+		}
+
+		/// <summary>
+		/// Moves this account off the older names (<see cref="OldNames"/>), once its tasks are there under their own, and at
+		/// uninstall: deletes each task of an old name that is this account's, ending its scan first. Another account's
+		/// stays, even where Task Scheduler would let this one delete it: it's that account's Heiward. A name with no task
+		/// is nothing to do. The other tasks' runs are short and are left to finish: one may be what started this page or
+		/// runs this uninstall. Task Scheduler leaves the old folders, empty.
+		/// </summary>
+		/// <returns>The old names whose task went.</returns>
+		public static List<string> DropOld(Func<string[], (int, string)>? run = null) {
+			run ??= Run;
+			var dropped = new List<string>();
+			foreach (string task in Tasks)
+				foreach (string old in OldNames(task)) {
+					try {
+						if (!IsOwn(old, run)) continue;
+						if (task == Scan) run(["/End", "/TN", old]);
+						if (run(["/Delete", "/TN", old, "/F"]).Item1 == 0) dropped.Add(old);
+					}
+					catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception or InvalidOperationException) {
+						AgentPaths.AppendLog($"Task Scheduler's {old} stays for now: {e.Message}");
+					}
+				}
+			if (dropped.Count > 0) AgentPaths.AppendLog("moved to " + Folder + ": " + string.Join(", ", dropped));
+			return dropped;
+		}
+
+		/// <summary>Whether this account has a task of an older name (<see cref="OldNames"/>) for the scan or the sign-in, still to move.</summary>
+		public static bool HasOld(Func<string[], (int, string)>? run = null) =>
+			OldNames(Open).Concat(OldNames(Scan)).Any(old => IsOwn(old, run));
+
+		/// <summary>
+		/// The uninstall's: this account's tasks, and those of the older names that are its own (<see cref="DropOld"/>). The
+		/// uninstall task's too: what ran this uninstall, if anything did, runs on regardless.
+		/// </summary>
+		public static void RemoveAll(Func<string[], (int, string)>? run = null) {
+			run ??= Run;
+			foreach (string task in Tasks) run(["/Delete", "/TN", Folder + @"\" + task, "/F"]);
+			DropOld(run);
+		}
 
 		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
 		static string Reg => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
@@ -173,22 +258,10 @@ namespace HEI.Agent {
 			</Task>
 			""";
 
-		/// <summary>
-		/// Registers a task from its XML, made for its name (the Store version's actions name their task). Refused in
-		/// Heiward's folder, as where another account of the PC holds the name, this account's tasks move to a folder of
-		/// its own (<see cref="TaskFolder"/>), and it's registered there.
-		/// </summary>
-		public static void Register(Func<string> name, Func<string> xml, Func<string, string, (int, string)>? create = null) {
-			create ??= Create;
-			string first = name();
-			(int code, string output) = create(first, xml());
-			if (code == 0) return;
-			if (TaskFolder == Folder) {
-				TaskFolder = AccountFolder;
-				if (create(name(), xml()).Item1 == 0) return;
-				TaskFolder = Folder;
-			}
-			throw new InvalidOperationException($"Task Scheduler refused '{first}': {output.Trim()}");
+		/// <summary>Registers (or replaces) a task from its XML, in this account's folder (<see cref="Folder"/>), which Task Scheduler makes if need be.</summary>
+		public static void Register(string name, string xml, Func<string, string, (int, string)>? create = null) {
+			(int code, string output) = (create ?? Create)(name, xml);
+			if (code != 0) throw new InvalidOperationException($"Task Scheduler refused '{name}': {output.Trim()}");
 		}
 
 		static (int, string) Create(string name, string xml) {
@@ -223,7 +296,9 @@ namespace HEI.Agent {
 		/// "Next Run Time" of the scan task, or null when it isn't registered or someone disabled it in Task
 		/// Scheduler: either way no scheduled scan comes. Kept for half an hour, or until that run's time has come:
 		/// each question starts schtasks.exe, and Manor's ping asks every round (<see cref="Forget"/> when the tasks
-		/// change). A development build has none: the task runs the installed copy, with that copy's settings.
+		/// change). A development build has none: the task runs the installed copy, with that copy's settings. The scan
+		/// task of an older name is this account's until it moves (<see cref="OldNames"/>): the Store version updates
+		/// without its install.
 		/// </summary>
 		public static string? NextRun() {
 			if (DevBuild.Current) return null;
@@ -231,7 +306,7 @@ namespace HEI.Agent {
 			if (Kept(cachedQuery.At, cachedQuery.DueUtc, now)) return cachedQuery.Next;
 			string? next = null;
 			try {
-				(int code, string output) = Run("/Query", "/TN", ScanTask, "/FO", "LIST", "/V");
+				(int code, string output) = QueryScan(Run);
 				if (code == 0) {
 					var lines = output.Split('\n').Select(l => l.Trim()).ToList();
 					string? Field(string name) => lines.FirstOrDefault(l => l.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase))?[(name.Length + 1)..].Trim();
@@ -245,6 +320,14 @@ namespace HEI.Agent {
 				&& local.ToUniversalTime() > now ? local.ToUniversalTime() : null;
 			cachedQuery = (now, next, due);
 			return next;
+		}
+
+		/// <summary>The scan task as schtasks /Query /V words it: this account's, else its own of an older name, until that moves.</summary>
+		internal static (int, string) QueryScan(Func<string[], (int, string)> run) {
+			(int code, string output) = run(["/Query", "/TN", ScanTask, "/FO", "LIST", "/V"]);
+			if (code != 0 && OldNames(Scan).FirstOrDefault(old => IsOwn(old, run)) is string own)
+				(code, output) = run(["/Query", "/TN", own, "/FO", "LIST", "/V"]);
+			return (code, output);
 		}
 
 		/// <summary>
