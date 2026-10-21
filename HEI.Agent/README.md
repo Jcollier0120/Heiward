@@ -60,6 +60,7 @@ Download `Heiward-<version>-x64.exe` (Intel or AMD) or `Heiward-<version>-arm64.
 2. downloads FFmpeg, ONNX Runtime and the DINOv2 model, plus the NPU pack for the PC's NPU. Every download is SHA-256 pinned, and AMD's plugin comes from Windows ML;
 3. checks for an NPU. Without one, it asks whether the AI should run on the **GPU** or the **CPU**. On every PC it asks how hard scans should work: **in the background** (efficiency mode, slower) or **at full speed**;
 4. schedules scans with Task Scheduler (per user):
+   - Its tasks are in a folder of each Windows account's own, `\Heiward (<account>)`, named after the account's profile folder, as Castellan names each program's. An update moves the account's tasks there from the names older versions gave them (`\Heiward\Scan`), and only that account's: another account's Heiward keeps its own.
    - With an NPU they run every hour. On battery they step aside in Battery Saver or below 30%.
    - On a GPU or CPU they run every 6 hours on AC power, or never on a schedule if you pick "only when I press Scan now";
 5. starts the review page at sign-in; it stays up, scans paused or not. It opens the page in your browser once a day at sign-in, and only when duplicates wait for review (look-alikes wait on the page without calling you to it);

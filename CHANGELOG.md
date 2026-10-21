@@ -2,7 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
-## 1.9.71
+## 1.9.72
+
+**Each Windows account on a PC has its own Heiward tasks, so two accounts never share or fight over one.**
+
+### What changed
+
+- Heiward's scheduled scan and its other tasks are now in a Task Scheduler folder of each account's own, named after the account: `\Heiward (<account>)\Scan`. Before, every account's were in one `Heiward` folder, where the names belonged to whichever account installed Heiward first. This is how Castellan names each of its programs' tasks when it's installed for everyone on a PC.
+- When Heiward updates, it moves your account's tasks from their old names to the new folder. It moves only your own: another account's Heiward keeps its tasks as they are. The Microsoft Store version moves them the first time its page starts after the update, and your scans run as scheduled in between.
+- Uninstalling removes your account's tasks under both the new names and the old ones, and never another account's.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
 
 **It carries the Steward's kit 2.94.0: the parts every agent of the manor shares.**
 

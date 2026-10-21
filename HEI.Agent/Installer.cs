@@ -399,7 +399,7 @@ namespace HEI.Agent {
 			string exe = DevBuild.Current ? InstalledExe : Environment.ProcessPath ?? InstalledExe;
 			if (!File.Exists(exe)) return false;
 			try {
-				Scheduler.Register(() => Scheduler.UninstallTask, () => Scheduler.UninstallXml(exe, purge));
+				Scheduler.Register(Scheduler.UninstallTask, Scheduler.UninstallXml(exe, purge));
 				if (Scheduler.RunNow(Scheduler.UninstallTask)) {
 					Log("uninstall: handed over to Task Scheduler");
 					return true;
@@ -436,12 +436,10 @@ namespace HEI.Agent {
 				Say((dryRun ? "[dry run] " : "") + s);
 				Log("uninstall: " + s);
 			}
-			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}'" + (StorePackage.IsPackaged ? "" : ", and Heiward from Startup apps"));
+			Step($"Remove tasks '{Scheduler.ScanTask}' and '{Scheduler.OpenTask}', and this account's of their older names" + (StorePackage.IsPackaged ? "" : ", and Heiward from Startup apps"));
 			if (!dryRun) {
-				Scheduler.Remove(Scheduler.ScanTask);
-				Scheduler.Remove(Scheduler.OpenTask);
+				Scheduler.RemoveAll(); // the uninstall task's too: what ran this uninstall, if anything did, runs on regardless
 				if (!StorePackage.IsPackaged) Startup.Remove();
-				Scheduler.Remove(Scheduler.UninstallTask); // what ran this uninstall, if anything did: it runs on regardless
 			}
 			// The shortcuts, the notification name, Apps & Features and the folder are a GitHub copy's.
 			if (!StorePackage.IsPackaged) {
@@ -546,14 +544,31 @@ namespace HEI.Agent {
 			// A copy run from Downloads has nothing a task could run once it's gone: install it first.
 			if (!StorePackage.IsPackaged && !File.Exists(InstalledExe)) return "Heiward isn't installed on this PC: run the downloaded Heiward once to install it.";
 			bool fromStore = StorePackage.IsPackaged;
-			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(() => Scheduler.ScanTask, () => Scheduler.ScanXml(cfg, TaskExe, fromStore));
+			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
 			else Scheduler.Remove(Scheduler.ScanTask);
 			// Always: it's what brings the page back after a restart. The setting decides only whether the browser opens.
 			// The copy from GitHub's is in Windows' Startup apps, where it can be seen and turned off; the Store version's a task.
-			if (fromStore) Scheduler.Register(() => Scheduler.OpenTask, () => Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
+			if (fromStore) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
 			else Startup.Register(cfg.OpenPageAtSignIn);
+			// Once this account's are there under their own names: its tasks of older names go, never another account's.
+			Scheduler.DropOld();
 			Scheduler.Forget();
 			return null;
+		}
+
+		/// <summary>
+		/// The Store version's tasks keep an older Heiward's names (<see cref="Scheduler.OldNames"/>) until they're registered
+		/// again: the Store updates it without its install. Its page moves them once it's up (<see cref="RegisterTasks"/>),
+		/// unless a scan is running, which moving would end: then at the page's next start. Once moved, its sign-in task is
+		/// there under its own name, and this asks Task Scheduler that alone. The copy from GitHub's move as it updates, by its install.
+		/// </summary>
+		public static void MoveStoreTasks(AgentConfig cfg, bool scanning) {
+			if (!StorePackage.IsPackaged || DevBuild.Current || scanning || !File.Exists(AgentPaths.StoreSetUp)) return;
+			try {
+				if (Scheduler.Exists(Scheduler.OpenTask) || !Scheduler.HasOld()) return;
+				if (RegisterTasks(cfg) is string why) AgentPaths.AppendLog("the tasks keep their older names: " + why);
+			}
+			catch (Exception e) { AgentPaths.AppendLog("the tasks keep their older names for now: " + e.Message); }
 		}
 
 		/// <summary>
@@ -868,7 +883,7 @@ namespace HEI.Agent {
 		/// <returns>True once the task has run; this view can't tell whether the keys are gone.</returns>
 		static bool DeleteUserKeysOutside(string[] keys, (string Key, string Value)[] values) {
 			try {
-				Scheduler.Register(() => Scheduler.RemoveKeysTask, () => Scheduler.DeleteKeysXml(keys, values));
+				Scheduler.Register(Scheduler.RemoveKeysTask, Scheduler.DeleteKeysXml(keys, values));
 				if (Scheduler.RunNow(Scheduler.RemoveKeysTask))
 					// The task deletes itself last.
 					for (var until = DateTime.UtcNow.AddSeconds(15); DateTime.UtcNow < until; Thread.Sleep(250))

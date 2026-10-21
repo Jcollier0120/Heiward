@@ -460,6 +460,8 @@ namespace HEI.Agent {
 			_ = JournalKeeper.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			// The copy from GitHub keeps itself up to date, once a day, never during a scan (SelfUpdate).
 			_ = SelfUpdate.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
+			// The Store version's tasks of an older Heiward's names move to this account's folder, once.
+			_ = Task.Run(() => Installer.MoveStoreTasks(cfg, ScanBusy()));
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
 			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
