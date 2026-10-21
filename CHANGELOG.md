@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.69
+
+**Urgent fix: Heiward installs on a PC where another account installed it first, and its FFmpeg runs where Smart App Control is on.**
+
+### What changed
+
+- On a PC where another Windows account had installed Heiward first, the install stopped at "Task Scheduler refused 'Heiward\Scan': Access is denied", and Heiward had no shortcut. Task Scheduler's names are the PC's, not each account's, so the other account's scan task held the name. Heiward now puts this account's tasks in a folder of their own inside Heiward's, named after your account, and finds them there from then on.
+- Heiward reads your videos with FFmpeg, which it downloads when it installs. The builds it downloaded weren't signed, and Smart App Control blocks a program no one signed that it doesn't know: where it's on, videos couldn't be scanned, with a Smart App Control notice for each try. Heiward now downloads the manor's FFmpeg, whose every program and library is signed, on both x64 and ARM64 PCs.
+- Where Smart App Control is on, an unsigned FFmpeg Heiward downloaded before is replaced with the signed one when Heiward updates.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.68
 
 **The Developer area no longer lists repositories that tests left in your Temp folder.**

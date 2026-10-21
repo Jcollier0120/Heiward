@@ -44,23 +44,30 @@ namespace HEI.Core.FFTools {
 		const string BtbNRepo = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/";
 		const string YtDlpRepo = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/";
 
+		/// <summary>The manor's signed FFmpeg (the staff fetch the same), in its public releases.</summary>
+		const string ManorFfmpeg = "https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/";
+
 		/// <summary>
-		/// Native Windows ARM64 builds, keyed by version tag, tried in order. BtbN's winarm64
-		/// builds crash with 0xC0000005 while avcodec-62.dll loads on Snapdragon X machines
-		/// (the fault is in their statically linked librsvg/cairo/DirectWrite init code), even
-		/// for `ffmpeg -version`. First the lean LGPL build made for VDF (ffmpeg-winarm64-lean:
-		/// dav1d and zlib only, 11 MB, built -O3 tuned for Oryon: HEVC ~15% faster per core; since n8.1.3-4
-		/// also Media Foundation's encoders, the only way to the Snapdragon's hardware video encoder), then tordona's essentials build as the fallback should
-		/// that download fail. Both run in-process and as ffmpeg.exe, and both are pinned by
-		/// release and SHA-256: only the tested archives install. Tags without an entry fall
-		/// back to BtbN.
+		/// Native Windows builds, keyed by processor and version tag, tried in order. First the manor's lean LGPL build
+		/// (ffmpeg-winarm64-lean: dav1d and zlib only, 11 MB; on ARM64 built -O3 tuned for Oryon: HEVC ~15% faster per
+		/// core; Media Foundation's encoders, the only way to the Snapdragon's hardware video encoder). Since 1.9.69 its
+		/// n8.1.3-6, whose every .exe and .dll is signed: Smart App Control blocks a program no one signed that it doesn't
+		/// know, as the earlier lean builds and BtbN's (a new build each day) are. Then a fallback should that download
+		/// fail: on ARM64 tordona's essentials build, as BtbN's winarm64 builds crash with 0xC0000005 while avcodec-62.dll
+		/// loads on Snapdragon X machines (the fault is in their statically linked librsvg/cairo/DirectWrite init code),
+		/// even for `ffmpeg -version`; on x64 BtbN's. The pinned ones run in-process and as ffmpeg.exe, and are pinned by
+		/// release and SHA-256: only the tested archives install. Tags without an entry fall back to BtbN.
 		/// </summary>
-		static readonly Dictionary<string, (string Url, string Sha256)[]> WinArm64Builds = new() {
-			["8.1"] = new[] {
-				("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-4/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip",
-					"77db6db962015a72f0316620bcaa4d824903b1bcc96c59a6a8b32316cb09ded5"),
+		static readonly Dictionary<(Architecture Arch, string Tag), (string Url, string Sha256)[]> WinBuilds = new() {
+			[(Architecture.Arm64, "8.1")] = new[] {
+				(ManorFfmpeg + "ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip",
+					"28a4b3aaf6d2fa99815d079d6d1619e57e235f5b98333aae7ff2e9de9b85eebf"),
 				("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/ffmpeg-8.1.3-essentials-shared-win-arm64.7z",
 					"f4d26c8a8387b61c9eacb92432cf5f2cdd075464aae7523731d17d53df1344cd"),
+			},
+			[(Architecture.X64, "8.1")] = new[] {
+				(ManorFfmpeg + "ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip",
+					"e26b6ec56ee89b39acb94792916bcb8346df1094f62432b5c18f56b286b1b12b"),
 			},
 		};
 
@@ -107,13 +114,16 @@ namespace HEI.Core.FFTools {
 		}
 
 		internal static List<FfmpegDownloadPlan> GetDownloadPlans(DownloadOS os, Architecture arch, string versionTag) {
-			if (os == DownloadOS.Windows && arch == Architecture.Arm64 && WinArm64Builds.TryGetValue(versionTag, out var pinnedBuilds)) {
-				return pinnedBuilds.Select(pinned => {
+			var plans = new List<FfmpegDownloadPlan>();
+			if (os == DownloadOS.Windows && WinBuilds.TryGetValue((arch, versionTag), out var pinnedBuilds)) {
+				plans.AddRange(pinnedBuilds.Select(pinned => {
 					var url = new Uri(pinned.Url);
 					string archive = Path.GetFileName(url.AbsolutePath);
 					ArchiveKind archiveKind = archive.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.SevenZip : ArchiveKind.Zip;
-					return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows ARM64 ({versionTag})", pinned.Sha256);
-				}).ToList();
+					return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows {(arch == Architecture.Arm64 ? "ARM64" : "x64")} ({versionTag})", pinned.Sha256);
+				}));
+				// No BtbN after the ARM64 ones: theirs crash on load there.
+				if (arch == Architecture.Arm64) return plans;
 			}
 
 			(string Rid, ArchiveKind Kind, string Repo, string Display)? pick = os switch {
@@ -138,13 +148,12 @@ namespace HEI.Core.FFTools {
 				_ => null
 			};
 			if (pick == null)
-				return new List<FfmpegDownloadPlan>();
+				return plans;
 			(string rid, ArchiveKind kind, string repo, string display) = pick.Value;
 			string ext = kind == ArchiveKind.Zip ? "zip" : "tar.xz";
 			string file = $"ffmpeg-n{versionTag}-latest-{rid}-gpl-shared-{versionTag}.{ext}";
-			return new List<FfmpegDownloadPlan> {
-				new(new Uri(repo + file), file, kind, $"{display} ({versionTag})")
-			};
+			plans.Add(new(new Uri(repo + file), file, kind, $"{display} ({versionTag})"));
+			return plans;
 		}
 
 		/// <summary>

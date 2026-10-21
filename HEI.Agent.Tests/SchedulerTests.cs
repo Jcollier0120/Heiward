@@ -112,6 +112,35 @@ public sealed class SchedulerTests {
 	}
 
 	[Fact]
+	public void Register_RefusedInHeiwardsFolder_MovesThisAccountsTasksToAFolderOfItsOwn() {
+		// Task names are the PC's: another account of the PC holds Heiward\Scan, and Task Scheduler says "Access is denied".
+		var tried = new List<(string Name, string Xml)>();
+		string before = Scheduler.TaskFolder;
+		Scheduler.TaskFolder = Scheduler.Folder;
+		try {
+			Scheduler.Register(() => Scheduler.ScanTask, () => $"<xml for {Scheduler.ScanTask}>",
+				(name, xml) => { tried.Add((name, xml)); return name == @"Heiward\Scan" ? (1, "ERROR: Access is denied.") : (0, "SUCCESS"); });
+			string own = @"Heiward\" + Environment.UserName;
+			Assert.Equal(new[] { (@"Heiward\Scan", @"<xml for Heiward\Scan>"), (own + @"\Scan", $@"<xml for {own}\Scan>") }, tried);
+			Assert.Equal(own + @"\Scan", Scheduler.ScanTask);
+			Assert.Equal(own + @"\Open review page", Scheduler.OpenTask);
+		}
+		finally { Scheduler.TaskFolder = before; }
+	}
+
+	[Fact]
+	public void Register_RefusedInBothFolders_SaysWhyTheFirstWasRefused_AndStaysInHeiwardsFolder() {
+		string before = Scheduler.TaskFolder;
+		Scheduler.TaskFolder = Scheduler.Folder;
+		try {
+			var e = Assert.Throws<InvalidOperationException>(() => Scheduler.Register(() => Scheduler.ScanTask, () => "x", (_, _) => (1, "ERROR: Access is denied.\r\n")));
+			Assert.Equal(@"Task Scheduler refused 'Heiward\Scan': ERROR: Access is denied.", e.Message);
+			Assert.Equal(Scheduler.Folder, Scheduler.TaskFolder);
+		}
+		finally { Scheduler.TaskFolder = before; }
+	}
+
+	[Fact]
 	public void Task_OfTheGitHubCopy_RunsTheExe() =>
 		Assert.Equal("--headless \"C:\\x\\hei.exe\" open", Scheduler.Action(Scheduler.OpenTask, @"C:\x\hei.exe", "open", removeWhenGone: false));
 
