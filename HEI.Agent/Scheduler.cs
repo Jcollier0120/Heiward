@@ -34,13 +34,28 @@ namespace HEI.Agent {
 	/// Both run through conhost --headless: the console app gets its console, the user no window.
 	/// </summary>
 	static class Scheduler {
+		/// <summary>
+		/// Heiward's folder in Task Scheduler. Task names are the PC's, not each account's: where another account of the PC
+		/// registered Heiward's tasks first, Task Scheduler refused this account's under the same names ("Access is denied"),
+		/// and the install stopped there. This account's tasks then go in a folder of its own, Heiward\&lt;account&gt;
+		/// (<see cref="Register"/>), and are looked for there from then on (<see cref="TaskFolder"/>).
+		/// </summary>
 		public const string Folder = @"Heiward";
-		public const string ScanTask = Folder + @"\Scan";
-		public const string OpenTask = Folder + @"\Open review page";
+		static string AccountFolder => Folder + @"\" + Environment.UserName;
+		static string? taskFolder;
+
+		/// <summary>Where this account's tasks are: Heiward's folder, or the account's own once it has tasks there.</summary>
+		internal static string TaskFolder {
+			get => taskFolder ??= Exists(AccountFolder + @"\Scan") || Exists(AccountFolder + @"\Open review page") ? AccountFolder : Folder;
+			set => taskFolder = value;
+		}
+
+		public static string ScanTask => TaskFolder + @"\Scan";
+		public static string OpenTask => TaskFolder + @"\Open review page";
 		/// <summary>One run of the uninstall, which <see cref="Installer.Uninstall"/> hands over to Task Scheduler.</summary>
-		public const string UninstallTask = Folder + @"\Uninstall";
+		public static string UninstallTask => TaskFolder + @"\Uninstall";
 		/// <summary>One run of reg.exe for the Store version, which removes a GitHub copy (<see cref="Installer.RemoveGitHubCopy"/>).</summary>
-		public const string RemoveKeysTask = Folder + @"\Remove GitHub copy";
+		public static string RemoveKeysTask => TaskFolder + @"\Remove GitHub copy";
 
 		static string Conhost => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "conhost.exe");
 		static string Reg => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "reg.exe");
@@ -158,13 +173,28 @@ namespace HEI.Agent {
 			</Task>
 			""";
 
-		public static void Register(string name, string xml) {
+		/// <summary>
+		/// Registers a task from its XML, made for its name (the Store version's actions name their task). Refused in
+		/// Heiward's folder, as where another account of the PC holds the name, this account's tasks move to a folder of
+		/// its own (<see cref="TaskFolder"/>), and it's registered there.
+		/// </summary>
+		public static void Register(Func<string> name, Func<string> xml, Func<string, string, (int, string)>? create = null) {
+			create ??= Create;
+			string first = name();
+			(int code, string output) = create(first, xml());
+			if (code == 0) return;
+			if (TaskFolder == Folder) {
+				TaskFolder = AccountFolder;
+				if (create(name(), xml()).Item1 == 0) return;
+				TaskFolder = Folder;
+			}
+			throw new InvalidOperationException($"Task Scheduler refused '{first}': {output.Trim()}");
+		}
+
+		static (int, string) Create(string name, string xml) {
 			string file = Path.Combine(Path.GetTempPath(), $"heiward-task-{Guid.NewGuid():N}.xml");
 			File.WriteAllText(file, xml, System.Text.Encoding.Unicode);
-			try {
-				(int code, string output) = Run("/Create", "/TN", name, "/XML", file, "/F");
-				if (code != 0) throw new InvalidOperationException($"Task Scheduler refused '{name}': {output.Trim()}");
-			}
+			try { return Run("/Create", "/TN", name, "/XML", file, "/F"); }
 			finally { File.Delete(file); }
 		}
 

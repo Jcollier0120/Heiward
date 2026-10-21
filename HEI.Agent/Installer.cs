@@ -399,7 +399,7 @@ namespace HEI.Agent {
 			string exe = DevBuild.Current ? InstalledExe : Environment.ProcessPath ?? InstalledExe;
 			if (!File.Exists(exe)) return false;
 			try {
-				Scheduler.Register(Scheduler.UninstallTask, Scheduler.UninstallXml(exe, purge));
+				Scheduler.Register(() => Scheduler.UninstallTask, () => Scheduler.UninstallXml(exe, purge));
 				if (Scheduler.RunNow(Scheduler.UninstallTask)) {
 					Log("uninstall: handed over to Task Scheduler");
 					return true;
@@ -546,11 +546,11 @@ namespace HEI.Agent {
 			// A copy run from Downloads has nothing a task could run once it's gone: install it first.
 			if (!StorePackage.IsPackaged && !File.Exists(InstalledExe)) return "Heiward isn't installed on this PC: run the downloaded Heiward once to install it.";
 			bool fromStore = StorePackage.IsPackaged;
-			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(Scheduler.ScanTask, Scheduler.ScanXml(cfg, TaskExe, fromStore));
+			if (cfg.ScanEveryMinutes > 0) Scheduler.Register(() => Scheduler.ScanTask, () => Scheduler.ScanXml(cfg, TaskExe, fromStore));
 			else Scheduler.Remove(Scheduler.ScanTask);
 			// Always: it's what brings the page back after a restart. The setting decides only whether the browser opens.
 			// The copy from GitHub's is in Windows' Startup apps, where it can be seen and turned off; the Store version's a task.
-			if (fromStore) Scheduler.Register(Scheduler.OpenTask, Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
+			if (fromStore) Scheduler.Register(() => Scheduler.OpenTask, () => Scheduler.OpenXml(TaskExe, cfg.OpenPageAtSignIn, fromStore));
 			else Startup.Register(cfg.OpenPageAtSignIn);
 			Scheduler.Forget();
 			return null;
@@ -658,10 +658,22 @@ namespace HEI.Agent {
 				return;
 			}
 
-			if (File.Exists(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe"))) { /* already here */ }
-			else if (await ComponentReuse.TryCopyAsync(ComponentReuse.Ffmpeg, sources, CoreUtils.CurrentFolder,
-				() => Task.FromResult(Starts(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe")) && Starts(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffprobe.exe")))) is string ffFrom)
+			string ffmpegHere = Path.Combine(CoreUtils.CurrentFolder, "bin", "ffmpeg.exe");
+			// Where Smart App Control is on, an FFmpeg no one signed doesn't start (Heiward's before 1.9.69, BtbN's): the
+			// signed one replaces it, and a copy is taken only from a signed one, with no notice from a blocked try.
+			bool sac = SmartAppControlOn();
+			bool blocked = sac && File.Exists(ffmpegHere) && !Signed(ffmpegHere);
+			if (File.Exists(ffmpegHere) && !blocked) { /* already here */ }
+			else if (await ComponentReuse.TryCopyAsync(ComponentReuse.Ffmpeg, sac ? sources.Where(s => Signed(Path.Combine(s, "bin", "ffmpeg.exe"))) : sources, CoreUtils.CurrentFolder,
+				() => Task.FromResult(Starts(ffmpegHere) && Starts(Path.Combine(CoreUtils.CurrentFolder, "bin", "ffprobe.exe")))) is string ffFrom)
 				Console.WriteLine($"  FFmpeg: copied from {ffFrom}");
+			else if (blocked) {
+				try { Console.WriteLine($"  FFmpeg, signed for Smart App Control -> {await FfmpegDownloader.DownloadAndInstallAsync(null, ct)}"); }
+				catch (Exception e) when (e is not OperationCanceledException) {
+					// The rest of the install goes on: scans that need FFmpeg say so on the page, and the next update tries again.
+					Console.WriteLine($"  FFmpeg: Smart App Control blocks the one here, and the signed one couldn't replace it yet: {e.Message}");
+				}
+			}
 			else if (FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFmpeg) == null || FFToolsUtils.GetPath(FFToolsUtils.FFTool.FFProbe) == null)
 				Console.WriteLine($"  FFmpeg -> {await FfmpegDownloader.DownloadAndInstallAsync(null, ct)}");
 
@@ -688,6 +700,31 @@ namespace HEI.Agent {
 		}
 
 		static string Capital(string s) => s.Length == 0 ? s : char.ToUpperInvariant(s[0]) + s[1..];
+
+		/// <summary>
+		/// Smart App Control on (1), or in evaluation (2), when Windows may turn it on at any time: it blocks a program or
+		/// library no one signed that it doesn't know. Read from the registry, without elevation; off where it can't be read.
+		/// </summary>
+		internal static bool SmartAppControlOn(Func<object?>? read = null) {
+			try {
+				object? state = read != null ? read() : OperatingSystem.IsWindows()
+					? Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\CI\Policy", "VerifiedAndReputablePolicyState", null)
+					: null;
+				return state is int s && (s == 1 || s == 2);
+			}
+			catch { return false; }
+		}
+
+		/// <summary>Whether a program carries a signature (whether Windows trusts it, it checks when it starts it).</summary>
+		internal static bool Signed(string exe) {
+			try {
+#pragma warning disable SYSLIB0057 // the only way to an Authenticode signature's certificate
+				using var cert = System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(exe);
+#pragma warning restore SYSLIB0057
+				return true;
+			}
+			catch { return false; }
+		}
 
 		/// <summary>The tool starts and prints its version: an FFmpeg build that crashes on load (as some ARM64 ones do) fails this.</summary>
 		static bool Starts(string exe) {
@@ -831,7 +868,7 @@ namespace HEI.Agent {
 		/// <returns>True once the task has run; this view can't tell whether the keys are gone.</returns>
 		static bool DeleteUserKeysOutside(string[] keys, (string Key, string Value)[] values) {
 			try {
-				Scheduler.Register(Scheduler.RemoveKeysTask, Scheduler.DeleteKeysXml(keys, values));
+				Scheduler.Register(() => Scheduler.RemoveKeysTask, () => Scheduler.DeleteKeysXml(keys, values));
 				if (Scheduler.RunNow(Scheduler.RemoveKeysTask))
 					// The task deletes itself last.
 					for (var until = DateTime.UtcNow.AddSeconds(15); DateTime.UtcNow < until; Thread.Sleep(250))

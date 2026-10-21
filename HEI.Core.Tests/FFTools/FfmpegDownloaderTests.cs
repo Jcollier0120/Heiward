@@ -44,7 +44,6 @@ public class FfmpegDownloaderTests {
 	static FfmpegDownloader.DownloadOS ParseOs(string os) => Enum.Parse<FfmpegDownloader.DownloadOS>(os);
 
 	[Theory]
-	[InlineData("Windows", Architecture.X64, "win64", "BtbN", "zip")]
 	[InlineData("Windows", Architecture.X86, "win32", "BtbN", "zip")]
 	[InlineData("Linux", Architecture.X64, "linux64", "BtbN", "tar.xz")]
 	[InlineData("Linux", Architecture.Arm, "linuxarmhf", "BtbN", "tar.xz")]
@@ -63,14 +62,15 @@ public class FfmpegDownloaderTests {
 	}
 
 	[Fact]
-	public void GetDownloadPlans_WindowsArm64UsesPinnedNativeBuilds_LeanFirstThenTordona() {
-		// BtbN's winarm64 builds crash on load on Snapdragon X; 8.1 takes pinned builds instead.
+	public void GetDownloadPlans_WindowsArm64UsesPinnedNativeBuilds_SignedLeanFirstThenTordona() {
+		// BtbN's winarm64 builds crash on load on Snapdragon X; 8.1 takes pinned builds instead, the manor's signed one first.
 		var plans = FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.Arm64, "8.1");
 
 		Assert.Equal(2, plans.Count);
 		Assert.Equal("ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip", plans[0].ArchiveFileName);
 		Assert.Equal(ArchiveKind.Zip, plans[0].ArchiveKind);
-		Assert.Equal("https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-4/" + plans[0].ArchiveFileName, plans[0].DownloadUrl.AbsoluteUri);
+		Assert.Equal("https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/" + plans[0].ArchiveFileName, plans[0].DownloadUrl.AbsoluteUri);
+		Assert.Equal("28a4b3aaf6d2fa99815d079d6d1619e57e235f5b98333aae7ff2e9de9b85eebf", plans[0].Sha256);
 		Assert.Equal("ffmpeg-8.1.3-essentials-shared-win-arm64.7z", plans[1].ArchiveFileName);
 		Assert.Equal(ArchiveKind.SevenZip, plans[1].ArchiveKind);
 		Assert.Equal("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/" + plans[1].ArchiveFileName, plans[1].DownloadUrl.AbsoluteUri);
@@ -78,6 +78,29 @@ public class FfmpegDownloaderTests {
 			Assert.Matches("^[0-9a-f]{64}$", plan.Sha256);
 			Assert.Contains("8.1", plan.DisplayName);
 		});
+	}
+
+	[Fact]
+	public void GetDownloadPlans_WindowsX64UsesTheSignedLeanBuild_ThenBtbN() {
+		// Smart App Control blocks BtbN's unsigned builds (a new one each day); the manor's signed one comes first.
+		var plans = FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.X64, "8.1");
+
+		Assert.Equal(2, plans.Count);
+		Assert.Equal("https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip", plans[0].DownloadUrl.AbsoluteUri);
+		Assert.Equal("e26b6ec56ee89b39acb94792916bcb8346df1094f62432b5c18f56b286b1b12b", plans[0].Sha256);
+		Assert.Equal(ArchiveKind.Zip, plans[0].ArchiveKind);
+		Assert.Equal("Windows x64 (8.1)", plans[0].DisplayName);
+		Assert.Equal("ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip", plans[1].ArchiveFileName);
+		Assert.Contains("github.com/BtbN/FFmpeg-Builds/releases/download/latest/", plans[1].DownloadUrl.AbsoluteUri);
+		Assert.Null(plans[1].Sha256);
+	}
+
+	[Fact]
+	public void GetDownloadPlans_WindowsX64WithoutAPinnedBuildTakesBtbN() {
+		var plan = Assert.Single(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.X64, "7.1"));
+
+		Assert.Equal("ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip", plan.ArchiveFileName);
+		Assert.Null(plan.Sha256);
 	}
 
 	[Fact]
