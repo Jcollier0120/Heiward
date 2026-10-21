@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.73
+
+**It carries the Steward's kit 2.95.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.95.0: Ready for Castellan's "Everyone on this PC" install: each Windows account's tasks in a Task Scheduler folder of its own, and the model files once per PC.
+
+### Before you update
+
+- An agent that names its task in its own code (`\<Name>\Home page`, or `schtasks /Run` by hand) should use `TASK_NAME`, or `runOwnTask([TASK_NAME, OLD_TASK_NAME], taskDeps())`. One that only shows `TASK_NAME` in its usage text needs nothing.
+- Nothing else: the old tasks move at each agent's next update, with nothing for the person to do.
+
 ## 1.9.72
 
 **Each Windows account on a PC has its own Heiward tasks, so two accounts never share or fight over one.**
