@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.70
+
+**It carries the Steward's kit 2.93.3: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.93.3: A test file that never ends no longer holds a whole check run, and the PC's turn, until its time limit.
+
+### Before you update
+
+- Nothing in an agent's code. A test file that took longer than ten minutes at the pace now fails: none of the manor's comes near (their whole suites take a few). A file that keeps its process alive after its tests is still a bug to fix in the agent (stop what it started, even when a test fails before its `finally`), but it no longer stalls the run.
+
 ## 1.9.69
 
 **Urgent fix: Heiward installs on a PC where another account installed it first, and its FFmpeg runs where Smart App Control is on.**
