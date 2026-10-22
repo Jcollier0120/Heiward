@@ -119,19 +119,22 @@ namespace HEI.Agent {
 					if (s.ValueKind != JsonValueKind.Object || !s.TryGetProperty("cwd", out JsonElement cwd) || cwd.GetString() is not { Length: > 0 } dir) continue;
 					if (!s.TryGetProperty("pid", out JsonElement pidValue) || !pidValue.TryGetInt32(out int pid)) continue;
 					if (!ListingPlan.IsUnder(RealPath.Of(dir), real ??= RealPath.Of(folder))) continue;
-					string? procStart = s.TryGetProperty("procStart", out JsonElement ps) ? ps.ValueKind == JsonValueKind.String ? ps.GetString() : ps.ToString() : null;
-					if (Running(pid, procStart) is { } name) return new WorkingFolder(pid, name, dir);
+					if (Running(pid, ProcStart(s)) is { } name) return new WorkingFolder(pid, name, dir);
 				}
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or InvalidOperationException) { }
 			}
 			return null;
 		}
 
+		/// <summary>When a session's process started, as its sessions\&lt;pid&gt;.json says (a FILETIME); null when it doesn't.</summary>
+		internal static string? ProcStart(JsonElement session) =>
+			session.TryGetProperty("procStart", out JsonElement ps) ? ps.ValueKind == JsonValueKind.String ? ps.GetString() : ps.ToString() : null;
+
 		/// <summary>
 		/// The process's name while it runs; null once it's gone, or when its number now belongs to a process started
 		/// later than the session's (<paramref name="procStart"/>, a FILETIME, when the file has it).
 		/// </summary>
-		static string? Running(int pid, string? procStart) {
+		internal static string? Running(int pid, string? procStart) {
 			try {
 				using Process p = Process.GetProcessById(pid);
 				if (p.HasExited) return null;
