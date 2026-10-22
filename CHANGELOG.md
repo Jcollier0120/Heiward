@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.74
+
+**It carries the Steward's kit 2.96.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.96.1: A strict page sends a browser that isn't signed in to Castellan, which opens that same page signed in.
+
+### Before you update
+
+- Nothing: pages aren't strict unless `KIT_STRICT_PAGES=1`, and an agent with a guard takes the let-go steps into its own install-guard.ps1.
+
 ## 1.9.73
 
 **It carries the Steward's kit 2.95.0: the parts every agent of the manor shares.**
