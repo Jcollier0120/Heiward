@@ -150,7 +150,7 @@ namespace HEI.Agent {
 		internal static string? KindOf(DevItem item) => item.Kind switch {
 			DevScanner.Projects => BuildOutputs,
 			DevScanner.Worktrees => Worktrees,
-			"temp" or "dumps" => Temp,
+			"temp" or "dumps" or ClaudeTemp.Kind => Temp,
 			"sysimage" => SystemImages,
 			_ => null,
 		};

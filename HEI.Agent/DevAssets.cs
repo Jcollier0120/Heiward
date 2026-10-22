@@ -141,7 +141,8 @@ namespace HEI.Agent {
 				AndroidItems(staleBefore).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Temp, "Temporary files and crash dumps",
-				$"Files in your Temp folder untouched for {cfg.TempOlderThanDays} days, and crash dumps apps left behind.",
+				$"Files in your Temp folder untouched for {cfg.TempOlderThanDays} days, Claude Code sessions' temp files idle as long (never those of a session " +
+				"that's running, can be resumed or has a file open), and crash dumps apps left behind.",
 				TempItems(cfg.TempOlderThanDays).ToList()));
 
 			report.Categories.RemoveAll(c => c.Items.Count == 0);
@@ -697,6 +698,11 @@ namespace HEI.Agent {
 			if (bytes >= 1 << 20)
 				yield return new DevItem(IdOf(Temp, temp), "temp", "Temp folder", temp, old.Select(e => e.Path).ToList(), bytes, null, true, null,
 					$"{old.Count:N0} item(s) untouched for {olderThanDays} days");
+			if (Directory.Exists(ClaudeTemp.In(temp))) {
+				ClaudeKeeps? keeps = ClaudeKeeps.Now(olderThanDays);
+				if (keeps == null) AgentPaths.AppendLog("developer check: Claude Code's sessions couldn't be read, so its temp files wait for the next check");
+				else if (ClaudeTemp.Item(temp, olderThanDays, keeps) is { } claude) yield return claude;
+			}
 			string dumps = Path.Combine(Local, "CrashDumps");
 			if (Directory.Exists(dumps)) {
 				var files = new DirectoryInfo(dumps).EnumerateFiles("*.dmp").ToList();
@@ -707,23 +713,27 @@ namespace HEI.Agent {
 			}
 		}
 
-		/// <summary>Top-level Temp entries with nothing inside changed for <paramref name="days"/> days.</summary>
+		/// <summary>
+		/// Top-level Temp entries with nothing inside changed for <paramref name="days"/> days. Not Claude Code's temp folder,
+		/// which is judged a session at a time (<see cref="ClaudeTemp"/>).
+		/// </summary>
 		internal static List<(string Path, long Bytes)> OldTempEntries(string temp, int days) {
 			DateTime before = DateTime.UtcNow.AddDays(-days);
 			var old = new List<(string, long)>();
 			IEnumerable<FileSystemInfo> entries;
 			try { entries = new DirectoryInfo(temp).EnumerateFileSystemInfos("*", ListOptions).ToList(); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return old; }
-			foreach (FileSystemInfo e in entries) {
-				if (e is FileInfo f) {
-					if (f.LastWriteTimeUtc < before) old.Add((f.FullName, f.Length));
-				}
-				else if ((e.Attributes & FileAttributes.ReparsePoint) == 0) {
-					var (bytes, newest) = Measure(e.FullName);
-					if (newest < before && e.LastWriteTimeUtc < before) old.Add((e.FullName, bytes));
-				}
-			}
+			foreach (FileSystemInfo e in entries)
+				if (!ClaudeTemp.IsIt(e) && Untouched(e, before) is { } entry) old.Add(entry);
 			return old;
+		}
+
+		/// <summary>A Temp entry with nothing inside changed since <paramref name="before"/>, and its size; null otherwise, and for a link.</summary>
+		internal static (string Path, long Bytes)? Untouched(FileSystemInfo e, DateTime before) {
+			if (e is FileInfo f) return f.LastWriteTimeUtc < before ? (f.FullName, f.Length) : null;
+			if ((e.Attributes & FileAttributes.ReparsePoint) != 0) return null;
+			var (bytes, newest) = Measure(e.FullName);
+			return newest < before && e.LastWriteTimeUtc < before ? (e.FullName, bytes) : null;
 		}
 
 		// ------------------------------------------------------------------ helpers
@@ -750,7 +760,7 @@ namespace HEI.Agent {
 			return (bytes, newest);
 		}
 
-		static string IdOf(string kind, string key) =>
+		internal static string IdOf(string kind, string key) =>
 			Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(kind + "|" + key.ToLowerInvariant())))[..16].ToLowerInvariant();
 	}
 
@@ -1053,6 +1063,8 @@ namespace HEI.Agent {
 						r = r.Add(File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p));
 					return CleanResult.Of(r, item.Location, use);
 				}
+				case ClaudeTemp.Kind:
+					return ClaudeTemp.Clean(item, cfg.TempOlderThanDays, ClaudeKeeps.Now(cfg.TempOlderThanDays), use);
 				case "dumps": {
 					var r = new SafeDelete.Result(0, 0);
 					foreach (string p in item.Paths.Where(p => p.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase)))

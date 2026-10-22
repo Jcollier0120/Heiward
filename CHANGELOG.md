@@ -2,6 +2,23 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.76
+
+**Claude Code's old temp files go one session at a time, and never those of a session still in use.**
+
+### What's new
+
+- Developer mode's **Temp files and crash dumps** has a new row, **Claude Code sessions' temp files**: the folder Claude Code keeps in your Temp folder for each session (its scratchpad, its tasks' output), counted and measured a session at a time. A session's folder is ticked once nothing in it has changed for 7 days (`tempOlderThanDays`), and automatic cleanup takes it with your other temp files.
+- Never one a session may still use, whatever its age: a session that's running, one you can still resume (it was used in those 7 days), one the Claude app lists as open rather than archived, or a folder a program has a file open in. Each is asked again just before anything is deleted.
+
+### What changed
+
+- Claude Code's temp folder no longer counts as a single Temp entry. Live sessions write in it every minute, so as a whole it was never old enough to go, and it could grow to tens of gigabytes. The rest of what's in it is judged as your other temp files are, and a project's folder goes once its sessions' have.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The row appears after the next developer check.
+
 ## 1.9.75
 
 **It carries the Steward's kit 2.96.2: the parts every agent of the manor shares.**
