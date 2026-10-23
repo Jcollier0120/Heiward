@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.81
+
+**It carries the Steward's kit 2.106.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.106.0: A generation of an NPU can say the biggest model size a manager has tested on it; the Smith offers no bigger.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.77
 
 **It carries the Steward's kit 2.99.1: the parts every agent of the manor shares.**
