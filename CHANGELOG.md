@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.87
+
+**It carries the Steward's kit 2.135.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.135.0: The text reader on the processor runs in Windows' efficiency mode at a gentle pace: the same lines read, for about half the energy a picture.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The signed helpers are unchanged, so nothing is compiled anew.
+
 ## 1.9.85
 
 **It carries the Steward's kit 2.114.0: the parts every agent of the manor shares.**
