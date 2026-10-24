@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.85
+
+**It carries the Steward's kit 2.114.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.114.0: The text reader reads with our own model on the NPU: on a Snapdragon it reads 1,211 of the check's 1,253 lines exactly, where Windows OCR read 733.
+
+### Before you update
+
+- Nothing: take the kit as usual. On a Snapdragon, the first read after an agent takes it starts the 226 MB fetch in the background. Windows OCR reads until the fetch is done, and the first start then compiles the NPU's graphs (about 17 s). Every agent on the PC shares the one folder, so it's fetched once.
+
 ## 1.9.84
 
 **It carries the Steward's kit 2.113.2: the parts every agent of the manor shares.**
