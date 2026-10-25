@@ -282,8 +282,13 @@ namespace HEI.Agent {
 		public string GameMode { get; set; } = "off";
 		/// <summary>A project untouched this many days has its build outputs ticked for cleaning.</summary>
 		public int StaleProjectDays { get; set; } = 30;
-		/// <summary>Temp files untouched this many days are ticked for cleaning.</summary>
-		public int TempOlderThanDays { get; set; } = 7;
+		/// <summary>
+		/// Temp files untouched this many days are ticked for cleaning, and Claude Code's ended sessions' temp files idle as long; a
+		/// day at least. What's in Temp is a program's scratch: what a program still needs it has open, or touched within the day.
+		/// Until 1.9.97 the setting was "tempOlderThanDays", 7, which nothing offered to change: a settings file's is left behind.
+		/// </summary>
+		public int TempUntouchedDays { get => tempDays; set => tempDays = Math.Max(1, value); }
+		int tempDays = 1;
 
 		/// <summary>Repositories the user bundled into one project on the review page (each in at most one).</summary>
 		public List<DevProject> DevProjects { get; set; } = new();

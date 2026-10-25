@@ -1821,7 +1821,8 @@ let autoBusy = false;
 function autoKinds(a) {
   return [
     ['branches', 'Merged branches', 'Their commits are already in the remote\'s main branch.'],
-    ['temp', 'Temp files and crash dumps', 'Untouched for ' + a.tempOlderThanDays + ' days.'],
+    ['temp', 'Temp files and crash dumps', 'Untouched for ' + (a.tempUntouchedDays === 1 ? 'a day' : a.tempUntouchedDays + ' days') +
+      ', never a folder a program still holds.'],
     ['buildOutputs', 'Build outputs', 'Of projects untouched for ' + a.staleProjectDays + ' days.'],
     ['worktrees', 'Worktrees', 'Untouched for ' + a.staleProjectDays + ' days, with everything committed and pushed.'],
     ['systemImages', 'Emulator system images', 'That no emulator uses.'],
@@ -2010,6 +2011,10 @@ function renderAutoCard(s) {
     const parts = [];
     if (last.files) parts.push(count(last.files, 'copy', 'copies') + ' (' + bytes(last.fileBytes) + ') to the Recycle Bin');
     if (last.devItems) parts.push(bytes(last.devBytes) + ' of developer leftovers');
+    // The drive's own count of what it got back: on a Dev Drive (ReFS) it differs from the files' sizes, and comes a while after.
+    for (const d of last.drives || []) {
+      parts.push(d.drive + ' had ' + bytes(d.before) + ' free, ' + bytes(d.after) + ' after' + (d.later != null ? ' (' + bytes(d.later) + ' ' + ago(d.laterUtc) + ')' : ''));
+    }
     if (last.branches) parts.push(count(last.branches, 'merged branch', 'merged branches'));
     if (last.gameItems) parts.push(bytes(last.gameBytes) + ' of game leftovers to the Recycle Bin');
     const line = el('div', 'muted small', 'Last run ' + ago(last.atUtc) + ': ' + (parts.join(' · ') || 'nothing cleaned') + '.');
@@ -3048,7 +3053,7 @@ async function cleanDev(picked) {
   devBusy = true;
   devResult = null;
   renderDev();
-  let freed = 0, left = 0;
+  let freed = 0, left = 0, busy = 0;
   const failed = [], held = [];
   for (const [n, i] of picked.entries()) {
     devProgress = i.name + ' (' + (n + 1) + ' of ' + picked.length + ')';
@@ -3058,6 +3063,7 @@ async function cleanDev(picked) {
       const r = await post('/api/dev/items/' + encodeURIComponent(i.id) + '/clean');
       freed += r.freedBytes;
       left += r.leftInUse;
+      busy += r.held || 0;
       if (r.error) failed.push(i.name + ' (' + r.error + ')');
       // What was left, and what holds it: a program working in the folder, one with a file open, or Windows' reason.
       if (r.leftInUse) held.push(i.name + ': ' + count(r.leftInUse, 'item', 'items') + ' left in use' +
@@ -3070,6 +3076,7 @@ async function cleanDev(picked) {
   devBusy = false;
   devProgress = '';
   devResult = [!failed.length, 'Freed ' + bytes(freed) + '.' + (left ? ' ' + count(left, 'file or folder was', 'files or folders were') + ' in use and left alone.' : '') +
+    (busy ? ' ' + count(busy, 'folder a program is using was', 'folders programs are using were') + ' left whole, for next time.' : '') +
     (failed.length ? ' Not cleaned:' : ''), [...failed, ...held]];
   await loadDevReport();
   renderDev();

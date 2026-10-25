@@ -115,9 +115,26 @@ public sealed class ClaudeTempTests : IDisposable {
 		Assert.Null(r.Error);
 		Assert.Equal(0, r.LeftInUse);
 		Assert.Equal((2 << 20) + 1, r.FreedBytes);
+		Assert.Equal("1 ended session's folder and 1 other item", r.Went);
 		Assert.False(Directory.Exists(Path.Combine(container, Project)), "the emptied project folder stayed");
 		Assert.True(Directory.Exists(fresh));
 		Assert.True(Directory.Exists(container));
+	}
+
+	/// <summary>By default an ended session's folder goes once it's been idle a day, and its transcript as long: that's when Claude Code's temp filled a drive.</summary>
+	[Fact]
+	public void AnEndedSession_GoesAfterADayIdle_ByDefault() {
+		int days = new AgentConfig().TempUntouchedDays;
+		string ended = Session(DateTime.UtcNow.AddDays(-2), bytes: 2 << 20);
+		Transcript(IdOf(ended), DateTime.UtcNow.AddDays(-2));
+		string lastHour = Session(DateTime.UtcNow.AddHours(-1));
+		string resumed = Session(DateTime.UtcNow.AddDays(-2));
+		Transcript(IdOf(resumed), DateTime.UtcNow.AddHours(-3)); // resumed this morning: its scratchpad may matter to it again
+		ClaudeTemp.Found found = ClaudeTemp.Scan(container, days, Keeps(days));
+		Assert.Equal(new[] { ended }, found.Idle.Select(e => e.Path));
+		Assert.Equal(1, found.Kept);
+		Assert.True(Directory.Exists(lastHour));
+		Assert.Equal("1 session(s) idle for a day · 1 kept: in use or resumable", ClaudeTemp.Item(temp, days, Keeps(days)) is { } item ? item.Detail : "too small to list");
 	}
 
 	[Fact]
@@ -207,8 +224,10 @@ public sealed class ClaudeTempTests : IDisposable {
 			ClaudeTemp.Found found = Scan();
 			Assert.Empty(found.Idle);
 			Assert.Equal(1, found.Kept);
-			SafeDelete.Result r = ClaudeTemp.Remove(folder);
-			Assert.Equal(1, r.Left);
+			// A cleanup leaves it whole, untouched, as held: not a failure.
+			SafeDelete.Result r = SafeDelete.Away(folder);
+			Assert.Equal(0, r.Left);
+			Assert.Equal(1, r.Held);
 			Assert.Equal(0, r.Bytes);
 		}
 		Assert.True(File.Exists(note), "the file held open went");

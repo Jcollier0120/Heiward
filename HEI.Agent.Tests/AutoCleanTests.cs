@@ -285,6 +285,8 @@ public sealed class AutoCleanTests : IDisposable {
 		public readonly List<(string Key, List<string> Paths)> Recycled = new();
 		public readonly List<string> Cleaned = new();
 		public readonly List<(string Repo, List<string> Branches)> Pruned = new();
+		/// <summary>Each item's drive and its free space before and after, as <see cref="CleanupActions.Clean"/> measures them.</summary>
+		public Func<DevItem, DriveFree?> Drive = _ => null;
 
 		public RecycleResult Recycle(ReportGroup group, IReadOnlyCollection<string> paths) {
 			Recycled.Add((group.Key, paths.ToList()));
@@ -293,7 +295,7 @@ public sealed class AutoCleanTests : IDisposable {
 
 		public CleanResult Clean(DevItem item) {
 			Cleaned.Add(item.Id);
-			return new CleanResult(item.Bytes, 0, null);
+			return new CleanResult(item.Bytes, 0, null, Drive: Drive(item));
 		}
 
 		public PruneResult Prune(RepoBranches repo, IReadOnlyCollection<string>? branches) {
@@ -335,6 +337,35 @@ public sealed class AutoCleanTests : IDisposable {
 		Assert.Equal(new[] { "done" }, Assert.Single(actions.Pruned).Branches);
 		Assert.Equal(1, run.Branches);
 		Assert.Equal(5L << 20, run.DevBytes);
+	}
+
+	/// <summary>
+	/// A drive says what it got back as well as the files' sizes do (on a Dev Drive they differ: cloned blocks, and ReFS gives space back
+	/// a while after): free before the first item cleaned on it and after the last, and once more at a run a while later.
+	/// </summary>
+	[Fact]
+	public void A_run_says_each_drives_free_space_before_and_after_and_looks_again_a_while_later() {
+		DevReport dev = DevOf(new[] { Dev("tmp", "temp"), Dev("claude", ClaudeTemp.Kind), Dev("dumps", "dumps") });
+		AutoCleanState s = State(dev.Categories[0].Items.Select(i => ("d:" + i.Id, Now.AddDays(-9))).ToArray());
+		long gb = 1L << 30;
+		var actions = new FakeActions {
+			Drive = i => i.Id switch {
+				"tmp" => new DriveFree(@"E:\", 6 * gb, 8 * gb),
+				"claude" => new DriveFree(@"E:\", 8 * gb, 20 * gb),
+				_ => new DriveFree(@"C:\", 50 * gb, 51 * gb),
+			},
+		};
+		AutoRun run = AutoCleaner.Run(Config(duplicates: false, developer: true), null, dev, NoDecisions, s, Now, devChecked: true, actions)!;
+		Assert.Equal(new[] { new DriveFree(@"E:\", 6 * gb, 20 * gb), new DriveFree(@"C:\", 50 * gb, 51 * gb) }, run.Drives);
+		Assert.Contains(@"E:\ had 6 GB free, 20 GB after", run.Describe());
+
+		var free = new Dictionary<string, long> { [@"E:\"] = 38 * gb, [@"C:\"] = 49 * gb };
+		Assert.Empty(AutoCleaner.LookAgain(s, Now.AddMinutes(5), d => free[d])); // too soon: ReFS is still giving it back
+		DateTime later = Now + AutoCleaner.LookAgainAfter;
+		Assert.Equal(2, AutoCleaner.LookAgain(s, later, d => free[d]).Count);
+		Assert.Equal(new DriveFree(@"E:\", 6 * gb, 20 * gb, 38 * gb, later), s.Runs[0].Drives![0]);
+		Assert.Contains("(38 GB later)", s.Runs[0].Describe());
+		Assert.Empty(AutoCleaner.LookAgain(s, later.AddHours(1), d => free[d])); // once
 	}
 
 	[Fact]

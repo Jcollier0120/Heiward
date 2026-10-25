@@ -30,8 +30,6 @@ namespace HEI.Agent {
 		/// <summary>The developer item's kind; automatic cleanup takes it as temp files.</summary>
 		public const string Kind = "claude";
 		const string Folder = "claude";
-		/// <summary>Added to a session's folder's name while it's renamed away (<see cref="Held"/>, <see cref="Remove"/>).</summary>
-		const string Away = ".heiward";
 
 		static readonly EnumerationOptions ListOptions = new() { IgnoreInaccessible = true, AttributesToSkip = 0 };
 		static readonly Regex SessionId = new("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -103,7 +101,7 @@ namespace HEI.Agent {
 			long bytes = found.Idle.Sum(e => e.Bytes);
 			if (bytes < 1 << 20) return null;
 			int others = found.Idle.Count - found.Sessions;
-			var facts = new List<string> { $"{found.Sessions:N0} session(s) idle for {days} days" };
+			var facts = new List<string> { $"{found.Sessions:N0} session(s) idle for {DevScanner.ForDays(days)}" };
 			if (others > 0) facts.Add($"{others:N0} other item(s) untouched as long");
 			if (found.Kept > 0) facts.Add($"{found.Kept:N0} kept: in use or resumable");
 			return new DevItem(DevScanner.IdOf(DevScanner.Temp, container), Kind, "Claude Code sessions' temp files", container,
@@ -119,19 +117,26 @@ namespace HEI.Agent {
 			var still = Scan(item.Location, days, keeps, checkHeld: false).Idle.ToDictionary(e => e.Path, e => e.Session, StringComparer.OrdinalIgnoreCase);
 			var r = new SafeDelete.Result(0, 0);
 			var projects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			int sessions = 0, others = 0;
 			foreach (string p in item.Paths) {
 				if (!still.TryGetValue(p, out bool session)) continue;
+				SafeDelete.Result one = session ? SafeDelete.Away(p) : File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p);
+				r = r.Add(one);
+				if (one.Left > 0 || one.Held > 0) continue;
 				if (session) {
-					r = r.Add(Remove(p));
+					sessions++;
 					projects.Add(Path.GetDirectoryName(p)!);
 				}
-				else r = r.Add(File.Exists(p) ? SafeDelete.File(p) : SafeDelete.Tree(p));
+				else others++;
 			}
 			// Windows deletes a folder this way only while it's empty: one a session was started in meanwhile stays.
 			foreach (string project in projects)
 				try { Directory.Delete(project); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-			return CleanResult.Of(r, item.Location, use);
+			var went = new List<string>();
+			if (sessions > 0) went.Add($"{sessions:N0} ended {(sessions == 1 ? "session's folder" : "sessions' folders")}");
+			if (others > 0) went.Add($"{others:N0} other {(others == 1 ? "item" : "items")}");
+			return CleanResult.Of(r, item.Location, use) with { Went = went.Count > 0 ? string.Join(" and ", went) : null, Held = r.Held };
 		}
 
 		/// <summary>
@@ -141,7 +146,7 @@ namespace HEI.Agent {
 		/// next time.
 		/// </summary>
 		internal static bool Held(string folder) {
-			string away = folder + Away;
+			string away = folder + SafeDelete.AwaySuffix;
 			try { Directory.Move(folder, away); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return true; }
 			for (int attempt = 1; ; attempt++) {
@@ -159,21 +164,6 @@ namespace HEI.Agent {
 			}
 		}
 
-		/// <summary>
-		/// Deletes a session's folder, renamed away first: what <see cref="Held"/> checks, and nothing can open a file in it by its
-		/// path while it goes. Whatever can't be deleted goes back under its name.
-		/// </summary>
-		internal static SafeDelete.Result Remove(string folder) {
-			string away = folder + Away;
-			try { Directory.Move(folder, away); }
-			catch (DirectoryNotFoundException) { return new SafeDelete.Result(0, 0); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return SafeDelete.Result.Failed(folder, e); }
-			SafeDelete.Result r = SafeDelete.Tree(away);
-			if (r.Left > 0)
-				try { Directory.Move(away, folder); }
-				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-			return r;
-		}
 	}
 
 	/// <summary>
