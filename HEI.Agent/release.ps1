@@ -1,6 +1,7 @@
 # Builds Heiward's release files: one self-contained exe per architecture
-# (Heiward-<version>-x64.exe, Heiward-<version>-arm64.exe) and SHA256SUMS.txt, in artifacts\heiward.
-# With -Publish it then creates the GitHub release v<version> at the commit it built, and uploads every file.
+# (Heiward-<version>-x64.exe, Heiward-<version>-arm64.exe), SHA256SUMS.txt, and beside them the GNU AGPL's text and the
+# third-party notices every copy carries (LICENSE.txt, THIRD-PARTY-NOTICES.txt; tools\notices.ps1 writes the notices), in
+# artifacts\heiward. With -Publish it then creates the GitHub release v<version> at the commit it built, and uploads every file.
 # It fills the Steward's kit first (tools\kit.ps1), at the version kit.json pins.
 # Each exe is code-signed before SHA256SUMS.txt is written (below, "Signing"); -Publish refuses unsigned files unless
 # told -Unsigned.
@@ -200,6 +201,13 @@ if ($Publish) {
 $signtool = $null
 $signer = $null
 if (-not $Unsigned) {
+	# The copies on PCs update themselves only to an exe signed by a certificate they know (Authenticode.cs,
+	# PublisherThumbprints): signed by any other, a release would be downloaded and thrown away. A renewed certificate is
+	# added there first, in a release signed by the one before.
+	$pinned = [regex]::Matches((Get-Content (Join-Path $PSScriptRoot 'Authenticode.cs') -Raw), '"([0-9A-Fa-f]{40})"') | ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() }
+	if ($pinned -notcontains $Thumbprint.ToUpperInvariant()) {
+		throw "The certificate $Thumbprint isn't in Authenticode.cs's PublisherThumbprints, so the copies already installed wouldn't update to this release. Add it there, and release that signed by a certificate they know, first."
+	}
 	$signtool = Find-SignTool
 	$cert = Get-Item "Cert:\CurrentUser\My\$Thumbprint" -ErrorAction SilentlyContinue
 	$problem = Get-SignProblem $signtool $cert
@@ -213,10 +221,14 @@ if (-not $Unsigned) {
 		Write-Host "Signing as $signer, with $signtool"
 	}
 }
+elseif ($Publish) {
+	Write-Warning 'Publishing unsigned: the copies already installed check a release''s signature, and won''t update to this one by themselves (Authenticode.cs).'
+}
 
 # Only this script's own files are replaced, so -Out can point at a folder that holds other things.
 New-Item -ItemType Directory -Force $Out | Out-Null
-Get-ChildItem $Out -File | Where-Object { $_.Name -like 'Heiward-*.exe' -or $_.Name -eq 'SHA256SUMS.txt' } | Remove-Item
+$texts = 'LICENSE.txt', 'THIRD-PARTY-NOTICES.txt'
+Get-ChildItem $Out -File | Where-Object { $_.Name -like 'Heiward-*.exe' -or $_.Name -eq 'SHA256SUMS.txt' -or $texts -contains $_.Name } | Remove-Item
 $work = Join-Path ([IO.Path]::GetTempPath()) "heiward-release-$([guid]::NewGuid().ToString('N'))"
 
 try {
@@ -246,6 +258,8 @@ try {
 			Set-ReleaseSignature $exe
 		}
 	}
+	# The texts a publish puts beside hei.exe (HEI.Agent.csproj), the same for both: hei.exe carries them too.
+	foreach ($name in $texts) { Copy-Item (Join-Path $work "x64\$name") (Join-Path $Out $name) }
 }
 finally {
 	Remove-Item $work -Recurse -Force -ErrorAction SilentlyContinue
@@ -255,7 +269,7 @@ Get-ChildItem $Out -Filter 'Heiward-*.exe' | Sort-Object Name | ForEach-Object {
 	"$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())  $($_.Name)"
 } | Set-Content (Join-Path $Out 'SHA256SUMS.txt') -Encoding ascii
 
-$files = Get-ChildItem $Out -File | Where-Object { $_.Name -like "Heiward-$version-*.exe" -or $_.Name -eq 'SHA256SUMS.txt' } | Sort-Object Name
+$files = Get-ChildItem $Out -File | Where-Object { $_.Name -like "Heiward-$version-*.exe" -or $_.Name -eq 'SHA256SUMS.txt' -or $texts -contains $_.Name } | Sort-Object Name
 Write-Host "Built in ${Out}:"
 $files | ForEach-Object { '  {0,-30} {1,7:N1} MB' -f $_.Name, ($_.Length / 1MB) }
 

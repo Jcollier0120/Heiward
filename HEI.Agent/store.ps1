@@ -27,7 +27,7 @@ $ffmpegBuilds = @{
 		Url = 'https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-4/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip'
 		Sha256 = '77db6db962015a72f0316620bcaa4d824903b1bcc96c59a6a8b32316cb09ded5'
 	}
-	# The same lean configuration built for x64 (the GitHub exe downloads BtbN's build there).
+	# The same lean configuration built for x64 (the GitHub exe downloads its signed n8.1.3-6 there, FfmpegDownloader).
 	x64 = @{
 		Url = 'https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-4/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip'
 		Sha256 = 'eb505d5ec3769bf786b4946202801aba62a9fba268d135b4571ef4a15d164bcd'

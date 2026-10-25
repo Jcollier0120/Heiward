@@ -841,7 +841,7 @@ function renderSettings(s) {
 }
 
 // What's read once, behind the About button beside Settings (as on Manor's and every kit agent's page): this
-// build, the licence's notice, and where its work runs. Its switches stay in Settings.
+// build, the license's notice, and where its work runs. Its switches stay in Settings.
 function renderAbout(s) {
   renderAboutCard(s);
   renderWhereCard(s);
@@ -855,7 +855,7 @@ const outLink = (text, href) => {
   return a;
 };
 
-/** This build of Heiward and where it came from, and the licence's "appropriate legal notices". */
+/** This build of Heiward and where it came from, and the license's "appropriate legal notices". */
 function renderAboutCard(s) {
   const [version, commit] = s.about.build.split('+');
   const card = el('div', 'auto-card about');
@@ -877,14 +877,16 @@ function renderAboutCard(s) {
   text.append(from);
   row.append(text);
   card.append(row);
-  // The licence notice the AGPL asks for, with the copyright of the code Heiward includes.
+  // The license notice the AGPL asks for, with the copyright of the code Heiward includes. Its full text and the
+  // third-party notices are the ones this hei.exe carries (LicenseTexts.cs).
   const foot = el('div', 'auto-foot');
-  const licence = el('div', 'muted small', 'Heiward is free software: you can share and change it under the ');
-  licence.append(outLink('GNU AGPL v3', 'https://www.gnu.org/licenses/agpl-3.0.html'),
+  const license = el('div', 'muted small', 'Heiward is free software: you can share and change it under the ');
+  license.append(outLink('GNU AGPL v3', '/license.txt'),
     '. It comes with no warranty. Its ', outLink('source code', 'https://github.com/Jcollier0120/Heiward'), ' is on GitHub. It includes code from ',
     outLink('Video Duplicate Finder', 'https://github.com/0x90d/videoduplicatefinder'),
-    ' (© 0x90d and contributors), under the same licence.');
-  foot.append(licence);
+    ' (© 0x90d and contributors), under the same license, and the work of others, each under its own: see the ',
+    outLink('third-party notices', '/third-party-notices.txt'), '.');
+  foot.append(license);
   card.append(foot);
   $('about-card').replaceChildren(card);
 }

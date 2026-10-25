@@ -271,6 +271,14 @@ namespace HEI.Agent {
 				if (!dryRun) RegisterUninstall();
 				Step($"heiward: links start the review page (its \"Start Heiward\" button): HKCU\\{ProtocolKey}");
 				if (!dryRun) RegisterProtocol();
+				Step($"License and notices: {string.Join(", ", LicenseTexts.All)} in {InstallDir}");
+				if (!dryRun) {
+					// Also on About; one missing here is no reason to fail an install or an update.
+					try { LicenseTexts.WriteBeside(InstallDir); }
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException) {
+						AgentPaths.AppendLog("install: the license and notices weren't written beside hei.exe: " + e.Message);
+					}
+				}
 			}
 
 			if (dryRun) return 0;

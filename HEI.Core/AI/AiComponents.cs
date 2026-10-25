@@ -29,7 +29,7 @@ namespace HEI.Core.AI {
 	/// <summary>
 	/// Locates and downloads the two native components AI matching needs: the ONNX Runtime
 	/// library (per-RID archive from the official microsoft/onnxruntime GitHub release,
-	/// pinned version) and the DINOv2-small embedding model (SHA256-pinned). Nothing is
+	/// version and SHA256 pinned) and the DINOv2-small embedding model (SHA256-pinned). Nothing is
 	/// bundled with VDF releases — the FFmpeg pattern: opt-in download on first use into
 	/// <c>{StateFolder}/ai</c>. Under Native AOT the OnnxRuntime *Managed* wrapper is pure
 	/// P/Invoke; a DllImport resolver points its "onnxruntime" import at the downloaded
@@ -50,6 +50,19 @@ namespace HEI.Core.AI {
 		/// </summary>
 		public const string WindowsRuntimeVersion = "1.27.0";
 		public static string RuntimeVersion => CoreUtils.IsWindows ? WindowsRuntimeVersion : PortableRuntimeVersion;
+		/// <summary>
+		/// The SHA-256 of each ONNX Runtime archive a build can download, as microsoft/onnxruntime's releases give them. A
+		/// download that doesn't match is refused before it's unpacked, and the runtime already here stays; a version
+		/// raised without its archives' hashes here downloads nothing.
+		/// </summary>
+		internal static readonly IReadOnlyDictionary<string, string> RuntimeSha256 = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) {
+			["onnxruntime-win-x64-1.27.0.zip"] = "c5c81710938e68079ff1a192b04897faabe4b43830d48f39f27ecd4e16138bfc",
+			["onnxruntime-win-arm64-1.27.0.zip"] = "a32f2650575b3c20df462e337519fd1cc4105356130d11dba9771c6f374d952f",
+			["onnxruntime-linux-x64-1.23.2.tgz"] = "1fa4dcaef22f6f7d5cd81b28c2800414350c10116f5fdd46a2160082551c5f9b",
+			["onnxruntime-linux-aarch64-1.23.2.tgz"] = "7c63c73560ed76b1fac6cff8204ffe34fe180e70d6582b5332ec094810241e5c",
+			["onnxruntime-osx-x86_64-1.23.2.tgz"] = "d10359e16347b57d9959f7e80a225a5b4a66ed7d7e007274a15cae86836485a6",
+			["onnxruntime-osx-arm64-1.23.2.tgz"] = "b4d513ab2b26f088c66891dbbc1408166708773d7cc4163de7bdca0e9bbb7856",
+		};
 		public const string ModelFileName = "dinov2-small-int8.onnx";
 		/// <summary>SHA256 of the model file (Xenova/dinov2-small ONNX export, quantized, Apache-2.0).</summary>
 		public const string ModelSha256 = "3afdc8bc63b50558d6e5770f5b799bb82455c2311183a2de43803f343a29d917";
@@ -103,23 +116,28 @@ namespace HEI.Core.AI {
 		}
 
 		/// <summary>The downloaded ONNX Runtime library file, or null when absent.</summary>
-		internal static string? FindRuntimeLibrary() {
+		internal static string? FindRuntimeLibrary() => FindRuntimeLibrary(AiFolder);
+
+		/// <summary>The ONNX Runtime library file in <paramref name="folder"/>, or null when absent.</summary>
+		internal static string? FindRuntimeLibrary(string folder) {
 			try {
-				if (!Directory.Exists(AiFolder)) return null;
-				// Windows: onnxruntime.dll — Linux: libonnxruntime.so.<ver> — macOS: libonnxruntime.<ver>.dylib
-				return Directory.EnumerateFiles(AiFolder)
-					.Where(f => {
-						string name = Path.GetFileName(f);
-						return name.Contains("onnxruntime", StringComparison.OrdinalIgnoreCase) &&
-							!name.Contains("providers", StringComparison.OrdinalIgnoreCase) &&
-							(name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
-							 name.Contains(".so", StringComparison.OrdinalIgnoreCase) ||
-							 name.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase));
-					})
+				if (!Directory.Exists(folder)) return null;
+				return Directory.EnumerateFiles(folder)
+					.Where(IsRuntimeLibrary)
 					.OrderByDescending(f => Path.GetFileName(f).Length) // prefer the fully-versioned real file over a bare symlink copy
 					.FirstOrDefault();
 			}
 			catch { return null; }
+		}
+
+		/// <summary>Windows: onnxruntime.dll — Linux: libonnxruntime.so.&lt;ver&gt; — macOS: libonnxruntime.&lt;ver&gt;.dylib</summary>
+		static bool IsRuntimeLibrary(string path) {
+			string name = Path.GetFileName(path);
+			return name.Contains("onnxruntime", StringComparison.OrdinalIgnoreCase) &&
+				!name.Contains("providers", StringComparison.OrdinalIgnoreCase) &&
+				(name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+				 name.Contains(".so", StringComparison.OrdinalIgnoreCase) ||
+				 name.EndsWith(".dylib", StringComparison.OrdinalIgnoreCase));
 		}
 
 		/// <summary>
@@ -155,20 +173,28 @@ namespace HEI.Core.AI {
 			}
 		}
 
-		internal static (Uri Url, string ArchiveFileName) GetRuntimeDownloadPlan() {
+		internal static (Uri Url, string ArchiveFileName, string Sha256) GetRuntimeDownloadPlan() {
 			string os =
 				RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win" :
 				RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" :
 				RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" :
 				throw new PlatformNotSupportedException("AI matching is not supported on this operating system.");
-			string arch = RuntimeInformation.ProcessArchitecture switch {
+			return GetRuntimeDownloadPlan(os, RuntimeInformation.ProcessArchitecture);
+		}
+
+		/// <param name="os">"win", "osx" or "linux".</param>
+		internal static (Uri Url, string ArchiveFileName, string Sha256) GetRuntimeDownloadPlan(string os, Architecture processArchitecture) {
+			string version = os == "win" ? WindowsRuntimeVersion : PortableRuntimeVersion;
+			string arch = processArchitecture switch {
 				Architecture.X64 => os == "osx" ? "x86_64" : "x64",
 				Architecture.Arm64 => os == "linux" ? "aarch64" : "arm64",
-				_ => throw new PlatformNotSupportedException($"AI matching is not supported on {RuntimeInformation.ProcessArchitecture}.")
+				_ => throw new PlatformNotSupportedException($"AI matching is not supported on {processArchitecture}.")
 			};
 			string ext = os == "win" ? "zip" : "tgz";
-			string file = $"onnxruntime-{os}-{arch}-{RuntimeVersion}.{ext}";
-			return (new Uri($"https://github.com/microsoft/onnxruntime/releases/download/v{RuntimeVersion}/{file}"), file);
+			string file = $"onnxruntime-{os}-{arch}-{version}.{ext}";
+			if (!RuntimeSha256.TryGetValue(file, out string? sha256))
+				throw new PlatformNotSupportedException($"No SHA-256 is pinned for {file}, so it isn't downloaded.");
+			return (new Uri($"https://github.com/microsoft/onnxruntime/releases/download/v{version}/{file}"), file, sha256);
 		}
 
 		/// <summary>Downloads whatever is missing (runtime and/or model). Safe to call when Ready.</summary>
@@ -225,23 +251,38 @@ namespace HEI.Core.AI {
 			}
 		}
 
-		static async Task DownloadRuntimeAsync(HttpClient http, IProgress<AiDownloadProgress>? progress, CancellationToken token) {
-			(Uri url, string archiveName) = GetRuntimeDownloadPlan();
+		static Task DownloadRuntimeAsync(HttpClient http, IProgress<AiDownloadProgress>? progress, CancellationToken token) =>
+			InstallRuntimeAsync(http, GetRuntimeDownloadPlan(), AiFolder, progress, token);
+
+		/// <summary>
+		/// Downloads the runtime's archive into a temp folder of its own, checks it against its pinned SHA-256, unpacks it,
+		/// and only then replaces the runtime in <paramref name="folder"/>. A download that doesn't match, or an archive
+		/// without the runtime, leaves the runtime already there working; the temp folder goes either way.
+		/// </summary>
+		internal static async Task InstallRuntimeAsync(HttpClient http, (Uri Url, string ArchiveFileName, string Sha256) plan, string folder,
+			IProgress<AiDownloadProgress>? progress, CancellationToken token) {
 			// Per-attempt temp dir: a fixed shared path let two VDF processes (GUI + CLI,
 			// or Web + CLI in one container) clobber each other's in-progress download —
 			// FileShare.None collisions, or one process's cleanup deleting the other's files.
 			string tempRoot = Path.Combine(Path.GetTempPath(), $"HEI.AiDownload.{Guid.NewGuid():N}");
 			Directory.CreateDirectory(tempRoot);
-			string archivePath = Path.Combine(tempRoot, archiveName);
+			string archivePath = Path.Combine(tempRoot, plan.ArchiveFileName);
 			try {
-				string runtimeStep = $"ONNX Runtime {RuntimeVersion}";
-				await DownloadUtils.DownloadFileAsync(http, url, archivePath, runtimeStep,
-					(done, total) => progress?.Report(new AiDownloadProgress(runtimeStep, done, total)), token);
+				// Throws IOException, the archive deleted, unless it is the pinned one.
+				await NpuComponents.DownloadVerifiedAsync(http, plan.Url, archivePath, plan.Sha256, $"ONNX Runtime {RuntimeVersion}", progress, token);
 
 				string extractDir = Path.Combine(tempRoot, "extracted");
 				Directory.CreateDirectory(extractDir);
 				ArchiveUtils.Extract(archivePath, extractDir,
-					archiveName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.Zip : ArchiveKind.TarGz);
+					plan.ArchiveFileName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.Zip : ArchiveKind.TarGz);
+
+				// Archives lay out onnxruntime-<rid>-<ver>/lib/<libraries>: found, with the runtime in it, before anything
+				// in the folder is touched.
+				string? libDir = Directory.EnumerateDirectories(extractDir, "lib", SearchOption.AllDirectories).FirstOrDefault();
+				if (libDir == null)
+					throw new IOException($"Downloaded ONNX Runtime archive has no lib/ directory ({plan.ArchiveFileName}).");
+				if (FindRuntimeLibrary(libDir) == null)
+					throw new IOException("ONNX Runtime archive extracted but no runtime library was found in it.");
 
 				// Purge any previously installed runtime BEFORE copying: the Linux/macOS
 				// library names carry the version (libonnxruntime.so.1.23.2), so upgraded
@@ -249,24 +290,20 @@ namespace HEI.Core.AI {
 				// tie-break could keep loading the stale one while the marker claims the
 				// new version — with GetState() reporting Ready, only deleting the ai
 				// folder by hand would have recovered.
-				foreach (string old in Directory.EnumerateFiles(AiFolder)) {
+				Directory.CreateDirectory(folder);
+				foreach (string old in Directory.EnumerateFiles(folder)) {
 					string oldName = Path.GetFileName(old);
 					if (oldName.Contains("onnxruntime", StringComparison.OrdinalIgnoreCase))
 						try { File.Delete(old); } catch { /* loaded/locked — overwritten below */ }
 				}
 
-				// Archives lay out onnxruntime-<rid>-<ver>/lib/<libraries>; flatten lib/ into AiFolder.
-				string? libDir = Directory.EnumerateDirectories(extractDir, "lib", SearchOption.AllDirectories).FirstOrDefault();
-				if (libDir == null)
-					throw new IOException($"Downloaded ONNX Runtime archive has no lib/ directory ({archiveName}).");
+				// Flatten lib/ into the folder.
 				foreach (string file in Directory.EnumerateFiles(libDir)) {
 					string name = Path.GetFileName(file);
 					if (name.EndsWith(".pdb", StringComparison.OrdinalIgnoreCase)) continue;
-					File.Copy(file, Path.Combine(AiFolder, name), overwrite: true);
+					File.Copy(file, Path.Combine(folder, name), overwrite: true);
 				}
-				await File.WriteAllTextAsync(Path.Combine(AiFolder, VersionMarkerFileName), RuntimeVersion, token);
-				if (FindRuntimeLibrary() == null)
-					throw new IOException("ONNX Runtime archive extracted but no runtime library was found in it.");
+				await File.WriteAllTextAsync(Path.Combine(folder, VersionMarkerFileName), RuntimeVersion, token);
 			}
 			finally {
 				try { Directory.Delete(tempRoot, true); } catch { }
