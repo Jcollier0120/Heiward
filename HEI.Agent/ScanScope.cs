@@ -192,6 +192,8 @@ namespace HEI.Agent {
 				rules.Add(new(windows, SystemReason));
 			rules.AddRange(OtherProfiles().Select(p => new Rule(p, WindowsProfiles.Contains(Path.GetFileName(p)) ? SystemReason : "Another account")));
 			rules.AddRange(PackageCaches().Select(p => new Rule(p, PackageCache)));
+			// This account's Temp folder wherever TEMP points: out of AppData, it's still the same throwaway files.
+			rules.AddRange(AccountTemp());
 			return rules;
 		}
 
@@ -367,18 +369,28 @@ namespace HEI.Agent {
 		internal const string TempReason = "Temporary files";
 
 		/// <summary>
-		/// Temp folders, left out where the Developer area looks for repositories: this account's (TEMP, as written and by its
-		/// real path) and a Temp or Tmp at a drive's root. A repository in one is a throwaway that tests and tools make by the
+		/// Temp folders, left out where the Developer area looks for repositories: this account's (<see cref="AccountTemp"/>)
+		/// and a Temp or Tmp at a drive's root. A repository in one is a throwaway that tests and tools make by the
 		/// thousand and leave behind, never one of the person's projects; its space is listed under Temporary files instead.
-		/// A TEMP set to a drive's root, or to the profile or a folder above it, is never left out: that would hide every project.
 		/// </summary>
 		internal static List<Rule> TempFolders(string? temp = null) {
 			var rules = new List<Rule> { new(@"?:\Temp", TempReason), new(@"?:\Tmp", TempReason) };
+			rules.AddRange(AccountTemp(temp));
+			return rules;
+		}
+
+		/// <summary>
+		/// This account's Temp folder (TEMP), as written and by its real path. In its usual place it's in AppData, which scans
+		/// leave out already; moved (to a Dev Drive, say), it's a plain folder, and its pictures are tools' and tests' throwaways
+		/// by the hundred thousand (screenshots, icons, fixtures). A TEMP set to a drive's root, or to the profile, a folder of the
+		/// person's own pictures or a folder above one, is never left out: that would hide their photos and projects.
+		/// </summary>
+		internal static List<Rule> AccountTemp(string? temp = null) {
 			string t = Path.TrimEndingDirectorySeparator(temp ?? Path.GetTempPath());
-			string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 			if (!Path.IsPathFullyQualified(t) || t.StartsWith(@"\\", StringComparison.Ordinal) || Path.GetPathRoot(t) == t + Path.DirectorySeparatorChar
-				|| (profile.Length > 0 && IsSameOrUnder(profile, t)))
-				return rules;
+				|| UsersOwnFolders().Any(own => IsSameOrUnder(own, t)))
+				return [];
+			var rules = new List<Rule>();
 			foreach (string form in new[] { t, Path.TrimEndingDirectorySeparator(RealPath.Of(t)) })
 				if (!rules.Any(r => r.Pattern.Equals(form, StringComparison.OrdinalIgnoreCase))) rules.Add(new(form, TempReason));
 			return rules;

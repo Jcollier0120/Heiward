@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.91
+
+**Scans leave your Temp folder out wherever it is, and a file that has gone no longer stops every scan.**
+
+### What changed
+
+- Your Temp folder is left out of scans wherever it is. It was left out only in its usual place, under your account's app data: once moved, to a Dev Drive say, its throwaway pictures were listed and compared like your photos, every one against every other, which could keep a scan busy for hours. It's left out by the path Windows gives it and, through a junction or a mounted folder, by where it really is. A Temp folder set to a drive's root, your profile or your Pictures is never left out.
+- A result whose file had gone since it was found (a temp file, or one on a drive scanned only when you ask) stopped the whole scan while it read the tracks' languages, so scans ended before saving anything, every time. Such a file is now passed over.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Its next scan no longer lists what's in a moved Temp folder, so sets of copies found only there drop off the page.
+
 ## 1.9.90
 
 **The developer check leaves a drive scanned only when you ask alone, and finds the caches you moved to a Dev Drive.**
