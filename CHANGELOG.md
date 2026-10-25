@@ -2,7 +2,7 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
-## 1.9.94
+## 1.9.96
 
 **The developer check is several times faster on a busy Temp folder.**
 
@@ -14,6 +14,18 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 ### Before you update
 
 - Nothing: it updates itself as usual.
+
+## 1.9.95
+
+**It carries the Steward's kit 2.136.5: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.136.5: GenieX's QAIRT clock keeper is off: GENIEX_CLOCK_KEEPER_THREADS 0 goes in the environment of every GenieX the kit starts, so AI Hub's 4B no longer keeps a processor core spinning through every answer (qualcomm/GenieX#1330). Speed, memory and answers are unchanged. A PC set up before gets it from npu-refresh, after its test. The 4B's X2 pins are AI Hub's v0.65.0 build, with the earlier build kept.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The first time the manor's keeper (the Smith, else Reeve) runs this kit with the NPU idle, it restarts GenieX once to test the new entry.
 
 ## 1.9.93
 
