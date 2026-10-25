@@ -18,6 +18,7 @@
 using System.Text;
 using MemoryPack;
 using HEI.Core.FFTools;
+using HEI.Core.Utils;
 using HEI.Core.ViewModels;
 
 namespace HEI.Core.Tests;
@@ -235,6 +236,44 @@ public class TrackLanguageTests {
 			Assert.Equal(new[] { failing.Path }, probedPaths);
 		}
 		finally {
+			Directory.Delete(dir, recursive: true);
+		}
+	}
+}
+
+// The scan's own lookup goes through the shared static database.
+[Collection("DatabaseUtils")]
+public class TrackLanguageDatabaseTests {
+	// A result whose file has gone since it was listed (a temp file, or one on a drive scanned
+	// only when asked, whose entries stay as last measured) is passed over: before, building the
+	// lookup key read the file, and the missing file stopped the whole scan.
+	[Fact]
+	public void Backfill_PassesOverAResultWhoseFileHasGone() {
+		string dir = Directory.CreateTempSubdirectory("hei-langs-gone-").FullName;
+		string path = Path.Combine(dir, "gone.mov");
+		var entry = new FileEntry {
+			_Path = path, Folder = dir,
+			mediaInfo = new MediaInfo { Streams = new[] { new MediaInfo.StreamInfo { Index = "0", CodecType = "audio" } } },
+		};
+		DatabaseUtils.Database.Add(entry);
+		try {
+			Assert.Same(entry, ScanEngine.DatabaseEntry(path));
+			Assert.True(ScanEngine.NeedsTrackLanguages(entry.mediaInfo)); // it would be re-probed, were it there
+			var engine = new ScanEngine();
+			engine.Duplicates.Add(new DuplicateItem(entry, 0f, Guid.NewGuid(), DuplicateFlags.None));
+			var probed = new List<string>();
+
+			int count = engine.BackfillTrackLanguages(ScanEngine.DatabaseEntry, p => {
+				lock (probed) probed.Add(p);
+				return null;
+			}, CancellationToken.None);
+
+			Assert.Equal(0, count);
+			Assert.Empty(probed);
+			Assert.Null(ScanEngine.DatabaseEntry(Path.Combine(dir, "never.mov")));
+		}
+		finally {
+			DatabaseUtils.Database.Remove(entry);
 			Directory.Delete(dir, recursive: true);
 		}
 	}

@@ -202,6 +202,33 @@ public sealed class ScanScopeTests : IDisposable {
 		}
 	}
 
+	/// <summary>
+	/// This account's Temp folder is left out wherever TEMP points. Moved out of AppData to a Dev Drive, it held 275,000
+	/// tools' screenshots that a scan of that drive listed and compared with each other for hours. Never a TEMP that is a
+	/// drive, the profile or the person's pictures: that would hide their photos.
+	/// </summary>
+	[Fact]
+	public void TheAccountsTemp_IsLeftOut_WhereverTEMPPoints() {
+		string moved = Dir("dev drive", "Temp");
+		ScanScope.Rule rule = Assert.Single(ScanScope.AccountTemp(moved + Path.DirectorySeparatorChar));
+		Assert.True(FileUtils.IsExcludedFolder(rule.Pattern, new DirectoryInfo(moved)));
+		Assert.Equal(ScanScope.TempReason, rule.Reason);
+		Assert.False(FileUtils.IsExcludedFolder(rule.Pattern, new DirectoryInfo(Dir("dev drive", "Photos"))));
+		// Written through a junction (TEMP=C:\DevData\Temp, the Dev Drive's E:\Temp): by its real path too, which the scan walks.
+		string link = RealTemp.Junction(Path.Combine(temp, "DevData"), Path.Combine(temp, "dev drive"));
+		var rules = ScanScope.AccountTemp(Path.Combine(link, "Temp"));
+		foreach (string written in new[] { moved, Path.Combine(link, "Temp") })
+			Assert.Contains(rules, r => FileUtils.IsExcludedFolder(r.Pattern, new DirectoryInfo(written)));
+
+		string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+		foreach (string never in new[] { profile, Path.GetDirectoryName(profile)!, Path.GetPathRoot(profile)!, Environment.GetFolderPath(Environment.SpecialFolder.MyPictures) })
+			Assert.Empty(ScanScope.AccountTemp(never));
+		// A scan's built-in rules have this account's own.
+		string own = Path.TrimEndingDirectorySeparator(Path.GetTempPath());
+		Assert.True(IsExcluded(own));
+		Assert.True(IsExcluded(Path.TrimEndingDirectorySeparator(RealPath.Of(own))));
+	}
+
 	[Fact]
 	public void ExtraFolders_UnderAScannedDrive_AreNotScannedTwice() {
 		string temp = Path.GetTempPath();

@@ -64,9 +64,16 @@ namespace HEI.Core {
 
 		void BackfillTrackLanguages() =>
 			BackfillTrackLanguages(
-				path => DatabaseUtils.Database.TryGetValue(new FileEntry(path), out var entry) ? entry : null,
+				DatabaseEntry,
 				path => FFProbeEngine.GetMediaInfo(path, Settings.ExtendedFFToolsLogging),
 				cancelationTokenSource.Token);
+
+		/// <summary>
+		/// The database's entry for a path, looked up by the path alone: the file isn't read,
+		/// so one that has gone since (or rests on a drive scanned only when asked) is no error.
+		/// </summary>
+		internal static FileEntry? DatabaseEntry(string path) =>
+			DatabaseUtils.Database.TryGetValue(new FileEntry { Path = path }, out var entry) ? entry : null;
 
 		/// <summary>
 		/// Re-probes the result videos whose cached media info predates track languages and
