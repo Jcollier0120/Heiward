@@ -61,6 +61,10 @@ public sealed class AboutViewTests {
 		string aboutCard = Function(script, "renderAboutCard");
 		string updatesCard = Function(script, "renderUpdatesCard");
 		Assert.Contains("GNU AGPL v3", aboutCard);
+		// The full texts this hei.exe carries, which ReviewServer serves (LicenseTexts).
+		Assert.Contains("outLink('GNU AGPL v3', '/license.txt')", aboutCard);
+		Assert.Contains("outLink('third-party notices', '/third-party-notices.txt')", aboutCard);
+		Assert.DoesNotContain("licence", aboutCard);
 		Assert.DoesNotContain("toggleSwitch(", aboutCard);
 		Assert.Contains("saveSettings({ autoUpdate: on })", updatesCard);
 		Assert.Contains("saveSettings({ manorCard: on })", updatesCard);

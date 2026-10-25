@@ -52,11 +52,12 @@ namespace HEI.Core.FFTools {
 		/// (ffmpeg-winarm64-lean: dav1d and zlib only, 11 MB; on ARM64 built -O3 tuned for Oryon: HEVC ~15% faster per
 		/// core; Media Foundation's encoders, the only way to the Snapdragon's hardware video encoder). Since 1.9.69 its
 		/// n8.1.3-6, whose every .exe and .dll is signed: Smart App Control blocks a program no one signed that it doesn't
-		/// know, as the earlier lean builds and BtbN's (a new build each day) are. Then a fallback should that download
-		/// fail: on ARM64 tordona's essentials build, as BtbN's winarm64 builds crash with 0xC0000005 while avcodec-62.dll
-		/// loads on Snapdragon X machines (the fault is in their statically linked librsvg/cairo/DirectWrite init code),
-		/// even for `ffmpeg -version`; on x64 BtbN's. The pinned ones run in-process and as ffmpeg.exe, and are pinned by
-		/// release and SHA-256: only the tested archives install. Tags without an entry fall back to BtbN.
+		/// know, as the earlier lean builds and BtbN's (a new build each day) are. On ARM64 a fallback should that download
+		/// fail: tordona's essentials build, as BtbN's winarm64 builds crash with 0xC0000005 while avcodec-62.dll loads on
+		/// Snapdragon X machines (the fault is in their statically linked librsvg/cairo/DirectWrite init code), even for
+		/// `ffmpeg -version`. The pinned ones run in-process and as ffmpeg.exe, and are pinned by release and SHA-256: only
+		/// the tested archives install. On Windows nothing else does: since 1.9.98 neither x64 nor a tag without an entry
+		/// falls back to BtbN's "latest", which is a different, unsigned build each day.
 		/// </summary>
 		static readonly Dictionary<(Architecture Arch, string Tag), (string Url, string Sha256)[]> WinBuilds = new() {
 			[(Architecture.Arm64, "8.1")] = new[] {
@@ -99,7 +100,7 @@ namespace HEI.Core.FFTools {
 			_ => "7.1"
 		};
 
-		static string GetVersionTag() => VersionTagForMajor(
+		internal static string GetVersionTag() => VersionTagForMajor(
 			MapToFfmpegMajor(ffmpeg.LIBAVCODEC_VERSION_MAJOR, ffmpeg.LIBAVFORMAT_VERSION_MAJOR, ffmpeg.LIBAVUTIL_VERSION_MAJOR));
 
 		internal static List<FfmpegDownloadPlan> GetDownloadPlans() {
@@ -115,24 +116,19 @@ namespace HEI.Core.FFTools {
 
 		internal static List<FfmpegDownloadPlan> GetDownloadPlans(DownloadOS os, Architecture arch, string versionTag) {
 			var plans = new List<FfmpegDownloadPlan>();
-			if (os == DownloadOS.Windows && WinBuilds.TryGetValue((arch, versionTag), out var pinnedBuilds)) {
-				plans.AddRange(pinnedBuilds.Select(pinned => {
-					var url = new Uri(pinned.Url);
-					string archive = Path.GetFileName(url.AbsolutePath);
-					ArchiveKind archiveKind = archive.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.SevenZip : ArchiveKind.Zip;
-					return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows {(arch == Architecture.Arm64 ? "ARM64" : "x64")} ({versionTag})", pinned.Sha256);
-				}));
-				// No BtbN after the ARM64 ones: theirs crash on load there.
-				if (arch == Architecture.Arm64) return plans;
+			// Windows takes only the pinned builds: none for this processor and tag is no download, never BtbN's "latest".
+			if (os == DownloadOS.Windows) {
+				if (WinBuilds.TryGetValue((arch, versionTag), out var pinnedBuilds))
+					plans.AddRange(pinnedBuilds.Select(pinned => {
+						var url = new Uri(pinned.Url);
+						string archive = Path.GetFileName(url.AbsolutePath);
+						ArchiveKind archiveKind = archive.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.SevenZip : ArchiveKind.Zip;
+						return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows {(arch == Architecture.Arm64 ? "ARM64" : "x64")} ({versionTag})", pinned.Sha256);
+					}));
+				return plans;
 			}
 
 			(string Rid, ArchiveKind Kind, string Repo, string Display)? pick = os switch {
-				DownloadOS.Windows => arch switch {
-					Architecture.X64 => ("win64", ArchiveKind.Zip, BtbNRepo, "Windows x64"),
-					Architecture.X86 => ("win32", ArchiveKind.Zip, BtbNRepo, "Windows x86"),
-					Architecture.Arm64 => ("winarm64", ArchiveKind.Zip, BtbNRepo, "Windows ARM64"),
-					_ => ((string, ArchiveKind, string, string)?)null
-				},
 				DownloadOS.Linux => arch switch {
 					Architecture.X64 => ("linux64", ArchiveKind.TarXz, BtbNRepo, "Linux x64"),
 					Architecture.X86 => ("linux32", ArchiveKind.TarXz, BtbNRepo, "Linux x86"),

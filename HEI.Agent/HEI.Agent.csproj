@@ -10,7 +10,7 @@
     <!-- The command is "hei"; Task Manager and file properties show the product name. -->
     <AssemblyName>hei</AssemblyName>
     <!-- Heiward's own version, as Apps & Features and the version option show it. Directory.Build.props's is Video Duplicate Finder's. -->
-    <VersionPrefix>1.9.97</VersionPrefix>
+    <VersionPrefix>1.9.98</VersionPrefix>
     <Product>Heiward</Product>
     <!-- The shield and leaf (make-icon.ps1 renders it from wwwroot\favicon.svg): the exe, its shortcuts and Apps & Features show it. -->
     <ApplicationIcon>heiward.ico</ApplicationIcon>
@@ -33,10 +33,21 @@
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.9" />
+    <!-- An update's signature and its timestamp (Authenticode.cs): the shared frameworks carry it, but no reference to it. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
   </ItemGroup>
 
   <ItemGroup>
     <EmbeddedResource Include="wwwroot\**" LogicalName="wwwroot/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- The GNU AGPL's text and the third-party notices (tools\notices.ps1 writes them), kept with every copy: in hei.exe
+       for About and the install (LicenseTexts.cs), and beside it in the build output and a publish, outside the single file. -->
+  <ItemGroup>
+    <EmbeddedResource Include="..\LICENSE" LogicalName="LICENSE.txt" Type="Non-Resx" WithCulture="false" />
+    <EmbeddedResource Include="..\THIRD-PARTY-NOTICES.txt" LogicalName="THIRD-PARTY-NOTICES.txt" Type="Non-Resx" WithCulture="false" />
+    <None Include="..\LICENSE" Link="LICENSE.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    <None Include="..\THIRD-PARTY-NOTICES.txt" Link="THIRD-PARTY-NOTICES.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
   </ItemGroup>
 
   <!-- Heiward.exe (HEI.Launcher), written beside hei.exe at install: what Windows' Startup apps lists (Startup.cs). A

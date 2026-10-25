@@ -123,6 +123,9 @@ namespace HEI.Agent {
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/tour.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("tour.js"), "text/javascript; charset=utf-8"); });
+			// About's links: the GNU AGPL's full text and the third-party notices, as this hei.exe carries them (LicenseTexts).
+			app.MapGet("/license.txt", () => Results.Bytes(LicenseTexts.Read(LicenseTexts.License), "text/plain; charset=utf-8"));
+			app.MapGet("/third-party-notices.txt", () => Results.Bytes(LicenseTexts.Read(LicenseTexts.Notices), "text/plain; charset=utf-8"));
 			app.MapGet("/api/ping", () => Results.Json(Ping(cfg)));
 			// The manor's disk measurement: the drives' free space as Windows gives it now, and the big tool caches from the
 			// last daily reading (DiskWatch), never measured for a request. Read-only, and like every GET here, for this PC only: the Host check

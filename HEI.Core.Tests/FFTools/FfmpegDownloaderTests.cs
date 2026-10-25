@@ -44,7 +44,6 @@ public class FfmpegDownloaderTests {
 	static FfmpegDownloader.DownloadOS ParseOs(string os) => Enum.Parse<FfmpegDownloader.DownloadOS>(os);
 
 	[Theory]
-	[InlineData("Windows", Architecture.X86, "win32", "BtbN", "zip")]
 	[InlineData("Linux", Architecture.X64, "linux64", "BtbN", "tar.xz")]
 	[InlineData("Linux", Architecture.Arm, "linuxarmhf", "BtbN", "tar.xz")]
 	[InlineData("OSX", Architecture.X64, "macos64", "yt-dlp", "zip")]
@@ -81,39 +80,36 @@ public class FfmpegDownloaderTests {
 	}
 
 	[Fact]
-	public void GetDownloadPlans_WindowsX64UsesTheSignedLeanBuild_ThenBtbN() {
-		// Smart App Control blocks BtbN's unsigned builds (a new one each day); the manor's signed one comes first.
-		var plans = FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.X64, "8.1");
+	public void GetDownloadPlans_WindowsX64UsesOnlyTheSignedLeanBuild() {
+		// Smart App Control blocks BtbN's unsigned builds (a new one each day): x64 takes the manor's signed one, and nothing else.
+		var plan = Assert.Single(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.X64, "8.1"));
 
-		Assert.Equal(2, plans.Count);
-		Assert.Equal("https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip", plans[0].DownloadUrl.AbsoluteUri);
-		Assert.Equal("e26b6ec56ee89b39acb94792916bcb8346df1094f62432b5c18f56b286b1b12b", plans[0].Sha256);
-		Assert.Equal(ArchiveKind.Zip, plans[0].ArchiveKind);
-		Assert.Equal("Windows x64 (8.1)", plans[0].DisplayName);
-		Assert.Equal("ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip", plans[1].ArchiveFileName);
-		Assert.Contains("github.com/BtbN/FFmpeg-Builds/releases/download/latest/", plans[1].DownloadUrl.AbsoluteUri);
-		Assert.Null(plans[1].Sha256);
+		Assert.Equal("https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip", plan.DownloadUrl.AbsoluteUri);
+		Assert.Equal("e26b6ec56ee89b39acb94792916bcb8346df1094f62432b5c18f56b286b1b12b", plan.Sha256);
+		Assert.Equal(ArchiveKind.Zip, plan.ArchiveKind);
+		Assert.Equal("Windows x64 (8.1)", plan.DisplayName);
 	}
 
-	[Fact]
-	public void GetDownloadPlans_WindowsX64WithoutAPinnedBuildTakesBtbN() {
-		var plan = Assert.Single(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.X64, "7.1"));
+	[Theory]
+	[InlineData(Architecture.X64)]
+	[InlineData(Architecture.Arm64)]
+	public void GetDownloadPlans_WindowsWithoutAPinnedBuildTakesNothing(Architecture arch) =>
+		// A binding bumped without a pin downloads nothing, rather than BtbN's "latest".
+		Assert.Empty(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, arch, "7.1"));
 
-		Assert.Equal("ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip", plan.ArchiveFileName);
-		Assert.Null(plan.Sha256);
-	}
-
-	[Fact]
-	public void GetDownloadPlans_WindowsArm64WithoutAPinnedBuildFallsBackToBtbN() {
-		var plan = Assert.Single(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, Architecture.Arm64, "7.1"));
-
-		Assert.Equal("ffmpeg-n7.1-latest-winarm64-gpl-shared-7.1.zip", plan.ArchiveFileName);
-		Assert.Null(plan.Sha256);
-	}
+	[Theory]
+	[InlineData(Architecture.X64)]
+	[InlineData(Architecture.Arm64)]
+	public void GetDownloadPlans_EveryWindowsPlanIsPinned(Architecture arch) =>
+		Assert.All(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, arch, "8.1"), plan => {
+			Assert.Matches("^[0-9a-f]{64}$", plan.Sha256);
+			Assert.DoesNotContain("/latest/", plan.DownloadUrl.AbsoluteUri);
+		});
 
 	[Theory]
 	[InlineData("OSX", Architecture.X86)] // no 32-bit mac builds
 	[InlineData("Windows", Architecture.Arm)] // no 32-bit ARM Windows builds
+	[InlineData("Windows", Architecture.X86)] // no pinned 32-bit Windows build
 	public void GetDownloadPlans_ReturnsEmptyForUnsupportedCombos(string os, Architecture arch) =>
 		Assert.Empty(FfmpegDownloader.GetDownloadPlans(ParseOs(os), arch, "8.1"));
 

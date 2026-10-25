@@ -30,9 +30,11 @@ namespace HEI.Agent {
 	/// <summary>
 	/// The copy installed from GitHub keeps itself up to date from the same releases Manor installs Heiward from: once a day
 	/// the review page's process looks at the newest release on GitHub, and when it's newer, downloads this PC's exe,
-	/// checks it against the release's SHA256SUMS.txt, and runs its installer as Manor does (<c>install --yes
-	/// --no-browser</c>), with <c>--keep-settings</c> so where the AI runs, the schedule and the graphics card stay. The
-	/// installer stops this copy (this process among them), installs over it, and starts the page and a scan again.
+	/// checks it against the release's SHA256SUMS.txt and checks its signature (<see cref="Authenticode"/>: valid,
+	/// timestamped, Heiward's publisher's), and runs its installer as Manor does (<c>install --yes --no-browser</c>), with
+	/// <c>--keep-settings</c> so where the AI runs, the schedule and the graphics card stay. The installer stops this copy
+	/// (this process among them), installs over it, and starts the page and a scan again. An exe that fails either check
+	/// is deleted, and the outcome logged (update.json, the log): this copy stays as it is.
 	/// <para>
 	/// Never while a scan runs, and never for a copy something else updates: the Store version (the Store), one Manor
 	/// employs (Manor's rounds), a development build, or an exe run from anywhere but the install folder. Settings'
@@ -179,7 +181,7 @@ namespace HEI.Agent {
 					await Task.Delay(BusyRetry, ct);
 				}
 
-				string exe = await DownloadAsync(http, exeUrl, name, sum, ct);
+				string exe = await DownloadAsync(http, exeUrl, name, sum, Folder, Authenticode.PublisherThumbprints, ct);
 				Record(version, $"updating from {Current} to {version}");
 				StartInstaller(exe);
 				return $"Updating Heiward from {Current} to {version}.";
@@ -210,13 +212,16 @@ namespace HEI.Agent {
 			return (tag.TrimStart('v', 'V'), assets);
 		}
 
-		/// <summary>Downloads the exe into <see cref="Folder"/> and checks its SHA-256; a file that doesn't match is deleted.</summary>
-		static async Task<string> DownloadAsync(HttpClient http, string url, string name, string sum, CancellationToken ct) {
-			Directory.CreateDirectory(Folder);
+		/// <summary>
+		/// Downloads the exe into <paramref name="folder"/> and checks its SHA-256, then its signature (<see cref="Authenticode"/>:
+		/// valid, timestamped, by one of <paramref name="signers"/>). A file that fails either is deleted, and nothing installed.
+		/// </summary>
+		internal static async Task<string> DownloadAsync(HttpClient http, string url, string name, string sum, string folder, IReadOnlyCollection<string> signers, CancellationToken ct) {
+			Directory.CreateDirectory(folder);
 			// Earlier downloads go: each is ~50 MB, and only the newest is ever installed.
-			foreach (string old in Directory.EnumerateFiles(Folder, "Heiward-*.exe*"))
+			foreach (string old in Directory.EnumerateFiles(folder, "Heiward-*.exe*"))
 				try { File.Delete(old); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-			string path = Path.Combine(Folder, name), partial = path + ".partial";
+			string path = Path.Combine(folder, name), partial = path + ".partial";
 			await using (var body = await http.GetStreamAsync(url, ct))
 			await using (var file = File.Create(partial))
 				await body.CopyToAsync(file, ct);
@@ -228,6 +233,11 @@ namespace HEI.Agent {
 				throw new InvalidOperationException($"{name} didn't match the release's SHA-256, so it wasn't installed");
 			}
 			File.Move(partial, path, overwrite: true);
+			// The SHA-256 says it's the release's file; the signature, that the release is the publisher's.
+			if (Authenticode.Problem(path, signers) is string problem) {
+				try { File.Delete(path); } catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+				throw new InvalidOperationException($"{name} wasn't installed: {problem}");
+			}
 			return path;
 		}
 

@@ -2,6 +2,24 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.98
+
+**Updates install only when they're signed by Heiward's publisher, every download is checked against a pinned SHA-256, and Heiward carries its license and third-party notices.**
+
+### What's new
+
+- **About** links the full text of Heiward's license, the GNU AGPL v3, and the third-party notices: the work of others Heiward includes or downloads (FFmpeg, ONNX Runtime, the .NET runtime and packages, the AI models and the NPU and graphics card packs), each with its license. Both are installed beside `hei.exe` as `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt`, and come with each release.
+
+### What changed
+
+- Before installing an update from GitHub, Heiward now also checks its signature: Windows must trust it, it must be timestamped, and it must be signed by Heiward's publisher. One that isn't is deleted, the log and Settings' **Updates** say why, and the copy you have keeps working.
+- On Intel and AMD PCs, FFmpeg now downloads only the signed build Heiward pins, checked against its SHA-256, as on Arm PCs. Before, should that download fail, Heiward took FFmpeg's newest daily build instead, which Smart App Control blocks and no hash checks.
+- ONNX Runtime, which runs the AI, is now checked against its pinned SHA-256 when it downloads. A download that doesn't match is deleted, and the runtime you have stays in place.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.97
 
 **Temp's leftovers, and Claude Code's ended sessions' temp files, go after a day untouched; a folder a program still holds stays whole.**

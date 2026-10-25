@@ -515,7 +515,7 @@ From the repository root, on the commit to release, with the .NET 10 SDK and the
 powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1 -Publish
 ```
 
-It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, signs them, writes `SHA256SUMS.txt`, then creates the release `v<version>` at the commit it built and uploads all three. The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
+It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, signs them, writes `SHA256SUMS.txt`, puts `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt` beside them, then creates the release `v<version>` at the commit it built and uploads all five. It signs only with a certificate in `Authenticode.cs`'s `PublisherThumbprints`: the installed copies update themselves only to an exe signed by one they know. After a package is added or updated, or a download's pin raised, run `tools\notices.ps1` to write `THIRD-PARTY-NOTICES.txt` again (`NoticesTests` fail until then). The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
 
 - It fills the kit first (`tools\kit.ps1`, above), at the version `kit.json` pins, and refuses a kit tree from `STEWARD_KIT`.
 - Without `-Publish` it only builds.
