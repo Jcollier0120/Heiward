@@ -151,7 +151,7 @@ namespace HEI.Agent {
 			report.Categories.Add(new DevCategory(Temp, "Temporary files and crash dumps",
 				$"Files in your Temp folder untouched for {cfg.TempOlderThanDays} days, Claude Code sessions' temp files idle as long (never those of a session " +
 				"that's running, can be resumed or has a file open), and crash dumps apps left behind.",
-				TempItems(cfg.TempOlderThanDays, resting).ToList()));
+				TempItems(cfg.TempOlderThanDays, resting, ct: ct).ToList()));
 
 			// Main checkouts only (a git worktree's .git is a file): what each uses, and where it's hosted.
 			report.Sources = repos.Where(r => !File.Exists(Path.Combine(r, ".git")))
@@ -874,10 +874,10 @@ namespace HEI.Agent {
 		/// unread (<paramref name="resting"/>), which %TEMP% can be through a junction (C:\DevData\Temp): the last check's stay (<see cref="KeepResting"/>).
 		/// </summary>
 		/// <param name="temp">The Temp folder (%TEMP%); <paramref name="dumps"/>: where apps leave crash dumps (%LOCALAPPDATA%\CrashDumps).</param>
-		internal static IEnumerable<DevItem> TempItems(int olderThanDays, Func<string, bool> resting, string? temp = null, string? dumps = null) {
+		internal static IEnumerable<DevItem> TempItems(int olderThanDays, Func<string, bool> resting, string? temp = null, string? dumps = null, CancellationToken ct = default) {
 			temp ??= Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar);
 			if (!resting(temp)) {
-				var old = OldTempEntries(temp, olderThanDays);
+				var old = OldTempEntries(temp, olderThanDays, ct);
 				long bytes = old.Sum(e => e.Bytes);
 				if (bytes >= 1 << 20)
 					yield return new DevItem(IdOf(Temp, temp), "temp", "Temp folder", temp, old.Select(e => e.Path).ToList(), bytes, null, true, null,
@@ -899,18 +899,20 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// Top-level Temp entries with nothing inside changed for <paramref name="days"/> days. Not Claude Code's temp folder,
-		/// which is judged a session at a time (<see cref="ClaudeTemp"/>).
+		/// Top-level Temp entries with nothing inside changed for <paramref name="days"/> days, in the folder's order. Not Claude
+		/// Code's temp folder, which is judged a session at a time (<see cref="ClaudeTemp"/>). Measured several at once: a
+		/// developer's Temp can hold millions of files, minutes walked one entry at a time. Stopped (<paramref name="ct"/>), the
+		/// entries not yet measured are left out.
 		/// </summary>
-		internal static List<(string Path, long Bytes)> OldTempEntries(string temp, int days) {
+		internal static List<(string Path, long Bytes)> OldTempEntries(string temp, int days, CancellationToken ct = default) {
 			DateTime before = DateTime.UtcNow.AddDays(-days);
-			var old = new List<(string, long)>();
-			IEnumerable<FileSystemInfo> entries;
-			try { entries = new DirectoryInfo(temp).EnumerateFileSystemInfos("*", ListOptions).ToList(); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return old; }
-			foreach (FileSystemInfo e in entries)
-				if (!ClaudeTemp.IsIt(e) && Untouched(e, before) is { } entry) old.Add(entry);
-			return old;
+			List<FileSystemInfo> entries;
+			try { entries = new DirectoryInfo(temp).EnumerateFileSystemInfos("*", ListOptions).Where(e => !ClaudeTemp.IsIt(e)).ToList(); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new(); }
+			var found = new (string Path, long Bytes)?[entries.Count];
+			Parallel.For(0, entries.Count, new ParallelOptions { MaxDegreeOfParallelism = SafeDelete.AtOnce },
+				i => found[i] = ct.IsCancellationRequested ? null : Untouched(entries[i], before));
+			return found.Where(e => e != null).Select(e => e!.Value).ToList();
 		}
 
 		/// <summary>A Temp entry with nothing inside changed since <paramref name="before"/>, and its size; null otherwise, and for a link.</summary>
@@ -1329,10 +1331,11 @@ namespace HEI.Agent {
 			: path;
 
 		/// <summary>
-		/// How many files and folders a deletion works on at once. Deleting is mostly waiting on the disk, which keeps up with
-		/// several: on an SSD, eight at once delete a tree of small files about three times as fast as one.
+		/// How many files and folders a deletion works on at once (and how many Temp entries the developer check measures at
+		/// once). Both are mostly waiting on the disk, which keeps up with several: on an SSD, eight at once delete a tree of
+		/// small files about three times as fast as one.
 		/// </summary>
-		static readonly int AtOnce = Math.Clamp(Environment.ProcessorCount, 2, 8);
+		internal static readonly int AtOnce = Math.Clamp(Environment.ProcessorCount, 2, 8);
 
 		/// <summary>The threads one deletion may take beside the one that asked for it, shared by all its folders.</summary>
 		sealed class Helpers(int count) {

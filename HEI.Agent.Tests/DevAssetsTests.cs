@@ -224,6 +224,26 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Equal(new[] { oldFile }, old.Select(o => o.Path));
 	}
 
+	/// <summary>Temp's entries are measured several at once (millions of files took the check minutes), and listed in the folder's order.</summary>
+	[Fact]
+	public void OldTempEntries_MeasuredSeveralAtOnce_KeepTheFoldersOrder_AndStopWhenAsked() {
+		string temp = Dir("temp");
+		DateTime old = DateTime.UtcNow.AddDays(-30);
+		var folders = new List<string>();
+		for (int i = 0; i < 60; i++) {
+			string d = Path.Combine(temp, $"e{i:00}");
+			Touch(Path.Combine(d, "a.bin"), i + 1);
+			File.SetLastWriteTimeUtc(Path.Combine(d, "a.bin"), old);
+			Directory.SetLastWriteTimeUtc(d, old);
+			folders.Add(d);
+		}
+		var found = DevScanner.OldTempEntries(temp, 7);
+		Assert.Equal(folders, found.Select(e => e.Path));
+		Assert.Equal(Enumerable.Range(1, 60).Select(i => (long)i), found.Select(e => e.Bytes));
+		// Stop scan: nothing more is measured, and the check isn't saved.
+		Assert.Empty(DevScanner.OldTempEntries(temp, 7, new CancellationToken(true)));
+	}
+
 	[Fact]
 	public void FindRepositories_StopsAtARepository_AndSkipsExemptFolders() {
 		Dir("a", "repo1", ".git");
