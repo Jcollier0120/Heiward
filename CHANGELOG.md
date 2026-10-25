@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.96
+
+**The developer check is several times faster on a busy Temp folder.**
+
+### What changed
+
+- The developer check measures your Temp folder several items at once instead of one at a time. On a developer's PC Temp can hold millions of files, and measuring it was most of the check: one that took about three minutes spent nearly all of them there. On that PC, measuring Temp went from 10–30 seconds to under three with the files already cached, and by more when they aren't. It finds exactly what it found before, in the same order.
+- Stop scan stops the developer check while it measures Temp, too.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.95
 
 **It carries the Steward's kit 2.136.5: the parts every agent of the manor shares.**
