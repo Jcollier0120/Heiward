@@ -207,7 +207,7 @@ namespace HEI.Agent {
 			// This listing, and where the journal was read up to: the next scan starts from them.
 			try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
-			AutoRun? auto = Housekeeping(cfg, ct);
+			AutoRun? auto = Housekeeping(cfg, ct, drives);
 			await status.DisposeAsync();
 
 			var decisions = DecisionStore.Load();
@@ -233,11 +233,18 @@ namespace HEI.Agent {
 		/// developer check and the games check when each is due, and automatic cleanup of what has waited its days. Developer and game mode are each read once,
 		/// fresh: Manor's settings may have changed since the last scan (<see cref="DevMode"/>, <see cref="GameMode"/>).
 		/// </summary>
-		static AutoRun? Housekeeping(AgentConfig cfg, CancellationToken ct) {
+		/// <param name="drives">Drives scanned only when asked that this scan read (Scan this drive now): the developer check reads
+		/// them too, now, due or not, so their developer items are brought up to date with their photos and videos.</param>
+		static AutoRun? Housekeeping(AgentConfig cfg, CancellationToken ct, IReadOnlyCollection<string>? drives = null) {
 			bool devChecked = false, gamesChecked = false;
 			DevMode devMode = DevMode.Now(cfg);
-			if (DevScan.Due(devMode)) {
-				try { devChecked = DevScan.RunAndSave(cfg, ct) != null; }
+			bool asked = devMode.On && drives is { Count: > 0 };
+			if (asked || DevScan.Due(devMode)) {
+				try {
+					devChecked = DevScan.RunAndSave(cfg, ct, drives) != null;
+					if (asked && !devChecked)
+						AgentPaths.AppendLog($"developer check already running, so the developer items on {string.Join(", ", drives!)} wait for the next Scan this drive now");
+				}
 				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("developer check failed: " + e.Message); }
 			}
 			// Game mode: the games check once a day too (GameMode, read fresh as developer mode is).

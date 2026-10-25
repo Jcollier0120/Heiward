@@ -28,9 +28,12 @@ namespace HEI.Agent {
 	/// says why it can't be cleaned right now (in use, uncommitted work); <see cref="Suggested"/> items
 	/// start ticked on the page. <paramref name="Leftover"/>: what a worktree removal that stopped partway left behind, a
 	/// folder git no longer knows (disk, not git state: Heiward's even where Reeve keeps the worktrees, <see cref="ManorRoles"/>).
+	/// <paramref name="OnRequest"/>: the drive it's on ("E:\"), scanned only when you ask, when this check left it unread: it's as
+	/// the check of <paramref name="MeasuredUtc"/> found it (<see cref="DevScanner.KeepResting"/>).
 	/// </summary>
 	sealed record DevItem(string Id, string Kind, string Name, string Location, List<string> Paths, long Bytes,
-		DateTime? LastUsedUtc, bool Suggested, string? Blocked, string Detail, string? Repo = null, bool Leftover = false);
+		DateTime? LastUsedUtc, bool Suggested, string? Blocked, string Detail, string? Repo = null, bool Leftover = false,
+		string? OnRequest = null, DateTime? MeasuredUtc = null);
 
 	sealed record DevCategory(string Key, string Title, string Explain, List<DevItem> Items);
 
@@ -51,10 +54,12 @@ namespace HEI.Agent {
 		static readonly object gate = new();
 
 		/// <summary>The developer report, when this build made it (see <see cref="Report.Load"/>); otherwise the next check redoes it.</summary>
-		public static DevReport? Load() {
+		public static DevReport? Load() => LoadAny() is { } report && report.Build == AppBuild.Current ? report : null;
+
+		/// <summary>The developer report whichever build made it: what the next check keeps of a drive it leaves unread.</summary>
+		public static DevReport? LoadAny() {
 			try {
-				return File.Exists(FilePath) && JsonSerializer.Deserialize<DevReport>(File.ReadAllText(FilePath), AgentConfig.Json) is { } report
-					&& report.Build == AppBuild.Current ? report : null;
+				return File.Exists(FilePath) ? JsonSerializer.Deserialize<DevReport>(File.ReadAllText(FilePath), AgentConfig.Json) : null;
 			}
 			catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) {
 				return null;
@@ -101,13 +106,16 @@ namespace HEI.Agent {
 		static readonly string Home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
 		static readonly string Local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
 
-		public static DevReport Run(AgentConfig cfg, CancellationToken ct = default) {
+		/// <param name="drives">Drives scanned only when asked that this check reads too: Scan this drive now, on the drive's page.</param>
+		/// <param name="previous">The last check (<see cref="DevReport.LoadAny"/>): its items on the drives left unread stay listed.</param>
+		public static DevReport Run(AgentConfig cfg, CancellationToken ct = default, IReadOnlyCollection<string>? drives = null, DevReport? previous = null) {
 			var timer = Stopwatch.StartNew();
 			var report = new DevReport { ScannedAtUtc = DateTime.UtcNow, StaleDays = cfg.StaleProjectDays, Build = AppBuild.Current };
 			DateTime staleBefore = DateTime.UtcNow.AddDays(-cfg.StaleProjectDays);
+			Func<string, bool> resting = Resting(cfg, drives);
 			// Not on a drive scanned only when asked: looking for projects would wake it. Nor in a Temp folder: tests leave repositories there.
-			List<string> repos = FindRepositories(ScanScope.Roots(cfg).Where(r => !cfg.IsOnRequest(r)).ToList(),
-				ScanScope.ExclusionRules(cfg).Concat(ScanScope.TempFolders()).ToList(), ct);
+			List<string> repos = FindRepositories(ScanScope.Roots(cfg).Where(r => !resting(r)).ToList(),
+				ScanScope.ExclusionRules(cfg).Concat(ScanScope.TempFolders()).ToList(), ct).Where(r => !resting(r)).ToList();
 			var use = new FolderUse(DateTime.UtcNow);
 
 			// Main checkouts and other version control (a git worktree is listed as a worktree), each walked once.
@@ -129,34 +137,81 @@ namespace HEI.Agent {
 			report.Categories.Add(new DevCategory(Worktrees, "Git worktrees",
 				"Extra working folders of a repository; AI coding agents leave many behind. Git removes one only when it has no uncommitted changes, " +
 				"and it's offered only when its commits are pushed and nothing works in it (a program, or a Claude Code session in the last day). The branch stays.",
-				repos.SelectMany(r => WorktreeItems(r, staleBefore, ct, use)).OrderByDescending(i => i.Bytes).ToList()));
+				repos.SelectMany(r => WorktreeItems(r, staleBefore, ct, use, resting)).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Caches, "Package and build caches",
-				"Downloads that Gradle, NuGet, npm and other tools keep. They're downloaded again when a build needs them, so the next build is slower. " +
-				"Never ticked for you.",
-				CacheItems().OrderByDescending(i => i.Bytes).ToList()));
+				"Downloads that Gradle, NuGet, npm and other tools keep, where their settings put them (a Dev Drive, say). They're downloaded again when " +
+				"a build needs them, so the next build is slower. Never ticked for you, but for a folder a tool moved its cache away from: nothing uses it.",
+				CacheItems(resting).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Android, "Android emulators",
 				"Emulator system images that no emulator uses (ticked), and emulators you haven't started in a while. Deleting an emulator deletes the apps and data inside it.",
-				AndroidItems(staleBefore).OrderByDescending(i => i.Bytes).ToList()));
+				AndroidItems(staleBefore, resting).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Temp, "Temporary files and crash dumps",
 				$"Files in your Temp folder untouched for {cfg.TempOlderThanDays} days, Claude Code sessions' temp files idle as long (never those of a session " +
 				"that's running, can be resumed or has a file open), and crash dumps apps left behind.",
-				TempItems(cfg.TempOlderThanDays).ToList()));
+				TempItems(cfg.TempOlderThanDays, resting).ToList()));
 
-			report.Categories.RemoveAll(c => c.Items.Count == 0);
 			// Main checkouts only (a git worktree's .git is a file): what each uses, and where it's hosted.
 			report.Sources = repos.Where(r => !File.Exists(Path.Combine(r, ".git")))
 				.Select(r => VersionControl.Of(r) is { } vcs ? new RepoSource(r, vcs, VersionControl.RemoteOf(r, vcs)) : null)
 				.Where(s => s != null).Select(s => s!).ToList();
 			// Main checkouts only: a repository's worktrees share its branches.
 			report.Repositories = repos.Where(r => Directory.Exists(Path.Combine(r, ".git")))
-				.Select(BranchPruner.Inspect).Where(r => r != null).Select(r => r!)
+				.Select(r => BranchPruner.Inspect(r, resting)).Where(r => r != null).Select(r => r!).ToList();
+			KeepResting(report, previous, cfg, resting);
+			report.Categories.RemoveAll(c => c.Items.Count == 0);
+			report.Repositories = report.Repositories
 				.OrderByDescending(r => r.Merged.Count).ThenBy(r => r.Name, StringComparer.OrdinalIgnoreCase).ToList();
 			report.DurationSec = Math.Round(timer.Elapsed.TotalSeconds, 1);
 			return report;
 		}
+
+		/// <summary>
+		/// Whether a path is on a drive scanned only when asked (<see cref="AgentConfig.IsOnRequest"/>, through a junction or a
+		/// folder a drive is mounted in too) that this check doesn't read: it isn't listed, measured or asked of git.
+		/// </summary>
+		internal static Func<string, bool> Resting(AgentConfig cfg, IReadOnlyCollection<string>? drives) =>
+			path => cfg.IsOnRequest(path) && !AgentConfig.IsOnDrive(path, drives);
+
+		/// <summary>
+		/// Brings over what <paramref name="previous"/> found on the drives this check leaves unread (<paramref name="resting"/>):
+		/// unchanged, marked with the drive and when it was measured, until a check reads the drive again. Its items, and its
+		/// repositories' merged branches and hosts. An item this check found anyway (it wasn't on such a drive after all) is this check's.
+		/// </summary>
+		internal static void KeepResting(DevReport report, DevReport? previous, AgentConfig cfg, Func<string, bool> resting) {
+			if (previous == null) return;
+			var found = report.Categories.SelectMany(c => c.Items).Select(i => i.Id).ToHashSet();
+			foreach (DevCategory was in previous.Categories) {
+				if (report.Categories.FirstOrDefault(c => c.Key == was.Key) is not { } now) continue; // a category this build no longer has
+				var kept = was.Items.Where(i => !found.Contains(i.Id))
+					.Select(i => RestingDrive(i, cfg, resting) is { } drive ? i with { OnRequest = drive, MeasuredUtc = i.MeasuredUtc ?? previous.ScannedAtUtc } : null)
+					.Where(i => i != null).Select(i => i!).ToList();
+				if (kept.Count == 0) continue;
+				now.Items.AddRange(kept);
+				// Temp's items stay in their order (the folder, Claude Code's, the dumps); the others go biggest first.
+				if (now.Key != Temp) now.Items.Sort((a, b) => b.Bytes.CompareTo(a.Bytes));
+			}
+			report.Repositories.AddRange(previous.Repositories.Where(r => resting(r.Path) && !report.Repositories.Any(n => n.Id == r.Id)));
+			report.Sources.AddRange(previous.Sources.Where(s => resting(s.Path) && !report.Sources.Any(n => string.Equals(n.Path, s.Path, StringComparison.OrdinalIgnoreCase))));
+		}
+
+		/// <summary>
+		/// The drive scanned only when asked that <paramref name="item"/> is on and this check leaves unread: its folder's, its
+		/// repository's (a worktree's git status reads it), or that of any of its paths outside its folder (a cache's other folders);
+		/// null when none. Paths inside its folder are on its drive, as no link is followed to them.
+		/// </summary>
+		internal static string? RestingDrive(DevItem item, AgentConfig cfg, Func<string, bool> resting) {
+			string inside = item.Location.TrimEnd('\\') + "\\";
+			var places = new[] { item.Location, item.Repo }.Concat(item.Paths.Where(p => !p.StartsWith(inside, StringComparison.OrdinalIgnoreCase)));
+			foreach (string? place in places.Distinct(StringComparer.OrdinalIgnoreCase))
+				if (place != null && resting(place)) return cfg.OnRequestDriveOf(place) ?? AgentConfig.DriveOf(place);
+			return null;
+		}
+
+		/// <summary>The drive scanned only when asked that <paramref name="item"/> is on, by <see cref="RestingDrive"/>'s rules, whether or not this check read it.</summary>
+		internal static string? OnRequestDrive(DevItem item, AgentConfig cfg) => item.OnRequest ?? RestingDrive(item, cfg, Resting(cfg, null));
 
 		// ------------------------------------------------------------------ projects
 
@@ -341,28 +396,27 @@ namespace HEI.Agent {
 		// ------------------------------------------------------------------ worktrees
 
 		/// <param name="use">What works in a folder now (<see cref="FolderUse"/>): a worktree in use isn't offered, nor what a removal left of one.</param>
-		internal static IEnumerable<DevItem> WorktreeItems(string repo, DateTime staleBefore, CancellationToken ct, FolderUse? use = null) {
+		/// <param name="resting">A worktree on a drive this check leaves unread (<see cref="Resting"/>) isn't looked at: the last check's stays.</param>
+		internal static IEnumerable<DevItem> WorktreeItems(string repo, DateTime staleBefore, CancellationToken ct, FolderUse? use = null, Func<string, bool>? resting = null) {
 			use ??= new FolderUse(DateTime.UtcNow);
-			string meta = Path.Combine(repo, ".git", "worktrees");
-			var records = Directory.Exists(meta) ? Directory.EnumerateDirectories(meta).ToList() : [];
-			foreach (string w in records) {
+			resting ??= _ => false;
+			foreach (var (w, path) in RecordedWorktrees(repo)) {
 				if (ct.IsCancellationRequested) yield break;
-				string? path = WorktreePath(w);
-				if (path == null || !Directory.Exists(path)) continue; // a deleted worktree's record takes no space
+				if (path == null || resting(path) || !Directory.Exists(path)) continue; // a deleted worktree's record takes no space
 				long bytes = Measure(path).Bytes;
 				DateTime lastUsed = LastUsed(path, w);
 				string branch = BranchOf(w) ?? "detached";
 				// In use first: it says what to close, where the others say why it stays for good.
 				string? blocked = File.Exists(Path.Combine(w, "locked")) ? "Locked in git"
 					: use.Why(path) is { } busy ? busy
-					: ToolHome(path) is { } tool ? $"Kept for the tool that made it ({tool})"
-					: AScheduledTaskUses(path) ? "A scheduled task uses it"
+					: ToolHome(path, resting) is { } tool ? $"Kept for the tool that made it ({tool})"
+					: AScheduledTaskUses(path, resting) ? "A scheduled task uses it"
 					: WorktreeBlocker(path);
 				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, bytes,
 					lastUsed == DateTime.MinValue ? null : lastUsed, lastUsed < staleBefore && blocked == null, blocked,
 					$"branch {branch} · worktree of {Path.GetFileName(repo)}", repo);
 			}
-			foreach (string path in LeftoverWorktrees(repo)) {
+			foreach (string path in LeftoverWorktrees(repo, resting)) {
 				if (ct.IsCancellationRequested) yield break;
 				DateTime lastUsed = LastUsed(path, null);
 				// A removal that stopped at the folder itself: Windows keeps a folder a process works in. It waits for that
@@ -382,18 +436,32 @@ namespace HEI.Agent {
 		/// folder, .git and all, until a file stops it (one in use, or a path too long without core.longpaths). Folders
 		/// in the repository's .claude\worktrees with no .git that git doesn't list: nothing in them can be committed any more.
 		/// </summary>
-		static List<string> LeftoverWorktrees(string repo) {
+		/// <param name="resting">Drives left unread (<see cref="Resting"/>): .claude\worktrees on one isn't looked in, and with a worktree on
+		/// one, git isn't asked to list them (it looks at each worktree's folder): the repository's own records say the same.</param>
+		static List<string> LeftoverWorktrees(string repo, Func<string, bool>? resting = null) {
+			string home = AgentWorktrees(repo);
+			if (resting?.Invoke(home) == true) return [];
 			List<string> candidates;
 			try {
-				candidates = Directory.Exists(AgentWorktrees(repo))
-					? Directory.EnumerateDirectories(AgentWorktrees(repo)).Where(p => !Path.Exists(Path.Combine(p, ".git"))).ToList()
+				candidates = Directory.Exists(home)
+					? Directory.EnumerateDirectories(home).Where(p => !Path.Exists(Path.Combine(p, ".git"))).ToList()
 					: [];
 			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
 			if (candidates.Count == 0) return candidates;
 			// By name: git may write the same folder another way (a short name, through a link).
-			var listed = WorktreeFolders(repo);
+			var recorded = RecordedWorktrees(repo);
+			var listed = resting != null && recorded.Any(r => r.Path != null && resting(r.Path))
+				? recorded.Where(r => r.Path != null).Select(r => r.Path!).ToHashSet(StringComparer.OrdinalIgnoreCase)
+				: WorktreeFolders(repo);
 			return listed == null ? [] : candidates.Where(p => !listed.Any(w => string.Equals(Path.GetFileName(w), Path.GetFileName(p), StringComparison.OrdinalIgnoreCase))).ToList();
+		}
+
+		/// <summary>The repository's worktrees as its own records keep them (.git\worktrees\&lt;id&gt;), each with its folder (null when the record can't be read).</summary>
+		internal static List<(string Record, string? Path)> RecordedWorktrees(string repo) {
+			string meta = Path.Combine(repo, ".git", "worktrees");
+			try { return Directory.Exists(meta) ? Directory.EnumerateDirectories(meta).Select(w => (w, WorktreePath(w))).ToList() : []; }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return []; }
 		}
 
 		internal static bool IsLeftoverWorktree(string repo, string path) {
@@ -420,10 +488,11 @@ namespace HEI.Agent {
 		/// (repo\.claude\worktrees) are the user's. Git names a worktree by its real path: one in ~\.steward\work, a
 		/// junction to E:\steward-work, is E:\steward-work\x, and still the Steward's.
 		/// </summary>
-		internal static string? ToolHome(string path) {
+		/// <param name="resting">Drives left unread (<see cref="Resting"/>): a tool's home on one isn't followed to, and can't hold <paramref name="path"/>, which isn't on one.</param>
+		internal static string? ToolHome(string path, Func<string, bool>? resting = null) {
 			if (ToolHomeAsWritten(path) is { } tool) return tool;
 			string real = RealPath.Of(path);
-			return ToolHomes().FirstOrDefault(h => ListingPlan.IsUnder(real, h.Folder)).Tool;
+			return ToolHomes(resting).FirstOrDefault(h => ListingPlan.IsUnder(real, h.Folder)).Tool;
 		}
 
 		static string? ToolHomeAsWritten(string path) {
@@ -438,21 +507,24 @@ namespace HEI.Agent {
 
 		static string[] AppDataHomes => new[] { Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData) };
 
-		static (DateTime ReadUtc, List<(string Tool, string Folder)> Homes)? toolHomes;
+		static (DateTime ReadUtc, Func<string, bool>? Resting, List<(string Tool, string Folder)> Homes)? toolHomes;
 
 		/// <summary>
 		/// The tools' homes by their real paths: app data, each dot-folder of the profile, and the folders a link directly
-		/// inside one leads to (~\.steward\work, a junction). Read again after a minute: tools come and go.
+		/// inside one leads to (~\.steward\work, a junction). Read again after a minute: tools come and go. A link onto a drive
+		/// left unread (<paramref name="resting"/>) isn't followed: finding where it leads would read that drive.
 		/// </summary>
-		static List<(string Tool, string Folder)> ToolHomes() {
-			if (toolHomes is { } known && DateTime.UtcNow - known.ReadUtc < TimeSpan.FromMinutes(1)) return known.Homes;
+		static List<(string Tool, string Folder)> ToolHomes(Func<string, bool>? resting) {
+			if (toolHomes is { } known && ReferenceEquals(known.Resting, resting) && DateTime.UtcNow - known.ReadUtc < TimeSpan.FromMinutes(1)) return known.Homes;
+			bool Rests(DirectoryInfo d) => resting != null && (d.Attributes & FileAttributes.ReparsePoint) != 0 && d.LinkTarget is { } target && resting(target);
 			var homes = AppDataHomes.Where(h => !string.IsNullOrEmpty(h)).Select(h => (Tool: "app data", Folder: RealPath.Of(h))).ToList();
 			var linkOptions = new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 };
 			try {
 				foreach (DirectoryInfo dot in new DirectoryInfo(Home).EnumerateDirectories(".*", linkOptions)) {
+					if (Rests(dot)) continue;
 					homes.Add((dot.Name, RealPath.Of(dot.FullName)));
 					try {
-						foreach (DirectoryInfo inside in dot.EnumerateDirectories("*", linkOptions).Where(d => (d.Attributes & FileAttributes.ReparsePoint) != 0))
+						foreach (DirectoryInfo inside in dot.EnumerateDirectories("*", linkOptions).Where(d => (d.Attributes & FileAttributes.ReparsePoint) != 0 && !Rests(d)))
 							if (RealPath.Of(inside.FullName) is var target && Path.GetPathRoot(target) != target) // a link to a whole drive holds more than the tool's
 								homes.Add((dot.Name, target));
 					}
@@ -460,7 +532,7 @@ namespace HEI.Agent {
 				}
 			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { }
-			toolHomes = (DateTime.UtcNow, homes);
+			toolHomes = (DateTime.UtcNow, resting, homes);
 			return homes;
 		}
 
@@ -468,19 +540,30 @@ namespace HEI.Agent {
 		/// A scheduled task runs in <paramref name="path"/> or names something in it, by its real path: a task written with
 		/// C:\worktrees\x uses the worktree git lists as E:\worktrees\x.
 		/// </summary>
-		static bool AScheduledTaskUses(string path) {
+		static bool AScheduledTaskUses(string path, Func<string, bool>? resting = null) {
 			if (ScheduledTasksText.Value.Contains(path, StringComparison.OrdinalIgnoreCase)) return true;
 			string real = RealPath.Of(path);
-			return ScheduledTaskPaths.Value.Any(p => ListingPlan.IsUnder(p, real));
+			return ScheduledTaskPaths(resting).Any(p => ListingPlan.IsUnder(p, real));
 		}
 
-		/// <summary>The paths in the scheduled tasks' commands and start folders, each by its real path, read once.</summary>
-		static readonly Lazy<List<string>> ScheduledTaskPaths = new(() => TaskPaths(ScheduledTasksText.Value));
+		static (Func<string, bool>? Resting, List<string> Paths)? taskPaths;
 
-		/// <summary>The local paths in <paramref name="text"/> ("C:\x\run.cmd" in "C:\x\run.cmd --now"), each by its real path.</summary>
-		internal static List<string> TaskPaths(string text) =>
+		/// <summary>The paths in the scheduled tasks' commands and start folders, each by its real path, read once (for each set of drives left unread).</summary>
+		static List<string> ScheduledTaskPaths(Func<string, bool>? resting) {
+			if (taskPaths is { } known && ReferenceEquals(known.Resting, resting)) return known.Paths;
+			var paths = TaskPaths(ScheduledTasksText.Value, resting);
+			taskPaths = (resting, paths);
+			return paths;
+		}
+
+		/// <summary>
+		/// The local paths in <paramref name="text"/> ("C:\x\run.cmd" in "C:\x\run.cmd --now"), each by its real path. Not those on a
+		/// drive left unread (<paramref name="resting"/>): finding their real paths would read it, and nothing there is looked at.
+		/// </summary>
+		internal static List<string> TaskPaths(string text, Func<string, bool>? resting = null) =>
 			Regex.Matches(text, @"(?<![A-Za-z])[A-Za-z]:\\[^""\r\n,]*?(?=\s+(?:-|/|[A-Za-z]:\\)|[""\r\n,]|$)")
 				.Select(m => m.Value.Trim()).Where(p => p.Length > 3).Distinct(StringComparer.OrdinalIgnoreCase)
+				.Where(p => resting?.Invoke(p) != true)
 				.Select(RealPath.Of).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
 		/// <summary>Every scheduled task's command and start folder, read once: a worktree a task runs in stays.</summary>
@@ -506,7 +589,7 @@ namespace HEI.Agent {
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
 		}
 
-		static string? BranchOf(string gitDir) {
+		internal static string? BranchOf(string gitDir) {
 			try {
 				string head = File.ReadAllText(Path.Combine(gitDir, "HEAD")).Trim();
 				return head.StartsWith("ref: refs/heads/", StringComparison.Ordinal) ? head["ref: refs/heads/".Length..] : null;
@@ -602,31 +685,98 @@ namespace HEI.Agent {
 
 		// ------------------------------------------------------------------ caches
 
+		/// <summary>
+		/// A cache folder: where its tool keeps it by default (~: the profile, %L: local app data), and the setting that moves it
+		/// (<see cref="CacheSetting"/>), with <paramref name="Sub"/> below the folder the setting names. Windows' Dev Drive guidance
+		/// moves package caches to a Dev Drive with these settings.
+		/// </summary>
+		internal sealed record CachePlace(string Default, string? Setting = null, string Sub = "");
+
+		const string NpmCache = "npm cache", PnpmStore = "pnpm store-dir", MavenRepo = "maven.repo.local";
+
 		/// <summary>Tools' own cache folders; blocked while a process that uses them runs.</summary>
-		static readonly (string Name, string[] Paths, string[] Processes)[] CacheDefs = {
-			("Gradle", new[] { @"~\.gradle\caches", @"~\.gradle\wrapper\dists", @"~\.gradle\daemon" }, new[] { "java", "javaw", "gradle", "studio64" }),
-			("NuGet", new[] { @"~\.nuget\packages", @"%L\NuGet\v3-cache", @"%L\NuGet\plugins-cache" }, new[] { "dotnet", "MSBuild", "devenv", "VBCSCompiler" }),
-			("npm", new[] { @"%L\npm-cache" }, Array.Empty<string>()),
-			("Yarn", new[] { @"%L\Yarn\Cache" }, Array.Empty<string>()),
-			("pnpm", new[] { @"%L\pnpm\store" }, Array.Empty<string>()),
-			("pip", new[] { @"%L\pip\Cache" }, Array.Empty<string>()),
-			("Maven", new[] { @"~\.m2\repository" }, new[] { "java", "javaw", "mvn" }),
-			("Cargo", new[] { @"~\.cargo\registry\cache", @"~\.cargo\registry\src", @"~\.cargo\git\checkouts" }, new[] { "cargo", "rustc" }),
-			("Go", new[] { @"%L\go-build" }, new[] { "go" }),
+		static readonly (string Name, CachePlace[] Places, string[] Processes)[] CacheDefs = {
+			("Gradle", [new(@"~\.gradle", "GRADLE_USER_HOME", "caches"), new(@"~\.gradle", "GRADLE_USER_HOME", @"wrapper\dists"), new(@"~\.gradle", "GRADLE_USER_HOME", "daemon")],
+				new[] { "java", "javaw", "gradle", "studio64" }),
+			("NuGet", [new(@"~\.nuget\packages", "NUGET_PACKAGES"), new(@"%L\NuGet\v3-cache", "NUGET_HTTP_CACHE_PATH"), new(@"%L\NuGet\plugins-cache", "NUGET_PLUGINS_CACHE_PATH")],
+				new[] { "dotnet", "MSBuild", "devenv", "VBCSCompiler" }),
+			("npm", [new(@"%L\npm-cache", NpmCache)], Array.Empty<string>()),
+			("Yarn", [new(@"%L\Yarn\Cache", "YARN_CACHE_FOLDER")], Array.Empty<string>()),
+			("pnpm", [new(@"%L\pnpm\store", PnpmStore)], Array.Empty<string>()),
+			("pip", [new(@"%L\pip\Cache", "PIP_CACHE_DIR")], Array.Empty<string>()),
+			("Maven", [new(@"~\.m2\repository", MavenRepo)], new[] { "java", "javaw", "mvn" }),
+			("Cargo", [new(@"~\.cargo", "CARGO_HOME", @"registry\cache"), new(@"~\.cargo", "CARGO_HOME", @"registry\src"), new(@"~\.cargo", "CARGO_HOME", @"git\checkouts")],
+				new[] { "cargo", "rustc" }),
+			("Go", [new(@"%L\go-build", "GOCACHE")], new[] { "go" }),
 		};
 
 		static string Expand(string p) => p.Replace("~", Home).Replace("%L", Local);
 
-		static IEnumerable<DevItem> CacheItems() {
-			foreach (var (name, paths, processes) in CacheDefs) {
-				var existing = paths.Select(Expand).Where(Directory.Exists).ToList();
-				if (existing.Count == 0) continue;
-				var sizes = existing.Select(Measure).ToList();
-				long bytes = sizes.Sum(s => s.Bytes);
-				if (bytes < 1 << 20) continue;
-				yield return new DevItem(IdOf(Caches, name), Caches, name, existing[0], existing, bytes, sizes.Max(s => s.NewestUtc), false,
-					CacheBlocker(processes), existing.Count > 1 ? $"{existing.Count} folders" : "");
+		/// <summary>
+		/// Each tool's cache where its settings put it now, and the folder it used before, when a setting moved it and the old
+		/// one is still there: nothing uses that one any more, so it's ticked. Either, on a drive left unread (<paramref name="resting"/>),
+		/// isn't looked at: the last check's stays (<see cref="KeepResting"/>).
+		/// </summary>
+		/// <param name="setting">A tool's setting's value (<see cref="CacheSetting"/>); <paramref name="tools"/>: the tools and their caches (<see cref="CacheDefs"/>).</param>
+		internal static IEnumerable<DevItem> CacheItems(Func<string, bool> resting, Func<string, string?>? setting = null,
+			IEnumerable<(string Name, CachePlace[] Places, string[] Processes)>? tools = null) {
+			setting ??= CacheSetting;
+			foreach (var (name, places, processes) in tools ?? CacheDefs) {
+				var located = places.Select(p => Locate(p, setting)).ToList();
+				if (!located.Any(l => resting(l.Now)) &&
+					CacheItem(IdOf(Caches, name), name, located.Select(l => l.Now), () => CacheBlocker(processes), false, null) is { } item)
+					yield return item;
+				var old = located.Where(l => l.Old != null).ToList();
+				if (old.Count > 0 && !old.Any(l => resting(l.Old!)) &&
+					CacheItem(IdOf(Caches, name + "|old"), name + ", old location", old.Select(l => l.Old!).Where(o => !IsLink(o)), () => null, true,
+						$"{name} keeps it in {old[0].Now} now · nothing uses this one") is { } left)
+					yield return left;
 			}
+		}
+
+		static DevItem? CacheItem(string id, string name, IEnumerable<string> paths, Func<string?> blocker, bool suggested, string? detail) {
+			var existing = paths.Where(Directory.Exists).ToList();
+			if (existing.Count == 0) return null;
+			var sizes = existing.Select(Measure).ToList();
+			long bytes = sizes.Sum(s => s.Bytes);
+			if (bytes < 1 << 20) return null;
+			return new DevItem(id, Caches, name, existing[0], existing, bytes, sizes.Max(s => s.NewestUtc), suggested, blocker(),
+				detail ?? (existing.Count > 1 ? $"{existing.Count} folders" : ""));
+		}
+
+		/// <summary>Where the tool keeps the cache now, and its default folder when a setting moved it elsewhere (null otherwise).</summary>
+		internal static (string Now, string? Old) Locate(CachePlace place, Func<string, string?> setting) {
+			string standard = Path.Combine(Expand(place.Default), place.Sub);
+			if (place.Setting == null || setting(place.Setting) is not { } moved || !Path.IsPathFullyQualified(moved)) return (standard, null);
+			string now = Path.Combine(moved, place.Sub);
+			try {
+				bool same = string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(now)), Path.TrimEndingDirectorySeparator(Path.GetFullPath(standard)), StringComparison.OrdinalIgnoreCase);
+				return (now, same ? null : standard);
+			}
+			catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { return (standard, null); }
+		}
+
+		/// <summary>
+		/// What a tool's setting says about where its cache is, or null when it's not set: an environment variable (NUGET_PACKAGES,
+		/// PIP_CACHE_DIR, GRADLE_USER_HOME...), npm's cache and pnpm's store-dir (npm_config_*, or ~\.npmrc), Maven's maven.repo.local in MAVEN_OPTS.
+		/// </summary>
+		internal static string? CacheSetting(string setting) => setting switch {
+			NpmCache => Env("npm_config_cache") ?? Npmrc("cache"),
+			PnpmStore => Env("npm_config_store_dir") ?? Npmrc("store-dir"),
+			MavenRepo => Env("MAVEN_OPTS") is { } opts && Regex.Match(opts, @"-Dmaven\.repo\.local=(""[^""]+""|\S+)") is { Success: true } m ? m.Groups[1].Value.Trim('"') : null,
+			_ => Env(setting),
+		};
+
+		static string? Env(string name) =>
+			Environment.GetEnvironmentVariable(name) is { } v && v.Trim().Trim('"') is { Length: > 0 } t ? Environment.ExpandEnvironmentVariables(t) : null;
+
+		/// <summary>A setting of the user's ~\.npmrc, with the ${VARIABLE}s npm fills in filled in.</summary>
+		static string? Npmrc(string key) =>
+			IniValue(Path.Combine(Home, ".npmrc"), key) is { } v && Regex.Replace(v.Trim('"'), @"\$\{([^}]+)\}", m => Environment.GetEnvironmentVariable(m.Groups[1].Value) ?? "") is { Length: > 0 } t ? t : null;
+
+		static bool IsLink(string path) {
+			try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
 		}
 
 		internal static string? CacheBlocker(string[] processes) {
@@ -638,22 +788,36 @@ namespace HEI.Agent {
 
 		// ------------------------------------------------------------------ Android
 
-		static string? AndroidSdk() =>
+		/// <summary>
+		/// The Android SDK's folder (ANDROID_HOME, ANDROID_SDK_ROOT, or where Android Studio puts it), or null. One on a drive left
+		/// unread (<paramref name="resting"/>) is taken as it's written: whether it's there would take reading the drive.
+		/// </summary>
+		static string? AndroidSdk(Func<string, bool> resting) =>
 			new[] { Environment.GetEnvironmentVariable("ANDROID_HOME"), Environment.GetEnvironmentVariable("ANDROID_SDK_ROOT"), Path.Combine(Local, "Android", "Sdk") }
-				.FirstOrDefault(p => !string.IsNullOrEmpty(p) && Directory.Exists(p));
+				.FirstOrDefault(p => !string.IsNullOrEmpty(p) && (resting(p) || Directory.Exists(p)));
 
 		static string AvdHome() => Environment.GetEnvironmentVariable("ANDROID_AVD_HOME") is { Length: > 0 } h ? h : Path.Combine(Home, ".android", "avd");
 
 		internal static bool EmulatorRunning() =>
 			Process.GetProcesses().Any(p => { try { return p.ProcessName.StartsWith("qemu-system", StringComparison.OrdinalIgnoreCase) || p.ProcessName.Equals("emulator", StringComparison.OrdinalIgnoreCase); } catch { return false; } });
 
-		static IEnumerable<DevItem> AndroidItems(DateTime staleBefore) {
+		/// <summary>
+		/// Emulators, and the system images none of them uses. Neither is looked at on a drive left unread (<paramref name="resting"/>):
+		/// the last check's stay (<see cref="KeepResting"/>). An emulator there may use any image, so then none is offered.
+		/// </summary>
+		/// <param name="avdHome">Where the emulators are listed (ANDROID_AVD_HOME, or ~\.android\avd); <paramref name="sdk"/>: the SDK (<see cref="AndroidSdk"/>).</param>
+		internal static IEnumerable<DevItem> AndroidItems(DateTime staleBefore, Func<string, bool> resting, string? avdHome = null, string? sdk = null) {
 			var usedImages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-			string avdHome = AvdHome();
+			avdHome ??= AvdHome();
 			string? blocked = EmulatorRunning() ? "An emulator is running" : null;
-			if (Directory.Exists(avdHome)) {
+			bool unknownUse = resting(avdHome);
+			if (!unknownUse && Directory.Exists(avdHome)) {
 				foreach (string ini in Directory.EnumerateFiles(avdHome, "*.ini")) {
 					string? avdDir = IniValue(ini, "path");
+					if (avdDir != null && resting(avdDir)) {
+						unknownUse = true;
+						continue;
+					}
 					if (avdDir == null || !Directory.Exists(avdDir)) continue;
 					string? sysdir = IniValue(Path.Combine(avdDir, "config.ini"), "image.sysdir.1");
 					if (sysdir != null) usedImages.Add(sysdir.Replace('/', '\\').TrimEnd('\\'));
@@ -663,17 +827,18 @@ namespace HEI.Agent {
 						false, blocked, "Emulator" + (sysdir != null ? " · " + sysdir.Replace('\\', '/').TrimEnd('/') : ""));
 				}
 			}
-			string? sdk = AndroidSdk();
+			sdk ??= AndroidSdk(resting);
 			string images = sdk == null ? "" : Path.Combine(sdk, "system-images");
-			if (!Directory.Exists(images)) yield break;
+			if (sdk == null || resting(images) || !Directory.Exists(images)) yield break;
+			string? imageBlocked = blocked ?? (unknownUse ? "An emulator on a drive scanned only when you ask may use it" : null);
 			foreach (string api in Directory.EnumerateDirectories(images))
 				foreach (string tag in Directory.EnumerateDirectories(api))
 					foreach (string abi in Directory.EnumerateDirectories(tag)) {
-						string rel = Path.GetRelativePath(sdk!, abi).TrimEnd('\\');
+						string rel = Path.GetRelativePath(sdk, abi).TrimEnd('\\');
 						if (usedImages.Contains(rel)) continue;
 						var (bytes, newest) = Measure(abi);
 						yield return new DevItem(IdOf(Android, abi), "sysimage", $"{Path.GetFileName(api)} · {Path.GetFileName(tag)} · {Path.GetFileName(abi)}",
-							abi, new() { abi }, bytes, newest, blocked == null, blocked, "System image no emulator uses (the SDK Manager downloads it again)");
+							abi, new() { abi }, bytes, newest, imageBlocked == null, imageBlocked, "System image no emulator uses (the SDK Manager downloads it again)");
 					}
 		}
 
@@ -691,20 +856,27 @@ namespace HEI.Agent {
 
 		// ------------------------------------------------------------------ temp and crash dumps
 
-		static IEnumerable<DevItem> TempItems(int olderThanDays) {
-			string temp = Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar);
-			var old = OldTempEntries(temp, olderThanDays);
-			long bytes = old.Sum(e => e.Bytes);
-			if (bytes >= 1 << 20)
-				yield return new DevItem(IdOf(Temp, temp), "temp", "Temp folder", temp, old.Select(e => e.Path).ToList(), bytes, null, true, null,
-					$"{old.Count:N0} item(s) untouched for {olderThanDays} days");
-			if (Directory.Exists(ClaudeTemp.In(temp))) {
-				ClaudeKeeps? keeps = ClaudeKeeps.Now(olderThanDays);
-				if (keeps == null) AgentPaths.AppendLog("developer check: Claude Code's sessions couldn't be read, so its temp files wait for the next check");
-				else if (ClaudeTemp.Item(temp, olderThanDays, keeps) is { } claude) yield return claude;
+		/// <summary>
+		/// The Temp folder's old entries, Claude Code's idle sessions' temp files, and crash dumps. None is looked at on a drive left
+		/// unread (<paramref name="resting"/>), which %TEMP% can be through a junction (C:\DevData\Temp): the last check's stay (<see cref="KeepResting"/>).
+		/// </summary>
+		/// <param name="temp">The Temp folder (%TEMP%); <paramref name="dumps"/>: where apps leave crash dumps (%LOCALAPPDATA%\CrashDumps).</param>
+		internal static IEnumerable<DevItem> TempItems(int olderThanDays, Func<string, bool> resting, string? temp = null, string? dumps = null) {
+			temp ??= Path.GetTempPath().TrimEnd(Path.DirectorySeparatorChar);
+			if (!resting(temp)) {
+				var old = OldTempEntries(temp, olderThanDays);
+				long bytes = old.Sum(e => e.Bytes);
+				if (bytes >= 1 << 20)
+					yield return new DevItem(IdOf(Temp, temp), "temp", "Temp folder", temp, old.Select(e => e.Path).ToList(), bytes, null, true, null,
+						$"{old.Count:N0} item(s) untouched for {olderThanDays} days");
+				if (!resting(ClaudeTemp.In(temp)) && Directory.Exists(ClaudeTemp.In(temp))) {
+					ClaudeKeeps? keeps = ClaudeKeeps.Now(olderThanDays);
+					if (keeps == null) AgentPaths.AppendLog("developer check: Claude Code's sessions couldn't be read, so its temp files wait for the next check");
+					else if (ClaudeTemp.Item(temp, olderThanDays, keeps) is { } claude) yield return claude;
+				}
 			}
-			string dumps = Path.Combine(Local, "CrashDumps");
-			if (Directory.Exists(dumps)) {
+			dumps ??= Path.Combine(Local, "CrashDumps");
+			if (!resting(dumps) && Directory.Exists(dumps)) {
 				var files = new DirectoryInfo(dumps).EnumerateFiles("*.dmp").ToList();
 				long dumpBytes = files.Sum(f => f.Length);
 				if (dumpBytes > 0)
@@ -788,7 +960,8 @@ namespace HEI.Agent {
 		static readonly HashSet<string> Protected = new(StringComparer.OrdinalIgnoreCase) { "main", "master", "develop", "dev", "trunk" };
 
 		/// <summary>From what's already fetched: no network.</summary>
-		public static RepoBranches? Inspect(string repo) {
+		/// <param name="resting">Drives left unread (<see cref="DevScanner.Resting"/>): with a worktree on one, what's checked out comes from the repository's records.</param>
+		public static RepoBranches? Inspect(string repo, Func<string, bool>? resting = null) {
 			if (Git.Exe == null) return null;
 			string name = System.IO.Path.GetFileName(repo.TrimEnd('\\'));
 			string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("branches|" + repo.ToLowerInvariant())))[..16].ToLowerInvariant();
@@ -804,7 +977,7 @@ namespace HEI.Agent {
 			var (mc, mergedText) = Git.Run(repo, "branch", "--format=%(refname:short)", "--merged", defaultRef);
 			if (mc != 0) return new RepoBranches(id, name, repo, defaultRef, local, new(), new(), "git couldn't list merged branches");
 			string defaultShort = defaultRef[(defaultRef.IndexOf('/') + 1)..];
-			var checkedOut = CheckedOutBranches(repo);
+			var checkedOut = CheckedOutBranches(repo, resting);
 			var merged = Lines(mergedText).Where(b => !Protected.Contains(b) && !b.Equals(defaultShort, StringComparison.OrdinalIgnoreCase)).ToList();
 			return new RepoBranches(id, name, repo, defaultRef, local,
 				merged.Where(b => !checkedOut.Contains(b)).ToList(), merged.Where(checkedOut.Contains).ToList(), null);
@@ -842,7 +1015,14 @@ namespace HEI.Agent {
 			return null;
 		}
 
-		static HashSet<string> CheckedOutBranches(string repo) {
+		/// <summary>
+		/// The branches checked out in the repository or any of its worktrees. git worktree list looks at each worktree's folder,
+		/// so with one on a drive left unread (<paramref name="resting"/>), each worktree's HEAD is read from the repository's own records.
+		/// </summary>
+		static HashSet<string> CheckedOutBranches(string repo, Func<string, bool>? resting = null) {
+			if (resting != null && DevScanner.RecordedWorktrees(repo).Any(w => w.Path != null && resting(w.Path)))
+				return new[] { System.IO.Path.Combine(repo, ".git") }.Concat(DevScanner.RecordedWorktrees(repo).Select(w => w.Record))
+					.Select(DevScanner.BranchOf).Where(b => b != null).Select(b => b!).ToHashSet(StringComparer.OrdinalIgnoreCase);
 			var (_, text) = Git.Run(repo, "worktree", "list", "--porcelain");
 			return Lines(text).Where(l => l.StartsWith("branch refs/heads/", StringComparison.Ordinal))
 				.Select(l => l["branch refs/heads/".Length..]).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -863,16 +1043,20 @@ namespace HEI.Agent {
 		public static bool Due(DevMode mode) =>
 			mode.On && (DevReport.Load() is not { } last || DateTime.UtcNow - last.ScannedAtUtc > TimeSpan.FromHours(20));
 
-		public static DevReport? RunAndSave(AgentConfig cfg, CancellationToken ct = default) {
+		/// <param name="drives">Drives scanned only when asked that this check reads too (Scan this drive now); the others' items stay as last found.</param>
+		public static DevReport? RunAndSave(AgentConfig cfg, CancellationToken ct = default, IReadOnlyCollection<string>? drives = null) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			FileStream? held;
 			try { held = new FileStream(LockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
 			catch (IOException) { return null; } // another check is running
 			using (held) {
-				DevReport report = DevScanner.Run(cfg, ct);
+				DevReport report = DevScanner.Run(cfg, ct, drives, DevReport.LoadAny());
 				if (!ct.IsCancellationRequested) report.Save();
+				int resting = report.Categories.Sum(c => c.Items.Count(i => i.OnRequest != null));
 				AgentPaths.AppendLog($"developer check: {report.Categories.Sum(c => c.Items.Count)} item(s), " +
-					$"{Format.Bytes(report.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes))} ticked, in {report.DurationSec:N0} s");
+					$"{Format.Bytes(report.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes))} ticked, in {report.DurationSec:N0} s" +
+					(resting > 0 ? $"; {resting} on drives scanned only when you ask kept as last measured" : "") +
+					(drives is { Count: > 0 } ? $"; read {string.Join(", ", drives)} as asked" : ""));
 				return report;
 			}
 		}

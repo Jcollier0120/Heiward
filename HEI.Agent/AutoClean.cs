@@ -139,6 +139,8 @@ namespace HEI.Agent {
 
 		/// <summary>This many sets or more with copies between the same two folders look like a copy of the whole folder.</summary>
 		internal const int WholeFolderSets = 20;
+		/// <summary>Why a set, developer item or repository on a drive scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) is left to the user.</summary>
+		internal const string OnRequestReason = "It's on a drive scanned only when you ask, so it waits for you";
 		/// <summary>A set automatic cleanup couldn't move is tried again after this.</summary>
 		static readonly TimeSpan RetryAfter = TimeSpan.FromDays(1);
 		const int RunsKept = 20;
@@ -237,7 +239,7 @@ namespace HEI.Agent {
 					var (targets, reason) = Targets(g);
 					// Cleaning up would wake a drive scanned only when asked: the set waits for you instead.
 					if (reason == null && g.Items.Any(i => cfg.IsOnRequest(i.Path)))
-						reason = "It's on a drive scanned only when you ask, so it waits for you";
+						reason = OnRequestReason;
 					string? pair = null;
 					if (reason == null) {
 						string keepFolder = Keeper(g).Folder;
@@ -266,6 +268,8 @@ namespace HEI.Agent {
 						} :
 						!auto.DeveloperKinds.Contains(kind) ? $"Automatic cleanup is off for {Label(kind)}" :
 						i.Blocked ?? (i.Suggested ? null : kind is BuildOutputs or Worktrees ? $"Used in the last {cfg.StaleProjectDays} days" : "Not ticked for you");
+					// Kept as last measured, or on such a drive the check was asked to read: cleaning would wake it.
+					if (reason == null && DevScanner.OnRequestDrive(i, cfg) != null) reason = OnRequestReason;
 					bool held = s.Held.Contains(key);
 					DateTime? due = reason == null && !held ? Due(key, s.DeveloperSinceUtc) : null;
 					plan.DevItems[i.Id] = new AutoPlanEntry(due, reason, held, Count: i.Paths.Count, Bytes: i.Bytes);
@@ -273,6 +277,10 @@ namespace HEI.Agent {
 				foreach (RepoBranches r in dev.Repositories.Where(r => r.Merged.Count > 0)) {
 					if (!auto.DeveloperKinds.Contains(Branches)) {
 						plan.Repos[r.Id] = new AutoPlanEntry(null, $"Automatic cleanup is off for {Label(Branches)}", Count: r.Merged.Count);
+						continue;
+					}
+					if (cfg.IsOnRequest(r.Path)) {
+						plan.Repos[r.Id] = new AutoPlanEntry(null, OnRequestReason, Count: r.Merged.Count);
 						continue;
 					}
 					bool held = s.Held.Contains("b:" + r.Id);

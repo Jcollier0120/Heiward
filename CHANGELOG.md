@@ -2,6 +2,25 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.90
+
+**The developer check leaves a drive scanned only when you ask alone, and finds the caches you moved to a Dev Drive.**
+
+### What's new
+
+- On a drive set to Scan only when I ask, the developer check reads nothing: projects, worktrees, package caches, emulators, temp files and crash dumps there aren't looked for, measured or asked of git, even when you reach them through a junction or a folder the drive is mounted in. What the last check found there stays listed as it was, with a line saying which drive it's on and when it was measured.
+- Scan this drive now, on such a drive's page, checks its developer items too, so they're up to date.
+- Package caches are found where their tools' settings put them, as Windows' Dev Drive guidance moves them: npm's cache in .npmrc, pnpm's store-dir, NUGET_PACKAGES and NuGet's other caches, PIP_CACHE_DIR, GRADLE_USER_HOME, CARGO_HOME, GOCACHE, YARN_CACHE_FOLDER and Maven's maven.repo.local. The folder a tool used before is listed too, ticked: nothing uses it any more.
+
+### What changed
+
+- Automatic cleanup leaves developer items and merged branches on a drive scanned only when you ask for you, as it does duplicate sets there ("It's on a drive scanned only when you ask, so it waits for you"). Clean still works on them when you ask, checking each again first.
+- A worktree on such a drive keeps its branch counted as checked out, so pruning merged branches never takes it.
+
+### Before you update
+
+- Nothing: it updates itself as usual. If you want the developer check to keep cleaning up a drive you set to Scan only when I ask (a Dev Drive holding your temp files, say), right-click that drive under This PC and choose Scan automatically again.
+
 ## 1.9.89
 
 **It carries the Steward's kit 2.136.1: the parts every agent of the manor shares.**
