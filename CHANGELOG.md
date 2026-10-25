@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.93
+
+**Cleaning developer files is several times faster, the Temp folder most of all.**
+
+### What changed
+
+- Cleaning the Temp folder no longer looks through all of it again first. Before deleting, it looked at every file in Temp once more, including the ones it wasn't going to delete. On a developer's PC that can be millions of files, which took minutes before anything was deleted. Now it looks again only at what it listed, each item just before it goes, so something used since the list was made is still left alone.
+- Developer files are deleted several folders at once instead of one file at a time. A `node_modules` of 100,000 files took about five seconds and now takes about one.
+- Cleaning a git worktree deletes its build output (`node_modules`, `bin`, `obj` and the like, which git ignores) several folders at once before git removes the rest. Git deletes one file at a time, so this part used to take longest. Your files are checked exactly as before.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.92
 
 **The end of a scan is quick even with thousands of look-alikes, Stop scan works until the very end, and the page says what the scan is finishing.**
