@@ -239,6 +239,29 @@ public sealed class AutoCleanTests : IDisposable {
 		Assert.True(plan.Repos["r1"].Held);
 	}
 
+	[Fact]
+	public void Developer_items_on_a_drive_scanned_only_on_request_wait_for_you() {
+		// Cleaning up would wake the drive: what the check kept as last measured, what's on it, a worktree of a repository there.
+		AgentConfig cfg = Config(duplicates: false, developer: true);
+		cfg.OnRequestDrives.Add(@"q:\");
+		DevReport dev = DevOf(new[] {
+			Dev("here", "temp"),
+			Dev("kept", "temp") with { OnRequest = @"Q:\", MeasuredUtc = Now.AddDays(-20) },
+			Dev("there", "temp") with { Location = @"Q:\Temp", Paths = new() { @"Q:\Temp\old.bin" } },
+			Dev("tree", DevScanner.Worktrees) with { Repo = @"Q:\src\app" },
+		}, new RepoBranches("r1", "app", @"Q:\src\app", "origin/main", 3, new() { "done" }, new(), null));
+		var s = State(dev.Categories[0].Items.Select(i => ("d:" + i.Id, Now.AddDays(-9))).Append(("b:r1:done", Now.AddDays(-9))).ToArray());
+		AutoPlan plan = AutoCleaner.Plan(cfg, null, dev, NoDecisions, s, Now);
+		Assert.NotNull(plan.DevItems["here"].DueUtc);
+		foreach (string id in new[] { "kept", "there", "tree" }) {
+			Assert.Null(plan.DevItems[id].DueUtc);
+			Assert.Equal(AutoCleaner.OnRequestReason, plan.DevItems[id].Reason);
+		}
+		Assert.Null(plan.Repos["r1"].DueUtc);
+		Assert.Equal(AutoCleaner.OnRequestReason, plan.Repos["r1"].Reason);
+		Assert.Empty(plan.BranchesDue);
+	}
+
 	// ------------------------------------------------------------------ bookkeeping and runs
 
 	[Fact]

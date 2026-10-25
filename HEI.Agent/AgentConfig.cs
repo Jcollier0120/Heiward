@@ -181,17 +181,23 @@ namespace HEI.Agent {
 		/// <summary>The path is on one of <see cref="OnRequestDrives"/> (<see cref="IsOnDrive"/>).</summary>
 		public bool IsOnRequest(string path) => IsOnDrive(path, OnRequestDrives);
 
+		/// <summary>Which of <see cref="OnRequestDrives"/> the path is on ("E:\"), by <see cref="IsOnDrive"/>'s rules; null for none.</summary>
+		public string? OnRequestDriveOf(string path) => DriveAmong(path, OnRequestDrives);
+
 		/// <summary>
 		/// The path is on one of <paramref name="drives"/> ("D:\"): by its drive letter, or, failing that, by the drive it's
 		/// really on (C:\Projects may be the drive D:\ mounted in a folder, <see cref="RealPath.VolumeOf"/>). A path written
 		/// with one of the drives' letters is answered without reading the drive, so a sleeping disk stays asleep.
 		/// </summary>
-		public static bool IsOnDrive(string path, IEnumerable<string>? drives) {
+		public static bool IsOnDrive(string path, IEnumerable<string>? drives) => DriveAmong(path, drives) != null;
+
+		/// <summary>Which of <paramref name="drives"/> the path is on (<see cref="IsOnDrive"/>), as <see cref="DriveOf"/> names it; null for none.</summary>
+		static string? DriveAmong(string path, IEnumerable<string>? drives) {
 			var letters = (drives ?? Array.Empty<string>()).Select(DriveOf).Where(d => d != null).ToList();
-			if (letters.Count == 0) return false;
-			bool Listed(string? drive) => drive != null && letters.Any(d => string.Equals(d, drive, StringComparison.OrdinalIgnoreCase));
-			if (DriveOf(path) is not { } written) return false;
-			return Listed(written) || Listed(RealPath.VolumeOf(path));
+			if (letters.Count == 0) return null;
+			string? Listed(string? drive) => drive == null ? null : letters.FirstOrDefault(d => string.Equals(d, drive, StringComparison.OrdinalIgnoreCase));
+			if (DriveOf(path) is not { } written) return null;
+			return Listed(written) ?? Listed(RealPath.VolumeOf(path));
 		}
 
 		/// <summary>A path's drive as these settings name it: "D:\".</summary>

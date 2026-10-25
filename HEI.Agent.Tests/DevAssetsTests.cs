@@ -29,6 +29,7 @@ public sealed class DevAssetsTests : IDisposable {
 	readonly string root = RealTemp.Folder("hei-dev-");
 	readonly string homes = RealTemp.Folder("hei-dev-homes-");
 	readonly Dictionary<string, string?> saved = Vars.ToDictionary(v => v, Environment.GetEnvironmentVariable);
+	readonly List<string> links = new(); // junctions made outside root (JunctionFromAnotherDrive)
 
 	public DevAssetsTests() {
 		Directory.CreateDirectory(root);
@@ -38,6 +39,7 @@ public sealed class DevAssetsTests : IDisposable {
 
 	public void Dispose() {
 		foreach (var (k, v) in saved) Environment.SetEnvironmentVariable(k, v);
+		foreach (string link in links) try { Directory.Delete(link); } catch { } // the junction only, never what it points to
 		// Junctions first, so cleanup can't reach through one.
 		foreach (string d in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories).OrderByDescending(d => d.Length))
 			if ((File.GetAttributes(d) & FileAttributes.ReparsePoint) != 0) Directory.Delete(d);
@@ -623,5 +625,237 @@ public sealed class DevAssetsTests : IDisposable {
 		G(repo, "commit", "-m", "one");
 		Assert.Equal("git keeps files in it", DevScanner.BuildOutputKeeps(repo, Path.Combine(repo, "bin")));
 		Assert.Null(DevScanner.BuildOutputKeeps(repo, Dir("tracked", "obj")));
+	}
+
+	// ------------------------------------------------------------------ drives scanned only when asked
+
+	/// <summary>Settings where the drive the tests' folder is really on is scanned only when asked.</summary>
+	AgentConfig OnRequestHere() => new() { OnRequestDrives = new() { RealPath.VolumeOf(root)! } };
+
+	/// <summary>
+	/// A junction to <paramref name="target"/> written with another drive's letter (as C:\DevData is the drive E:), where this
+	/// PC has a folder on another drive to make it in; null where it hasn't (one drive, as on CI).
+	/// </summary>
+	string? JunctionFromAnotherDrive(string target) {
+		string? drive = RealPath.VolumeOf(target);
+		foreach (string place in new[] { Path.GetTempPath(), Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) }) {
+			if (place.Length == 0 || string.Equals(AgentConfig.DriveOf(place), drive, StringComparison.OrdinalIgnoreCase)) continue;
+			string link = Path.Combine(place, "hei-dev-link-" + Guid.NewGuid().ToString("N"));
+			links.Add(link);
+			return RealTemp.Junction(link, target);
+		}
+		return null;
+	}
+
+	[Fact]
+	public void ADriveScannedOnlyWhenAsked_RestsUntilItsAskedFor_ByTheDriveItReallyIsOn() {
+		AgentConfig cfg = OnRequestHere();
+		string drive = cfg.OnRequestDrives[0];
+		Assert.True(DevScanner.Resting(cfg, null)(root));
+		Assert.Equal(drive, cfg.OnRequestDriveOf(Path.Combine(root, "x")));
+		// Scan this drive now reads it; back to automatic, every check does.
+		Assert.False(DevScanner.Resting(cfg, new[] { drive.ToLowerInvariant() })(root));
+		Assert.False(DevScanner.Resting(new AgentConfig(), null)(root));
+		Assert.False(DevScanner.Resting(new AgentConfig { OnRequestDrives = new() { @"Q:\" } }, null)(root));
+		// Through a junction written with another drive's letter, by where it really is.
+		Dir("target", "x");
+		if (JunctionFromAnotherDrive(Path.Combine(root, "target")) is { } link) {
+			Assert.True(DevScanner.Resting(cfg, null)(Path.Combine(link, "x")));
+			Assert.Equal(drive, cfg.OnRequestDriveOf(Path.Combine(link, "x")));
+			Assert.False(DevScanner.Resting(cfg, new[] { drive })(Path.Combine(link, "x")));
+		}
+	}
+
+	/// <summary>
+	/// %TEMP% on a drive scanned only when asked, as C:\DevData\Temp is E:\Temp: neither its old files nor the crash dumps
+	/// there are read, as written or through a junction. The last check's stay (<see cref="ItemsOnADriveScannedOnlyWhenAsked_StayAsLastMeasured"/>).
+	/// </summary>
+	[Fact]
+	public void Temp_OnADriveScannedOnlyWhenAsked_IsntRead() {
+		string temp = Dir("temp");
+		string old = Path.Combine(temp, "old.bin");
+		Touch(old, 2 << 20);
+		File.SetLastWriteTimeUtc(old, DateTime.UtcNow.AddDays(-30));
+		string dumps = Dir("dumps");
+		Touch(Path.Combine(dumps, "app.dmp"), 100);
+		Assert.Equal(new[] { "temp", "dumps" }, DevScanner.TempItems(7, _ => false, temp, dumps).Select(i => i.Kind));
+
+		Func<string, bool> resting = DevScanner.Resting(OnRequestHere(), null);
+		Assert.Empty(DevScanner.TempItems(7, resting, temp, dumps));
+		string viaLink = Path.Combine(root, "temp-link");
+		Junction(viaLink, temp);
+		Assert.Empty(DevScanner.TempItems(7, resting, viaLink, dumps));
+		if (JunctionFromAnotherDrive(temp) is { } elsewhere) Assert.Empty(DevScanner.TempItems(7, resting, elsewhere, dumps));
+		// Asked for, it's read.
+		Assert.Equal(2, DevScanner.TempItems(7, DevScanner.Resting(OnRequestHere(), OnRequestHere().OnRequestDrives), temp, dumps).Count());
+	}
+
+	/// <summary>
+	/// A worktree on a drive scanned only when asked (E:\worktrees, of a repository on another drive) isn't measured or asked
+	/// of git. Its repository's leftovers and checked-out branches are still told apart, from the repository's own records.
+	/// </summary>
+	[Fact]
+	public void AWorktreeOnADriveScannedOnlyWhenAsked_IsntLookedAt() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, _) = AgentWorktree("resting");
+		string half = Path.Combine(repo, ".claude", "worktrees", "half");
+		G(repo, "worktree", "add", "-b", "half", half, "origin/main");
+		File.Delete(Path.Combine(half, ".git"));
+		G(repo, "worktree", "prune");
+		DateTime staleBefore = DateTime.UtcNow.AddDays(1);
+		var noOne = new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new());
+		Assert.Equal(2, DevScanner.WorktreeItems(repo, staleBefore, default, noOne).Count());
+
+		// The worktree's drive alone rests.
+		string real = RealPath.Of(wt);
+		Func<string, bool> resting = p => string.Equals(RealPath.Of(p), real, StringComparison.OrdinalIgnoreCase);
+		DevItem left = Assert.Single(DevScanner.WorktreeItems(repo, staleBefore, default, noOne, resting));
+		Assert.Equal(half, left.Location);
+		Assert.True(left.Leftover);
+		RepoBranches branches = BranchPruner.Inspect(repo, resting)!;
+		Assert.Contains("resting", branches.CheckedOut);
+		Assert.DoesNotContain("resting", branches.Merged);
+		Assert.Contains("half", branches.Merged);
+
+		// The repository's drive too: nothing of it is read.
+		Assert.Empty(DevScanner.WorktreeItems(repo, staleBefore, default, noOne, DevScanner.Resting(OnRequestHere(), null)));
+		G(repo, "worktree", "remove", wt);
+	}
+
+	/// <summary>
+	/// What the last check found on a drive scanned only when asked stays listed as it was, marked with the drive and when it
+	/// was measured, until Scan this drive now reads it again or the drive goes back to automatic. A worktree is on its
+	/// repository's drive too: git status reads the repository.
+	/// </summary>
+	[Fact]
+	public void ItemsOnADriveScannedOnlyWhenAsked_StayAsLastMeasured() {
+		var cfg = new AgentConfig { OnRequestDrives = new() { @"Q:\" } };
+		DateTime then = DateTime.UtcNow.AddDays(-3);
+		static DevItem Item(string id, string kind, string location, string? repo = null) =>
+			new(id, kind, id, location, new() { location }, 5 << 20, null, true, null, "", repo);
+		DevItem tree = Item("t1", DevScanner.Worktrees, @"Q:\worktrees\app-x");
+		var previous = new DevReport {
+			ScannedAtUtc = then,
+			Categories = new() {
+				new DevCategory(DevScanner.Worktrees, "", "", new() {
+					tree,
+					Item("t2", DevScanner.Worktrees, @"C:\hei-none\app-y", @"Q:\src\app"), // of a repository there
+					Item("t3", DevScanner.Worktrees, @"C:\hei-none\app-z"), // this check would have found it: it's gone
+				}),
+				new DevCategory(DevScanner.Temp, "", "", new() { Item("tmp", "temp", @"Q:\Temp") }),
+			},
+			Repositories = new() {
+				new RepoBranches("r1", "app", @"Q:\src\app", "origin/main", 3, new() { "done" }, new(), null),
+				new RepoBranches("r2", "web", @"C:\hei-none\web", "origin/main", 1, new(), new(), null),
+			},
+			Sources = new() { new RepoSource(@"Q:\src\app", "git", null) },
+		};
+		static DevReport Fresh() => new() {
+			ScannedAtUtc = DateTime.UtcNow,
+			Categories = new() { new DevCategory(DevScanner.Worktrees, "", "", new()), new DevCategory(DevScanner.Temp, "", "", new()) },
+		};
+
+		DevReport now = Fresh();
+		DevScanner.KeepResting(now, previous, cfg, DevScanner.Resting(cfg, null));
+		Assert.Equal(new[] { "t1", "t2" }, now.Categories[0].Items.Select(i => i.Id).Order());
+		Assert.Equal("tmp", Assert.Single(now.Categories[1].Items).Id);
+		Assert.All(now.Categories.SelectMany(c => c.Items), i => {
+			Assert.Equal(@"Q:\", i.OnRequest);
+			Assert.Equal(then, i.MeasuredUtc);
+		});
+		Assert.Equal("r1", Assert.Single(now.Repositories).Id);
+		Assert.Single(now.Sources);
+
+		// Kept again, it's still as first measured.
+		DevReport next = Fresh();
+		DevScanner.KeepResting(next, now, cfg, DevScanner.Resting(cfg, null));
+		Assert.All(next.Categories.SelectMany(c => c.Items), i => Assert.Equal(then, i.MeasuredUtc));
+
+		// Scan this drive now read it: what it found is this check's, and what it didn't find is gone.
+		DevReport read = Fresh();
+		read.Categories[0].Items.Add(tree with { Bytes = 1 });
+		DevScanner.KeepResting(read, previous, cfg, DevScanner.Resting(cfg, new[] { @"q:" }));
+		DevItem found = Assert.Single(read.Categories[0].Items);
+		Assert.Equal(1, found.Bytes);
+		Assert.Null(found.OnRequest);
+		Assert.Empty(read.Categories[1].Items);
+		Assert.Empty(read.Repositories);
+
+		// Back to automatic: the next check measures it.
+		DevReport automatic = Fresh();
+		DevScanner.KeepResting(automatic, previous, new AgentConfig(), DevScanner.Resting(new AgentConfig(), null));
+		Assert.All(automatic.Categories, c => Assert.Empty(c.Items));
+	}
+
+	/// <summary>
+	/// A cache is where its tool's setting puts it (a Dev Drive, say: npm's cache= in .npmrc, NUGET_PACKAGES); the folder it
+	/// used before is listed, ticked, as nothing uses it, unless it's a link to the new one. On a drive left unread, neither is read.
+	/// </summary>
+	[Fact]
+	public void Caches_AreWhereTheirSettingsPutThem_AndTheOldFolderIsOffered() {
+		string standard = Dir("default-cache"), moved = Dir("moved-cache");
+		Touch(Path.Combine(standard, "a.tgz"), 3 << 20);
+		Touch(Path.Combine(moved, "b.tgz"), 2 << 20);
+		var tools = new[] { ("npm", new[] { new DevScanner.CachePlace(standard, "TEST_CACHE") }, Array.Empty<string>()) };
+		string? Setting(string name) => name == "TEST_CACHE" ? moved : null;
+
+		Assert.Equal((moved, standard), DevScanner.Locate(tools[0].Item2[0], Setting));
+		Assert.Equal((standard, (string?)null), DevScanner.Locate(tools[0].Item2[0], _ => null));
+		Assert.Null(DevScanner.Locate(tools[0].Item2[0], _ => standard + "\\").Old); // set to where it is anyway
+
+		var items = DevScanner.CacheItems(_ => false, Setting, tools).ToList();
+		Assert.Equal(2, items.Count);
+		DevItem now = items[0], old = items[1];
+		Assert.Equal(moved, now.Location);
+		Assert.False(now.Suggested);
+		Assert.Equal(standard, old.Location);
+		Assert.Equal("npm, old location", old.Name);
+		Assert.True(old.Suggested);
+		Assert.Contains("nothing uses this one", old.Detail);
+		Assert.NotEqual(now.Id, old.Id);
+
+		// On a drive scanned only when asked: not read, either of them.
+		Assert.Empty(DevScanner.CacheItems(DevScanner.Resting(OnRequestHere(), null), Setting, tools));
+		Assert.Equal(new[] { standard }, DevScanner.CacheItems(p => p == moved, Setting, tools).Select(i => i.Location));
+
+		// The old folder made a link to the new one: it's the cache itself.
+		Directory.Delete(standard, true);
+		Junction(standard, moved);
+		Assert.Equal(new[] { moved }, DevScanner.CacheItems(_ => false, Setting, tools).Select(i => i.Location));
+	}
+
+	/// <summary>
+	/// Emulators on a drive scanned only when asked aren't read, and as one there may use any system image, no image is ticked;
+	/// the system images' own folder there isn't read either.
+	/// </summary>
+	[Fact]
+	public void Emulators_OnADriveScannedOnlyWhenAsked_ArentRead_AndKeepTheirImages() {
+		string sdk = Dir("sdk");
+		string image = Dir("sdk", "system-images", "android-34", "google_apis", "x86_64");
+		Touch(Path.Combine(image, "system.img"), 100);
+		Dir("sdk", "system-images", "android-33", "google_apis", "x86_64");
+		string avdHome = Dir("avd"), avd = Dir("avds", "pixel.avd");
+		File.WriteAllText(Path.Combine(avdHome, "pixel.ini"), "path=" + avd + "\n");
+		File.WriteAllText(Path.Combine(avd, "config.ini"), @"image.sysdir.1=system-images\android-34\google_apis\x86_64\" + "\n");
+		DateTime staleBefore = DateTime.UtcNow.AddDays(-30);
+		bool running = DevScanner.EmulatorRunning();
+
+		// Nothing rests: the emulator, and the image it doesn't use, ticked.
+		var items = DevScanner.AndroidItems(staleBefore, _ => false, avdHome, sdk).ToList();
+		Assert.Equal(new[] { "avd", "sysimage" }, items.Select(i => i.Kind));
+		Assert.Contains("android-33", items[1].Name);
+		Assert.Equal(!running, items[1].Suggested);
+
+		// The emulator's folder rests, or where emulators are listed: an image may be in use.
+		foreach (Func<string, bool> resting in new Func<string, bool>[] { p => p.StartsWith(Path.Combine(root, "avds"), StringComparison.OrdinalIgnoreCase), p => p == avdHome }) {
+			items = DevScanner.AndroidItems(staleBefore, resting, avdHome, sdk).ToList();
+			Assert.All(items, i => Assert.Equal("sysimage", i.Kind));
+			Assert.Equal(2, items.Count);
+			Assert.All(items, i => Assert.False(i.Suggested));
+			if (!running) Assert.All(items, i => Assert.Equal("An emulator on a drive scanned only when you ask may use it", i.Blocked));
+		}
+
+		// The SDK's drive rests.
+		Assert.DoesNotContain(DevScanner.AndroidItems(staleBefore, p => p.StartsWith(sdk, StringComparison.OrdinalIgnoreCase), avdHome, sdk), i => i.Kind == "sysimage");
 	}
 }

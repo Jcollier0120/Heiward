@@ -2904,6 +2904,8 @@ function devRow(i, showRepo, compact) {
     where.title = i.location;
     main.append(where);
   }
+  // Left unread by the developer check: it's as its last reading found it, until that drive is scanned.
+  if (i.onRequest) main.append(el('div', 'muted small', onRequestLine(i)));
   const places = i.paths || [];
   if (places.length) row.addEventListener('contextmenu', (e) => openPathMenu(e, { name: i.name, path: places[0], folder: true, more: places.length - 1 }));
   // On a single repository's page, 'worktree of <it>' says nothing new.
@@ -2920,6 +2922,13 @@ function devRow(i, showRepo, compact) {
   if (i.lastUsedUtc) side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
   row.append(side);
   return row;
+}
+
+/** A developer item on a drive scanned only when asked: which drive, when it was measured, and how to update it. */
+function onRequestLine(i) {
+  const drive = i.onRequest.replace(/[\\/]+$/, '');
+  return 'On ' + drive + ', a drive scanned only when you ask: as measured ' + (i.measuredUtc ? ago(i.measuredUtc) : 'before') +
+    '. Scan this drive now, on its page, updates it.';
 }
 
 const pruneResults = new Map(); // repository id -> the prune's answer ({ deleted, kept, fetched } or { error })
@@ -4177,10 +4186,10 @@ function openFolderMenu(e, node) {
   } else if (isDrive && card.onRequest) {
     item('Scan this drive now', () => scanDrive(card.root));
     item('Scan automatically again', () => setOnRequest(card.root, false));
-    hint = 'Scanned only when you ask: scheduled scans and Scan now leave it alone.';
+    hint = 'Scanned only when you ask: scheduled scans, Scan now and the developer check leave it alone.';
   } else if (isDrive) {
     item('Scan only when I ask', () => setOnRequest(card.root, true));
-    hint = 'Scheduled scans and Scan now would leave this drive alone, so a disk that sleeps stays asleep. Its sets stay listed; scan it from its page.';
+    hint = 'Scheduled scans, Scan now and the developer check would leave this drive alone, so a disk that sleeps stays asleep. Its sets and developer items stay listed; scan it from its page.';
   } else if (card && card.type !== 'folder') {
     item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
   } else {
@@ -4282,7 +4291,7 @@ async function renderContent() {
   if (d && d.onRequest) {
     const strip = el('div', 'rest-strip');
     strip.append(el('span', null, (d.type === 'folder' ? 'This folder\'s drive' : 'This drive') +
-      ' is scanned only when you ask: scheduled scans and Scan now leave it alone, and its sets are from its last scan.'));
+      ' is scanned only when you ask: scheduled scans, Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.'));
     const now = el('button', 'btn', state.scan.running ? 'Scanning…' : 'Scan this drive now');
     now.disabled = state.scan.running;
     now.addEventListener('click', () => scanDrive(d.root));
