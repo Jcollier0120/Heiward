@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.88
+
+**It carries the Steward's kit 2.135.4: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.135.4: A 16 GB Snapdragon X2 reranks on its NPU, beside chat and embeddings, as a bigger PC does. Measured there with a 16 GB PC's memory: nothing failed, chat wasn't slowed, and the NPU held 4.7 GB against its 6.2 GB share.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Reeve's sharper search, set up again on a 16 GB X2, moves its reranker to the NPU.
+
 ## 1.9.87
 
 **It carries the Steward's kit 2.135.0: the parts every agent of the manor shares.**
