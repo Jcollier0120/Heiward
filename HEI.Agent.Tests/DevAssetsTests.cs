@@ -139,6 +139,59 @@ public sealed class DevAssetsTests : IDisposable {
 	}
 
 	[Fact]
+	public void SafeDelete_SeveralFoldersAtOnce_SaysWhatsLeftInTheFoldersOrder() {
+		string dir = Dir("wide");
+		for (int i = 0; i < 40; i++)
+			for (int j = 0; j < 20; j++) Touch(Path.Combine(dir, $"f{i:00}", "sub", $"{j}.js"), 10);
+		string first = Path.Combine(dir, "f07", "sub", "3.js"), second = Path.Combine(dir, "f31", "sub", "12.js");
+		using (new FileStream(second, FileMode.Open, FileAccess.Read, FileShare.None))
+		using (new FileStream(first, FileMode.Open, FileAccess.Read, FileShare.None)) {
+			SafeDelete.Result r = SafeDelete.Tree(dir);
+			Assert.Equal(2, r.Left);
+			Assert.Equal(new[] { first, second }, r.LeftPaths);
+			Assert.Equal(40 * 20 * 10 - 20, r.Bytes);
+		}
+		Assert.Equal(new[] { first, second }, Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Order());
+		Assert.Equal(new[] { "f07", "f31" }, Directory.EnumerateDirectories(dir).Select(Path.GetFileName).Order());
+	}
+
+	/// <summary>
+	/// A cleaning of Temp re-checks the entries it listed, each on its own just before it goes: it used to walk all of Temp
+	/// again first, which on a developer's PC is millions of files and took minutes.
+	/// </summary>
+	[Fact]
+	public void Clean_LooksAgainAtEachTempEntryItListed_AndAtNothingElse() {
+		string temp = Dir("temp");
+		string oldFile = Path.Combine(temp, "old.tmp"), oldFolder = Path.Combine(temp, "old-folder"), touched = Path.Combine(temp, "touched");
+		string unlisted = Path.Combine(temp, "unlisted.tmp"), claude = Path.Combine(temp, "claude"), elsewhere = Path.Combine(Dir("elsewhere"), "old.tmp");
+		Touch(oldFile, 7);
+		Touch(Path.Combine(oldFolder, "a.bin"), 20);
+		Touch(Path.Combine(touched, "a.bin"), 30);
+		Touch(unlisted, 40);
+		Touch(Path.Combine(claude, "x.txt"), 50);
+		Touch(elsewhere, 60);
+		DateTime old = DateTime.UtcNow.AddDays(-30);
+		foreach (string f in new[] { oldFile, Path.Combine(oldFolder, "a.bin"), Path.Combine(touched, "a.bin"), unlisted, Path.Combine(claude, "x.txt"), elsewhere })
+			File.SetLastWriteTimeUtc(f, old);
+		foreach (string d in new[] { oldFolder, touched, claude }) Directory.SetLastWriteTimeUtc(d, old);
+		// Since the list was made, something wrote in one of its folders.
+		Touch(Path.Combine(touched, "new.bin"));
+		var item = new DevItem("id", "temp", "Temp folder", temp,
+			new() { oldFile, oldFolder, touched, claude, elsewhere, Path.Combine(temp, "gone.tmp") }, 0, null, true, null, "");
+
+		CleanResult r = DevCleaner.Clean(item, new AgentConfig());
+		Assert.Null(r.Error);
+		Assert.Equal(27, r.FreedBytes);
+		Assert.Equal(0, r.LeftInUse);
+		Assert.False(File.Exists(oldFile));
+		Assert.False(Directory.Exists(oldFolder));
+		Assert.True(File.Exists(Path.Combine(touched, "a.bin")));
+		Assert.True(File.Exists(unlisted));                       // not on the list
+		Assert.True(File.Exists(Path.Combine(claude, "x.txt"))); // Claude Code's, judged a session at a time
+		Assert.True(File.Exists(elsewhere));                     // not in Temp
+	}
+
+	[Fact]
 	public void SafeDelete_RefusesADriveRoot() =>
 		Assert.Throws<InvalidOperationException>(() => SafeDelete.Tree(Path.GetPathRoot(root)!));
 
@@ -298,6 +351,27 @@ public sealed class DevAssetsTests : IDisposable {
 		CleanResult result = DevCleaner.Clean(item, new AgentConfig());
 		Assert.Null(result.Error);
 		Assert.Equal(0, result.LeftInUse);
+		Assert.False(Directory.Exists(wt));
+		Assert.DoesNotContain("/" + Path.GetFileName(wt), G(repo, "worktree", "list"));
+	}
+
+	/// <summary>Git deletes a worktree a file at a time: the build output git ignores goes first, several folders at once.</summary>
+	[Fact]
+	public void Clean_DeletesAWorktreesIgnoredBuildOutputItself_ThenGitRemovesTheRest() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, item) = AgentWorktree("built");
+		File.AppendAllText(Path.Combine(repo, ".git", "info", "exclude"), "\nbuild/\nnotes/\n");
+		Touch(Path.Combine(wt, "node_modules", "pkg", "x.js"), 40);
+		Touch(Path.Combine(wt, "web", "node_modules", "y.js"), 30);
+		Touch(Path.Combine(wt, "build", "app.js"), 20);
+		Touch(Path.Combine(wt, "notes", "todo.txt"));
+		Assert.Equal(new[] { Path.Combine(wt, "build"), Path.Combine(wt, "node_modules"), Path.Combine(wt, "web", "node_modules") },
+			DevScanner.RebuiltIgnored(wt).Order(StringComparer.OrdinalIgnoreCase));
+		Directory.Delete(Path.Combine(wt, "notes"), true); // a build doesn't make it again: it would keep the worktree
+
+		CleanResult result = DevCleaner.Clean(item, new AgentConfig());
+		Assert.Null(result.Error);
+		Assert.True(result.FreedBytes >= 90);
 		Assert.False(Directory.Exists(wt));
 		Assert.DoesNotContain("/" + Path.GetFileName(wt), G(repo, "worktree", "list"));
 	}
