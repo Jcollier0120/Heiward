@@ -154,11 +154,18 @@ namespace HEI.Agent {
 			return sims.Count > 0 ? sims.Average() : null;
 		}
 
+		/// <summary>The frames both files have, compared and averaged. A plain loop: the report asks it for every pair in a set.</summary>
 		float? Average(string a, string b, Func<FileEntry, Dictionary<double, byte[]?>> frames, Func<byte[], byte[], float?> compare) {
 			if (!entries.TryGetValue(a, out FileEntry? ea) || !entries.TryGetValue(b, out FileEntry? eb)) return null;
-			var sims = frames(ea).Where(kv => kv.Value != null && frames(eb).TryGetValue(kv.Key, out byte[]? v) && v != null)
-				.Select(kv => compare(kv.Value!, frames(eb)[kv.Key]!)).Where(v => v != null).Select(v => v!.Value).ToList();
-			return sims.Count > 0 ? sims.Average() : null;
+			Dictionary<double, byte[]?> other = frames(eb);
+			double sum = 0;
+			int count = 0;
+			foreach (var (key, x) in frames(ea)) {
+				if (x == null || !other.TryGetValue(key, out byte[]? y) || y == null || compare(x, y) is not float v) continue;
+				sum += v;
+				count++;
+			}
+			return count > 0 ? (float)(sum / count) : null;
 		}
 	}
 
@@ -195,15 +202,19 @@ namespace HEI.Agent {
 		/// <param name="hashes">The content hashes the last scan kept (<see cref="ContentHashes.Load"/>); none kept when null.</param>
 		/// <param name="mayRead">False for a file on a resting drive (<see cref="ScanEngine.MayRead"/>): judged from what the scan knows, never opened.</param>
 		/// <param name="known">The files the scan listed: a resting drive's folders are known from it, not listed again.</param>
+		/// <param name="progress">How many of the sets' files are sorted, of how many, after each of the scan's sets.</param>
+		/// <param name="ct">Stop scan: a set of thousands takes a while, so it's heard between rounds.</param>
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null,
-			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null) {
+			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null, Action<int, int>? progress = null, CancellationToken ct = default) {
 			Func<string, bool>? before = readable;
 			ILookup<string, string>? knownBefore = knownByFolder;
+			Dictionary<string, bool>? datesBefore = datesTaken;
 			readable = mayRead;
 			knownByFolder = mayRead == null ? null : (known ?? Array.Empty<string>()).Where(p => !mayRead(p))
 				.ToLookup(p => Path.GetDirectoryName(p) ?? "", StringComparer.OrdinalIgnoreCase);
-			try { return BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes()); }
-			finally { readable = before; knownByFolder = knownBefore; }
+			datesTaken = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			try { return BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes(), progress, ct); }
+			finally { readable = before; knownByFolder = knownBefore; datesTaken = datesBefore; }
 		}
 
 		/// <summary>This report's <c>mayRead</c>: a file on a resting drive isn't checked, hashed or opened for its EXIF.</summary>
@@ -215,7 +226,24 @@ namespace HEI.Agent {
 		/// <summary>In a cloud-synced folder; a file on a resting drive isn't asked.</summary>
 		static bool Synced(string path) => CanRead(path) && CloudFiles.IsSynced(path);
 
-		static List<ReportGroup> BuildReadable(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes hashes) {
+		/// <summary>This report's photos with an EXIF capture date, each file read once: a set's kept file is picked again
+		/// every round from what's left, and reading them all every round made a set of 15,000 screenshots take hours.</summary>
+		[ThreadStatic] static Dictionary<string, bool>? datesTaken;
+		/// <summary>How many files this thread has opened for their capture date (tests).</summary>
+		[ThreadStatic] internal static int DatesRead;
+
+		/// <summary>The photo has an EXIF capture date; one on a resting drive isn't opened.</summary>
+		static bool HasDateTaken(string path) {
+			if (!CanRead(path)) return false;
+			if (datesTaken != null && datesTaken.TryGetValue(path, out bool known)) return known;
+			DatesRead++;
+			bool has = ExifReader.TryGetDateTaken(path, out _);
+			if (datesTaken != null) datesTaken[path] = has;
+			return has;
+		}
+
+		static List<ReportGroup> BuildReadable(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes hashes,
+			Action<int, int>? progress, CancellationToken ct) {
 			var bursts = new BurstSeries();
 			// Each group's files, and the groups, in path order: wherever the builder takes the first of
 			// equals (the kept one of equal videos, the group split copies join), it's the same file in
@@ -224,12 +252,19 @@ namespace HEI.Agent {
 				.Select(g => g.Where(d => !CanRead(d.Path) || File.Exists(d.Path)).OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList())
 				.OrderBy(g => g.Count > 0 ? g[0].Path : "", StringComparer.OrdinalIgnoreCase)
 				.ToList();
-			GatherSplitCopies(members, hashes, fingerprints);
-			return members
-				.SelectMany(items => SplitByPicture(items, hashes, fingerprints, bursts))
-				.SelectMany(items => LeaveOutUnrelated(items, hashes, fingerprints, bursts))
-				.Where(items => items.Count >= 2)
-				.Select(items => BuildGroup(items, hashes, fingerprints, bursts))
+			GatherSplitCopies(members, hashes, fingerprints, ct);
+			int total = members.Sum(items => items.Count), done = 0;
+			var groups = new List<ReportGroup>();
+			foreach (List<DuplicateItem> items in members) {
+				progress?.Invoke(done, total);
+				foreach (List<DuplicateItem> picture in SplitByPicture(items, hashes, fingerprints, bursts, ct))
+					foreach (List<DuplicateItem> set in LeaveOutUnrelated(picture, hashes, fingerprints, bursts, ct))
+						if (set.Count >= 2)
+							groups.Add(BuildGroup(set, hashes, fingerprints, bursts));
+				done += items.Count;
+			}
+			progress?.Invoke(done, total);
+			return groups
 				.OrderBy(g => g.Kind == "similar" ? 1 : 0)
 				.ThenByDescending(g => g.ReclaimBytes)
 				.ThenBy(g => g.Key, StringComparer.Ordinal)
@@ -243,13 +278,14 @@ namespace HEI.Agent {
 		/// holding its closest other match (a group of nothing but those copies counts as closest), and
 		/// a group left with one file is dropped.
 		/// </summary>
-		static void GatherSplitCopies(List<List<DuplicateItem>> groups, ContentHashes hashes, IFingerprints fingerprints) {
+		static void GatherSplitCopies(List<List<DuplicateItem>> groups, ContentHashes hashes, IFingerprints fingerprints, CancellationToken ct) {
 			var splitBySize = groups
 				.SelectMany((items, g) => items.Select(item => (Item: item, Group: g)))
 				.GroupBy(x => x.Item.SizeLong)
 				.Where(same => same.Select(x => x.Group).Distinct().Count() > 1) // hash only what could be split
 				.ToList();
-			foreach (var sameSize in splitBySize)
+			foreach (var sameSize in splitBySize) {
+				ct.ThrowIfCancellationRequested();
 				foreach (var identical in sameSize.GroupBy(x => hashes.Get(x.Item.Path)).Where(h => h.Key != null)) {
 					List<int> apart = identical.Select(x => x.Group).Distinct().ToList();
 					if (apart.Count < 2)
@@ -260,6 +296,7 @@ namespace HEI.Agent {
 						groups[g].RemoveAll(copies.Contains);
 					groups[target].AddRange(copies.Where(c => !groups[target].Contains(c)));
 				}
+			}
 		}
 
 		/// <summary>How close the group's other files are to the copies in it (100 when there are none).</summary>
@@ -277,7 +314,7 @@ namespace HEI.Agent {
 		/// isn't ticked. Such a group becomes one group per picture, each with its own kept file; files
 		/// that copy none of the others (look-alikes) leave the report.
 		/// </summary>
-		static IEnumerable<List<DuplicateItem>> SplitByPicture(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+		static IEnumerable<List<DuplicateItem>> SplitByPicture(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts, CancellationToken ct) {
 			if (items.Count < 4) { // two sets of copies take four files
 				yield return items;
 				yield break;
@@ -285,8 +322,9 @@ namespace HEI.Agent {
 			var sets = new List<List<DuplicateItem>>();
 			var rest = new List<DuplicateItem>(items);
 			while (rest.Count > 0) {
+				ct.ThrowIfCancellationRequested();
 				DuplicateItem keep = rest.Count == 1 ? rest[0] : PickKeeper(rest).Item1;
-				var set = rest.Where(i => ReferenceEquals(i, keep) || IsPlainCopy(Relation(i, keep, hashes, fingerprints, bursts))).ToList();
+				var set = rest.Where(i => ReferenceEquals(i, keep) || IsPlainCopy(Relation(i, keep, hashes, fingerprints, bursts, askAi: false))).ToList();
 				sets.Add(set);
 				rest.RemoveAll(set.Contains);
 			}
@@ -311,10 +349,11 @@ namespace HEI.Agent {
 		/// another version of goes only with its own copies, not into a second set of the same
 		/// look-alikes. A set of one is no set.
 		/// </summary>
-		static IEnumerable<List<DuplicateItem>> LeaveOutUnrelated(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+		static IEnumerable<List<DuplicateItem>> LeaveOutUnrelated(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts, CancellationToken ct) {
 			var rest = new List<DuplicateItem>(items);
 			var shown = new HashSet<DuplicateItem>(); // versions whose burst or video a set already shows
 			while (rest.Count >= 2) {
+				ct.ThrowIfCancellationRequested();
 				DuplicateItem keep = PickKeeper(rest).Item1;
 				var set = new List<DuplicateItem> { keep };
 				var otherVersions = new List<DuplicateItem>();
@@ -409,7 +448,9 @@ namespace HEI.Agent {
 		/// <c>language</c> and <c>soundtrack</c>: the same video in another language or with another
 		/// soundtrack (<see cref="LanguageVersions"/>, <see cref="SameSoundtrackPercent"/>).
 		/// </summary>
-		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+		/// <param name="askAi">False where only <see cref="IsPlainCopy"/> matters: below the plain-copy match the AI tells edited from
+		/// variant, neither of them a plain copy, so it isn't asked (says variant).</param>
+		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts, bool askAi = true) {
 			// IMG_1234 next to IMG_1235, or 0084.png next to 0085.png: a burst, a retake, or an image
 			// sequence's frames. Burst shots match 99% and more, which below would pass for a resaved
 			// copy and be ticked. A still stretch of an animation is even the same bytes, and each frame
@@ -439,7 +480,7 @@ namespace HEI.Agent {
 			// still taken from one, are not copies of each other.
 			if (MayBeAnimated(i.Path) || MayBeAnimated(keep.Path))
 				return "variant";
-			return ByLook(fingerprints.GrayPercent(i.Path, keep.Path), () => fingerprints.AiPercent(i.Path, keep.Path),
+			return ByLook(fingerprints.GrayPercent(i.Path, keep.Path), () => askAi ? fingerprints.AiPercent(i.Path, keep.Path) : null,
 				smaller: i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt,
 				shorterCut: !i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds),
 				fewerBytes: i.SizeLong < keep.SizeLong);
@@ -470,12 +511,26 @@ namespace HEI.Agent {
 
 		/// <summary>One name is the other's plus an original/edit suffix: IMG_1.jpg and IMG_1_Original.jpg.</summary>
 		internal static bool IsOriginalAndEdit(string a, string b) {
-			string sa = Path.GetFileNameWithoutExtension(a), sb = Path.GetFileNameWithoutExtension(b);
-			return EditSuffixes.Any(s => sa.Equals(sb + s, StringComparison.OrdinalIgnoreCase) || sb.Equals(sa + s, StringComparison.OrdinalIgnoreCase));
+			ReadOnlySpan<char> sa = Path.GetFileNameWithoutExtension(a.AsSpan()), sb = Path.GetFileNameWithoutExtension(b.AsSpan());
+			foreach (string s in EditSuffixes)
+				if (NameWith(sa, sb, s) || NameWith(sb, sa, s))
+					return true;
+			return false;
+
+			// name is stem + suffix, without making the string: this runs for every pair in a set.
+			static bool NameWith(ReadOnlySpan<char> name, ReadOnlySpan<char> stem, string suffix) =>
+				name.Length == stem.Length + suffix.Length && name.StartsWith(stem, StringComparison.OrdinalIgnoreCase) && name.EndsWith(suffix, StringComparison.OrdinalIgnoreCase);
 		}
 
-		static bool MayBeAnimated(string path) =>
-			Path.GetExtension(path).ToLowerInvariant() is ".gif" or ".webp" or ".apng" or ".heics";
+		static readonly string[] AnimatedExtensions = { ".gif", ".webp", ".apng", ".heics" };
+
+		static bool MayBeAnimated(string path) {
+			ReadOnlySpan<char> extension = Path.GetExtension(path.AsSpan());
+			foreach (string e in AnimatedExtensions)
+				if (extension.Equals(e, StringComparison.OrdinalIgnoreCase))
+					return true;
+			return false;
+		}
 
 		/// <summary>Stable across scans for the same set of files, so a "keep all" answer sticks.</summary>
 		public static string GroupKey(IEnumerable<string> paths) {
@@ -494,7 +549,7 @@ namespace HEI.Agent {
 			var top = items.Where(i => i.FrameSizeInt == best).ToList();
 			if (top.Count == 1)
 				return (top[0], $"highest resolution ({top[0].FrameSize?.Replace("x", " × ")})");
-			var withExif = top.Where(i => CanRead(i.Path) && ExifReader.TryGetDateTaken(i.Path, out _)).ToList();
+			var withExif = top.Where(i => HasDateTaken(i.Path)).ToList();
 			if (withExif.Count == 1)
 				return (withExif[0], "the camera original (the only copy with its capture date)");
 			if (withExif.Count > 1) top = withExif;

@@ -45,6 +45,8 @@ namespace HEI.Agent {
 		}
 
 		readonly Dictionary<string, Dictionary<string, List<long>>?> folders = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>Each file's name read once: the report asks for every pair in a set, and a set can hold thousands.</summary>
+		readonly Dictionary<string, Shot?> shots = new(StringComparer.OrdinalIgnoreCase);
 
 		/// <summary>
 		/// Two shots of one series: the same name apart from the number, different numbers at most
@@ -53,11 +55,17 @@ namespace HEI.Agent {
 		/// burst next to it, while "Photo 1" and "Photo 2" in two folders with no series are judged as usual.
 		/// </summary>
 		public bool AreSiblings(string a, string b) {
-			if (Parse(Path.GetFileNameWithoutExtension(a)) is not { } sa || Parse(Path.GetFileNameWithoutExtension(b)) is not { } sb)
+			if (ShotOf(a) is not { } sa || ShotOf(b) is not { } sb)
 				return false;
 			if (!sa.Series.Equals(sb.Series, StringComparison.Ordinal) || sa.Number == sb.Number || Math.Abs(sa.Number - sb.Number) > sa.Span)
 				return false;
 			return InSeries(a, sa) || InSeries(b, sb);
+		}
+
+		Shot? ShotOf(string path) {
+			if (!shots.TryGetValue(path, out Shot? shot))
+				shots[path] = shot = Parse(Path.GetFileNameWithoutExtension(path));
+			return shot;
 		}
 
 		/// <summary>Whether a name next to this one in its folder continues the series.</summary>
