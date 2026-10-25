@@ -488,4 +488,59 @@ public sealed class ReportBuilderTests : IDisposable {
 		Assert.Equal(expected, Report(Enumerable.Reverse(items).ToArray()));
 		Assert.Equal(expected, Report(items[1], items[3], items[0], items[2]));
 	}
+
+	/// <summary>A set of screenshots: the same size, alike, none a copy of another, no two of a burst.</summary>
+	DuplicateItem[] Screenshots(int n) => Enumerable.Range(0, n)
+		.Select(i => Photo(Guid.NewGuid().ToString("N") + ".png", 1920, 1080, Bytes(100 + i, (byte)i), gray: 97f, ai: 90f,
+			modified: new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc).AddMinutes(i)))
+		.ToArray();
+
+	// A set's kept file is picked again every round, from what's left. Each round read every
+	// photo's capture date again: a set of 15,000 screenshots in a Temp folder took hours.
+	[Fact]
+	public void ALargeSet_ReadsEachCaptureDateOnce() {
+		DuplicateItem[] shots = Screenshots(300);
+		ReportBuilder.DatesRead = 0;
+		var g = Single(shots);
+		Assert.Equal(300, g.Items.Count);
+		Assert.Equal(300, ReportBuilder.DatesRead);
+	}
+
+	// Stop scan is heard while the report is made, and the page sees how far it is.
+	[Fact]
+	public void TheReport_SaysHowFarItIs_AndStopsWhenAsked() {
+		DuplicateItem[] shots = Screenshots(6);
+		var other = Photo(@"Other\x.jpg", 800, 600, Bytes(500, 1));
+		var copy = Photo(@"Other\x copy.jpg", 800, 600, Bytes(500, 1));
+		other.GroupId = copy.GroupId = Guid.NewGuid();
+		var calls = new List<(int Done, int Total)>();
+		var groups = ReportBuilder.Build(shots.Append(other).Append(copy), fingerprints, progress: (done, total) => calls.Add((done, total)));
+		Assert.Equal(2, groups.Count);
+		Assert.Equal((0, 8), calls[0]);
+		Assert.Equal((8, 8), calls[^1]);
+		Assert.True(calls.Zip(calls.Skip(1)).All(p => p.First.Done <= p.Second.Done));
+
+		using var stop = new CancellationTokenSource();
+		stop.Cancel();
+		Assert.Throws<OperationCanceledException>(() => ReportBuilder.Build(shots, fingerprints, ct: stop.Token));
+	}
+
+	[Theory]
+	[InlineData("IMG_1.jpg", "IMG_1_Original.jpg", true)]
+	[InlineData("IMG_1-edited.jpg", "IMG_1.jpg", true)]
+	[InlineData("img_1 (EDITED).png", "IMG_1.jpg", true)]
+	[InlineData("IMG_1.jpg", "IMG_1.jpg", false)]
+	[InlineData("IMG_1.jpg", "IMG_2_original.jpg", false)]
+	[InlineData("IMG_1_original.jpg", "IMG_1_edited.jpg", false)]
+	[InlineData("original.jpg", "_original.jpg", false)]
+	public void OriginalAndEdit_ByName(string a, string b, bool expected) =>
+		Assert.Equal(expected, ReportBuilder.IsOriginalAndEdit(Path.Combine(dir, a), Path.Combine(dir, "sub", b)));
+
+	// An animation is compared by its first frame only: however alike, it's no plain copy (any case of extension).
+	[Fact]
+	public void AnimatedPictures_AreNeverPlainCopies() {
+		var g = Single(Photo("anim.gif", 400, 300, Bytes(3000, 1)), Photo("anim copy.GIF", 400, 300, Bytes(2900, 2), gray: 99.9f, ai: 99f));
+		Assert.Equal("variant", Named(g, "anim copy.GIF").Relation);
+		Assert.False(Named(g, "anim copy.GIF").Suggested);
+	}
 }

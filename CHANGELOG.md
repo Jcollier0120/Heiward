@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.92
+
+**The end of a scan is quick even with thousands of look-alikes, Stop scan works until the very end, and the page says what the scan is finishing.**
+
+### What changed
+
+- Making the report is many times faster on big sets of look-alikes. Each photo's capture date is read once instead of once for every file in its set, and each name is checked once for a burst. A set of 2,000 look-alike screenshots took a minute and now takes under two seconds; one of 15,000, which took hours, now takes about two minutes.
+- Stop scan works while the report is made and while the developer and games checks that follow it run. Before, once the comparing was done, Stop went unheard until the scan ended by itself, however long that took. Stopped while the report is made, the last report stays as it was; stopped after it, the report is kept and the checks and automatic cleanup wait for the next scan.
+- The last step's status says what it's doing: making the report (with how many of the sets' files are done, and a bar), saving it, checking your developer files or games, or cleaning up automatically. It used to say "checking the copies byte for byte" throughout.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.91
 
 **Scans leave your Temp folder out wherever it is, and a file that has gone no longer stops every scan.**

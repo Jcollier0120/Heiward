@@ -44,7 +44,8 @@ namespace HEI.Agent {
 		public const string Checking = "checking";
 		/// <summary>Comparing every file with the others, across drives: <see cref="ScanStatus.Stage"/> says which pass.</summary>
 		public const string Comparing = "comparing";
-		/// <summary>Making the report: byte-for-byte checks of the copies and the videos' sound.</summary>
+		/// <summary>Making the report (each set sorted into the file to keep, its copies and look-alikes; the copies checked byte for
+		/// byte, the videos' sound), then the checks that follow a scan: <see cref="ScanStatus.Stage"/> says which.</summary>
 		public const string Finishing = "finishing";
 	}
 
@@ -54,6 +55,9 @@ namespace HEI.Agent {
 	/// scan runs at a time machine-wide for this user (scan.lock).
 	/// </summary>
 	static class AgentScanner {
+		/// <summary>The status while the report is made, with how many of the sets' files are done.</summary>
+		internal const string SortingSets = "Making the report: sorting each set into the file to keep, its copies and look-alikes";
+
 		/// <param name="scheduled">Started by Task Scheduler: in the background unless the review page is open (<see cref="ScanPace"/>).</param>
 		/// <param name="drives">Drives scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) that this scan reads: from the drive's own page.</param>
 		/// <param name="waitTurn">The install's first scan: waits its turn among the agents' first rounds as a scheduled one does (<see cref="FirstRound"/>).</param>
@@ -132,10 +136,12 @@ namespace HEI.Agent {
 			GpuAdapter? card = GpuAdapters.InUse(cfg.Gpu, GpuAdapters.List());
 			using var stopPacing = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			Task pacing = FollowPageAsync(scheduled, fullSpeed, now => fullSpeed = now, card, stopPacing.Token, firstTurn);
-			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would.
+			// Stop scan on the review page (or hei stop, or a pause) ends the scan as Ctrl+C would. It's heard until the scan
+			// ends, while the report is made and the checks after it run too: once the engine was done it went unheard, for hours.
 			ScanStop.Clear();
 			using var stopped = CancellationTokenSource.CreateLinkedTokenSource(ct);
-			Task watching = ScanStop.WatchAsync(started, stopped, stopPacing.Token);
+			using var stopWatching = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			Task watching = ScanStop.WatchAsync(started, stopped, stopWatching.Token);
 
 			Func<string, bool>? mayRead = plan?.MayRead;
 			List<string> reading = plan?.Roots.Where(r => r.Mode != ListingMode.Resting).Select(r => r.Root).ToList() ?? settings.IncludeList.ToList();
@@ -152,22 +158,75 @@ namespace HEI.Agent {
 				if (e.Drives != null) driveCounts = e.Drives;
 			};
 			engine.FilesEnumerated += (_, _) => { latest = null; phase = ScanPhase.Checking; };
+			// What the finishing is doing, and how far (files of the sets sorted, while the report is made).
+			string finishing = "Finishing";
+			int finishedFiles = 0, finishingFiles = 0;
+			void Finish(string stage, int done = 0, int total = 0) { finishing = stage; finishedFiles = done; finishingFiles = total; }
 			// Once a second, whether or not a file finished: the listing reports nothing, and a drive's
 			// last files can take minutes.
 			void Write() {
 				ScanProgressSnapshot? e = latest;
+				bool finishingNow = phase == ScanPhase.Finishing;
 				string stage = !string.IsNullOrEmpty(e?.CurrentStage) ? e.CurrentStage : phase switch {
-					ScanPhase.Listing => "Finding files", ScanPhase.Checking => "Checking files", ScanPhase.Comparing => "Comparing", _ => "Finishing",
+					ScanPhase.Listing => "Finding files", ScanPhase.Checking => "Checking files", ScanPhase.Comparing => "Comparing", _ => finishing,
 				};
 				var ai = engine.AiLastRun;
-				WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? 0, e?.MaxPosition ?? 0, fullSpeed, reading,
+				WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? (finishingNow ? finishedFiles : 0),
+					e?.MaxPosition ?? (finishingNow ? finishingFiles : 0), fullSpeed, reading,
 					phase, phase == ScanPhase.Listing ? engine.ListingTimes.Keys.ToList() : null,
 					driveCounts?.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList(),
 					ai?.Device, ai?.Utc));
 			}
 			await using var status = new StatusFile(Write);
+			Report? previous;
+			string device;
+			List<ReportGroup> groups;
+			Report report;
+			AutoRun? auto;
 			try {
-				await RunEngineAsync(engine, () => { latest = null; phase = ScanPhase.Comparing; }, stopped.Token);
+				try {
+					await RunEngineAsync(engine, () => { latest = null; phase = ScanPhase.Comparing; }, stopped.Token);
+				}
+				finally {
+					stopPacing.Cancel();
+					await pacing;
+				}
+				latest = null;
+				phase = ScanPhase.Finishing;
+
+				// The files the listing found (the progress counts the database's entries, a deleted file's too).
+				if (engine.FoundFiles.Count > 0) files = engine.FoundFiles.Count;
+				// Whichever build made it: after an update, the sets it already listed aren't new.
+				previous = Report.LoadAny();
+				// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
+				device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
+				string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
+				var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, stopped.Token) { MayRead = mayRead };
+				var hashes = ReportBuilder.ContentHashes.Load();
+				Finish(SortingSets);
+				groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, mayRead, engine.FoundFiles.Select(f => f.Path),
+					(done, total) => Finish(SortingSets, done, total), stopped.Token);
+				Finish("Saving the report");
+				try { hashes.Save(); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }
+				// The report fingerprints the sound of the videos in it, once: the next scan reuses them.
+				if (fingerprints.AudioAdded)
+					try { DatabaseUtils.SaveDatabase(); }
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the audio fingerprints failed: " + e.Message); }
+				AiStatus.Record(cfg, device, "scan", engine.AiAcceleratorUsed, engine.AiCardUsed, engine.AiFallback);
+				report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
+					settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
+				report.Save();
+				ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
+				// This listing, and where the journal was read up to: the next scan starts from them.
+				try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
+				// The report stands from here: Stop now leaves out what's still to come after it.
+				try { auto = Housekeeping(cfg, stopped.Token, drives, stage => Finish(stage)); }
+				catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
+					AgentPaths.AppendLog("scan stopped after its report was saved: the developer check, the games check and automatic cleanup wait for the next scan");
+					auto = null;
+				}
 			}
 			catch (OperationCanceledException) {
 				AgentPaths.AppendLog("scan aborted");
@@ -175,39 +234,10 @@ namespace HEI.Agent {
 				return 130;
 			}
 			finally {
-				stopPacing.Cancel();
-				await pacing;
+				stopWatching.Cancel();
 				await watching;
 				ScanStop.Clear();
 			}
-			latest = null;
-			phase = ScanPhase.Finishing;
-
-			// The files the listing found (the progress counts the database's entries, a deleted file's too).
-			if (engine.FoundFiles.Count > 0) files = engine.FoundFiles.Count;
-			// Whichever build made it: after an update, the sets it already listed aren't new.
-			Report? previous = Report.LoadAny();
-			// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
-			string device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
-			string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
-			var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, ct) { MayRead = mayRead };
-			var hashes = ReportBuilder.ContentHashes.Load();
-			var groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, mayRead, engine.FoundFiles.Select(f => f.Path));
-			try { hashes.Save(); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }
-			// The report fingerprints the sound of the videos in it, once: the next scan reuses them.
-			if (fingerprints.AudioAdded)
-				try { DatabaseUtils.SaveDatabase(); }
-				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the audio fingerprints failed: " + e.Message); }
-			AiStatus.Record(cfg, device, "scan", engine.AiAcceleratorUsed, engine.AiCardUsed, engine.AiFallback);
-			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
-				settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
-			report.Save();
-			ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
-			// This listing, and where the journal was read up to: the next scan starts from them.
-			try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
-			AutoRun? auto = Housekeeping(cfg, ct, drives);
 			await status.DisposeAsync();
 
 			var decisions = DecisionStore.Load();
@@ -235,11 +265,13 @@ namespace HEI.Agent {
 		/// </summary>
 		/// <param name="drives">Drives scanned only when asked that this scan read (Scan this drive now): the developer check reads
 		/// them too, now, due or not, so their developer items are brought up to date with their photos and videos.</param>
-		static AutoRun? Housekeeping(AgentConfig cfg, CancellationToken ct, IReadOnlyCollection<string>? drives = null) {
+		/// <param name="stage">What it's doing now, for the scan's status on the page.</param>
+		static AutoRun? Housekeeping(AgentConfig cfg, CancellationToken ct, IReadOnlyCollection<string>? drives = null, Action<string>? stage = null) {
 			bool devChecked = false, gamesChecked = false;
 			DevMode devMode = DevMode.Now(cfg);
 			bool asked = devMode.On && drives is { Count: > 0 };
 			if (asked || DevScan.Due(devMode)) {
+				stage?.Invoke("Checking your developer files");
 				try {
 					devChecked = DevScan.RunAndSave(cfg, ct, drives) != null;
 					if (asked && !devChecked)
@@ -250,9 +282,13 @@ namespace HEI.Agent {
 			// Game mode: the games check once a day too (GameMode, read fresh as developer mode is).
 			GameMode gameMode = GameMode.Now(cfg);
 			if (GameScan.Due(gameMode)) {
+				stage?.Invoke("Checking your games");
 				try { gamesChecked = GameScan.RunAndSave(cfg, ct) != null; }
 				catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("games check failed: " + e.Message); }
 			}
+			// Stopped by now: nothing is removed either.
+			ct.ThrowIfCancellationRequested();
+			stage?.Invoke("Cleaning up automatically");
 			try { return AutoCleaner.RunAndSave(cfg, devMode, devChecked, new CleanupActions(cfg, automatic: true), gameMode, gamesChecked); }
 			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("automatic cleanup failed: " + e.Message); }
 			return null;

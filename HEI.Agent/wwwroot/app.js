@@ -3642,7 +3642,10 @@ function scanProgress(st) {
     const what = st.stage ? st.stage[0].toUpperCase() + st.stage.slice(1) : 'Comparing the drives together';
     return { step, text: what, fraction: st.max > 0 ? st.position / st.max : null };
   }
-  return { step, text: 'Finishing the report: checking the copies byte for byte', fraction: null };
+  // Making the report, then the checks that follow a scan: the stage says which, and the report how many of the sets' files are sorted.
+  const what = st.stage && !/^finishing$/i.test(st.stage) ? st.stage : 'Making the report';
+  if (!(st.max > 0)) return { step, text: what, fraction: null };
+  return { step, text: what + ' · ' + st.position.toLocaleString() + ' of ' + count(st.max, 'file', 'files'), fraction: st.position / st.max };
 }
 
 /**
