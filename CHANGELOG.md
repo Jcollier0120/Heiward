@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.89
+
+**It carries the Steward's kit 2.136.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.136.1: Urgent fix: the PowerShell worker starts in a signed release. Since kit 2.123.0 signed ps-worker.ps1, it was too long for a command line: no agent released since could start its worker (spawn ENAMETOOLONG), and every `powershell()` call failed.
+
+### Before you update
+
+- Nothing in an agent's code: take the kit and release. An agent released on kit 2.123.0 or later needs this kit for its PowerShell to work.
+
 ## 1.9.88
 
 **It carries the Steward's kit 2.135.4: the parts every agent of the manor shares.**
