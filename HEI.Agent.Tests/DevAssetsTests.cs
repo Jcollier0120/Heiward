@@ -183,6 +183,7 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Null(r.Error);
 		Assert.Equal(27, r.FreedBytes);
 		Assert.Equal(0, r.LeftInUse);
+		Assert.Equal("2 items untouched for a day", r.Went); // what the History and the log say went
 		Assert.False(File.Exists(oldFile));
 		Assert.False(Directory.Exists(oldFolder));
 		Assert.True(File.Exists(Path.Combine(touched, "a.bin")));
@@ -222,6 +223,112 @@ public sealed class DevAssetsTests : IDisposable {
 		Touch(Path.Combine(temp, "new.tmp"));
 		var old = DevScanner.OldTempEntries(temp, 7);
 		Assert.Equal(new[] { oldFile }, old.Select(o => o.Path));
+	}
+
+	/// <summary>Temp is a program's scratch, so a day untouched is enough: the default, and the least a settings file can say. The old setting is left behind.</summary>
+	[Fact]
+	public void TempFiles_GoAfterADayUntouched_AndTheOldSevenDaySettingIsLeftBehind() {
+		Assert.Equal(1, new AgentConfig().TempUntouchedDays);
+		Assert.Equal(1, AgentConfig.FromJson("""{"tempOlderThanDays": 7}""").TempUntouchedDays);
+		Assert.Equal(3, AgentConfig.FromJson("""{"tempUntouchedDays": 3}""").TempUntouchedDays);
+		Assert.Equal(1, AgentConfig.FromJson("""{"tempUntouchedDays": 0}""").TempUntouchedDays); // never "everything in Temp"
+		Assert.DoesNotContain("tempOlderThanDays", System.Text.Json.JsonSerializer.Serialize(AgentConfig.FromJson("""{"tempOlderThanDays": 7}"""), AgentConfig.Json));
+	}
+
+	/// <summary>Caches and markers tools keep in Temp on purpose stay, however old: they'd only be filled again, slower.</summary>
+	[Fact]
+	public void OldTempEntries_LeaveTheCachesToolsKeepThere() {
+		string temp = Dir("temp");
+		DateTime old = DateTime.UtcNow.AddDays(-30);
+		var all = new List<string>();
+		foreach (string name in new[] { "node-compile-cache", ".NET", "dotnet", "WinGet", "chocolatey", "NVIDIA Corporation", "Low", "system-commandline-sentinel-files", "manor-dev-offices-x1" }) {
+			string f = Path.Combine(temp, name, "a.bin");
+			Touch(f);
+			File.SetLastWriteTimeUtc(f, old);
+			Directory.SetLastWriteTimeUtc(Path.GetDirectoryName(f)!, old);
+			all.Add(Path.GetDirectoryName(f)!);
+		}
+		Assert.Equal(new[] { all[^1] }, DevScanner.OldTempEntries(temp, 1).Select(e => e.Path));
+		Assert.False(DevScanner.StillOldTemp(temp, all[0], DateTime.UtcNow));
+	}
+
+	/// <summary>A folder part of which can't be read may hold something in use: it's left, however old the rest is.</summary>
+	[Fact]
+	public void OldTempEntries_SkipAFolderPartOfWhichCantBeRead() {
+		string temp = Dir("temp");
+		DateTime old = DateTime.UtcNow.AddDays(-30);
+		string shut = Dir("temp", "shut", "inner"), open = Dir("temp", "open");
+		foreach (string f in new[] { Path.Combine(shut, "a.bin"), Path.Combine(open, "a.bin") }) {
+			Touch(f);
+			File.SetLastWriteTimeUtc(f, old);
+		}
+		foreach (string d in new[] { shut, Path.GetDirectoryName(shut)!, open }) Directory.SetLastWriteTimeUtc(d, old);
+		string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+		Icacls(shut, "/deny", me + ":(RD)");
+		try {
+			Assert.Equal(new[] { open }, DevScanner.OldTempEntries(temp, 1).Select(e => e.Path));
+		}
+		finally {
+			Icacls(shut, "/remove:d", me);
+		}
+	}
+
+	static void Icacls(params string[] args) {
+		var start = new ProcessStartInfo("icacls.exe") { CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true };
+		foreach (string a in args) start.ArgumentList.Add(a);
+		using var p = Process.Start(start)!;
+		p.StandardOutput.ReadToEnd();
+		p.WaitForExit();
+		Assert.Equal(0, p.ExitCode);
+	}
+
+	/// <summary>A link in Temp is judged by its own time, never by what it points to, and goes as a link: what it points to stays.</summary>
+	[Fact]
+	public void ALinkInTemp_IsJudgedByItsOwnTime_AndUnlinked() {
+		string temp = Dir("temp");
+		string target = Dir("elsewhere");
+		string kept = Path.Combine(target, "kept.bin");
+		Touch(kept, 500);
+		File.SetLastWriteTimeUtc(kept, DateTime.UtcNow.AddDays(1)); // were it followed, it would never be untouched
+		string link = Path.Combine(temp, "link");
+		Junction(link, target);
+		// Untouched since it was made (a moment ago), and nothing of its target's measured.
+		Assert.Equal(new[] { (link, 0L) }, DevScanner.OldTempEntries(temp, 0));
+		SafeDelete.Result r = SafeDelete.Each(new[] { link }, whole: true);
+		Assert.Equal(0, r.Left);
+		Assert.Equal(1, r.Gone);
+		Assert.False(Directory.Exists(link));
+		Assert.True(File.Exists(kept));
+	}
+
+	/// <summary>
+	/// A Temp folder a program holds (an installer waiting for a restart, an app running from what it unpacked) goes whole or not at
+	/// all: its files that aren't open stay too, and it's no failure, only looked at again the next time.
+	/// </summary>
+	[Fact]
+	public void Clean_LeavesAFolderAProgramHolds_Whole() {
+		string temp = Dir("temp");
+		DateTime old = DateTime.UtcNow.AddDays(-30);
+		string held = Dir("temp", "_MEI4242"), free = Dir("temp", "setup-x");
+		string open = Path.Combine(held, "python3.dll"), beside = Path.Combine(held, "lib.pyd"), other = Path.Combine(free, "a.msi");
+		foreach (string f in new[] { open, beside, other }) {
+			Touch(f, 100);
+			File.SetLastWriteTimeUtc(f, old);
+		}
+		foreach (string d in new[] { held, free }) Directory.SetLastWriteTimeUtc(d, old);
+		var item = new DevItem("id", "temp", "Temp folder", temp, new() { held, free }, 0, null, true, null, "");
+		CleanResult r;
+		using (new FileStream(open, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+			r = DevCleaner.Clean(item, new AgentConfig());
+		Assert.Null(r.Error);
+		Assert.Equal(0, r.LeftInUse);
+		Assert.Equal(1, r.Held);
+		Assert.Equal(100, r.FreedBytes);
+		Assert.Equal("1 item untouched for a day", r.Went);
+		Assert.True(File.Exists(open));
+		Assert.True(File.Exists(beside)); // not open, and still not taken: the folder goes whole or not at all
+		Assert.False(Directory.Exists(free));
+		Assert.False(Directory.Exists(held + SafeDelete.AwaySuffix));
 	}
 
 	/// <summary>Temp's entries are measured several at once (millions of files took the check minutes), and listed in the folder's order.</summary>

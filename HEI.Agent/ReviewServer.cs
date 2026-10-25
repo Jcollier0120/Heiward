@@ -800,7 +800,7 @@ namespace HEI.Agent {
 			return new {
 				settings = fresh.AutoClean,
 				fresh.StaleProjectDays,
-				fresh.TempOlderThanDays,
+				fresh.TempUntouchedDays,
 				groups = plan.Groups,
 				devItems = plan.DevItems,
 				repos = plan.Repos,

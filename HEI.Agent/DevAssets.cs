@@ -149,9 +149,10 @@ namespace HEI.Agent {
 				AndroidItems(staleBefore, resting).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Temp, "Temporary files and crash dumps",
-				$"Files in your Temp folder untouched for {cfg.TempOlderThanDays} days, Claude Code sessions' temp files idle as long (never those of a session " +
-				"that's running, can be resumed or has a file open), and crash dumps apps left behind.",
-				TempItems(cfg.TempOlderThanDays, resting, ct: ct).ToList()));
+				$"Files in your Temp folder untouched for {ForDays(cfg.TempUntouchedDays)} (never a folder a program still holds, nor the caches tools keep there), " +
+				"Claude Code sessions' temp files idle as long (never those of a session that's running, can be resumed or has a file open), " +
+				"and crash dumps apps left behind.",
+				TempItems(cfg.TempUntouchedDays, resting, ct: ct).ToList()));
 
 			// Main checkouts only (a git worktree's .git is a file): what each uses, and where it's hosted.
 			report.Sources = repos.Where(r => !File.Exists(Path.Combine(r, ".git")))
@@ -881,7 +882,7 @@ namespace HEI.Agent {
 				long bytes = old.Sum(e => e.Bytes);
 				if (bytes >= 1 << 20)
 					yield return new DevItem(IdOf(Temp, temp), "temp", "Temp folder", temp, old.Select(e => e.Path).ToList(), bytes, null, true, null,
-						$"{old.Count:N0} item(s) untouched for {olderThanDays} days");
+						$"{old.Count:N0} item(s) untouched for {ForDays(olderThanDays)}");
 				if (!resting(ClaudeTemp.In(temp)) && Directory.Exists(ClaudeTemp.In(temp))) {
 					ClaudeKeeps? keeps = ClaudeKeeps.Now(olderThanDays);
 					if (keeps == null) AgentPaths.AppendLog("developer check: Claude Code's sessions couldn't be read, so its temp files wait for the next check");
@@ -900,14 +901,14 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// Top-level Temp entries with nothing inside changed for <paramref name="days"/> days, in the folder's order. Not Claude
-		/// Code's temp folder, which is judged a session at a time (<see cref="ClaudeTemp"/>). Measured several at once: a
-		/// developer's Temp can hold millions of files, minutes walked one entry at a time. Stopped (<paramref name="ct"/>), the
-		/// entries not yet measured are left out.
+		/// Code's temp folder, which is judged a session at a time (<see cref="ClaudeTemp"/>), nor the caches tools keep there
+		/// (<see cref="KeptInTemp"/>). Measured several at once: a developer's Temp can hold millions of files, minutes walked one
+		/// entry at a time. Stopped (<paramref name="ct"/>), the entries not yet measured are left out.
 		/// </summary>
 		internal static List<(string Path, long Bytes)> OldTempEntries(string temp, int days, CancellationToken ct = default) {
 			DateTime before = DateTime.UtcNow.AddDays(-days);
 			List<FileSystemInfo> entries;
-			try { entries = new DirectoryInfo(temp).EnumerateFileSystemInfos("*", ListOptions).Where(e => !ClaudeTemp.IsIt(e)).ToList(); }
+			try { entries = new DirectoryInfo(temp).EnumerateFileSystemInfos("*", ListOptions).Where(e => !ClaudeTemp.IsIt(e) && !IsKeptInTemp(e)).ToList(); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new(); }
 			var found = new (string Path, long Bytes)?[entries.Count];
 			Parallel.For(0, entries.Count, new ParallelOptions { MaxDegreeOfParallelism = SafeDelete.AtOnce },
@@ -915,12 +916,34 @@ namespace HEI.Agent {
 			return found.Where(e => e != null).Select(e => e!.Value).ToList();
 		}
 
-		/// <summary>A Temp entry with nothing inside changed since <paramref name="before"/>, and its size; null otherwise, and for a link.</summary>
+		/// <summary>
+		/// What tools keep in Temp on purpose, by name, which stays whatever its age: caches that cost time to fill again, and
+		/// markers that say something was done once. Everything else in Temp is a program's scratch, or what one left behind.
+		/// </summary>
+		static readonly HashSet<string> KeptInTemp = new(StringComparer.OrdinalIgnoreCase) {
+			"node-compile-cache",                // Node.js's compiled modules
+			".net",                              // what .NET single-file apps unpack to run
+			"dotnet",                            // the .NET SDK's builds of file-based apps (dotnet run app.cs)
+			"WinGet",                            // WinGet's downloads
+			"chocolatey",                        // Chocolatey's downloads
+			"NVIDIA Corporation",                // NVIDIA's shader cache, with older drivers
+			"Low",                               // Temp for programs that run at low integrity (sandboxed browsers' and viewers')
+			"system-commandline-sentinel-files", // .NET tools' first-run markers
+		};
+
+		static bool IsKeptInTemp(FileSystemInfo e) => KeptInTemp.Contains(e.Name);
+
+		/// <summary>
+		/// A Temp entry with nothing inside changed since <paramref name="before"/>, and its size; null otherwise. A folder only when
+		/// all of it could be read: what's in one that can't be might be in use. A link (a junction, a symbolic link) by its own time,
+		/// with no size: it goes as a link, never followed.
+		/// </summary>
 		internal static (string Path, long Bytes)? Untouched(FileSystemInfo e, DateTime before) {
+			if ((e.Attributes & FileAttributes.ReparsePoint) != 0)
+				return e.LinkTarget != null && e.LastWriteTimeUtc < before ? (e.FullName, 0) : null; // another kind (a cloud file's placeholder): left alone
 			if (e is FileInfo f) return f.LastWriteTimeUtc < before ? (f.FullName, f.Length) : null;
-			if ((e.Attributes & FileAttributes.ReparsePoint) != 0) return null;
-			var (bytes, newest) = Measure(e.FullName);
-			return newest < before && e.LastWriteTimeUtc < before ? (e.FullName, bytes) : null;
+			var (bytes, newest, whole) = MeasureWhole(e.FullName);
+			return whole && newest < before && e.LastWriteTimeUtc < before ? (e.FullName, bytes) : null;
 		}
 
 		/// <summary>Whether <paramref name="path"/>, listed among <paramref name="temp"/>'s old entries, still is one (<see cref="OldTempEntries"/>).</summary>
@@ -928,8 +951,11 @@ namespace HEI.Agent {
 			if (!string.Equals(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(path)), Path.TrimEndingDirectorySeparator(temp), StringComparison.OrdinalIgnoreCase))
 				return false;
 			FileSystemInfo e = File.Exists(path) ? new FileInfo(path) : new DirectoryInfo(path);
-			return e.Exists && !ClaudeTemp.IsIt(e) && Untouched(e, before) != null;
+			return e.Exists && !ClaudeTemp.IsIt(e) && !IsKeptInTemp(e) && Untouched(e, before) != null;
 		}
+
+		/// <summary>"a day", "7 days": how long something has been untouched.</summary>
+		internal static string ForDays(int days) => days == 1 ? "a day" : $"{days} days";
 
 		// ------------------------------------------------------------------ helpers
 
@@ -937,12 +963,20 @@ namespace HEI.Agent {
 
 		/// <summary>Bytes and the newest change below a folder, never following links (pnpm's node_modules are full of them).</summary>
 		internal static (long Bytes, DateTime NewestUtc) Measure(string path) {
+			var (bytes, newest, _) = Measure(path, skipUnreadable: true);
+			return (bytes, newest);
+		}
+
+		/// <summary>As <see cref="Measure(string)"/>, and whether all of it could be read: false at the first folder that can't be.</summary>
+		internal static (long Bytes, DateTime NewestUtc, bool Whole) MeasureWhole(string path) => Measure(path, skipUnreadable: false);
+
+		static (long Bytes, DateTime NewestUtc, bool Whole) Measure(string path, bool skipUnreadable) {
 			long bytes = 0;
 			DateTime newest = DateTime.MinValue;
 			try {
 				var files = new FileSystemEnumerable<(long, DateTime)>(path,
 					(ref FileSystemEntry e) => (e.Length, e.LastWriteTimeUtc.UtcDateTime),
-					new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true, AttributesToSkip = 0 }) {
+					new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = skipUnreadable, AttributesToSkip = 0 }) {
 					ShouldIncludePredicate = (ref FileSystemEntry e) => !e.IsDirectory,
 					ShouldRecursePredicate = (ref FileSystemEntry e) => (e.Attributes & FileAttributes.ReparsePoint) == 0,
 				};
@@ -951,8 +985,8 @@ namespace HEI.Agent {
 					if (written > newest) newest = written;
 				}
 			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-			return (bytes, newest);
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (bytes, newest, false); }
+			return (bytes, newest, true);
 		}
 
 		internal static string IdOf(string kind, string key) =>
@@ -1164,7 +1198,11 @@ namespace HEI.Agent {
 	/// Why they're left: the processes that hold them when Windows says ("Code (process 1234) works in it", "dotnet (process 99)
 	/// has a file open"), otherwise Windows' own reason ("Access to the path is denied.").
 	/// </param>
-	sealed record CleanResult(long FreedBytes, int LeftInUse, string? Error, string? LeftPath = null, string? HeldBy = null) {
+	/// <param name="Went">What went, in words, for the History and the log ("1,204 items untouched for a day"); null to say nothing more than the item's name.</param>
+	/// <param name="Held">Listed folders a program holds, left whole and untouched (<see cref="SafeDelete.Away"/>): looked at again the next time.</param>
+	/// <param name="Drive">The free space of the drive it's really on, before and after (<see cref="CleanupActions.Clean"/>).</param>
+	sealed record CleanResult(long FreedBytes, int LeftInUse, string? Error, string? LeftPath = null, string? HeldBy = null,
+		string? Went = null, int Held = 0, DriveFree? Drive = null) {
 		/// <summary>A deletion's result, with what holds what it left (<paramref name="root"/>: the folder it was deleting).</summary>
 		internal static CleanResult Of(SafeDelete.Result r, string root, FolderUse use, long? freed = null) {
 			if (r.Left == 0) return new CleanResult(freed ?? r.Bytes, 0, null);
@@ -1264,13 +1302,17 @@ namespace HEI.Agent {
 				}
 				case "temp": {
 					// Only entries still untouched for the whole period, as they were when listed: each looked at again on its own
-					// just before it goes, not all of Temp first (on a developer's PC, millions of files).
-					DateTime before = DateTime.UtcNow.AddDays(-cfg.TempOlderThanDays);
-					var r = SafeDelete.Each(item.Paths, p => DevScanner.StillOldTemp(item.Location, p, before));
-					return CleanResult.Of(r, item.Location, use);
+					// just before it goes, not all of Temp first (on a developer's PC, millions of files). A folder goes only whole:
+					// one a program still holds (an installer waiting for a restart, say) stays as it is.
+					DateTime before = DateTime.UtcNow.AddDays(-cfg.TempUntouchedDays);
+					var r = SafeDelete.Each(item.Paths, p => DevScanner.StillOldTemp(item.Location, p, before), whole: true);
+					return CleanResult.Of(r, item.Location, use) with {
+						Went = r.Gone > 0 ? $"{r.Gone:N0} {(r.Gone == 1 ? "item" : "items")} untouched for {DevScanner.ForDays(cfg.TempUntouchedDays)}" : null,
+						Held = r.Held,
+					};
 				}
 				case ClaudeTemp.Kind:
-					return ClaudeTemp.Clean(item, cfg.TempOlderThanDays, ClaudeKeeps.Now(cfg.TempOlderThanDays), use);
+					return ClaudeTemp.Clean(item, cfg.TempUntouchedDays, ClaudeKeeps.Now(cfg.TempUntouchedDays), use);
 				case "dumps": {
 					var r = new SafeDelete.Result(0, 0);
 					foreach (string p in item.Paths.Where(p => p.EndsWith(".dmp", StringComparison.OrdinalIgnoreCase)))
@@ -1302,7 +1344,9 @@ namespace HEI.Agent {
 		/// <param name="Left">How many files and folders are left (in use, or refused).</param>
 		/// <param name="Reason">Why the first of them is left, as Windows said it.</param>
 		/// <param name="LeftPaths">The first of them (<see cref="PathsKept"/> at most), in their usual form.</param>
-		public readonly record struct Result(long Bytes, int Left, string? Reason = null, IReadOnlyList<string>? LeftPaths = null) {
+		/// <param name="Held">Folders left whole, untouched: a program holds them (<see cref="Away"/>).</param>
+		/// <param name="Gone">Of a list's entries (<see cref="Each"/>), how many went whole.</param>
+		public readonly record struct Result(long Bytes, int Left, string? Reason = null, IReadOnlyList<string>? LeftPaths = null, int Held = 0, int Gone = 0) {
 			/// <summary>One path left, and why (Windows' message without the path, which <see cref="LeftPaths"/> has).</summary>
 			public static Result Failed(string path, Exception e) =>
 				new(0, 1, Regex.Replace(e.Message, @"\s*'[^']*'", "").Trim(), new[] { Plain(path) });
@@ -1311,8 +1355,12 @@ namespace HEI.Agent {
 				other.LeftPaths is not { Count: > 0 } ? LeftPaths
 				: LeftPaths is not { Count: > 0 } ? other.LeftPaths
 				: LeftPaths.Count >= PathsKept ? LeftPaths
-				: LeftPaths.Concat(other.LeftPaths).Take(PathsKept).ToList());
+				: LeftPaths.Concat(other.LeftPaths).Take(PathsKept).ToList(),
+				Held + other.Held, Gone + other.Gone);
 		}
+
+		/// <summary>Added to a folder's name while it's renamed away (<see cref="Away"/>, <see cref="ClaudeTemp.Held"/>).</summary>
+		internal const string AwaySuffix = ".heiward";
 
 		/// <summary>How many of the paths left a result keeps: enough to say what held them.</summary>
 		const int PathsKept = 20;
@@ -1367,12 +1415,36 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// Deletes each of <paramref name="paths"/>, files or folders (<see cref="Tree"/>), several at once. <paramref name="stillGoes"/>,
-		/// asked just before one is deleted, keeps it when it says no.
+		/// asked just before one is deleted, keeps it when it says no. <paramref name="whole"/>: a folder goes only whole, renamed away
+		/// first (<see cref="Away"/>), so one a program holds stays as it is.
 		/// </summary>
-		public static Result Each(IReadOnlyList<string> paths, Func<string, bool>? stillGoes = null) {
+		public static Result Each(IReadOnlyList<string> paths, Func<string, bool>? stillGoes = null, bool whole = false) {
 			var helpers = new Helpers(AtOnce - 1);
-			return InTurn(paths.Count, i => stillGoes?.Invoke(paths[i]) == false ? new Result(0, 0)
-				: System.IO.File.Exists(paths[i]) ? File(paths[i]) : Tree(paths[i], false, helpers), helpers);
+			return InTurn(paths.Count, i => {
+				if (stillGoes?.Invoke(paths[i]) == false) return new Result(0, 0);
+				Result r = System.IO.File.Exists(paths[i]) ? File(paths[i]) : whole ? Away(paths[i], helpers) : Tree(paths[i], false, helpers);
+				return r.Left == 0 && r.Held == 0 ? r with { Gone = 1 } : r;
+			}, helpers);
+		}
+
+		/// <summary>
+		/// Deletes a folder renamed away first (<see cref="AwaySuffix"/>). Windows won't rename one while a program has a file in it
+		/// open or works in it, whatever the program let others do with its files (Node lets them delete its open files, not rename
+		/// their folder): such a folder is held, left whole and untouched, and counted in <see cref="Result.Held"/>. Renamed, nothing
+		/// can open a file in it by its path while it goes. Whatever can't be deleted goes back under its name.
+		/// </summary>
+		public static Result Away(string folder) => Away(folder, new Helpers(AtOnce - 1));
+
+		static Result Away(string folder, Helpers helpers) {
+			string away = folder + AwaySuffix;
+			try { Directory.Move(folder, away); }
+			catch (DirectoryNotFoundException) { return new Result(0, 0); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return new Result(0, 0, Held: 1); }
+			Result r = Tree(away, false, helpers);
+			if (r.Left > 0)
+				try { Directory.Move(away, folder); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+			return r;
 		}
 
 		public static Result File(string path) => File(new FileInfo(Extended(path)));

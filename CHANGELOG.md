@@ -2,6 +2,29 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.97
+
+**Temp's leftovers, and Claude Code's ended sessions' temp files, go after a day untouched; a folder a program still holds stays whole.**
+
+### What's new
+
+- **Temp files and crash dumps** now takes what has sat untouched in your Temp folder for a day, not a week, and Claude Code's ended sessions' temp files (their scratchpads and task output) once they've been idle a day. A session that's running, was resumed that day, or is still open in the Claude app keeps its folder, as before. On a developer's PC, tests' leftovers and ended sessions' folders can fill a drive within days.
+- After automatic cleanup deletes developer leftovers, the card's **Last run**, the notification and `heiward.log` say each drive's free space before and after, and once more at a run at least 10 minutes later. On a Dev Drive (ReFS) what a drive gets back can differ from the files' sizes: a file cloned from another frees nothing until the other goes too, and ReFS gives deleted space back a while after.
+- History says what went: "Temp folder (1,204 items untouched for a day)", "Claude Code sessions' temp files (37 ended sessions' folders and 12 other items)".
+
+### What changed
+
+- A folder in Temp that a program still holds (a file in it open, or a program working in it: an installer waiting for a restart, an app running from what it unpacked) now goes whole or not at all. It's renamed away before it's deleted, which Windows refuses while it's in use, and it's looked at again the next time. Before, the files in it that weren't open went, which could break that program. This holds for the Developer area's **Clean** button too, which now says how many such folders it left.
+- A folder in Temp part of which can't be read is left alone.
+- What tools keep in Temp on purpose stays, however old: Node.js's compile cache, what .NET single-file apps unpack and the .NET SDK's builds of file-based apps, WinGet's and Chocolatey's downloads, NVIDIA's shader cache with older drivers, the Low folder sandboxed programs use, and .NET tools' first-run markers.
+- A junction or symbolic link in Temp is judged by its own age and removed as a link; what it points to is never touched. Before, it was never cleaned.
+- The setting is now `tempUntouchedDays` (a day, and never less) in place of `tempOlderThanDays` (7 days).
+
+### Before you update
+
+- Automatic cleanup stays as you set it. Developer leftovers are cleaned automatically only with that switch on in Settings' **Automatic cleanup** (in developer mode), and Temp's only with **Temp files and crash dumps** picked there. Otherwise the Developer area lists them for you to clean.
+- If you set `tempOlderThanDays` in `settings.json` yourself, set `tempUntouchedDays` instead: the old setting is no longer read.
+
 ## 1.9.96
 
 **The developer check is several times faster on a busy Temp folder.**

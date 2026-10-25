@@ -28,15 +28,20 @@ namespace HEI.Agent {
 
 	/// <summary>One automatic cleanup: what went, and what couldn't.</summary>
 	/// <param name="GameItems">What games left behind that went to the Recycle Bin (game mode), and <paramref name="GameBytes"/> their size.</param>
+	/// <param name="Drives">The free space of the drives developer leftovers were deleted from, before and after (<see cref="DriveSpace"/>).</param>
 	sealed record AutoRun(DateTime AtUtc, int Files, long FileBytes, int DevItems, long DevBytes, int Branches, List<string> Problems,
-		int GameItems = 0, long GameBytes = 0) {
+		int GameItems = 0, long GameBytes = 0, List<DriveFree>? Drives = null) {
 		public bool DidSomething => Files > 0 || DevItems > 0 || Branches > 0 || GameItems > 0;
 
-		/// <summary>"12 copies (340 MB) to the Recycle Bin · 2.1 GB of developer leftovers · 5 merged branches" (the console gets "; ").</summary>
+		/// <summary>
+		/// "12 copies (340 MB) to the Recycle Bin · 2.1 GB of developer leftovers · E:\ had 6.5 GB free, 8.7 GB after · 5 merged branches"
+		/// (the console gets "; ").
+		/// </summary>
 		public string Describe(string separator = " · ") {
 			var parts = new List<string>();
 			if (Files > 0) parts.Add($"{Files} {(Files == 1 ? "copy" : "copies")} ({Format.Bytes(FileBytes)}) to the Recycle Bin");
 			if (DevItems > 0) parts.Add($"{Format.Bytes(DevBytes)} of developer leftovers");
+			parts.AddRange((Drives ?? new()).Select(d => d.Describe()));
 			if (Branches > 0) parts.Add($"{Branches} merged {(Branches == 1 ? "branch" : "branches")}");
 			if (GameItems > 0) parts.Add($"{Format.Bytes(GameBytes)} of game leftovers to the Recycle Bin");
 			if (parts.Count == 0) parts.Add("nothing cleaned");
@@ -143,6 +148,8 @@ namespace HEI.Agent {
 		internal const string OnRequestReason = "It's on a drive scanned only when you ask, so it waits for you";
 		/// <summary>A set automatic cleanup couldn't move is tried again after this.</summary>
 		static readonly TimeSpan RetryAfter = TimeSpan.FromDays(1);
+		/// <summary>The drives a run deleted from are measured again at the first run at least this long after (<see cref="LookAgain"/>).</summary>
+		internal static readonly TimeSpan LookAgainAfter = TimeSpan.FromMinutes(10);
 		const int RunsKept = 20;
 
 		/// <summary>
@@ -397,6 +404,7 @@ namespace HEI.Agent {
 				if (r.Recycled.Count == 0 && r.Failed.Count > 0)
 					s.Failed["g:" + key] = new AutoFailure(r.Failed[0].Reason, now);
 			}
+			var drives = new List<DriveFree>();
 			if (devChecked && dev != null) {
 				foreach (DevItem i in dev.Categories.SelectMany(c => c.Items).ToList()) {
 					if (!plan.DevItems.TryGetValue(i.Id, out AutoPlanEntry? e) || !(e.DueUtc <= now)) continue;
@@ -404,6 +412,12 @@ namespace HEI.Agent {
 					if (r.FreedBytes > 0) {
 						devItems++;
 						devBytes += r.FreedBytes;
+						// A drive by its free space before the first item cleaned on it, and after the last.
+						if (r.Drive is { } d) {
+							int at = drives.FindIndex(x => string.Equals(x.Drive, d.Drive, StringComparison.OrdinalIgnoreCase));
+							if (at < 0) drives.Add(d);
+							else drives[at] = drives[at] with { After = d.After };
+						}
 					}
 					if (r.Error != null) problems.Add($"{i.Name}: {r.Error}");
 					else if (r.Describe(withPath: false) is { } left) problems.Add($"{i.Name}: {left}");
@@ -429,12 +443,30 @@ namespace HEI.Agent {
 					else if (r.Describe(withPath: false) is { } left) problems.Add($"{i.Name}: {left}");
 				}
 			}
-			var run = new AutoRun(now, files, fileBytes, devItems, devBytes, branches, problems, gameItems, gameBytes);
+			var run = new AutoRun(now, files, fileBytes, devItems, devBytes, branches, problems, gameItems, gameBytes, drives.Count > 0 ? drives : null);
 			if (run.DidSomething || problems.Count > 0) {
 				s.Runs.Insert(0, run);
 				if (s.Runs.Count > RunsKept) s.Runs.RemoveRange(RunsKept, s.Runs.Count - RunsKept);
 			}
 			return run;
+		}
+
+		/// <summary>
+		/// The free space of the drives the last run deleted from, read once more at the first run <see cref="LookAgainAfter"/> or
+		/// more after it: ReFS gives deleted space back a while after, so right after a cleanup the drive shows less than it will.
+		/// What else the drive was used for meanwhile counts too, so it's said as it is, not as what the cleanup freed. The drives
+		/// read again, or none.
+		/// </summary>
+		/// <param name="free">A drive's free space now (<see cref="DriveSpace.Free"/>).</param>
+		internal static List<DriveFree> LookAgain(AutoCleanState s, DateTime now, Func<string, long?> free) {
+			var read = new List<DriveFree>();
+			if (s.Runs.FirstOrDefault() is not { Drives: { Count: > 0 } drives } last || now - last.AtUtc < LookAgainAfter) return read;
+			for (int i = 0; i < drives.Count; i++) {
+				if (drives[i].Later != null || free(drives[i].Drive) is not { } later) continue;
+				drives[i] = drives[i] with { Later = later, LaterUtc = now };
+				read.Add(drives[i]);
+			}
+			return read;
 		}
 
 		/// <summary>
@@ -449,6 +481,8 @@ namespace HEI.Agent {
 			if (!on && !File.Exists(AutoCleanState.FilePath)) return null; // never turned on: nothing to keep
 			using (CleanLock.Acquire(TimeSpan.FromMinutes(10))) {
 				AutoCleanState s = AutoCleanState.Load();
+				foreach (DriveFree d in LookAgain(s, DateTime.UtcNow, DriveSpace.Free))
+					AgentPaths.AppendLog($"automatic cleanup of {s.Runs[0].AtUtc.ToLocalTime():g}, looked at again: {d.Describe()}");
 				AutoRun? run = Run(cfg, Report.Load(), devMode.On ? roles.View(DevReport.Load()) : null, DecisionStore.Load(), s, DateTime.UtcNow, devChecked, actions,
 					gameMode is { On: true } ? GameReport.Load() : null, gamesChecked);
 				s.Save();
@@ -514,16 +548,22 @@ namespace HEI.Agent {
 		public CleanResult Clean(DevItem item) {
 			CleanResult result;
 			using (CleanLock.Acquire()) {
+				var before = DriveSpace.Of(item.Location);
 				result = DevCleaner.Clean(item, cfg);
+				if (before is { } b && DriveSpace.Free(b.Drive) is { } after) result = result with { Drive = new DriveFree(b.Drive, b.Free, after) };
+				// What went, when the item says ("Temp folder (1,204 items untouched for a day)"): no file's name.
 				if (result.FreedBytes > 0)
-					DecisionStore.Record(cfg, "dev:" + item.Id, new Decision("dev-cleaned", DateTime.UtcNow, new() { item.Name }, result.FreedBytes, automatic));
+					DecisionStore.Record(cfg, "dev:" + item.Id, new Decision("dev-cleaned", DateTime.UtcNow,
+						new() { result.Went is { } went ? $"{item.Name} ({went})" : item.Name }, result.FreedBytes, automatic));
 				// Gone, or what's left (files in use) re-measured.
 				if (result.Error == null)
 					DevReport.Update(item.Id, result.LeftInUse == 0 ? null : item with { Bytes = Math.Max(0, item.Bytes - result.FreedBytes), Suggested = false });
 			}
 			// Without a history, the log keeps no names either.
 			AgentPaths.AppendLog($"developer clean{(automatic ? " (automatic)" : "")}: {item.Kind}{(cfg.KeepHistory ? " " + item.Location : "")}: freed {Format.Bytes(result.FreedBytes)}" +
-				(result.Describe(cfg.KeepHistory) is { } left ? ", " + left : "") + (result.Error != null ? $", {result.Error}" : ""));
+				(result.Went is { } w ? $" ({w})" : "") + (result.Held > 0 ? $", {result.Held:N0} held by a program, left for next time" : "") +
+				(result.Describe(cfg.KeepHistory) is { } left ? ", " + left : "") + (result.Error != null ? $", {result.Error}" : "") +
+				(result.Drive is { } d ? "; " + d.Describe() : ""));
 			return result;
 		}
 
