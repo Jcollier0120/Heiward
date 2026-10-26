@@ -230,6 +230,8 @@ namespace HEI.Agent {
 			Step($"Settings: {AgentPaths.Config} ({Scheduler.Describe(cfg)}, {SpeedText(cfg)}; {(cfg.ScanAllDrives ? "every fixed drive, minus system, app and game folders" : "folders: " + string.Join("; ", cfg.Folders))})");
 			// A new install scans nothing until the person says so on the page (FirstScanWait); an update scans as before.
 			bool firstScanWaits = FirstScanWait.ForInstall(keepSettings, FirstRound.Done());
+			// Read before this install records its own version (Apps & Features, the Store's setup.txt).
+			string? replaces = Replaces() ?? (keepSettings ? "" : null);
 			if (firstScanWaits) Step("First scan: waits until you press Scan now on the review page, or choose there to let it scan by itself");
 			if (!dryRun) {
 				cfg.Save();
@@ -287,12 +289,7 @@ namespace HEI.Agent {
 			if (!pageFree) openPage = false;
 			bool onDemandOnly = cfg.ScanEveryMinutes <= 0;
 			Console.WriteLine();
-			Console.WriteLine(onDemandOnly
-				? openPage ? "Installed. Scans run when you press Scan now on the review page, which opens in your browser." : "Installed. Scans run when you press Scan now on the review page."
-				: firstScanWaits
-					? openPage ? "Installed. The review page opens in your browser: the first scan starts when you press Scan now there, or let it scan by itself." : "Installed. The first scan starts when you press Scan now on the review page, or let it scan by itself there."
-				: openPage ? "Installed. The first scan starts now; the review page opens in your browser and shows its progress." : "Installed. The first scan starts now.");
-			Console.WriteLine("Later scans only look at new files. Nothing is ever deleted unless you choose it on the page.");
+			foreach (string line in DoneWords(onDemandOnly, firstScanWaits, openPage, replaces, SelfUpdate.Current)) Console.WriteLine(line);
 			foreach (string[] args in AfterInstall(openPage, pageFree, onDemandOnly, firstScanWaits)) StartDetached(args);
 			return 0;
 		}
@@ -324,6 +321,47 @@ namespace HEI.Agent {
 				starts.Add(["scan", "--wait-turn"]);
 			}
 			return starts;
+		}
+
+		/// <summary>
+		/// What the install says once it's done: what it did, then what happens next. A new install is "Installed"; one that
+		/// replaced a copy (<see cref="Replaces"/>) says "Updated from 1.9.101 to 1.9.104", or "Updated to 1.9.104" when the
+		/// copy's version isn't known, and its scan is no first scan. Manor shows these lines in its Updates box.
+		/// </summary>
+		/// <param name="replaces">The version of the copy this install replaced, "" when it isn't known; null for a new install.</param>
+		/// <param name="version">This copy's version.</param>
+		internal static string[] DoneWords(bool onDemandOnly, bool firstScanWaits, bool openPage, string? replaces, string version) {
+			const string NothingDeleted = "Nothing is ever deleted unless you choose it on the page.";
+			string next = onDemandOnly
+				? openPage ? "Scans run when you press Scan now on the review page, which opens in your browser." : "Scans run when you press Scan now on the review page."
+				: firstScanWaits
+					? openPage ? "The review page opens in your browser: the first scan starts when you press Scan now there, or let it scan by itself." : "The first scan starts when you press Scan now on the review page, or let it scan by itself there."
+				: replaces == null
+					? openPage ? "The first scan starts now; the review page opens in your browser and shows its progress." : "The first scan starts now."
+				: openPage ? "A scan starts now; it only looks at new files. The review page opens in your browser and shows its progress." : "A scan starts now; it only looks at new files.";
+			if (replaces == null) return [$"Installed. {next}", "Later scans only look at new files. " + NothingDeleted];
+			int order = Version.TryParse(replaces, out Version? was) && Version.TryParse(version, out Version? now) ? was.CompareTo(now)
+				: replaces == version ? 0 : -1;
+			string done = replaces.Length == 0 ? $"Updated to {version}."
+				: order == 0 ? $"Reinstalled {version}."
+				: order > 0 ? $"Went back from {replaces} to {version}."
+				: $"Updated from {replaces} to {version}.";
+			return [$"{done} {next}", NothingDeleted];
+		}
+
+		/// <summary>
+		/// The version of the copy an install replaces, read before the install records its own: the GitHub copy's as its
+		/// Apps &amp; Features entry has it (every install writes it, and uninstalling removes it), "" for an entry without
+		/// one, or the Store version's "" when it was set up before (its package's old version has gone by then). Null: no
+		/// copy was installed.
+		/// </summary>
+		static string? Replaces() {
+			if (StorePackage.IsPackaged) return File.Exists(AgentPaths.StoreSetUp) ? "" : null;
+			try {
+				using RegistryKey? key = Registry.CurrentUser.OpenSubKey(UninstallKey);
+				return key == null ? null : (key.GetValue("DisplayVersion") as string)?.Trim() ?? "";
+			}
+			catch (Exception e) when (e is System.Security.SecurityException or UnauthorizedAccessException or IOException) { return null; }
 		}
 
 		/// <summary>

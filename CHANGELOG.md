@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.105
+
+**An update says it's an update: "Updated from 1.9.104 to 1.9.105", not "Installed".**
+
+### What changed
+
+- When Heiward replaces a copy that's already installed (from Manor, its own updates or a setup run again), its last words say so: "Updated from 1.9.104 to 1.9.105. A scan starts now; it only looks at new files." Before, every update ended with "Installed. The first scan starts now.", which Manor's Updates box showed as if Heiward were new.
+- Where the old version isn't known (the Microsoft Store version), it says "Updated to 1.9.105". The same version set up again says "Reinstalled". A new install keeps its words.
+- Only the words changed: what an install or an update starts is as before.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.104
 
 **It carries the Steward's kit 2.142.0: the parts every agent of the manor shares.**
