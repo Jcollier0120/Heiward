@@ -5,7 +5,9 @@ Heiward is Windows-only today. This is what a Linux and a macOS version take, in
 ## Already portable
 
 - **The engine** (`HEI.Core`) targets `net10.0`, and already builds and runs on Linux and macOS.
-- **Downloads.** FFmpeg already downloads for Linux (x64, Arm64) and macOS (Intel, Apple Silicon), and ONNX Runtime for all four.
+- **Downloads.** ONNX Runtime downloads for all four, pinned by SHA-256. FFmpeg downloads only on Windows, where every build is pinned by release and SHA-256 (`FfmpegDownloader.WinBuilds`); since 1.9.100 Linux and macOS get no FFmpeg download, rather than an unpinned "latest". A port pins its own, the same way:
+  - **Linux:** BtbN's month-end builds stay up for two years (its daily ones for 14 days), so they have addresses that last. The LGPL shared 8.1 builds of `autobuild-2026-09-30-13-08` (FFmpeg n8.1.3-9-g29e619e767, GNU LGPL version 3) were checked on 2026-10-25: `ffmpeg-n8.1.3-9-g29e619e767-linux64-lgpl-shared-8.1.tar.xz` has SHA-256 `d4d7b6936f492c0b866b1cb4a29a1bbae09d6a064b4ec4eb90c95bed7969535a`, and `…-linuxarm64-lgpl-shared-8.1.tar.xz` `d44838f375c66cf31a8b1473b6f8bad76e5c7dac55870c4d96a75c907a52ba2d`. Their `lib/` holds symlinks (`libavcodec.so.62` → `libavcodec.so.62.28.103`), which the install must copy as the files they point at.
+  - **macOS:** neither BtbN nor yt-dlp publishes macOS builds (the addresses the downloader used to build for it answered 404). Homebrew's `ffmpeg` is found where it installs, or the port builds and signs its own.
 - **Photos.** They decode through FFmpeg in-process, iPhone HEIC included. WIC is only a Windows speed-up.
 - **The review page** is ASP.NET Core plus plain HTML and JavaScript. Opening it uses `xdg-open` or `open`, which .NET already calls for a URL.
 - **Most other code:** the report, scan index, folder tree, decisions, and developer mode's logic. Git and deletion that never follows links (`LinkTarget`) work on every OS.

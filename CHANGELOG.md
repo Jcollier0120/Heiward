@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.100
+
+**The Microsoft Store version carries the same signed FFmpeg as the download, nothing downloads FFmpeg without a pinned hash, and the switch to a renewed signing certificate is planned so that updates never stop.**
+
+### What changed
+
+- **Microsoft Store version:** the FFmpeg inside it, which reads your videos and photos, is now the same build the GitHub version downloads (FFmpeg 8.1.3, lean LGPL build `n8.1.3-6`), with every program and library in it signed by Heiward's publisher. Before, the Store package carried an earlier, unsigned build of it (`n8.1.3-4`). The package build now stops if the FFmpeg archive doesn't have its pinned SHA-256, or if any of its files isn't signed by Heiward's publisher.
+- Heiward runs on Windows only, and only Windows downloads FFmpeg: the builds Heiward pins, each checked against its SHA-256 before it's unpacked. The apps Heiward inherited from Video Duplicate Finder no longer download FFmpeg's unpinned daily build on Linux, or a macOS build that no longer exists; there they ask you to install FFmpeg from your package manager, as they did when a download failed.
+- Heiward's releases are signed by a certificate that expires on 2027-10-11. Each release now records when every certificate it trusts expires. When the certificate is renewed, a release that trusts both the old and the new one comes out first, signed by the old one, and only after that are releases signed by the new one, so your copy keeps updating itself. Releasing checks that this order is kept.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The Microsoft Store version gets the signed FFmpeg with its next Store update.
+
 ## 1.9.99
 
 **It carries the Steward's kit 2.137.1: the parts every agent of the manor shares.**

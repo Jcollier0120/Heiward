@@ -27,8 +27,8 @@ namespace HEI.Core.FFTools {
 
 	internal readonly record struct FfmpegDownloadProgress(FfmpegDownloadPhase Phase, string DisplayName, long BytesDone, long? BytesTotal);
 
-	/// <param name="Sha256">Pinned hash of the archive. When set, it must match and the release's checksums.sha256 is not consulted.</param>
-	internal sealed record FfmpegDownloadPlan(Uri DownloadUrl, string ArchiveFileName, ArchiveKind ArchiveKind, string DisplayName, string? Sha256 = null);
+	/// <param name="Sha256">Pinned hash of the archive: a download that doesn't have it is deleted, never extracted or run.</param>
+	internal sealed record FfmpegDownloadPlan(Uri DownloadUrl, string ArchiveFileName, ArchiveKind ArchiveKind, string DisplayName, string Sha256);
 
 	/// <summary>
 	/// Downloads and installs the shared FFmpeg/FFprobe build matching the compiled-in
@@ -40,9 +40,6 @@ namespace HEI.Core.FFTools {
 		internal const long MaxDownloadBytes = 500 * 1024 * 1024; // 500 MB safety cap
 
 		internal enum DownloadOS { Windows, Linux, OSX }
-
-		const string BtbNRepo = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/";
-		const string YtDlpRepo = "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/";
 
 		/// <summary>The manor's signed FFmpeg (the staff fetch the same), in its public releases.</summary>
 		const string ManorFfmpeg = "https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/";
@@ -56,8 +53,9 @@ namespace HEI.Core.FFTools {
 		/// fail: tordona's essentials build, as BtbN's winarm64 builds crash with 0xC0000005 while avcodec-62.dll loads on
 		/// Snapdragon X machines (the fault is in their statically linked librsvg/cairo/DirectWrite init code), even for
 		/// `ffmpeg -version`. The pinned ones run in-process and as ffmpeg.exe, and are pinned by release and SHA-256: only
-		/// the tested archives install. On Windows nothing else does: since 1.9.98 neither x64 nor a tag without an entry
-		/// falls back to BtbN's "latest", which is a different, unsigned build each day.
+		/// the tested archives install. Nothing else does: since 1.9.98 neither x64 nor a tag without an entry falls back to
+		/// BtbN's "latest", which is a different, unsigned build each day, and since 1.9.100 neither do Linux and macOS, which
+		/// Heiward doesn't run on (docs/PLATFORMS.md has the builds a port would pin).
 		/// </summary>
 		static readonly Dictionary<(Architecture Arch, string Tag), (string Url, string Sha256)[]> WinBuilds = new() {
 			[(Architecture.Arm64, "8.1")] = new[] {
@@ -90,9 +88,7 @@ namespace HEI.Core.FFTools {
 		}
 
 		internal static string VersionTagForMajor(int ffMajor) => ffMajor switch {
-			// BtbN/yt-dlp builds publish only the latest minor per major; the n8.0 tag
-			// was retired when 8.1 landed, so a hardcoded "8.0" 404s on every fresh
-			// install. Keep this aligned with whatever minor BtbN currently ships.
+			// The tag WinBuilds is keyed by: one minor per major, the one pinned there.
 			8 => "8.1",
 			7 => "7.1",
 			6 => "6.1",
@@ -114,41 +110,20 @@ namespace HEI.Core.FFTools {
 			return GetDownloadPlans(os.Value, RuntimeInformation.ProcessArchitecture, GetVersionTag());
 		}
 
+		/// <summary>
+		/// The pinned builds for this OS, processor and tag, in the order to try them. Only Windows has any: none is no download,
+		/// and the caller says how to install FFmpeg by hand instead.
+		/// </summary>
 		internal static List<FfmpegDownloadPlan> GetDownloadPlans(DownloadOS os, Architecture arch, string versionTag) {
 			var plans = new List<FfmpegDownloadPlan>();
-			// Windows takes only the pinned builds: none for this processor and tag is no download, never BtbN's "latest".
-			if (os == DownloadOS.Windows) {
-				if (WinBuilds.TryGetValue((arch, versionTag), out var pinnedBuilds))
-					plans.AddRange(pinnedBuilds.Select(pinned => {
-						var url = new Uri(pinned.Url);
-						string archive = Path.GetFileName(url.AbsolutePath);
-						ArchiveKind archiveKind = archive.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.SevenZip : ArchiveKind.Zip;
-						return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows {(arch == Architecture.Arm64 ? "ARM64" : "x64")} ({versionTag})", pinned.Sha256);
-					}));
+			if (os != DownloadOS.Windows || !WinBuilds.TryGetValue((arch, versionTag), out var pinnedBuilds))
 				return plans;
-			}
-
-			(string Rid, ArchiveKind Kind, string Repo, string Display)? pick = os switch {
-				DownloadOS.Linux => arch switch {
-					Architecture.X64 => ("linux64", ArchiveKind.TarXz, BtbNRepo, "Linux x64"),
-					Architecture.X86 => ("linux32", ArchiveKind.TarXz, BtbNRepo, "Linux x86"),
-					Architecture.Arm64 => ("linuxarm64", ArchiveKind.TarXz, BtbNRepo, "Linux ARM64"),
-					Architecture.Arm => ("linuxarmhf", ArchiveKind.TarXz, BtbNRepo, "Linux ARMHF"),
-					_ => ((string, ArchiveKind, string, string)?)null
-				},
-				DownloadOS.OSX => arch switch {
-					Architecture.X64 => ("macos64", ArchiveKind.Zip, YtDlpRepo, "macOS x64"),
-					Architecture.Arm64 => ("macosarm64", ArchiveKind.Zip, YtDlpRepo, "macOS ARM64"),
-					_ => ((string, ArchiveKind, string, string)?)null
-				},
-				_ => null
-			};
-			if (pick == null)
-				return plans;
-			(string rid, ArchiveKind kind, string repo, string display) = pick.Value;
-			string ext = kind == ArchiveKind.Zip ? "zip" : "tar.xz";
-			string file = $"ffmpeg-n{versionTag}-latest-{rid}-gpl-shared-{versionTag}.{ext}";
-			plans.Add(new(new Uri(repo + file), file, kind, $"{display} ({versionTag})"));
+			plans.AddRange(pinnedBuilds.Select(pinned => {
+				var url = new Uri(pinned.Url);
+				string archive = Path.GetFileName(url.AbsolutePath);
+				ArchiveKind archiveKind = archive.EndsWith(".7z", StringComparison.OrdinalIgnoreCase) ? ArchiveKind.SevenZip : ArchiveKind.Zip;
+				return new FfmpegDownloadPlan(url, archive, archiveKind, $"Windows {(arch == Architecture.Arm64 ? "ARM64" : "x64")} ({versionTag})", pinned.Sha256);
+			}));
 			return plans;
 		}
 
@@ -166,6 +141,16 @@ namespace HEI.Core.FFTools {
 				throw new PlatformNotSupportedException("No FFmpeg download is available for this platform/architecture.");
 
 			using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+			return await DownloadAndInstallAsync(http, plans, InstallFromExtracted, progress, token);
+		}
+
+		/// <summary>
+		/// Tries <paramref name="plans"/> in order, each into a temp folder of its own. A download whose SHA-256 isn't the
+		/// plan's throws InvalidOperationException at once, and is deleted unextracted: <paramref name="install"/> never sees it,
+		/// and no later plan is tried, as a changed file is no network hiccup.
+		/// </summary>
+		internal static async Task<string> DownloadAndInstallAsync(HttpClient http, IReadOnlyList<FfmpegDownloadPlan> plans, Func<string, string> install,
+			IProgress<FfmpegDownloadProgress>? progress, CancellationToken token) {
 			HttpRequestException? lastHttpError = null;
 			foreach (FfmpegDownloadPlan plan in plans) {
 				// Per-attempt temp dir: a fixed shared path let two VDF processes clobber
@@ -181,13 +166,10 @@ namespace HEI.Core.FFTools {
 							(done, total) => progress?.Report(new FfmpegDownloadProgress(FfmpegDownloadPhase.Downloading, plan.DisplayName, done, total)),
 							token, MaxDownloadBytes);
 						progress?.Report(new FfmpegDownloadProgress(FfmpegDownloadPhase.Verifying, plan.DisplayName, 0, null));
-						if (plan.Sha256 != null)
-							await VerifyPinnedChecksumAsync(downloadPath, plan.ArchiveFileName, plan.Sha256, token);
-						else
-							await VerifyChecksumAsync(http, plan.DownloadUrl, downloadPath, plan.ArchiveFileName, token);
+						await VerifyPinnedChecksumAsync(downloadPath, plan.ArchiveFileName, plan.Sha256, token);
 						progress?.Report(new FfmpegDownloadProgress(FfmpegDownloadPhase.Extracting, plan.DisplayName, 0, null));
 						ArchiveUtils.Extract(downloadPath, extractDir, plan.ArchiveKind);
-						return InstallFromExtracted(extractDir);
+						return install(extractDir);
 					}
 					catch (HttpRequestException ex) {
 						lastHttpError = ex; // try the next plan (if any)
@@ -197,7 +179,7 @@ namespace HEI.Core.FFTools {
 					try { Directory.Delete(tempRoot, true); } catch { }
 				}
 			}
-			throw lastHttpError!;
+			throw (Exception?)lastHttpError ?? new PlatformNotSupportedException("No FFmpeg download is available for this platform/architecture.");
 		}
 
 		static string InstallFromExtracted(string extractedFolder) {
@@ -244,49 +226,6 @@ namespace HEI.Core.FFTools {
 				? FFToolsUtils.LongPathFix(destinationPath)
 				: destinationPath;
 			File.Copy(sourcePath, targetPath, true);
-		}
-
-		/// <summary>Extracts the hash for <paramref name="archiveFileName"/> from a GNU sha256sum listing, or null.</summary>
-		internal static string? TryParseExpectedChecksum(string checksumText, string archiveFileName) {
-			foreach (var line in checksumText.Split('\n', StringSplitOptions.RemoveEmptyEntries)) {
-				// Format: "hash  filename" (GNU sha256sum)
-				var parts = line.Split("  ", 2, StringSplitOptions.None);
-				if (parts.Length == 2 && parts[1].Trim().Equals(archiveFileName, StringComparison.OrdinalIgnoreCase))
-					return parts[0].Trim().ToLowerInvariant();
-			}
-			return null;
-		}
-
-		/// <summary>
-		/// Best-effort integrity check: an unreachable or slow checksums.sha256 only logs
-		/// a warning (the install must not depend on a second endpoint being up), but a
-		/// present-and-mismatching hash aborts with InvalidOperationException.
-		/// </summary>
-		static async Task VerifyChecksumAsync(HttpClient http, Uri downloadUrl, string filePath, string archiveFileName, CancellationToken token) {
-			// Derive checksums URL from download URL (same directory, different file)
-			var checksumUrl = new Uri(downloadUrl, "checksums.sha256");
-			try {
-				using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
-				cts.CancelAfter(TimeSpan.FromSeconds(30));
-				string checksumText = await http.GetStringAsync(checksumUrl, cts.Token);
-
-				string? expectedHash = TryParseExpectedChecksum(checksumText, archiveFileName);
-				if (expectedHash == null) {
-					Logger.Instance.Warn($"FFmpeg download: no checksum entry found for '{archiveFileName}', skipping verification");
-					return;
-				}
-
-				await VerifyPinnedChecksumAsync(filePath, archiveFileName, expectedHash, token);
-			}
-			catch (HttpRequestException) {
-				Logger.Instance.Warn("FFmpeg download: could not fetch checksums.sha256, skipping verification");
-			}
-			catch (OperationCanceledException) when (!token.IsCancellationRequested) {
-				// The 30 s fetch budget elapsed. Previously this bubbled up as a
-				// TaskCanceledException and aborted the whole install, defeating the
-				// best-effort intent — a slow checksum host must not block FFmpeg.
-				Logger.Instance.Warn("FFmpeg download: checksum fetch timed out, skipping verification");
-			}
 		}
 
 		/// <summary>Throws InvalidOperationException unless the file's SHA-256 is <paramref name="expectedHash"/>.</summary>

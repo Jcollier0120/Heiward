@@ -95,8 +95,8 @@ jobs:
           - kind: windowsarm64
             # Native ARM64 runner (same reasoning as linux-arm64): Native AOT
             # builds on its own architecture instead of relying on the x64
-            # image's cross toolchain. The FFmpeg auto-downloader already picks
-            # the BtbN winarm64 shared build on ARM64 Windows.
+            # image's cross toolchain. The FFmpeg auto-downloader picks the
+            # pinned, signed lean build on ARM64 Windows.
             os: windows-11-arm
             target: win-arm64
             name: win-arm64

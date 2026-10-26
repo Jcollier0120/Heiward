@@ -19,18 +19,18 @@ $ProgressPreference = 'SilentlyContinue'
 # Microsoft.Windows.SDK.BuildTools: pinned, so every build packs with the same MakeAppx.
 $buildToolsVersion = '10.0.28000.2705'
 
-# FFmpeg ships inside the package, in bin\ where Heiward looks for it first. The Store signs it with the
-# rest, so Smart App Control lets it load, and nothing is downloaded after install. Pinned by release and
-# SHA-256 like FfmpegDownloader.WinArm64Builds (HEI.Core): only tested archives go in.
+# FFmpeg ships inside the package, in bin\ where Heiward looks for it first, so nothing is downloaded after install.
+# It's the build the GitHub exe downloads (FfmpegDownloader.WinBuilds, HEI.Core), pinned by release and SHA-256 the
+# same: the manor's lean LGPL n8.1.3-6, whose every .exe and .dll Heiward's publisher signed. A download that doesn't
+# have the pinned SHA-256, or a file in its bin\ that isn't signed by a certificate Authenticode.cs pins, stops the build.
 $ffmpegBuilds = @{
 	arm64 = @{
-		Url = 'https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-4/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip'
-		Sha256 = '77db6db962015a72f0316620bcaa4d824903b1bcc96c59a6a8b32316cb09ded5'
+		Url = 'https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/ffmpeg-8.1.3-lean-lgpl-shared-win-arm64.zip'
+		Sha256 = '28a4b3aaf6d2fa99815d079d6d1619e57e235f5b98333aae7ff2e9de9b85eebf'
 	}
-	# The same lean configuration built for x64 (the GitHub exe downloads its signed n8.1.3-6 there, FfmpegDownloader).
 	x64 = @{
-		Url = 'https://github.com/Jcollier0120/ffmpeg-winarm64-lean/releases/download/n8.1.3-4/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip'
-		Sha256 = 'eb505d5ec3769bf786b4946202801aba62a9fba268d135b4571ef4a15d164bcd'
+		Url = 'https://github.com/Jcollier0120/Manor-releases/releases/download/ffmpeg-v8.1.3-6/ffmpeg-8.1.3-lean-lgpl-shared-win-x64.zip'
+		Sha256 = 'e26b6ec56ee89b39acb94792916bcb8346df1094f62432b5c18f56b286b1b12b'
 	}
 }
 
@@ -48,6 +48,9 @@ if (-not (Get-ChildItem $assets -Filter '*.png' -ErrorAction SilentlyContinue)) 
 foreach ($a in $Arch) {
 	if (-not $ffmpegBuilds[$a]) { throw "No FFmpeg build is pinned for $a yet (`$ffmpegBuilds in store.ps1)." }
 }
+# The certificates Heiward's publisher signs with, as the self-update knows them (Authenticode.cs, PublisherCertificates).
+$publisherThumbprints = [regex]::Matches((Get-Content (Join-Path $PSScriptRoot 'Authenticode.cs') -Raw), '"([0-9A-Fa-f]{40})"') | ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() }
+if (-not $publisherThumbprints) { throw "No certificate thumbprints in $(Join-Path $PSScriptRoot 'Authenticode.cs')." }
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 # The Steward's kit, at exactly the version kit.json pins, as for a GitHub release (HEI.Agent\README.md, "The kit").
@@ -123,6 +126,16 @@ function Add-Ffmpeg([string]$a, [string]$layout) {
 	$top = (Get-ChildItem $unpacked -Directory | Select-Object -First 1).FullName
 	if (-not (Test-Path (Join-Path $top 'bin\ffmpeg.exe'))) { throw "$zip has no bin\ffmpeg.exe." }
 	Copy-Item (Join-Path $top 'bin') (Join-Path $layout 'bin') -Recurse
+	# What goes in the package is checked, not the archive: each program and library valid, by the publisher, timestamped.
+	$programs = @(Get-ChildItem (Join-Path $layout 'bin') -Recurse -File -Include '*.exe', '*.dll')
+	if ($programs.Count -eq 0) { throw "$zip has no programs in bin\." }
+	foreach ($p in $programs) {
+		$s = Get-AuthenticodeSignature $p.FullName
+		if ($s.Status -ne 'Valid' -or $publisherThumbprints -notcontains $s.SignerCertificate.Thumbprint -or -not $s.TimeStamperCertificate) {
+			throw "FFmpeg's $($p.Name) ($a) isn't signed by Heiward's publisher and timestamped: $($s.Status), $($s.SignerCertificate.Subject)."
+		}
+	}
+	Write-Host "FFmpeg for ${a}: $($programs.Count) programs, each signed by $($s.SignerCertificate.GetNameInfo('SimpleName', $false))."
 	$licenses = Join-Path $layout 'licenses\FFmpeg'
 	New-Item -ItemType Directory -Force $licenses | Out-Null
 	Copy-Item (Join-Path $top 'licenses\*'), (Join-Path $top 'readme.txt') $licenses
