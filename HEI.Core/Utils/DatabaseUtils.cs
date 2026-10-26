@@ -56,7 +56,20 @@ namespace HEI.Core.Utils {
 		static string CurrentDatabasePath => FileUtils.SafePathCombine(DatabaseFolder, "ScannedFiles.db");
 		static string TempDatabasePath => FileUtils.SafePathCombine(DatabaseFolder, "ScannedFiles_new.db");
 
+		/// <summary>
+		/// The database file as this process last read or wrote it, with the SHA-256 of its bytes; null when it has done
+		/// neither, or read an older format. <see cref="SaveDatabase"/> leaves the file alone when it is still that file and
+		/// the save would write these same bytes.
+		/// </summary>
+		static (string Path, long Length, DateTime WrittenUtc, byte[] Hash)? onDisk;
+		static (string, long, DateTime, byte[]) Stamp(string path, byte[] hash) {
+			var info = new FileInfo(path);
+			return (info.FullName, info.Length, info.LastWriteTimeUtc, hash);
+		}
+		static readonly object saveLock = new();
+
 		internal static bool LoadDatabase() {
+			onDisk = null;
 			FileInfo databaseFile = new(TempDatabasePath);
 			if (!databaseFile.Exists)
 				databaseFile = new(CurrentDatabasePath);
@@ -79,7 +92,13 @@ namespace HEI.Core.Utils {
 				Span<byte> header = stackalloc byte[8];
 				int headerRead = file.Read(header);
 				if (headerRead == FormatMagicStreaming.Length && header.SequenceEqual(FormatMagicStreaming)) {
-					DbWrapper = DeserializeDatabaseStreaming(file);
+					// Hashed as it's read: a save that would write these same bytes again writes nothing.
+					using var hashing = new HashingStream(file);
+					hashing.Append(header);
+					DbWrapper = DeserializeDatabaseStreaming(hashing);
+					// A save left halfway is read instead of the database (as above), and is only made the database by a save.
+					if (databaseFile.FullName == new FileInfo(CurrentDatabasePath).FullName)
+						onDisk = Stamp(databaseFile.FullName, hashing.Hash());
 				}
 				else if (headerRead == FormatMagic.Length && header.SequenceEqual(FormatMagic)) {
 					// A non-empty file that deserializes to null is corrupt, not empty —
@@ -119,7 +138,31 @@ namespace HEI.Core.Utils {
 			Logger.Instance.Info($"Previously scanned files imported. {Database.Count:N0} files in {st.Elapsed}");
 			MigrateImageHashesIfNeeded();
 			HealPoisonedFingerprintsIfNeeded();
+			HealProbeFlagsIfNeeded();
 			return true;
+		}
+
+		// Builds before the probe memory set MetadataError on every failed ffprobe, a timeout or a file another program
+		// held as much as a file with no video in it, and never read it: every scan probed the file again. Scans now
+		// skip a file whose flag is set, and set it only when ffprobe answered about the file itself. So each flag from
+		// before is cleared once (tracked by a sidecar marker, as the fingerprint repair is): its file is probed one
+		// more time, and keeps the flag only if ffprobe again finds no video in it.
+		static string ProbeHealMarkerPath => FileUtils.SafePathCombine(DatabaseFolder, "ScannedFiles.probeheal1");
+		static bool pendingProbeHealMarker;
+
+		static void HealProbeFlagsIfNeeded() {
+			if (File.Exists(ProbeHealMarkerPath))
+				return;
+			int healed = 0;
+			foreach (FileEntry entry in DbWrapper.Entries) {
+				if (entry.IsImage || entry.mediaInfo != null || !entry.Flags.Has(EntryFlags.MetadataError))
+					continue;
+				entry.Flags.Set(EntryFlags.MetadataError, false);
+				healed++;
+			}
+			pendingProbeHealMarker = true;
+			if (healed > 0)
+				Logger.Instance.Info($"Probe memory: {healed:N0} file(s) that ffprobe failed on before get one more look; each that again holds no video is skipped from then on.");
 		}
 
 		// Stopping a scan on builds before the Stop-cancellation fix (fa902d3) could leave entries
@@ -221,13 +264,45 @@ namespace HEI.Core.Utils {
 			SaveDatabase();
 		}
 		internal static void SaveDatabase() {
-			Logger.Instance.Info($"Save scanned files to disk ({Database.Count:N0} files).");
+			lock (saveLock) {
+				// What this save would write, hashed without writing it: a scan that changed nothing (most hourly scans)
+				// writes nothing, where it wrote the whole database twice.
+				// Only while the file is the one read or written last: not after the database folder changed, nor once
+				// another program wrote it.
+				if (onDisk is { } known && new FileInfo(CurrentDatabasePath) is { Exists: true } now &&
+					now.FullName == known.Path && now.Length == known.Length && now.LastWriteTimeUtc == known.WrittenUtc) {
+					using var unchanged = new HashingStream(null);
+					SerializeDatabaseStreaming(unchanged, DbWrapper);
+					if (unchanged.Hash().AsSpan().SequenceEqual(known.Hash)) {
+						Logger.Instance.Info($"Scanned files unchanged on disk ({Database.Count:N0} files), nothing to save.");
+						WritePendingMarkers();
+						return;
+					}
+				}
+				Logger.Instance.Info($"Save scanned files to disk ({Database.Count:N0} files).");
 
-			using (FileStream stream = new(TempDatabasePath, FileMode.Create))
-				SerializeDatabaseStreaming(stream, DbWrapper);
-			//Reason: https://github.com/0x90d/videoduplicatefinder/issues/247
-			File.Move(TempDatabasePath, CurrentDatabasePath, true);
+				onDisk = null;
+				byte[] hash;
+				using (FileStream file = new(TempDatabasePath, FileMode.Create))
+				using (var stream = new HashingStream(file)) {
+					SerializeDatabaseStreaming(stream, DbWrapper);
+					hash = stream.Hash();
+				}
+				//Reason: https://github.com/0x90d/videoduplicatefinder/issues/247
+				File.Move(TempDatabasePath, CurrentDatabasePath, true);
+				onDisk = Stamp(CurrentDatabasePath, hash);
+				WritePendingMarkers();
+			}
+		}
 
+		static void WritePendingMarkers() {
+			if (pendingProbeHealMarker) {
+				try {
+					File.WriteAllText(ProbeHealMarkerPath, "Files ffprobe failed on were probed once more after the probe memory came in. Delete this file to do that again on next load.");
+					pendingProbeHealMarker = false;
+				}
+				catch (Exception) { }
+			}
 			if (pendingFingerprintHealMarker) {
 				try {
 					File.WriteAllText(FingerprintHealMarkerPath, "Fingerprint error flags were reset once after the Stop-poisoning fix. Delete this file to run the reset again on next load.");

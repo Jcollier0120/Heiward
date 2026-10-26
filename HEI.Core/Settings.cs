@@ -67,6 +67,13 @@ namespace HEI.Core {
 		/// find (deleted, or in a folder the listing leaves out) is left out of the search.
 		/// </summary>
 		public bool ListingProvesExistence;
+		/// <summary>
+		/// With <see cref="ListingProvesExistence"/>: the database forgets the files in the listed folders that the
+		/// listing didn't find, deleted or in a folder the listing leaves out. None of them is compared, so keeping them
+		/// only costs memory and disk writes on every search; one that comes back is read again as a new file. Files on
+		/// drives this search doesn't read, and in folders it didn't list, are kept.
+		/// </summary>
+		public bool ForgetUnlisted;
 		public bool ScanAgainstEntireDatabase;
 		public FolderMatchMode FolderMatchMode;
 		public int SameFolderDepth = 1;

@@ -121,7 +121,8 @@ namespace HEI.Agent {
 		public static void AppendLog(string line) {
 			try {
 				Directory.CreateDirectory(Home);
-				File.AppendAllText(Log, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {line}{Environment.NewLine}");
+				if (new FileInfo(Log) is { Exists: true, Length: >= HEI.Core.Utils.Logger.FullLogBytes }) HEI.Core.Utils.Logger.MoveAside(Log);
+				File.AppendAllText(Log,$"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {line}{Environment.NewLine}");
 			}
 			catch { /* logging never breaks a scan */ }
 		}

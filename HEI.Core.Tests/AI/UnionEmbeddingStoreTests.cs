@@ -141,6 +141,29 @@ public class UnionEmbeddingStoreTests : IDisposable {
 	}
 
 	[Fact]
+	public void Save_PrunesFilesTheDatabaseForgot_EvenWithNothingNew() {
+		var kept = Entry("kept.mp4");
+		var forgotten = Entry("forgotten.mp4");
+		var store = new UnionEmbeddingStore();
+		store.Put(kept, 12.5, Embedding(1));
+		store.Put(forgotten, 12.5, Embedding(2));
+		store.Save(keepOnly: null);
+		string path = UnionEmbeddingStore.StorePath;
+		DateTime written = File.GetLastWriteTimeUtc(path);
+
+		// Nothing new and nothing to prune: the file is left alone.
+		var both = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { kept.Path, forgotten.Path };
+		UnionEmbeddingStore.Load().Save(both);
+		Assert.Equal(written, File.GetLastWriteTimeUtc(path));
+
+		// The database forgot a file (ForgetUnlisted): its embeddings go too, though nothing was added.
+		UnionEmbeddingStore.Load().Save(new HashSet<string>(StringComparer.OrdinalIgnoreCase) { kept.Path });
+		var loaded = UnionEmbeddingStore.Load();
+		Assert.Equal(1, loaded.Count);
+		Assert.NotNull(loaded.GetEmbedding(kept, 12.5));
+	}
+
+	[Fact]
 	public void CorruptFile_LoadsAsEmptyStore() {
 		File.WriteAllBytes(UnionEmbeddingStore.StorePath, new byte[] { 1, 2, 3, 4, 5 });
 		Assert.Equal(0, UnionEmbeddingStore.Load().Count);

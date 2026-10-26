@@ -194,8 +194,10 @@ namespace HEI.Agent {
 				latest = null;
 				phase = ScanPhase.Finishing;
 
-				// The files the listing found (the progress counts the database's entries, a deleted file's too).
-				if (engine.FoundFiles.Count > 0) files = engine.FoundFiles.Count;
+				// The photos and videos the listing found (the progress counts the database's entries, a deleted file's too),
+				// less the text files with a video's extension (TypeScript .ts files).
+				List<(string Path, long Size)> media = engine.FoundMedia();
+				if (media.Count > 0) files = media.Count;
 				// Whichever build made it: after an update, the sets it already listed aren't new.
 				previous = Report.LoadAny();
 				// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
@@ -217,7 +219,7 @@ namespace HEI.Agent {
 				report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 					settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
 				report.Save();
-				ScanIndex.Build(started, settings.IncludeList, engine.FoundFiles, engine.ListingTimes, engine.AnalysisTimes).Save();
+				ScanIndex.Build(started, settings.IncludeList, media, engine.ListingTimes, engine.AnalysisTimes).Save();
 				// This listing, and where the journal was read up to: the next scan starts from them.
 				try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
@@ -320,6 +322,9 @@ namespace HEI.Agent {
 				SkipCloudPlaceholders = true,
 				// The listing just saw every file; asking the disk about each one again could wake a sleeping drive.
 				ListingProvesExistence = true,
+				// And whatever it didn't see in the folders it listed is gone, or in a folder scans now leave out: forgotten,
+				// so the database holds what's there to compare, not every file a scan ever saw.
+				ForgetUnlisted = true,
 				UseWindowsImageDecoder = true,
 				MaxDegreeOfParallelism = cfg.ParallelismFor(fullSpeed),
 				CustomDatabaseFolder = AgentPaths.Database,

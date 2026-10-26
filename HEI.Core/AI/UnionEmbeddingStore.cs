@@ -138,17 +138,18 @@ namespace HEI.Core.AI {
 		/// known to the scan database — records are pruned only when their file left the
 		/// database entirely, so alternating scans between different libraries (or scans
 		/// with an offline drive) never throw cached embeddings away. Best-effort: failure
-		/// only costs recompute time. No-op when nothing was added since load.
+		/// only costs recompute time. No-op when nothing was added since load and nothing is pruned.
 		/// </summary>
 		internal void Save(IReadOnlySet<string>? keepOnly) {
-			if (!dirty)
+			// Pruned even with nothing new: the database forgetting files (Settings.ForgetUnlisted) shrinks the cache too.
+			List<string> stale = keepOnly == null ? new() : records.Keys.Where(k => !keepOnly.Contains(k)).ToList();
+			if (!dirty && stale.Count == 0)
 				return;
 			string tempPath = path + ".tmp";
 			try {
 				lock (saveLock) {
-					if (keepOnly != null)
-						foreach (string stale in records.Keys.Where(k => !keepOnly.Contains(k)).ToList())
-							records.TryRemove(stale, out _);
+					foreach (string file in stale)
+						records.TryRemove(file, out _);
 					using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
 					using (var writer = new BinaryWriter(stream, Encoding.UTF8)) {
 						writer.Write(Magic);
