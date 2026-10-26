@@ -362,9 +362,9 @@ const SETTLING_SVG = '<svg class="settling-mark" viewBox="0 0 44 28" width="44" 
 function renderSettling(first) {
   const banner = $('settling-banner');
   const text = first === 'waiting'
-    ? 'Heiward is new to the manor and waits its turn: agents settling in do their first rounds one at a time, so this PC is never swamped. It starts as soon as the one before it has finished.'
+    ? 'Heiward is new to the manor and waits their turn at the door: newcomers do their first rounds one at a time, so this PC is never swamped. They start as soon as the one before them has finished.'
     : first === 'running'
-      ? "Heiward's first scan is under way: scanning every drive for the first time, at full speed while it has its turn. It takes longer than the scans after it, which only look at what changed."
+      ? 'Heiward is learning the lay of the land in their first scan: scanning every drive for the first time, at full speed while they have their turn. It takes longer than the scans after it, which only look at what changed.'
       : null;
   banner.classList.toggle('hidden', !text);
   if (banner.dataset.key === (text || '')) return;

@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.103
+
+**Heiward's first scan in a manor speaks like the rest of the staff: a newcomer waits their turn at the door, then learns the lay of the land.**
+
+### What changed
+
+- While Heiward's first scan waits for the other agents' first rounds, the page says: "Heiward is new to the manor and waits their turn at the door: newcomers do their first rounds one at a time, so this PC is never swamped. They start as soon as the one before them has finished."
+- While it runs: "Heiward is learning the lay of the land in their first scan: scanning every drive for the first time…". These are the words the Steward's kit 2.139.0 gives every agent's page.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.102
 
 **Background scans do far less work: TypeScript files are no longer checked as videos, the list of scanned files keeps only what's in the folders Heiward scans and is saved only when something changed, and the logs stop growing.**
