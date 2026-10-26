@@ -2,6 +2,23 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.99
+
+**It carries the Steward's kit 2.137.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.137.1: The text reader's helper is prebuilt and signed again: `kit/node/prebuilt/ocr-npu-87e019a2736d.exe`, for `ocr-npu.cs` as it is since 2.137.0.
+- The Steward's kit 2.137.0: AMD's XDNA 2 NPU (Ryzen AI 300 and later) reads with the text reader's model by default, with a copy of model 2 made for it (`ocr-model-v2-amd`). Measured on a Ryzen AI 7 350, a picture costs 27% less energy there than on its processor (3,492 mJ against 4,757), and it reads 1,221 of the check's 1,253 lines, against the processor's 1,224 and Windows OCR's 736. The three lines are the owner's call.
+- The Steward's kit 2.136.6: Three fixes before launch. Install and uninstall refuse an empty, relative or someone else's data folder. FFmpeg prefers the manor's signed build, and borrows Heiward's only while it can't be fetched. Model setup weighs the NVIDIA driver and the PC's memory, and by default sets up only the cards with memory of their own.
+
+### Before you update
+
+- Nothing to do. An agent that pins this kit uses the signed helper (`signedHelper`), even on a PC where it compiled its own before.
+- Nothing to do. On a Ryzen AI 300 or later, after the update the PC fetches AMD's copy (1.6 MB) and Windows ML (52 MB fetched, 1 MB kept) once, in the background, compiles the copy's graphs, and reads on the processor until they're in place. The program's self-check still compares the NPU's read with the processor's before it reads there.
+- A new model needs a new AMD copy, made and measured again, before it ships, or `VITISAI_GENERATIONS` emptied, since the copy's release is named after `MODEL_VERSION`.
+- Nothing: it updates itself as usual. An agent's own tests that compare a `leftToNpu` entry whole will find its `variant` too.
+
 ## 1.9.98
 
 **Updates install only when they're signed by Heiward's publisher, every download is checked against a pinned SHA-256, and Heiward carries its license and third-party notices.**
