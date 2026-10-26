@@ -89,6 +89,62 @@ public sealed class AuthenticodeTests : IDisposable {
 	public void ThePublishersCertificate_IsPinned() {
 		Assert.Contains("6B654D9C34800D4307D42ACD63B925EDA5CE8D33", Authenticode.PublisherThumbprints);
 		Assert.All(Authenticode.PublisherThumbprints, t => Assert.Matches("^[0-9A-F]{40}$", t));
+		Assert.Equal(Authenticode.PublisherThumbprints.Length, Authenticode.PublisherThumbprints.Distinct().Count());
+		// Its certificate's NotAfter: 2027-10-11 11:27:51 UTC.
+		Assert.Contains(("6B654D9C34800D4307D42ACD63B925EDA5CE8D33", new DateOnly(2027, 10, 11)), Authenticode.PublisherCertificates);
+	}
+
+	static readonly (string, DateOnly)[] Current = [("6B654D9C34800D4307D42ACD63B925EDA5CE8D33", new DateOnly(2027, 10, 11))];
+	static readonly (string, DateOnly)[] Renewed = [.. Current, ("0123456789ABCDEF0123456789ABCDEF01234567", new DateOnly(2028, 10, 11))];
+
+	[Fact]
+	public void TheRenewal_IsDue_ThreeMonthsBeforeTheLastCertificateExpires() {
+		Assert.Null(Authenticode.RenewalDue(new DateOnly(2027, 7, 10), Current));
+		string? due = Authenticode.RenewalDue(new DateOnly(2027, 7, 11), Current);
+		Assert.NotNull(due);
+		Assert.Contains("expires on 2027-10-11", due);
+		// It names the steps, in their order.
+		int certum = due.IndexOf("from Certum", StringComparison.Ordinal), pin = due.IndexOf("PublisherCertificates in HEI.Agent/Authenticode.cs", StringComparison.Ordinal),
+			bridge = due.IndexOf("signed with the current certificate", StringComparison.Ordinal), sign = due.IndexOf("-Thumbprint <new>", StringComparison.Ordinal);
+		Assert.True(certum > 0 && pin > certum && bridge > pin && sign > bridge, due);
+		Assert.Contains("expired on 2027-10-11", Authenticode.RenewalDue(new DateOnly(2027, 10, 12), Current));
+	}
+
+	[Fact]
+	public void TheRenewal_IsDone_OnceACertificateThatOutlastsItIsPinned() {
+		Assert.Null(Authenticode.RenewalDue(new DateOnly(2027, 7, 11), Renewed));
+		Assert.Null(Authenticode.RenewalDue(new DateOnly(2027, 10, 12), Renewed));
+		// And the next one is due three months before that one expires.
+		Assert.Contains("expires on 2028-10-11", Authenticode.RenewalDue(new DateOnly(2028, 7, 11), Renewed));
+	}
+
+	[Fact]
+	public void ARenewedCertificate_IsPinnedInTime() {
+		// The early warning: from three months before the last pinned certificate expires (2027-07-11 for Certum's of
+		// 2026-10-11), this fails, and every pull request's build with it, until the renewal's first steps are done.
+		if (Authenticode.RenewalDue(DateOnly.FromDateTime(DateTime.UtcNow), Authenticode.PublisherCertificates) is string due)
+			Assert.Fail(due);
+	}
+
+	[Fact]
+	public void ThePinnedExpiry_IsTheCertificates_OnThisPc() {
+		// Where this PC has a signed release installed, the expiry pinned for its certificate is that certificate's NotAfter.
+		string exe = Installer.InstalledExe;
+		if (!File.Exists(exe)) return;
+		X509Certificate2 cert;
+		try {
+#pragma warning disable SYSLIB0057
+			cert = new X509Certificate2(X509Certificate.CreateFromSignedFile(exe));
+#pragma warning restore SYSLIB0057
+		}
+		catch (CryptographicException) {
+			return; // a development build, installed unsigned
+		}
+		using (cert) {
+			var pinned = Authenticode.PublisherCertificates.Where(c => c.Thumbprint == cert.Thumbprint).ToArray();
+			if (pinned.Length == 0) return;
+			Assert.Equal(DateOnly.FromDateTime(cert.NotAfter.ToUniversalTime()), pinned[0].Expires);
+		}
 	}
 
 	[Fact]

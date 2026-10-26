@@ -157,12 +157,17 @@ function Get-ChangelogEntry([string]$Text, [string]$Version) {
 	if ($body) { return $body }
 	return $null
 }
-function Get-CommitsSince([string]$Version) {
+# The tag of the newest release before $Version in this commit's history (v1.9.99), or null.
+function Get-ReleaseBefore([string]$Version) {
 	# git writes to stderr now and then, which Windows PowerShell would turn into a stopping error.
 	$ErrorActionPreference = 'Continue'
-	$since = @(git -C $PSScriptRoot tag --merged HEAD --list 'v[0-9]*' 2>$null) |
+	@(git -C $PSScriptRoot tag --merged HEAD --list 'v[0-9]*' 2>$null) |
 		Where-Object { $_ -match '^v\d+\.\d+\.\d+$' -and [version]$_.Substring(1) -lt [version]$Version } |
 		Sort-Object { [version]$_.Substring(1) } -Descending | Select-Object -First 1
+}
+function Get-CommitsSince([string]$Version) {
+	$ErrorActionPreference = 'Continue'
+	$since = Get-ReleaseBefore $Version
 	$range = @(if ($since) { "$since..HEAD" } else { '-n'; '10' })
 	$log = (git -C $PSScriptRoot log --first-parent '--format=%s%x1f%b%x1e' @range 2>$null) -join "`n"
 	$lines = foreach ($c in ($log -split [char]0x1e)) {
@@ -198,15 +203,47 @@ if ($Publish) {
 	if ($exists) { throw "Release $tag already exists on $Repo. Raise VersionPrefix in HEI.Agent.csproj first." }
 }
 
+# The certificates a copy of Heiward updates to (Authenticode.cs's PublisherCertificates, as a release's source has it):
+# each one's thumbprint, and its expiry where that source records one (since 1.9.100).
+function Get-PinnedCertificates([string]$Source) {
+	foreach ($m in [regex]::Matches($Source, '"([0-9A-Fa-f]{40})"(\s*,\s*new DateOnly\((\d{4}),\s*(\d{1,2}),\s*(\d{1,2})\))?')) {
+		[pscustomobject]@{
+			Thumbprint = $m.Groups[1].Value.ToUpperInvariant()
+			Expires = if ($m.Groups[2].Success) { [datetime]::new([int]$m.Groups[3].Value, [int]$m.Groups[4].Value, [int]$m.Groups[5].Value) } else { $null }
+		}
+	}
+}
+$pinnedCertificates = @(Get-PinnedCertificates (Get-Content (Join-Path $PSScriptRoot 'Authenticode.cs') -Raw))
+
+# The early warning (AuthenticodeTests.ARenewedCertificate_IsPinnedInTime fails from the same day): from three months
+# before the last pinned certificate expires, a renewed one is due (README.md, "Renewing the certificate").
+$lastExpiry = $pinnedCertificates | Where-Object { $_.Expires } | ForEach-Object { $_.Expires } | Sort-Object -Descending | Select-Object -First 1
+if ($lastExpiry -and [datetime]::UtcNow.Date -ge $lastExpiry.AddMonths(-3)) {
+	Write-Warning ("Heiward's code-signing certificate expires on {0:yyyy-MM-dd}, and no certificate that outlasts it is pinned. Renew it now, in the order HEI.Agent\README.md (""Renewing the certificate"") gives: get the renewed certificate from Certum, pin it in Authenticode.cs beside the current one, release that signed with the current one, and only then sign with the renewed one." -f $lastExpiry)
+}
+
 $signtool = $null
 $signer = $null
 if (-not $Unsigned) {
 	# The copies on PCs update themselves only to an exe signed by a certificate they know (Authenticode.cs,
-	# PublisherThumbprints): signed by any other, a release would be downloaded and thrown away. A renewed certificate is
-	# added there first, in a release signed by the one before.
-	$pinned = [regex]::Matches((Get-Content (Join-Path $PSScriptRoot 'Authenticode.cs') -Raw), '"([0-9A-Fa-f]{40})"') | ForEach-Object { $_.Groups[1].Value.ToUpperInvariant() }
-	if ($pinned -notcontains $Thumbprint.ToUpperInvariant()) {
-		throw "The certificate $Thumbprint isn't in Authenticode.cs's PublisherThumbprints, so the copies already installed wouldn't update to this release. Add it there, and release that signed by a certificate they know, first."
+	# PublisherCertificates): signed by any other, a release would be downloaded and thrown away. A renewed certificate is
+	# added there first, in a release signed by the one before; only the release after that is signed by it.
+	if (($pinnedCertificates | ForEach-Object { $_.Thumbprint }) -notcontains $Thumbprint.ToUpperInvariant()) {
+		throw "The certificate $Thumbprint isn't in Authenticode.cs's PublisherCertificates, so the copies already installed wouldn't update to this release. Add it there, and release that signed by a certificate they know, first."
+	}
+	# The copies run the release before this one: it must know the certificate already. Before 1.9.98 a copy checked no signature.
+	$before = Get-ReleaseBefore $version
+	if ($before) {
+		$ErrorActionPreference = 'Continue'
+		$beforeSource = (git -C $PSScriptRoot show "${before}:HEI.Agent/Authenticode.cs" 2>$null) -join "`n"
+		$found = $LASTEXITCODE -eq 0
+		$ErrorActionPreference = 'Stop'
+		if ($found) {
+			$known = @(Get-PinnedCertificates $beforeSource | ForEach-Object { $_.Thumbprint })
+			if ($known -notcontains $Thumbprint.ToUpperInvariant()) {
+				throw "The copies on $before update only to an exe signed by $($known -join ' or '), not $Thumbprint. Release this signed by a certificate they know (the default -Thumbprint), and sign with $Thumbprint from the release after it (README.md, ""Renewing the certificate"")."
+			}
+		}
 	}
 	$signtool = Find-SignTool
 	$cert = Get-Item "Cert:\CurrentUser\My\$Thumbprint" -ErrorAction SilentlyContinue
@@ -217,8 +254,14 @@ if (-not $Unsigned) {
 		$Unsigned = $true
 	}
 	else {
+		# The early warning counts from the expiry Authenticode.cs records: it must be the certificate's own.
+		$recorded = ($pinnedCertificates | Where-Object { $_.Thumbprint -eq $Thumbprint.ToUpperInvariant() } | Select-Object -First 1).Expires
+		$actual = $cert.NotAfter.ToUniversalTime().Date
+		if ($recorded -ne $actual) {
+			throw ("Authenticode.cs records the certificate $Thumbprint as expiring on {0}, but it expires on {1:yyyy-MM-dd} (UTC). Put new DateOnly({1:yyyy}, {1:%M}, {1:%d}) beside its thumbprint there." -f $(if ($recorded) { $recorded.ToString('yyyy-MM-dd') } else { 'no date' }), $actual)
+		}
 		$signer = $cert.GetNameInfo([Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
-		Write-Host "Signing as $signer, with $signtool"
+		Write-Host "Signing as $signer, with $signtool (the certificate expires on $($actual.ToString('yyyy-MM-dd')))"
 	}
 }
 elseif ($Publish) {

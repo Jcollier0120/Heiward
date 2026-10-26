@@ -30,12 +30,36 @@ namespace HEI.Agent {
 	/// </summary>
 	static class Authenticode {
 		/// <summary>
-		/// The certificates Heiward's releases are signed with, by SHA-1 thumbprint: Certum's for Heiward's publisher, until
-		/// 2027-10-11. A renewed certificate is added here, in a release signed by the one before, before any release is
-		/// signed by it: copies update themselves only to an exe signed by one they know. release.ps1 refuses to sign with
-		/// one that isn't here.
+		/// The certificates Heiward's releases are signed with: each one's SHA-1 thumbprint, and the day it expires (its
+		/// NotAfter, in UTC). Certum's for Heiward's publisher, valid for a year. A renewed certificate is added here, in a
+		/// release signed by the one before, before any release is signed by it: copies update themselves only to an exe signed
+		/// by one they know (HEI.Agent/README.md, "Renewing the certificate"). release.ps1 signs only with one the release
+		/// before pins, and checks its expiry here is the certificate's. One that expired stays: what it signed, timestamped,
+		/// is still valid, and FFmpeg's DLLs are signed by it.
 		/// </summary>
-		public static readonly string[] PublisherThumbprints = ["6B654D9C34800D4307D42ACD63B925EDA5CE8D33"];
+		public static readonly (string Thumbprint, DateOnly Expires)[] PublisherCertificates = [
+			("6B654D9C34800D4307D42ACD63B925EDA5CE8D33", new DateOnly(2027, 10, 11)),
+		];
+
+		/// <summary>The thumbprints of <see cref="PublisherCertificates"/>.</summary>
+		public static readonly string[] PublisherThumbprints = [.. PublisherCertificates.Select(c => c.Thumbprint)];
+
+		/// <summary>
+		/// What to do about the renewal, from three months before the last of <paramref name="certificates"/> expires: by then a
+		/// renewed certificate must be pinned, so that a release that pins it can go out, signed by the current one, while that
+		/// one still signs. Null while there's time.
+		/// </summary>
+		internal static string? RenewalDue(DateOnly today, IEnumerable<(string Thumbprint, DateOnly Expires)> certificates) {
+			DateOnly expires = certificates.Max(c => c.Expires);
+			if (today < expires.AddMonths(-3)) return null;
+			string when = today < expires ? "expires on" : "expired on";
+			return $"Heiward's code-signing certificate {when} {expires:yyyy-MM-dd}, and no certificate that outlasts it is pinned in Authenticode.PublisherCertificates. " +
+				"Copies update themselves only to an exe signed by a certificate they know, so renew it in this order (HEI.Agent/README.md, \"Renewing the certificate\"): " +
+				"1. get the renewed certificate from Certum; " +
+				"2. add its thumbprint and expiry to PublisherCertificates in HEI.Agent/Authenticode.cs, keeping the current one; " +
+				"3. release that, signed with the current certificate (release.ps1 -Publish); " +
+				"4. once the copies have updated to it, sign with the renewed one (release.ps1 -Publish -Thumbprint <new>), and make it release.ps1's default.";
+		}
 
 		/// <summary>
 		/// Why <paramref name="file"/> isn't one to install, in a few words ("it isn't signed"); null when it is. Revocation is

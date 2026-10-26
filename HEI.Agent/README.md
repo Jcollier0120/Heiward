@@ -515,7 +515,7 @@ From the repository root, on the commit to release, with the .NET 10 SDK and the
 powershell -ExecutionPolicy Bypass -File HEI.Agent\release.ps1 -Publish
 ```
 
-It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, signs them, writes `SHA256SUMS.txt`, puts `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt` beside them, then creates the release `v<version>` at the commit it built and uploads all five. It signs only with a certificate in `Authenticode.cs`'s `PublisherThumbprints`: the installed copies update themselves only to an exe signed by one they know. After a package is added or updated, or a download's pin raised, run `tools\notices.ps1` to write `THIRD-PARTY-NOTICES.txt` again (`NoticesTests` fail until then). The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
+It builds `Heiward-<version>-x64.exe` and `Heiward-<version>-arm64.exe` into `artifacts\heiward`, signs them, writes `SHA256SUMS.txt`, puts `LICENSE.txt` and `THIRD-PARTY-NOTICES.txt` beside them, then creates the release `v<version>` at the commit it built and uploads all five. It signs only with a certificate in `Authenticode.cs`'s `PublisherCertificates` that the release before already pinned: the installed copies update themselves only to an exe signed by one they know ([Renewing the certificate](#renewing-the-certificate)). After a package is added or updated, or a download's pin raised, run `tools\notices.ps1` to write `THIRD-PARTY-NOTICES.txt` again (`NoticesTests` fail until then). The version is `VersionPrefix` in `HEI.Agent.csproj`. It refuses to publish with uncommitted changes, or when that release already exists.
 
 - It fills the kit first (`tools\kit.ps1`, above), at the version `kit.json` pins, and refuses a kit tree from `STEWARD_KIT`.
 - Without `-Publish` it only builds.
@@ -534,3 +534,27 @@ winget install Microsoft.WindowsSDK.10.0.26100 --override "/features OptionId.Si
 - The Store package (`store.ps1`) isn't signed here: Microsoft signs it after certification.
 
 GitHub attaches the source code to every release by itself.
+
+### Renewing the certificate
+
+The publisher's certificate from Certum is valid for a year. The one in use, `6B654D9C34800D4307D42ACD63B925EDA5CE8D33`, **expires on 2027-10-11**. A renewed certificate has a new thumbprint, and an installed copy updates itself only to an exe signed by a certificate it already pins (`Authenticode.PublisherCertificates`). A release signed only by a certificate the copies don't know is downloaded and thrown away, by every copy. So the renewal goes in this order, while the current certificate still signs:
+
+1. **Get the renewed certificate** from Certum, into the same SimplySign account. With SimplySign Desktop connected it's in `Cert:\CurrentUser\My` beside the current one, and this lists both with their thumbprints and expiry:
+
+   ```
+   Get-ChildItem Cert:\CurrentUser\My -CodeSigningCert | Format-List Subject, Thumbprint, NotAfter
+   ```
+
+2. **Pin it.** Add its thumbprint and the UTC day of its `NotAfter` to `PublisherCertificates` in `HEI.Agent\Authenticode.cs`, beside the current one: `("<thumbprint>", new DateOnly(<year>, <month>, <day>))`. Keep the current one. What it signed stays valid after it expires, as it's timestamped, and FFmpeg's DLLs (the manor's `ffmpeg-v8.1.3-6`) are signed by it.
+3. **Release that, signed with the current certificate**: `release.ps1 -Publish`, with its default `-Thumbprint`. Every copy that installs it trusts both certificates.
+4. **Give the copies time.** They look once a day, and Manor updates the copies it employs on its rounds. Leave weeks, not days, before the next step, as long as the current certificate lasts. A copy that stays switched off through all of it can't update by itself once releases are signed by the renewed certificate alone: it takes one download by hand.
+5. **Sign with the renewed certificate**: `release.ps1 -Publish -Thumbprint <new>`, then make the new thumbprint `release.ps1`'s default `-Thumbprint`. From the day the current certificate expires, only the renewed one signs.
+
+`release.ps1` holds to the order:
+- it signs only with a certificate that the release before this one already pins, read from that release's tag (`git show v<version>:HEI.Agent/Authenticode.cs`), so step 5 can't come before step 3 is out;
+- it checks that `Authenticode.cs` records the expiry the certificate itself has;
+- from three months before the last pinned certificate expires, it warns at every run.
+
+From the same day, `AuthenticodeTests.ARenewedCertificate_IsPinnedInTime` fails, and with it every pull request's build, until a certificate that outlasts the current one is pinned. For the current certificate that's **2027-07-11**. The test's message names these steps.
+
+The Store package needs none of this: Microsoft signs it. `store.ps1` does check that FFmpeg's programs are signed by a certificate `Authenticode.cs` pins, which is one more reason to keep the expired one there.

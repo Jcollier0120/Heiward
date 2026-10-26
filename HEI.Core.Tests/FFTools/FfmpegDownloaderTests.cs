@@ -14,7 +14,11 @@
 // */
 //
 
+using System.IO.Compression;
+using System.Net;
+using System.Net.Http;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using HEI.Core.FFTools;
 using HEI.Core.Utils;
 
@@ -37,27 +41,31 @@ public class FfmpegDownloaderTests {
 	[InlineData(7, "7.1")]
 	[InlineData(6, "6.1")]
 	[InlineData(5, "5.1")]
-	[InlineData(0, "7.1")] // unknown headers fall back to a tag that exists
-	public void VersionTagForMajor_MapsToPublishedBtbNTags(int major, string expected) =>
+	[InlineData(0, "7.1")] // unknown headers fall back to a known tag
+	public void VersionTagForMajor_MapsToOneTagPerMajor(int major, string expected) =>
 		Assert.Equal(expected, FfmpegDownloader.VersionTagForMajor(major));
 
 	static FfmpegDownloader.DownloadOS ParseOs(string os) => Enum.Parse<FfmpegDownloader.DownloadOS>(os);
 
-	[Theory]
-	[InlineData("Linux", Architecture.X64, "linux64", "BtbN", "tar.xz")]
-	[InlineData("Linux", Architecture.Arm, "linuxarmhf", "BtbN", "tar.xz")]
-	[InlineData("OSX", Architecture.X64, "macos64", "yt-dlp", "zip")]
-	[InlineData("OSX", Architecture.Arm64, "macosarm64", "yt-dlp", "zip")]
-	public void GetDownloadPlans_BuildsTheExpectedReleaseUrl(
-		string os, Architecture arch, string rid, string repoOwner, string ext) {
-		var plans = FfmpegDownloader.GetDownloadPlans(ParseOs(os), arch, "8.1");
+	/// <summary>Every plan for every OS, processor and tag there is.</summary>
+	static IEnumerable<FfmpegDownloadPlan> EveryPlan() =>
+		from os in Enum.GetValues<FfmpegDownloader.DownloadOS>()
+		from arch in Enum.GetValues<Architecture>()
+		from tag in new[] { "8.1", "7.1", "6.1", "5.1" }
+		from plan in FfmpegDownloader.GetDownloadPlans(os, arch, tag)
+		select plan;
 
-		var plan = Assert.Single(plans);
-		Assert.Equal($"ffmpeg-n8.1-latest-{rid}-gpl-shared-8.1.{ext}", plan.ArchiveFileName);
-		Assert.Equal(ext == "zip" ? ArchiveKind.Zip : ArchiveKind.TarXz, plan.ArchiveKind);
-		Assert.Contains($"github.com/{repoOwner}/FFmpeg-Builds/releases/download/latest/{plan.ArchiveFileName}", plan.DownloadUrl.AbsoluteUri);
-		Assert.Contains("8.1", plan.DisplayName);
-		Assert.Null(plan.Sha256);
+	[Fact]
+	public void EveryPlan_IsPinnedByHash_AtATaggedRelease_NeverLatest() {
+		Assert.NotEmpty(EveryPlan());
+		Assert.All(EveryPlan(), plan => {
+			Assert.Matches("^[0-9a-f]{64}$", plan.Sha256);
+			Assert.Equal(Uri.UriSchemeHttps, plan.DownloadUrl.Scheme);
+			// A GitHub release's download address names its tag: never the "latest" that floats to a new build each day.
+			Assert.Matches("^/[^/]+/[^/]+/releases/download/[^/]+/[^/]+$", plan.DownloadUrl.AbsolutePath);
+			Assert.DoesNotContain("latest", plan.DownloadUrl.AbsoluteUri, StringComparison.OrdinalIgnoreCase);
+			Assert.Equal(Path.GetFileName(plan.DownloadUrl.AbsolutePath), plan.ArchiveFileName);
+		});
 	}
 
 	[Fact]
@@ -73,10 +81,7 @@ public class FfmpegDownloaderTests {
 		Assert.Equal("ffmpeg-8.1.3-essentials-shared-win-arm64.7z", plans[1].ArchiveFileName);
 		Assert.Equal(ArchiveKind.SevenZip, plans[1].ArchiveKind);
 		Assert.Equal("https://github.com/tordona/ffmpeg-win-arm64/releases/download/8.1.3/" + plans[1].ArchiveFileName, plans[1].DownloadUrl.AbsoluteUri);
-		Assert.All(plans, plan => {
-			Assert.Matches("^[0-9a-f]{64}$", plan.Sha256);
-			Assert.Contains("8.1", plan.DisplayName);
-		});
+		Assert.All(plans, plan => Assert.Contains("8.1", plan.DisplayName));
 	}
 
 	[Fact]
@@ -98,16 +103,11 @@ public class FfmpegDownloaderTests {
 		Assert.Empty(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, arch, "7.1"));
 
 	[Theory]
-	[InlineData(Architecture.X64)]
-	[InlineData(Architecture.Arm64)]
-	public void GetDownloadPlans_EveryWindowsPlanIsPinned(Architecture arch) =>
-		Assert.All(FfmpegDownloader.GetDownloadPlans(FfmpegDownloader.DownloadOS.Windows, arch, "8.1"), plan => {
-			Assert.Matches("^[0-9a-f]{64}$", plan.Sha256);
-			Assert.DoesNotContain("/latest/", plan.DownloadUrl.AbsoluteUri);
-		});
-
-	[Theory]
-	[InlineData("OSX", Architecture.X86)] // no 32-bit mac builds
+	[InlineData("Linux", Architecture.X64)] // Heiward is Windows-only: no download, rather than BtbN's or yt-dlp's "latest"
+	[InlineData("Linux", Architecture.Arm64)]
+	[InlineData("Linux", Architecture.Arm)]
+	[InlineData("OSX", Architecture.X64)]
+	[InlineData("OSX", Architecture.Arm64)]
 	[InlineData("Windows", Architecture.Arm)] // no 32-bit ARM Windows builds
 	[InlineData("Windows", Architecture.X86)] // no pinned 32-bit Windows build
 	public void GetDownloadPlans_ReturnsEmptyForUnsupportedCombos(string os, Architecture arch) =>
@@ -115,28 +115,80 @@ public class FfmpegDownloaderTests {
 
 	[Fact]
 	public void GetDownloadPlans_ForCurrentPlatformIsNonEmptyOnCi() {
-		// Every platform CI runs on (win/linux/mac, x64/arm64) has a published build.
+		// CI and every PC Heiward runs on are Windows, x64 or Arm64: each has a pinned build.
 		Assert.NotEmpty(FfmpegDownloader.GetDownloadPlans());
 	}
 
-	[Fact]
-	public void TryParseExpectedChecksum_FindsTheArchiveEntry() {
-		const string listing =
-			"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip\n" +
-			"FEDCBA9876543210fedcba9876543210fedcba9876543210fedcba9876543210  ffmpeg-n8.1-latest-linux64-gpl-shared-8.1.tar.xz\n";
+	/// <summary>Answers every request with <paramref name="body"/> (or 404 for an address in <paramref name="missing"/>), counting them.</summary>
+	sealed class StubHandler(byte[] body, params string[] missing) : HttpMessageHandler {
+		public int Requests;
+		protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) {
+			Interlocked.Increment(ref Requests);
+			return Task.FromResult(missing.Contains(request.RequestUri!.AbsoluteUri)
+				? new HttpResponseMessage(HttpStatusCode.NotFound)
+				: new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(body) });
+		}
+	}
 
-		Assert.Equal("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-			FfmpegDownloader.TryParseExpectedChecksum(listing, "ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip"));
-		// hash is lower-cased, filename match is case-insensitive
-		Assert.Equal("fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
-			FfmpegDownloader.TryParseExpectedChecksum(listing, "FFMPEG-N8.1-LATEST-LINUX64-GPL-SHARED-8.1.TAR.XZ"));
+	/// <summary>A zip laid out as an FFmpeg build is: one folder, its bin\ with ffmpeg.exe and ffprobe.exe.</summary>
+	static byte[] FfmpegLikeZip() {
+		using var stream = new MemoryStream();
+		using (var zip = new ZipArchive(stream, ZipArchiveMode.Create, leaveOpen: true))
+			foreach (string name in new[] { "ffmpeg.exe", "ffprobe.exe" })
+				using (var writer = new StreamWriter(zip.CreateEntry($"ffmpeg-test/bin/{name}").Open()))
+					writer.Write("not a program");
+		return stream.ToArray();
+	}
+
+	static FfmpegDownloadPlan Plan(string url, string sha256) =>
+		new(new Uri(url), Path.GetFileName(new Uri(url).AbsolutePath), ArchiveKind.Zip, "Test", sha256);
+
+	[Fact]
+	public async Task ADownloadWithoutItsPinnedHash_IsRefused_NeverExtractedOrInstalled_AndNoOtherBuildTried() {
+		using var handler = new StubHandler(FfmpegLikeZip());
+		using var http = new HttpClient(handler);
+		bool installed = false;
+		var plans = new[] {
+			Plan("https://example.test/releases/download/v1/a.zip", new string('0', 64)),
+			Plan("https://example.test/releases/download/v1/b.zip", Convert.ToHexStringLower(SHA256.HashData(FfmpegLikeZip()))),
+		};
+
+		var e = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+			FfmpegDownloader.DownloadAndInstallAsync(http, plans, _ => { installed = true; return "bin"; }, null, CancellationToken.None));
+
+		Assert.Contains("Checksum mismatch for 'a.zip'", e.Message);
+		Assert.False(installed);
+		Assert.Equal(1, handler.Requests);
 	}
 
 	[Fact]
-	public void TryParseExpectedChecksum_HandlesCrLfAndMissingEntries() {
-		const string listing = "abc123  some-archive.zip\r\nother  another.zip\r\n";
-		Assert.Equal("abc123", FfmpegDownloader.TryParseExpectedChecksum(listing, "some-archive.zip"));
-		Assert.Null(FfmpegDownloader.TryParseExpectedChecksum(listing, "absent.zip"));
-		Assert.Null(FfmpegDownloader.TryParseExpectedChecksum(string.Empty, "some-archive.zip"));
+	public async Task ADownloadWithItsPinnedHash_IsExtractedAndInstalled() {
+		byte[] zip = FfmpegLikeZip();
+		using var http = new HttpClient(new StubHandler(zip));
+		string? sawFfmpeg = null;
+		var plans = new[] { Plan("https://example.test/releases/download/v1/a.zip", Convert.ToHexStringLower(SHA256.HashData(zip))) };
+
+		string folder = await FfmpegDownloader.DownloadAndInstallAsync(http, plans, extracted => {
+			sawFfmpeg = Directory.EnumerateFiles(extracted, "ffmpeg.exe", SearchOption.AllDirectories).SingleOrDefault();
+			return "bin";
+		}, null, CancellationToken.None);
+
+		Assert.Equal("bin", folder);
+		Assert.NotNull(sawFfmpeg);
+	}
+
+	[Fact]
+	public async Task ABuildThatFailsToDownload_GivesWayToTheNext() {
+		byte[] zip = FfmpegLikeZip();
+		string sha = Convert.ToHexStringLower(SHA256.HashData(zip));
+		const string gone = "https://example.test/releases/download/v1/a.zip";
+		using var handler = new StubHandler(zip, gone);
+		using var http = new HttpClient(handler);
+
+		string folder = await FfmpegDownloader.DownloadAndInstallAsync(http, new[] { Plan(gone, sha), Plan("https://example.test/releases/download/v1/b.zip", sha) },
+			_ => "bin", null, CancellationToken.None);
+
+		Assert.Equal("bin", folder);
+		Assert.Equal(2, handler.Requests);
 	}
 }
