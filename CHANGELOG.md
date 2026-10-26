@@ -2,6 +2,24 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.102
+
+**Background scans do far less work: TypeScript files are no longer checked as videos, the list of scanned files keeps only what's in the folders Heiward scans and is saved only when something changed, and the logs stop growing.**
+
+### What changed
+
+- Files ending in `.ts` that are TypeScript source code, not video recordings, are recognized from their first bytes. Before, every scan opened each of them with FFmpeg's ffprobe, one program start per file (122 on one developer's PC), and counted them among your photos and videos. Now they're left alone, and not counted.
+- A file ffprobe found no video in isn't checked again until it changes. Files that failed in earlier versions get one more look on the first scan, then are remembered.
+- The list of scanned files now holds only the files in the folders Heiward scans. It used to keep every file it had ever seen, including ones since deleted and ones in folders scans now leave out, such as developer repositories: on one PC 307,700 files, of which 5,245 were still scanned. A drive Heiward scans only when you ask, and a drive that isn't plugged in, keep their files.
+- The list is saved only when a scan changed something, instead of written in full twice per scan. The AI's stored image fingerprints of files no longer in the list are dropped with them.
+- Heiward's logs, `heiward.log` and the `log.txt` beside the program, no longer grow without end: once one reaches 1 MB it's kept as `heiward.1.log` or `log.1.txt` and a new one starts. A log that grew large in earlier versions is cut to its last megabyte.
+- On that PC, a background scan went from 27 seconds to 6, from 2 GB of memory to 0.2 GB, and from writing 962 MB to the disk to writing nothing, and found the same duplicates.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The first scan after the update tidies the list of scanned files once, and uses no more memory than scans did before; the scans after it use far less.
+- If you later include a folder that scans leave out now, its photos and videos are read on the next scan, as new files are.
+
 ## 1.9.101
 
 **It carries the Steward's kit 2.137.2: the parts every agent of the manor shares.**

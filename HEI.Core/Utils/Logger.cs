@@ -48,13 +48,47 @@ namespace HEI.Core.Utils {
 		/// <summary>Marks the start of a logical session (e.g. a scan) with a short label.</summary>
 		public void BeginSession(string label) => Add(new LogEntry(DateTime.Now, LogSeverity.Info, label, IsSessionStart: true));
 
+		/// <summary>The size a log grows to before <see cref="MoveAside"/> starts a new one.</summary>
+		public const long FullLogBytes = 1 << 20;
+
+		/// <summary>
+		/// Moves a full log aside to its ".1" name (log.txt to log.1.txt, replacing the one there), so the next line starts
+		/// a new log: two of them at most, instead of one that grows for years. Best-effort: a log that can't be moved now
+		/// is moved on a later line.
+		/// </summary>
+		public static void MoveAside(string path) {
+			string previous = Path.ChangeExtension(path, ".1" + Path.GetExtension(path));
+			try {
+				if (new FileInfo(path).Length <= 2 * FullLogBytes) {
+					File.Move(path, previous, overwrite: true);
+					return;
+				}
+				// A log from before logs were moved aside, hundreds of megabytes of it: only its last lines are kept.
+				using (var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+					source.Seek(-FullLogBytes, SeekOrigin.End);
+					using var target = new FileStream(previous, FileMode.Create, FileAccess.Write, FileShare.Read);
+					source.CopyTo(target);
+				}
+				File.Delete(path);
+			}
+			catch (IOException) { }
+			catch (UnauthorizedAccessException) { }
+		}
+
 		void Add(LogEntry entry) {
 			LogEntryAdded?.Invoke(entry);
 			lock (lockObject) {
 				// Best-effort: a reader holding log.txt (tail, editor, antivirus) must
 				// never turn a log call into an exception inside the scan engine.
 				try {
-					using var stream = new FileStream(_logFilePath.Value, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+					// Shared for deleting too: another process writing to it doesn't stop it being moved aside.
+					FileStream Open() => new(_logFilePath.Value, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+					FileStream stream = Open();
+					if (stream.Length >= FullLogBytes) {
+						stream.Dispose();
+						MoveAside(_logFilePath.Value);
+						stream = Open();
+					}
 					using var writer = new StreamWriter(stream);
 					writer.WriteLine(FormatFileLine(entry));
 				}

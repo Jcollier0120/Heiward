@@ -60,6 +60,48 @@ namespace HEI.Core.Utils {
 		internal static bool IsMediaExtension(string extension) => AllExtensionSet.Contains(extension);
 		/// <summary>True when the file path has a still-image extension (decoded as a single frame by FFmpeg).</summary>
 		internal static bool IsImageFile(string path) => ImageExtensionSet.Contains(Path.GetExtension(path));
+
+		static readonly FrozenSet<string> TransportStreamExtensionSet = new[] { ".ts", ".m2t", ".m2ts", ".mts" }.ToFrozenSet(StringComparer.OrdinalIgnoreCase);
+		/// <summary>An MPEG transport stream's extension, which TypeScript's source files (.ts) share.</summary>
+		internal static bool IsTransportStreamExtension(string path) => TransportStreamExtensionSet.Contains(Path.GetExtension(path));
+
+		/// <summary>How much of a file <see cref="IsTextNotVideo(ReadOnlySpan{byte})"/> looks at.</summary>
+		internal const int SniffBytes = 64 * 1024;
+
+		/// <summary>
+		/// For a file with a transport stream's extension: true when it's text, such as a TypeScript source file, and so
+		/// holds no video; false when it may be a video, which is left to ffprobe; null when it couldn't be read.
+		/// </summary>
+		internal static bool? IsTextNotVideo(string path) {
+			byte[] head = new byte[SniffBytes];
+			int read;
+			try {
+				using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
+				read = stream.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return null;
+			}
+			return IsTextNotVideo(head.AsSpan(0, read));
+		}
+
+		/// <summary>
+		/// True when <paramref name="head"/>, a file's first bytes, is text with no transport stream in it. A transport
+		/// stream is packets of 188 bytes (.ts), 192 (.m2ts and .mts, a timestamp before each) or 204 (with error
+		/// correction), each starting with the sync byte 0x47: three in a row, from any byte, as a recording cut
+		/// mid-packet starts, make it one. Text has no NUL byte, which every video container has in its first bytes
+		/// (a transport stream's packet headers, an MP4's box sizes). Anything else that isn't text may be a video under
+		/// the wrong name, and is left to ffprobe.
+		/// </summary>
+		internal static bool IsTextNotVideo(ReadOnlySpan<byte> head) {
+			if (head.Length == 0 || head.Contains((byte)0))
+				return false;
+			foreach (int packet in (ReadOnlySpan<int>)[188, 192, 204])
+				for (int start = 0; start + 2 * packet < head.Length; start++)
+					if (head[start] == 0x47 && head[start + packet] == 0x47 && head[start + 2 * packet] == 0x47)
+						return false;
+			return true;
+		}
 		/// <summary>
 		/// True for HEIF-family images (.heic/.heif). Apple photos store the full-resolution
 		/// picture as a tile-grid stream group that FFmpeg assembles via an internal

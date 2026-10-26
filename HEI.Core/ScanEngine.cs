@@ -109,6 +109,7 @@ namespace HEI.Core {
 		static readonly TimeSpan progressHeartbeatIntervall = TimeSpan.FromMilliseconds(500);
 		readonly Timer progressHeartbeat;
 		const int maxExcludedLogsPerReason = 5;
+		const string NotMediaReason = "it isn't a video: text with a video's extension, such as a TypeScript .ts file";
 		readonly ConcurrentDictionary<string, int> excludedReasonCounts = new();
 		readonly ConcurrentDictionary<string, int> excludedReasonLoggedCounts = new();
 		// Files whose stored pHash for the comparison position is null. Dedupes the
@@ -171,6 +172,12 @@ namespace HEI.Core {
 		readonly List<(string Path, long Size)> foundFiles = new();
 		/// <summary>Every photo and video the last search listed in the included folders, with its size.</summary>
 		public IReadOnlyList<(string Path, long Size)> FoundFiles => foundFiles;
+		/// <summary>
+		/// The photos and videos of <see cref="FoundFiles"/>, without the files this or an earlier search found to be text
+		/// with a video's extension (TypeScript's .ts): what a person counts as photos and videos.
+		/// </summary>
+		public List<(string Path, long Size)> FoundMedia() => foundFiles.Where(f =>
+			!(DatabaseUtils.Database.TryGetValue(new FileEntry { _Path = f.Path }, out FileEntry? e) && e.Flags.Has(EntryFlags.NotMedia))).ToList();
 		/// <summary>The paths of <see cref="FoundFiles"/>, for <see cref="Settings.ListingProvesExistence"/>.</summary>
 		HashSet<string>? listedPaths;
 
@@ -937,8 +944,14 @@ namespace HEI.Core {
 			listedPaths = Settings.ListingProvesExistence
 				? foundFiles.Select(f => f.Path).ToHashSet(CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)
 				: null;
+			int added = DatabaseUtils.Database.Count - oldFileCount;
+			if (Settings.ForgetUnlisted && listedPaths != null) {
+				int forgotten = ForgetUnlisted(listedPaths, roots);
+				if (forgotten > 0)
+					Logger.Instance.Info($"Forgot {forgotten:N0} file(s) the listing didn't find in the scanned folders: deleted, or in folders scans leave out");
+			}
 
-			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({DatabaseUtils.Database.Count - oldFileCount:N0} files added)");
+			Logger.Instance.Info($"Files in database: {DatabaseUtils.Database.Count:N0} ({added:N0} files added)");
 			if (relinkedCount > 0)
 				Logger.Instance.Info($"Detected {relinkedCount:N0} moved/renamed file(s) — reused existing analysis (no re-decode)");
 		});
@@ -969,6 +982,31 @@ namespace HEI.Core {
 				}
 			}
 		}
+
+		/// <summary>
+		/// <see cref="Settings.ForgetUnlisted"/>: removes the entries of files under <paramref name="roots"/>, the folders this
+		/// search listed, that the listing (<paramref name="listed"/>) didn't find. A file this search mustn't read
+		/// (<see cref="MayRead"/>, a resting drive's) is kept whatever its listing says, as is everything outside the roots,
+		/// such as a drive that isn't there. Returns how many went.
+		/// </summary>
+		internal int ForgetUnlisted(IReadOnlySet<string> listed, IReadOnlyCollection<string> roots) {
+			StringComparison comparison = CoreUtils.IsWindows ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+			List<string> trimmed = roots.Select(Path.TrimEndingDirectorySeparator).ToList();
+			bool Under(string folder) => trimmed.Any(root => folder.StartsWith(root, comparison) && (folder.Length == root.Length ||
+				Path.EndsInDirectorySeparator(root) || folder[root.Length] == Path.DirectorySeparatorChar || folder[root.Length] == Path.AltDirectorySeparatorChar));
+			return DatabaseUtils.Database.RemoveWhere(e => !listed.Contains(e.Path) && Under(e.Folder) && MayRead?.Invoke(e.Path) != false);
+		}
+
+		/// <summary>
+		/// What an earlier scan found this file to be, as it still is (a changed file is a new entry): not a video. Asking
+		/// ffprobe again would start a process for the same answer, every scan. Null when it is asked: never asked, read
+		/// before, or every failed file is retried (<paramref name="alwaysRetry"/>).
+		/// </summary>
+		internal static string? KnownNotVideo(FileEntry entry, bool alwaysRetry) =>
+			alwaysRetry || entry.IsImage || entry.mediaInfo != null ? null
+			: entry.Flags.Has(EntryFlags.NotMedia) ? NotMediaReason
+			: entry.Flags.Has(EntryFlags.MetadataError) ? "ffprobe found no video in it before, and the file hasn't changed since"
+			: null;
 
 		// Returns true if fEntry is a moved/renamed version of an existing analysed entry — same size
 		// and content fingerprint (oshash), and that entry's recorded path no longer exists — in which
@@ -1268,6 +1306,10 @@ namespace HEI.Core {
 							skipEntry = true;
 							skipReason = "previous thumbnail sampling failed and retry is disabled";
 						}
+						if (!skipEntry && KnownNotVideo(entry, Settings.AlwaysRetryFailedSampling) is { } known) {
+							skipEntry = true;
+							skipReason = known;
+						}
 
 						if (!skipEntry && !Settings.ScanAgainstEntireDatabase && !IsInIncludeScope(entry)) {
 							skipEntry = true;
@@ -1356,16 +1398,29 @@ namespace HEI.Core {
 						}
 
 						if (entry.mediaInfo == null && !entry.IsImage) {
+							// A transport stream's extension on a text file: TypeScript's .ts. Told from a video by its first
+							// bytes, without starting ffprobe.
+							if (FileUtils.IsTransportStreamExtension(entry.Path) && FileUtils.IsTextNotVideo(entry.Path) == true) {
+								entry.invalid = true;
+								entry.Flags.Set(EntryFlags.NotMedia);
+								LogExcludedFile(entry, NotMediaReason);
+								CompleteEntry(entry, driveCounter);
+								return ValueTask.CompletedTask;
+							}
 							ReportProgress(entry.Path, T("Scan.Stage.Probing"));
-							MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging);
+							MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging, out bool noMedia);
 							if (info == null) {
 								entry.invalid = true;
-								entry.Flags.Set(EntryFlags.MetadataError);
+								// Kept only when ffprobe answered about the file itself: one that timed out, or that another
+								// program held, is asked again next scan.
+								if (noMedia)
+									entry.Flags.Set(EntryFlags.MetadataError);
 								CompleteEntry(entry, driveCounter);
 								return ValueTask.CompletedTask;
 							}
 
 							entry.mediaInfo = info;
+							entry.Flags.Set(EntryFlags.MetadataError, false);
 						}
 						// This is for people upgrading from an older VDF version
 						// Or if you create a new database, start and immediately stop the scan and then try to scan again

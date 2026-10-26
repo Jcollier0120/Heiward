@@ -21,8 +21,46 @@ namespace HEI.Core.Tests.Utils;
 [CollectionDefinition(nameof(LoggerTests), DisableParallelization = true)]
 [Collection(nameof(LoggerTests))]
 public class LoggerTests : IDisposable {
-	public LoggerTests() => File.Delete(Logger.LogFilePath);
-	public void Dispose() => File.Delete(Logger.LogFilePath);
+	public LoggerTests() => Dispose();
+	public void Dispose() {
+		File.Delete(Logger.LogFilePath);
+		File.Delete(Previous);
+	}
+
+	static string Previous => Path.ChangeExtension(Logger.LogFilePath, ".1.txt");
+
+	[Fact]
+	public void FullLog_IsMovedAside_AndANewOneStarted() {
+		File.WriteAllText(Logger.LogFilePath, new string('x', (int)Logger.FullLogBytes));
+		string marker = Guid.NewGuid().ToString("N");
+		Logger.Instance.Info($"after {marker}");
+
+		Assert.Equal(Logger.FullLogBytes, new FileInfo(Previous).Length);
+		string log = File.ReadAllText(Logger.LogFilePath);
+		Assert.Contains(marker, log);
+		Assert.DoesNotContain("xxx", log);
+	}
+
+	[Fact]
+	public void LogFromBeforeTrimming_KeepsOnlyItsLastLines() {
+		string path = Path.Combine(Path.GetTempPath(), $"hei-log-{Guid.NewGuid():N}.log");
+		string previous = Path.ChangeExtension(path, ".1.log");
+		try {
+			using (var writer = new StreamWriter(path)) {
+				writer.Write(new string('a', 3 * (int)Logger.FullLogBytes));
+				writer.Write("the last line");
+			}
+			Logger.MoveAside(path);
+
+			Assert.False(File.Exists(path));
+			Assert.Equal(Logger.FullLogBytes, new FileInfo(previous).Length);
+			Assert.EndsWith("the last line", File.ReadAllText(previous));
+		}
+		finally {
+			File.Delete(path);
+			File.Delete(previous);
+		}
+	}
 
 	static List<LogEntry> Capture(Action<Logger> act, string marker) {
 		var captured = new List<LogEntry>();

@@ -378,4 +378,56 @@ public class FileUtilsTests {
 			DeleteTempTree(target);
 		}
 	}
+
+	// TypeScript's .ts files share the MPEG transport stream's extension: told apart by their first bytes, so ffprobe
+	// isn't started for each one every scan. Only text is declared not a video; anything else is left to ffprobe.
+
+	[Fact]
+	public void IsTextNotVideo_TypeScriptSource_True() =>
+		Assert.True(FileUtils.IsTextNotVideo("import { add } from './math';\nexport const GG = add(1, 2);\n"u8));
+
+	[Fact]
+	public void IsTextNotVideo_Empty_False() =>
+		Assert.False(FileUtils.IsTextNotVideo(ReadOnlySpan<byte>.Empty));
+
+	[Fact]
+	public void IsTextNotVideo_NulByte_False() =>
+		Assert.False(FileUtils.IsTextNotVideo("e\0x\0p\0o\0r\0t\0"u8)); // UTF-16 text, or any binary file
+
+	[Theory]
+	[InlineData(188, 0)]
+	[InlineData(192, 4)]  // .m2ts: a timestamp before each packet
+	[InlineData(204, 0)]  // with error correction
+	[InlineData(188, 57)] // a recording cut mid-packet
+	public void IsTextNotVideo_TransportStreamSyncBytes_False(int packet, int offset) {
+		// No NUL byte anywhere: only the sync bytes, a packet apart, tell it from text.
+		byte[] head = new byte[offset + 3 * packet + 1];
+		head.AsSpan().Fill((byte)'a');
+		for (int i = offset; i < head.Length; i += packet)
+			head[i] = 0x47;
+		Assert.False(FileUtils.IsTextNotVideo(head));
+	}
+
+	[Fact]
+	public void IsTextNotVideo_File() {
+		string dir = NewTempTree();
+		try {
+			string source = Path.Combine(dir, "app.ts"), recording = Path.Combine(dir, "show.ts");
+			File.WriteAllText(source, "export function add(a: number, b: number) { return a + b; }\n");
+			byte[] packets = new byte[3 * 188];
+			for (int i = 0; i < packets.Length; i += 188)
+				packets[i] = 0x47;
+			File.WriteAllBytes(recording, packets);
+
+			Assert.True(FileUtils.IsTextNotVideo(source));
+			Assert.False(FileUtils.IsTextNotVideo(recording));
+			Assert.Null(FileUtils.IsTextNotVideo(Path.Combine(dir, "missing.ts"))); // no answer: ffprobe decides
+			Assert.True(FileUtils.IsTransportStreamExtension(source));
+			Assert.True(FileUtils.IsTransportStreamExtension("clip.M2TS"));
+			Assert.False(FileUtils.IsTransportStreamExtension("clip.mp4"));
+		}
+		finally {
+			DeleteTempTree(dir);
+		}
+	}
 }

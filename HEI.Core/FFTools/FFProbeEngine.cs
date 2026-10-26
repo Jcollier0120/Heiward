@@ -32,7 +32,16 @@ namespace HEI.Core.FFTools {
 		}
 		const int TimeoutDuration = 15_000; //15 seconds
 
-		public static MediaInfo? GetMediaInfo(string file, bool extendedLogging) {
+		public static MediaInfo? GetMediaInfo(string file, bool extendedLogging) => GetMediaInfo(file, extendedLogging, out _);
+
+		/// <param name="noMedia">
+		/// True when ffprobe read the file and found nothing it could use: it exited with an error, or gave no usable
+		/// info, while the file itself could be read. The same file gives the same answer again, so a caller may
+		/// remember it. False when there was no answer: ffprobe didn't start, ran out of time, or the file couldn't
+		/// be opened (another program holding it), which the next try may not repeat.
+		/// </param>
+		public static MediaInfo? GetMediaInfo(string file, bool extendedLogging, out bool noMedia) {
+			noMedia = false;
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
 				CreateNoWindow = ChildConsole.OwnConsole,
@@ -75,12 +84,20 @@ namespace HEI.Core.FFTools {
 				// (dead network share, sleeping drive) never let return.
 				FFToolsUtils.ReadStdoutBounded(process, ms, TimeoutDuration, "FFprobe", file);
 
-				if (process.ExitCode != 0)
+				if (process.ExitCode != 0) {
+					noMedia = CanRead(file);
 					throw new FFInvalidExitCodeException($"FFprobe exited with: {process.ExitCode}");
+				}
 
 				mediaInfo = FFProbeJsonReader.Read(ms.ToArray(), file);
+				noMedia = mediaInfo == null && CanRead(file);
+			}
+			catch (FFInvalidExitCodeException e) {
+				errOut += $"{Environment.NewLine}{e.Message}";
+				mediaInfo = null;
 			}
 			catch (Exception e) {
+				noMedia = false;
 				errOut += $"{Environment.NewLine}{e.Message}";
 				try {
 					if (process.HasExited == false)
@@ -98,6 +115,18 @@ namespace HEI.Core.FFTools {
 				Logger.Instance.Warn($"{message}{errOut}");
 			}
 			return mediaInfo;
+		}
+
+		/// <summary>The file opens and its first bytes read: ffprobe's failure on it was about what's in it, not about getting at it.</summary>
+		static bool CanRead(string file) {
+			try {
+				using var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
+				Span<byte> first = stackalloc byte[1];
+				return stream.Length == 0 || stream.Read(first) == 1;
+			}
+			catch {
+				return false;
+			}
 		}
 
 		/// <summary>
