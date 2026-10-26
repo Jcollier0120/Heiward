@@ -2,6 +2,38 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.104
+
+**It carries the Steward's kit 2.142.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.142.0: A link to a part of the page in a tab not shown opens that tab, a time still to come reads "in 6 hours", and an empty number setting says what empty means.
+- The Steward's kit 2.141.0: Settings and tabbed pages take less room: no box inside the Settings panel, no headings over an empty table, tabs that stay put, and a tab's title said once.
+- The Steward's kit 2.140.0: The settings the staff share are set once, on Manor's Settings (Staff settings), and an agent's own Settings leaves them out; a list of short words is drawn in columns.
+- The Steward's kit 2.139.0: The kit's page talks like the manor: newcomers wait their turn at the door, the off-duty put their feet up by the fire, and an agent short of settings is awaiting orders.
+- The Steward's kit 2.138.0: The whole staff employed at once: rounds placed apart on each PC by Manor's rota, staggered after a start or a wake, a model loaded only under the manor's memory ceiling, and at most 2 or 4 agents' text readers at once.
+
+### Before you update
+
+- Nothing breaks.
+- **A test that renders a future time and expects "just now"** finds "in …" instead.
+- Nothing breaks.
+- **A Settings form of 8 or 9 ordinary settings, in two or more groups or named tabs,** is in tabs now. Look at it once.
+- **A `Section` titled as its page tab** no longer repeats its title. Take out any agent-side workaround.
+- **A test that matches an empty records or map field's `<table>` or its headings** finds none.
+- Nothing breaks: a field built by hand has no `inManor` and stays on the agent's page.
+- **To move a shared setting to Manor:**
+  - Build it with its factory.
+  - Read it with its read function. Clerk and Chamberlain read `semanticRerank` by hand; Miller and Chronicler read `preset` and `keepVideoTags` by hand.
+  - Take the agent's own default from DEFAULT_SETTINGS.
+- **A test that counts an agent's settings fields under node --test** sees them all, as before: no Manor is read there.
+- A test that pins any of these lines needs the new words: `Awaiting orders`, `waits their turn at the door`, `is learning the lay of the land in their first round`, `Castellan to teach it the new skills of`, and `, feet up by the fire` after the off-duty time.
+- Nothing else: the page's structure, classes and every value Manor reads are as they were.
+- A test that moves the clock past a scheduled round's time with mock timers (`setTime`) before ticking it now sees the round wait its place in the start window first. Tick to the round's time, or make it `light`.
+- A test that compares a whole round.json record on the clock needs `phaseFrom`.
+- Nothing else: an agent's own `phaseMs` and `firstDelayMs` keep their meaning, and a background request that finds no room to load its model is deferred as a busy NPU's is, which agents already handle.
+
 ## 1.9.103
 
 **Heiward's first scan in a manor speaks like the rest of the staff: a newcomer waits their turn at the door, then learns the lay of the land.**
