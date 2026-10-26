@@ -132,7 +132,8 @@ function Add-Ffmpeg([string]$a, [string]$layout) {
 	foreach ($p in $programs) {
 		$s = Get-AuthenticodeSignature $p.FullName
 		if ($s.Status -ne 'Valid' -or $publisherThumbprints -notcontains $s.SignerCertificate.Thumbprint -or -not $s.TimeStamperCertificate) {
-			throw "FFmpeg's $($p.Name) ($a) isn't signed by Heiward's publisher and timestamped: $($s.Status), $($s.SignerCertificate.Subject)."
+			$by = if ($s.SignerCertificate) { ", by $($s.SignerCertificate.Subject)" } else { '' }
+			throw "FFmpeg's $($p.Name) ($a) isn't signed by Heiward's publisher and timestamped: $($s.Status)$by."
 		}
 	}
 	Write-Host "FFmpeg for ${a}: $($programs.Count) programs, each signed by $($s.SignerCertificate.GetNameInfo('SimpleName', $false))."
