@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.101
+
+**It carries the Steward's kit 2.137.2: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.137.2: Three fixes from the launch checks: a video the kit makes no longer carries where it was filmed, the known folders come back right whatever script a user or folder name is in, and "Back to Castellan" goes to Castellan's own address.
+
+### Before you update
+
+- A test that pins `manorLink().url`, or anything built from it, as `http://manor.localhost:…` needs `castellan.localhost`, or a check that holds for both.
+- A test that pins `grindArgs`' `-map_metadata 0` needs `tagArgs`' options, or `tags: tagArgs(info, true)` for every tag.
+- Nothing else: the exports and their results are the same.
+
 ## 1.9.100
 
 **The Microsoft Store version carries the same signed FFmpeg as the download, nothing downloads FFmpeg without a pinned hash, and the switch to a renewed signing certificate is planned so that updates never stop.**
