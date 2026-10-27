@@ -1,0 +1,3 @@
+# Heiward's changes waiting to be released
+
+Each piece of work writes its changelog entry here, in the file the Steward's `claim-version` names for its branch (`claude/some-work` writes `claude-some-work.md`), and leaves the version files and CHANGELOG.md alone. The entry is what the Steward's kit spec/RELEASE-NOTES.md describes (a bold line, What's new and/or What changed, Before you update), without its `## ` heading. You merge the work yourself once it's vouched for. The Steward's next build stamps it: it sets the release's version, moves the entry into CHANGELOG.md and deletes the file, in a pull request of its own, so two pieces of work never meet in the same lines.
