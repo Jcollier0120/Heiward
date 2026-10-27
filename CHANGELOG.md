@@ -2,6 +2,20 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.107
+
+**It carries the Steward's kit 2.142.3: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.142.3: The shared video switch is called "Keep GPS and camera details in video copies". Its old name, "Keep a video's place and camera details", read as where the videos are kept, and sent the owner to Manor's Staff settings looking for a folder setting that isn't there.
+- The Steward's kit 2.142.2: spec/RELEASE-NOTES.md says how every agent rides the build pipeline: its work writes its changelog entry in changes/, and the Steward's build sets the version.
+
+### Before you update
+
+- Nothing, unless the agent passes its own `help` that speaks of "a video's place" (the Miller's does): say "where it was filmed" there instead.
+- Nothing: it updates itself as usual. Once Steward 0.36.248 is installed, its next build puts each agent on the build pipeline, in a pull request it opens and merges itself; from then on, write each piece of work's entry in `changes/<branch>.md` and leave the version files and `CHANGELOG.md` alone.
+
 ## 1.9.106
 
 **It carries the Steward's kit 2.142.1: the parts every agent of the manor shares.**
