@@ -924,6 +924,67 @@ public sealed class DevAssetsTests : IDisposable {
 	}
 
 	/// <summary>
+	/// A worktree on a drive the check reads, of a repository on a drive scanned only when asked (E:\worktrees\x of a clone
+	/// on D:\): found by the walk, measured, never ticked, and of the repository only its record of it read. Cleaning it, the
+	/// user's ask, asks git as ever.
+	/// </summary>
+	[Fact]
+	public void AWorktreeOfARepositoryLeftUnread_IsMeasured_NotTicked_AndCleanedWhenAsked() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, _, _) = AgentWorktree("inside");
+		string wt = Path.Combine(root, "worktrees", "app-x");
+		G(repo, "worktree", "add", "-b", "app-x", wt, "origin/main");
+		Touch(Path.Combine(wt, "node_modules", "pkg", "x.js"), 3 << 20);
+		// It names its repository another way (C:\Projects\x for D:\x): still listed under the repository, by its real path.
+		string repoLink = RealTemp.Junction(Path.Combine(root, "repo-link"), repo);
+		File.SetAttributes(Path.Combine(wt, ".git"), FileAttributes.Normal); // git hides it, and a hidden file can't be written over
+		File.WriteAllText(Path.Combine(wt, ".git"), "gitdir: " + Path.Combine(repoLink, ".git", "worktrees", "app-x").Replace('\\', '/') + "\n");
+		// A submodule's .git is a file too, naming the repository's modules: not a worktree.
+		string sub = Dir("sub");
+		File.WriteAllText(Path.Combine(sub, ".git"), "gitdir: " + Path.Combine(repo, ".git", "modules", "sub").Replace('\\', '/') + "\n");
+		// A copy of the worktree a move left behind names its record too, which names the worktree: not one either.
+		string copy = Dir("worktrees.old", "app-x");
+		File.Copy(Path.Combine(wt, ".git"), Path.Combine(copy, ".git"));
+		Touch(Path.Combine(copy, "node_modules", "pkg", "x.js"), 1 << 20);
+		var noOne = new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new());
+		string realRepo = RealPath.Of(repo);
+		Func<string, bool> resting = p => RealPath.IsUnder(p, realRepo); // the repository's drive rests, the worktree's doesn't
+
+		// Run passes what the walk found that isn't resting: main checkouts (theirs are listed from their records) and worktrees.
+		DevItem listed = Assert.Single(DevScanner.UnreadRepoWorktrees(new[] { copy, wt, sub }, default, noOne, resting, _ => @"D:\"));
+		Assert.Equal(DevScanner.Worktrees, listed.Kind);
+		Assert.Equal(RealPath.Of(wt), listed.Location);
+		Assert.Equal(RealPath.Of(repo), listed.Repo);
+		Assert.True(listed.Bytes >= 3 << 20);
+		Assert.False(listed.Suggested);
+		Assert.Null(listed.Blocked);
+		Assert.Equal("worktree of repo · its repository is on D: (scanned when you ask)", listed.Detail);
+		// Its repository read with the rest: listed from its records instead.
+		Assert.Empty(DevScanner.UnreadRepoWorktrees(new[] { wt, sub }, default, noOne, _ => false, _ => @"D:\"));
+
+		CleanResult cleaned = DevCleaner.Clean(listed, new AgentConfig());
+		Assert.Null(cleaned.Error);
+		Assert.False(Directory.Exists(wt));
+		Assert.DoesNotContain("app-x", G(repo, "worktree", "list"));
+	}
+
+	/// <summary>A worktree git names through a junction (C:\worktrees\x for E:\worktrees\x) is shown where it really is, as Reeve shows it.</summary>
+	[Fact]
+	public void AWorktreeGitNamesThroughAJunction_IsShownWhereItReallyIs() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, _) = AgentWorktree("named");
+		string link = RealTemp.Junction(Path.Combine(root, "link"), Path.Combine(repo, ".claude", "worktrees"));
+		string named = Path.Combine(link, "named");
+		File.WriteAllText(Path.Combine(repo, ".git", "worktrees", "named", "gitdir"), Path.Combine(named, ".git").Replace('\\', '/') + "\n");
+		var noOne = new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new());
+
+		DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, DateTime.UtcNow.AddDays(1), default, noOne));
+		Assert.Equal(RealPath.Of(wt), listed.Location);
+		Assert.Equal(new[] { RealPath.Of(wt) }, listed.Paths);
+		Assert.Equal(DevScanner.IdOf(DevScanner.Worktrees, named), listed.Id); // its id as before: what automatic cleanup counted stays
+	}
+
+	/// <summary>
 	/// What the last check found on a drive scanned only when asked stays listed as it was, marked with the drive and when it
 	/// was measured, until Scan this drive now reads it again or the drive goes back to automatic. A worktree is on its
 	/// repository's drive too: git status reads the repository.
@@ -940,8 +1001,10 @@ public sealed class DevAssetsTests : IDisposable {
 			Categories = new() {
 				new DevCategory(DevScanner.Worktrees, "", "", new() {
 					tree,
-					Item("t2", DevScanner.Worktrees, @"C:\hei-none\app-y", @"Q:\src\app"), // of a repository there
+					Item("t2", DevScanner.Worktrees, Dir("app-y"), @"Q:\src\app"), // of a repository there
 					Item("t3", DevScanner.Worktrees, @"C:\hei-none\app-z"), // this check would have found it: it's gone
+					Item("t4", DevScanner.Worktrees, @"C:\hei-none\app-w", @"Q:\src\app"), // of a repository there, but its folder is gone
+					Item("t5", DevScanner.Worktrees, Dir("app-v"), @"Q:\src\app"), // found by this check under another id
 				}),
 				new DevCategory(DevScanner.Temp, "", "", new() { Item("tmp", "temp", @"Q:\Temp") }),
 			},
@@ -957,8 +1020,10 @@ public sealed class DevAssetsTests : IDisposable {
 		};
 
 		DevReport now = Fresh();
+		now.Categories[0].Items.Add(Item("t5-found", DevScanner.Worktrees, Path.Combine(root, "APP-V")) with { MeasuredUtc = then });
 		DevScanner.KeepResting(now, previous, cfg, DevScanner.Resting(cfg, null));
-		Assert.Equal(new[] { "t1", "t2" }, now.Categories[0].Items.Select(i => i.Id).Order());
+		Assert.Equal(new[] { "t1", "t2", "t5-found" }, now.Categories[0].Items.Select(i => i.Id).Order());
+		now.Categories[0].Items.RemoveAll(i => i.Id == "t5-found");
 		Assert.Equal("tmp", Assert.Single(now.Categories[1].Items).Id);
 		Assert.All(now.Categories.SelectMany(c => c.Items), i => {
 			Assert.Equal(@"Q:\", i.OnRequest);

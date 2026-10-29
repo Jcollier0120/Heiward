@@ -137,7 +137,9 @@ namespace HEI.Agent {
 			report.Categories.Add(new DevCategory(Worktrees, "Git worktrees",
 				"Extra working folders of a repository; AI coding agents leave many behind. Git removes one only when it has no uncommitted changes, " +
 				"and it's offered only when its commits are pushed and nothing works in it (a program, or a Claude Code session in the last day). The branch stays.",
-				repos.SelectMany(r => WorktreeItems(r, staleBefore, ct, use, resting)).OrderByDescending(i => i.Bytes).ToList()));
+				repos.SelectMany(r => WorktreeItems(r, staleBefore, ct, use, resting))
+					.Concat(UnreadRepoWorktrees(repos, ct, use, resting, path => cfg.OnRequestDriveOf(path) ?? AgentConfig.DriveOf(path) ?? Path.GetPathRoot(path) ?? path))
+					.OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Caches, "Package and build caches",
 				"Downloads that Gradle, NuGet, npm and other tools keep, where their settings put them (a Dev Drive, say). They're downloaded again when " +
@@ -179,14 +181,19 @@ namespace HEI.Agent {
 		/// <summary>
 		/// Brings over what <paramref name="previous"/> found on the drives this check leaves unread (<paramref name="resting"/>):
 		/// unchanged, marked with the drive and when it was measured, until a check reads the drive again. Its items, and its
-		/// repositories' merged branches and hosts. An item this check found anyway (it wasn't on such a drive after all) is this check's.
+		/// repositories' merged branches and hosts. An item this check found anyway (it wasn't on such a drive after all) is this check's,
+		/// and so is a worktree it found by another path; a worktree whose own folder is on a drive it read, and gone, is gone.
 		/// </summary>
 		internal static void KeepResting(DevReport report, DevReport? previous, AgentConfig cfg, Func<string, bool> resting) {
 			if (previous == null) return;
 			var found = report.Categories.SelectMany(c => c.Items).Select(i => i.Id).ToHashSet();
+			// A worktree is listed by its real path, whichever way git or the walk found it (UnreadRepoWorktrees).
+			var worktreesAt = report.Categories.Where(c => c.Key == Worktrees).SelectMany(c => c.Items).Select(i => i.Location)
+				.ToHashSet(StringComparer.OrdinalIgnoreCase);
+			bool Gone(DevItem i) => i.Kind == Worktrees && (worktreesAt.Contains(i.Location) || !resting(i.Location) && !Directory.Exists(i.Location));
 			foreach (DevCategory was in previous.Categories) {
 				if (report.Categories.FirstOrDefault(c => c.Key == was.Key) is not { } now) continue; // a category this build no longer has
-				var kept = was.Items.Where(i => !found.Contains(i.Id))
+				var kept = was.Items.Where(i => !found.Contains(i.Id) && !Gone(i))
 					.Select(i => RestingDrive(i, cfg, resting) is { } drive ? i with { OnRequest = drive, MeasuredUtc = i.MeasuredUtc ?? previous.ScannedAtUtc } : null)
 					.Where(i => i != null).Select(i => i!).ToList();
 				if (kept.Count == 0) continue;
@@ -413,7 +420,9 @@ namespace HEI.Agent {
 					: ToolHome(path, resting) is { } tool ? $"Kept for the tool that made it ({tool})"
 					: AScheduledTaskUses(path, resting) ? "A scheduled task uses it"
 					: WorktreeBlocker(path);
-				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, bytes,
+				// Shown by the drive it's really on (git may have been given C:\worktrees for E:\worktrees), as Reeve shows it.
+				string real = RealPath.Of(path);
+				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), real, new() { real }, bytes,
 					lastUsed == DateTime.MinValue ? null : lastUsed, lastUsed < staleBefore && blocked == null, blocked,
 					$"branch {branch} · worktree of {Path.GetFileName(repo)}", repo);
 			}
@@ -423,9 +432,44 @@ namespace HEI.Agent {
 				// A removal that stopped at the folder itself: Windows keeps a folder a process works in. It waits for that
 				// process, rather than being offered, and failing, every day.
 				string? blocked = use.Why(path);
-				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), path, new() { path }, Measure(path).Bytes,
+				string real = RealPath.Of(path);
+				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), real, new() { real }, Measure(path).Bytes,
 					lastUsed == DateTime.MinValue ? null : lastUsed, blocked == null, blocked,
 					$"left over from a removal · worktree of {Path.GetFileName(repo)}", repo, Leftover: true);
+			}
+		}
+
+		/// <summary>
+		/// The worktrees on the drives this check reads whose repository is on a drive it leaves unread (<see cref="Resting"/>):
+		/// E:\worktrees\x of a clone on D:\, scanned only when asked. Git would read the repository to say what's in one, so
+		/// they're only measured: never ticked, what git says checked when the user cleans one (<see cref="DevCleaner.Clean"/>).
+		/// Found by the walk (a worktree's .git is a file naming its repository's record of it), not by the repository's records.
+		/// Of the repository, only that record's line naming its folder is read, and whether git locked it: a copy of a worktree
+		/// (C:\worktrees.old\x, left by a move) names the same record, which names another folder.
+		/// </summary>
+		/// <param name="repos">The repositories the walk found, worktrees among them.</param>
+		/// <param name="driveOf">The drive a repository is on, as the user named it ("D:\").</param>
+		internal static IEnumerable<DevItem> UnreadRepoWorktrees(IEnumerable<string> repos, CancellationToken ct, FolderUse use,
+			Func<string, bool> resting, Func<string, string> driveOf) {
+			foreach (string path in repos) {
+				if (ct.IsCancellationRequested) yield break;
+				if (!File.Exists(Path.Combine(path, ".git"))) continue; // a main checkout
+				// <repo>\.git\worktrees\<id>; a submodule's .git names <repo>\.git\modules\<name> instead.
+				if (GitDirOf(path) is not { } record || Path.GetDirectoryName(record) is not { } records || !Path.GetFileName(records).Equals("worktrees", StringComparison.OrdinalIgnoreCase)
+					|| Path.GetDirectoryName(records) is not { } dotGit || !Path.GetFileName(dotGit).Equals(".git", StringComparison.OrdinalIgnoreCase)
+					|| Path.GetDirectoryName(dotGit) is not { } repo || !resting(repo)) continue;
+				if (WorktreePath(record) is not { } recorded || !RealPath.Same(recorded, path)) continue; // not the worktree git knows
+				repo = RealPath.Of(repo); // one repository, however each worktree names it (C:\Projects\x is D:\x): listed once
+				DateTime lastUsed = LastUsed(path, null);
+				string? blocked = File.Exists(Path.Combine(record, "locked")) ? "Locked in git"
+					: use.Why(path) is { } busy ? busy
+					: ToolHome(path, resting) is { } tool ? $"Kept for the tool that made it ({tool})"
+					: AScheduledTaskUses(path, resting) ? "A scheduled task uses it"
+					: null;
+				string real = RealPath.Of(path);
+				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), real, new() { real }, Measure(path).Bytes,
+					lastUsed == DateTime.MinValue ? null : lastUsed, false, blocked,
+					$"worktree of {Path.GetFileName(repo)} · its repository is on {driveOf(repo).TrimEnd('\\')} (scanned when you ask)", repo);
 			}
 		}
 
@@ -1265,8 +1309,10 @@ namespace HEI.Agent {
 						return new CleanResult(built.Bytes + rest.RecycledBytes, rest.Failed.Count, null,
 							rest.Failed.FirstOrDefault()?.Path, rest.Failed.FirstOrDefault()?.Reason);
 					}
-					// At a manor with Reeve, git worktrees are Reeve's to remove (ManorRoles): read fresh, whatever the list said.
-					if (ManorRoles.Now().Worktrees is { } reeve) return new CleanResult(0, 0, reeve.Note + ": Heiward leaves worktrees to it");
+					// At a manor with Reeve, the worktrees its tidy round goes through are Reeve's to remove (ManorRoles): read fresh,
+					// whatever the list said.
+					if (ManorRoles.Now() is { Worktrees: { } reeve } roles && roles.LooksAfter(item.Location))
+						return new CleanResult(0, 0, reeve.Note + ": Heiward leaves worktrees to it");
 					if (DevScanner.WorktreeBlocker(item.Location) is { } why) return new CleanResult(0, 0, why);
 					// Git deletes a file at a time: the build output it would delete with the worktree goes first, several folders at once.
 					var rebuilt = SafeDelete.Each(DevScanner.RebuiltIgnored(item.Location));

@@ -2804,8 +2804,13 @@ function devSection(k, items, showRepo) {
   box.append(head);
   // Where Reeve keeps git state, its worktrees are listed for the space they take, read-only, with who removes them.
   const reeve = k === 'worktrees' ? reeveRole() : null;
-  if (reeve) box.append(el('p', 'muted small', 'Extra working folders, and the space they take.'), roleNote(reeve));
-  else box.append(el('p', 'muted small', DEV_META[k].blurb));
+  if (reeve) {
+    box.append(el('p', 'muted small', 'Extra working folders, and the space they take.'), roleNote(reeve));
+    // Those its tidy round doesn't go through are Heiward's: never ticked for you, cleaned when you tick one.
+    if (items.some((i) => !i.leftover && i.blocked !== reeve.kept))
+      box.append(el('p', 'muted small', 'Those without the tag "' + reeve.kept + '" aren\'t in ' + reeve.name + '\'s tidy: ' +
+        'they\'re yours to clean here. None is ticked for you; git removes one only when it has no uncommitted changes, and the branch stays.'));
+  } else box.append(el('p', 'muted small', DEV_META[k].blurb));
   if (open.length) {
     const list = el('div', 'dev-list');
     for (const i of open) list.append(devRow(i, showRepo));
