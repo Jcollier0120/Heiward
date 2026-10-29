@@ -2795,10 +2795,12 @@ function devSection(k, items, showRepo) {
   title.append(el('span', null, DEV_META[k].short), el('span', 'muted', ' · ' + bytes(devSize(items))));
   head.append(title);
   const open = items.filter((i) => !i.blocked);
-  if (open.length > 1) {
-    const allOn = open.every((i) => devTicks.has(i.id));
+  // A worktree Reeve keeps for you holds work: ticked one at a time, never all at once.
+  const many = open.filter((i) => !i.keptForYou);
+  if (many.length > 1) {
+    const allOn = many.every((i) => devTicks.has(i.id));
     const toggle = el('button', 'link small', allOn ? 'Select none' : 'Select all');
-    toggle.addEventListener('click', () => { for (const i of open) if (allOn) devTicks.delete(i.id); else devTicks.add(i.id); renderDev(); });
+    toggle.addEventListener('click', () => { for (const i of many) if (allOn) devTicks.delete(i.id); else devTicks.add(i.id); renderDev(); });
     head.append(toggle);
   }
   box.append(head);
@@ -2806,9 +2808,13 @@ function devSection(k, items, showRepo) {
   const reeve = k === 'worktrees' ? reeveRole() : null;
   if (reeve) {
     box.append(el('p', 'muted small', 'Extra working folders, and the space they take.'), roleNote(reeve));
+    // Those it keeps for you hold work it won't throw away: yours again, never ticked for you, asked about before they go.
+    if (items.some((i) => i.keptForYou))
+      box.append(el('p', 'muted small', 'Those tagged "' + reeve.keptForYou + '" hold work ' + reeve.name + '\'s tidy won\'t throw away, so ' +
+        'they\'re yours again. None is ticked for you; removing one asks first and says what goes with it.'));
     // Those its tidy round doesn't go through are Heiward's: never ticked for you, cleaned when you tick one.
-    if (items.some((i) => !i.leftover && i.blocked !== reeve.kept))
-      box.append(el('p', 'muted small', 'Those without the tag "' + reeve.kept + '" aren\'t in ' + reeve.name + '\'s tidy: ' +
+    if (items.some((i) => !i.leftover && i.blocked !== reeve.kept && !i.keptForYou))
+      box.append(el('p', 'muted small', 'Those without a tag from ' + reeve.name + ' aren\'t in its tidy: ' +
         'they\'re yours to clean here. None is ticked for you; git removes one only when it has no uncommitted changes, and the branch stays.'));
   } else box.append(el('p', 'muted small', DEV_META[k].blurb));
   if (open.length) {
@@ -2906,8 +2912,11 @@ function devRow(i, showRepo, compact) {
   // A project's build outputs are one row per repository: name it by what's in it, not the repository twice.
   name.append(el('span', null, i.kind === 'projects' && !showRepo ? 'Build outputs' : i.name));
   if (i.blocked) name.append(el('span', 'tag', i.blocked));
-  else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
+  // A worktree Reeve keeps for you: its reason, and how long it has gone untouched.
+  if (i.keptForYou) name.append(el('span', 'tag kept', keptTag(i)));
+  else if (!i.blocked && i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
   main.append(name);
+  if (i.keptForYou && i.keptTouchedUtc) main.append(el('div', 'muted small', untouchedFor(i.keptTouchedUtc)));
   const auto = state.auto.devItems[i.id];
   if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'd:' + i.id, 'Deleted automatically ' + dueText(auto.dueUtc, true) + '.'));
   if (compact) row.title = i.location;
@@ -2931,9 +2940,36 @@ function devRow(i, showRepo, compact) {
   row.append(main);
   const side = el('div', 'dev-item-side');
   side.append(el('div', 'dev-size', bytes(i.bytes)));
-  if (i.lastUsedUtc) side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
+  // One that Reeve keeps for you says how long it's been untouched beside its reason, as Reeve found it.
+  if (i.lastUsedUtc && !i.keptForYou) side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
   row.append(side);
   return row;
+}
+
+/** A worktree Reeve keeps for you, as its tag says it: "Reeve keeps it: has changes that aren't committed". */
+const keptTag = (i) => ((reeveRole() || {}).keptForYou || 'Reeve keeps it') + ': ' + i.keptForYou;
+
+/** How long a worktree Reeve keeps for you has gone untouched, as Reeve found it: "Untouched for 32 days". */
+function untouchedFor(iso) {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (days < 1) return 'Touched today';
+  return 'Untouched for ' + (days === 1 ? 'a day' : days < 60 ? days + ' days' : Math.round(days / 30) + ' months');
+}
+
+/**
+ * The question before removing worktrees Reeve keeps for you, past the first line: each one's reason, and what goes with
+ * them and where it can be got back.
+ */
+function keptLoss(kept) {
+  const one = kept.length === 1;
+  const reeve = (reeveRole() || {}).name || 'Reeve';
+  return [
+    one ? reeve + ' keeps ' + kept[0].name + ' for you: ' + kept[0].keptForYou + '.'
+      : reeve + ' keeps them for you:\n' + kept.map((i) => '• ' + i.name + ': ' + i.keptForYou).join('\n'),
+    (one ? 'It goes' : 'Each goes') + ' to the Recycle Bin, where you can put it back, with its' +
+      ' uncommitted changes, the files git ignores and any merge or rebase under way; only build output is deleted for good. ' +
+      (one ? 'Its branch and commits stay' : 'Their branches and commits stay') + ' in the repository.',
+  ];
 }
 
 /** A developer item on a drive scanned only when asked: which drive, when it was measured, and how to update it. */
@@ -3049,9 +3085,17 @@ function selectionBar() {
 
 async function cleanDev(picked) {
   const size = devSize(picked);
-  const lines = ['Delete ' + count(picked.length, 'item', 'items') + ' (' + bytes(size) + ') permanently?',
-    'Tools recreate them when needed; the next build or install takes longer.'];
-  const worktrees = picked.filter((i) => i.kind === 'worktrees').length;
+  // Worktrees Reeve keeps for you hold work: the question says what goes with them, and where it can be got back.
+  const kept = picked.filter((i) => i.keptForYou);
+  const others = picked.length - kept.length;
+  const lines = !kept.length ? ['Delete ' + count(picked.length, 'item', 'items') + ' (' + bytes(size) + ') permanently?',
+    'Tools recreate them when needed; the next build or install takes longer.']
+    : [(others ? 'Clean ' + count(picked.length, 'item', 'items') + ' (' + bytes(size) + '), with the work in ' + count(kept.length, 'worktree', 'worktrees') + '?'
+      : (kept.length === 1 ? 'Remove the worktree ' + kept[0].name : 'Remove ' + count(kept.length, 'worktree', 'worktrees')) +
+        ' (' + bytes(size) + ') with the work in ' + (kept.length === 1 ? 'it' : 'them') + '?'), ...keptLoss(kept)];
+  if (kept.length && others) lines.push((others === 1 ? 'The other item is' : 'The other ' + others + ' items are') +
+    ' deleted permanently: tools recreate them when needed; the next build or install takes longer.');
+  const worktrees = picked.filter((i) => i.kind === 'worktrees' && !i.keptForYou).length;
   if (worktrees) lines.push(count(worktrees, 'worktree folder is', 'worktree folders are') + ' removed by git; the branches stay.');
   if (picked.some((i) => i.kind === 'avd')) lines.push('Deleting an emulator deletes the apps and data inside it.');
   const orphans = picked.filter((i) => i.kind === 'orphans').length;

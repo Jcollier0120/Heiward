@@ -30,10 +30,14 @@ namespace HEI.Agent {
 	/// folder git no longer knows (disk, not git state: Heiward's even where Reeve keeps the worktrees, <see cref="ManorRoles"/>).
 	/// <paramref name="OnRequest"/>: the drive it's on ("E:\"), scanned only when you ask, when this check left it unread: it's as
 	/// the check of <paramref name="MeasuredUtc"/> found it (<see cref="DevScanner.KeepResting"/>).
+	/// <paramref name="HoldsWork"/>: a worktree <see cref="Blocked"/> for the work in it git would lose (<see cref="DevScanner.WorktreeBlocker"/>),
+	/// not for being in use or someone else's. <paramref name="KeptForYou"/>: Reeve's reason for keeping a worktree for you
+	/// ("has changes that aren't committed"), and <paramref name="KeptTouchedUtc"/> when it was last touched, as Reeve found it
+	/// (<see cref="ManorRoles.View"/>): yours to remove, with that work, never ticked for you.
 	/// </summary>
 	sealed record DevItem(string Id, string Kind, string Name, string Location, List<string> Paths, long Bytes,
 		DateTime? LastUsedUtc, bool Suggested, string? Blocked, string Detail, string? Repo = null, bool Leftover = false,
-		string? OnRequest = null, DateTime? MeasuredUtc = null);
+		string? OnRequest = null, DateTime? MeasuredUtc = null, bool HoldsWork = false, string? KeptForYou = null, DateTime? KeptTouchedUtc = null);
 
 	sealed record DevCategory(string Key, string Title, string Explain, List<DevItem> Items);
 
@@ -419,12 +423,13 @@ namespace HEI.Agent {
 					: use.Why(path) is { } busy ? busy
 					: ToolHome(path, resting) is { } tool ? $"Kept for the tool that made it ({tool})"
 					: AScheduledTaskUses(path, resting) ? "A scheduled task uses it"
-					: WorktreeBlocker(path);
+					: null;
+				string? work = blocked == null ? WorktreeBlocker(path) : null;
 				// Shown by the drive it's really on (git may have been given C:\worktrees for E:\worktrees), as Reeve shows it.
 				string real = RealPath.Of(path);
 				yield return new DevItem(IdOf(Worktrees, path), Worktrees, Path.GetFileName(path), real, new() { real }, bytes,
-					lastUsed == DateTime.MinValue ? null : lastUsed, lastUsed < staleBefore && blocked == null, blocked,
-					$"branch {branch} · worktree of {Path.GetFileName(repo)}", repo);
+					lastUsed == DateTime.MinValue ? null : lastUsed, lastUsed < staleBefore && blocked == null && work == null, blocked ?? work,
+					$"branch {branch} · worktree of {Path.GetFileName(repo)}", repo, HoldsWork: work != null);
 			}
 			foreach (string path in LeftoverWorktrees(repo, resting)) {
 				if (ct.IsCancellationRequested) yield break;
@@ -1269,7 +1274,9 @@ namespace HEI.Agent {
 	/// it), removes links without touching what they point to, and leaves files in use alone, saying what holds them.
 	/// </summary>
 	static class DevCleaner {
-		public static CleanResult Clean(DevItem item, AgentConfig cfg) {
+		/// <param name="byHand">The user cleans it, from the page, which said first what goes with it: a worktree Reeve keeps
+		/// for them (<see cref="ManorRoles.KeptFor"/>) goes too, work and all. Never automatic cleanup.</param>
+		public static CleanResult Clean(DevItem item, AgentConfig cfg, bool byHand = false) {
 			var use = new FolderUse(DateTime.UtcNow);
 			switch (item.Kind) {
 				case DevScanner.Projects: {
@@ -1309,10 +1316,14 @@ namespace HEI.Agent {
 						return new CleanResult(built.Bytes + rest.RecycledBytes, rest.Failed.Count, null,
 							rest.Failed.FirstOrDefault()?.Path, rest.Failed.FirstOrDefault()?.Reason);
 					}
-					// At a manor with Reeve, the worktrees its tidy round goes through are Reeve's to remove (ManorRoles): read fresh,
-					// whatever the list said.
-					if (ManorRoles.Now() is { Worktrees: { } reeve } roles && roles.LooksAfter(item.Location))
-						return new CleanResult(0, 0, reeve.Note + ": Heiward leaves worktrees to it");
+					// At a manor with Reeve, the worktrees its tidy round goes through are Reeve's to remove (ManorRoles), but for
+					// those it keeps for you: they hold work, so they go only by your hand, work and all. Read fresh, whatever the
+					// list said.
+					if (ManorRoles.Now() is { Worktrees: { } reeve } roles) {
+						if (roles.KeptFor(item.Location) is { } kept)
+							return byHand ? RemoveWithWork(item, use) : new CleanResult(0, 0, ManorRoles.Tag(kept) + ": only you remove it, never automatic cleanup");
+						if (roles.LooksAfter(item.Location)) return new CleanResult(0, 0, reeve.Note + ": Heiward leaves worktrees to it");
+					}
 					if (DevScanner.WorktreeBlocker(item.Location) is { } why) return new CleanResult(0, 0, why);
 					// Git deletes a file at a time: the build output it would delete with the worktree goes first, several folders at once.
 					var rebuilt = SafeDelete.Each(DevScanner.RebuiltIgnored(item.Location));
@@ -1368,6 +1379,29 @@ namespace HEI.Agent {
 				default:
 					return new CleanResult(0, 0, "Unknown item");
 			}
+		}
+
+		/// <summary>
+		/// A worktree Reeve keeps for you, removed by your hand with the work in it, after the page said what goes with it: what
+		/// a build makes again goes for good, the rest to the Recycle Bin, where it can be put back, and then git's record of it
+		/// (with any merge or rebase under way in it) the same way, so both can be put back together. The branch and its commits
+		/// stay in the repository. One the Recycle Bin can't take stays whole, but for its build output.
+		/// </summary>
+		static CleanResult RemoveWithWork(DevItem item, FolderUse use) {
+			string? record = DevScanner.GitDirOf(item.Location); // <repo>\.git\worktrees\<id>
+			if (record == null || !Path.GetFileName(Path.GetDirectoryName(record))!.Equals("worktrees", StringComparison.OrdinalIgnoreCase))
+				return new CleanResult(0, 0, "Not a worktree git knows any more; check again");
+			if (File.Exists(Path.Combine(record, "locked"))) return new CleanResult(0, 0, "Locked in git");
+			var built = SafeDelete.Each(DevScanner.RebuiltIgnored(item.Location));
+			if (built.Left > 0) return CleanResult.Of(built, item.Location, use);
+			RecycleResult rest = Recycler.RecyclePaths(new[] { item.Location });
+			if (rest.Failed.Count == 0) {
+				// The folder is in the bin: its record goes after it. Should the bin refuse that, git forgets a record whose folder is gone.
+				RecycleResult r = Recycler.RecyclePaths(new[] { record });
+				AgentPaths.AppendLog($"removed a worktree Reeve keeps for you, with its work, to the Recycle Bin; its record {(r.Failed.Count == 0 ? "too" : "left: " + r.Failed[0].Reason)}");
+			}
+			return new CleanResult(built.Bytes + rest.RecycledBytes, rest.Failed.Count, null,
+				rest.Failed.FirstOrDefault()?.Path, rest.Failed.FirstOrDefault()?.Reason);
 		}
 
 		static string[] ProcessesFor(string cacheName) => cacheName switch {

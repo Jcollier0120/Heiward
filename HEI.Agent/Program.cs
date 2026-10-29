@@ -393,7 +393,8 @@ dev.SetAction(r => {
 	foreach (DevCategory c in report.Categories) {
 		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked");
 		foreach (DevItem i in c.Items.Take(8))
-			Console.WriteLine($"  {(i.Suggested ? "[x]" : i.Blocked != null ? "[-]" : "[ ]")} {Format.Bytes(i.Bytes),9}  {i.Name}  {i.Detail}{(i.Blocked != null ? $" ({i.Blocked})" : "")}");
+			Console.WriteLine($"  {(i.Suggested ? "[x]" : i.Blocked != null ? "[-]" : "[ ]")} {Format.Bytes(i.Bytes),9}  {i.Name}  {i.Detail}{(i.Blocked != null ? $" ({i.Blocked})" : "")}" +
+				(i.KeptForYou != null ? $" ({ManorRoles.KeptForYouTag}: {i.KeptForYou})" : ""));
 	}
 	return 0;
 });
