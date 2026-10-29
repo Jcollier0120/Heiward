@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.113
+
+**It carries the Steward's kit 2.144.1: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.144.1: Ready for the Workshop Pro plan: every agent accepts a Workshop Pro license (tier `workshop-pro`) and runs under it as it does under Workshop, and a PC holding one has what Developer Pro brought, now named Workshop Pro: the Wright's and the Bailiff's work with the rest of the staff, and the Seneschal. Until now a license of a tier the kit didn't know was refused as no license at all, so this kit reaches every agent before the Exchequer signs one.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.112
 
 **Worktrees Reeve keeps because they hold your work are yours again, with Reeve's reason beside each.**
