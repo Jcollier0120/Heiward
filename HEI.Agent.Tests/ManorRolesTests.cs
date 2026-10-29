@@ -142,6 +142,139 @@ public sealed class ManorRolesTests : IDisposable {
 		Assert.Single(report.Repositories);
 	}
 
+	/// <summary>Reeve's last worktree-tidy round as it writes it: its job data, jobs\data\worktree-tidy.json in its home.</summary>
+	void TidyRound(string json) {
+		Directory.CreateDirectory(Path.Combine(reeve, "jobs", "data"));
+		File.WriteAllText(Path.Combine(reeve, "jobs", "data", "worktree-tidy.json"), json);
+	}
+
+	static string Round(params string[] lookedAfter) =>
+		JsonSerializer.Serialize(new { worktrees = 3, keptWork = new[] { "C:\\r: kept" }, dryRun = false, lookedAfter });
+
+	static (DevItem Wt, DevItem Mine, DevItem Left) Worktrees(DevReport view) =>
+		(view.Categories[0].Items.Single(i => i.Id == "wt"), view.Categories[0].Items.Single(i => i.Id == "mine"), view.Categories[0].Items.Single(i => i.Id == "left"));
+
+	static DevReport ReportWithMine() {
+		DevReport report = Report();
+		report.Categories[0] = report.Categories[0] with { Items = [.. report.Categories[0].Items, Worktree("mine")] };
+		return report;
+	}
+
+	[Fact]
+	public void View_ReeveLooksAfterOnlyTheWorktreesItsRoundWentThrough_TheOthersAreHeiwards() {
+		InstallManor();
+		Install(reeve);
+		// Reeve's paths are real ones, sorted, any case; a trailing separator is the same folder.
+		TidyRound(Round(@"C:\elsewhere\x", @"C:\R\.CLAUDE\worktrees\WT\"));
+		var (wt, mine, left) = Worktrees(ManorRoles.Now().View(ReportWithMine()));
+
+		Assert.False(wt.Suggested);
+		Assert.Equal(ManorRoles.WorktreeKept, wt.Blocked);
+		// Not in its round: Heiward's, as without Reeve, but never ticked for the user.
+		Assert.False(mine.Suggested);
+		Assert.Null(mine.Blocked);
+		Assert.Equal(40 << 20, mine.Bytes);
+		Assert.True(left.Suggested); // what a removal left: disk, still Heiward's
+		Assert.Null(left.Blocked);
+
+		// Read fresh: the next round goes through it too.
+		TidyRound(Round(@"C:\r\.claude\worktrees\mine", @"C:\r\.claude\worktrees\wt"));
+		Assert.Equal(ManorRoles.WorktreeKept, Worktrees(ManorRoles.Now().View(ReportWithMine())).Mine.Blocked);
+		// And an empty round went through none of them.
+		TidyRound(Round());
+		var (wt2, mine2, _) = Worktrees(ManorRoles.Now().View(ReportWithMine()));
+		Assert.Null(wt2.Blocked);
+		Assert.Null(mine2.Blocked);
+	}
+
+	[Fact]
+	public void View_OneFolderUnderTwoNames_IsTheSameWorktree() {
+		string real = Path.Combine(dir, "real"), wtFolder = Path.Combine(real, "wt");
+		Directory.CreateDirectory(wtFolder);
+		// As C:\worktrees is E:\worktrees: a junction, made as mklink /J does (no rights needed).
+		string link = Path.Combine(dir, "link");
+		using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("cmd.exe", $"/c mklink /J \"{link}\" \"{real}\"") {
+			CreateNoWindow = true, UseShellExecute = false, RedirectStandardOutput = true,
+		})!) {
+			p.StandardOutput.ReadToEnd();
+			p.WaitForExit();
+			Assert.Equal(0, p.ExitCode);
+		}
+		try {
+			InstallManor();
+			Install(reeve);
+			DevItem AsHeiwardHasIt(string location) => Worktree("wt") with { Location = location, Paths = [location] };
+			DevReport ReportAt(string location) => new() { ScannedAtUtc = DateTime.UtcNow, Build = AppBuild.Current, Categories = [new DevCategory(DevScanner.Worktrees, "", "", [AsHeiwardHasIt(location)])] };
+
+			// Heiward has it through the junction, Reeve by its real path.
+			TidyRound(Round(RealPath.Of(wtFolder)));
+			Assert.Equal(ManorRoles.WorktreeKept, ManorRoles.Now().View(ReportAt(Path.Combine(link, "wt"))).Categories[0].Items[0].Blocked);
+			// And the other way round: a Reeve that wrote it through the junction.
+			TidyRound(Round(Path.Combine(link, "wt")));
+			Assert.Equal(ManorRoles.WorktreeKept, ManorRoles.Now().View(ReportAt(wtFolder)).Categories[0].Items[0].Blocked);
+			// A folder beside it isn't it.
+			Assert.Null(ManorRoles.Now().View(ReportAt(Path.Combine(link, "wt2"))).Categories[0].Items[0].Blocked);
+		}
+		finally {
+			Directory.Delete(link); // the junction only, never what it points to
+		}
+	}
+
+	[Fact]
+	public void View_ReeveThatDoesntSayWhichItWentThrough_LooksAfterThemAll() {
+		InstallManor();
+		Install(reeve);
+		void AllReeves() {
+			var (wt, mine, left) = Worktrees(ManorRoles.Now().View(ReportWithMine()));
+			Assert.Equal(ManorRoles.WorktreeKept, wt.Blocked);
+			Assert.Equal(ManorRoles.WorktreeKept, mine.Blocked);
+			Assert.False(mine.Suggested);
+			Assert.Null(left.Blocked);
+		}
+		AllReeves(); // no round yet
+		Assert.Null(ManorRoles.Now().LookedAfter);
+		// An older Reeve: its job data without the field.
+		TidyRound("{\"worktrees\":3,\"keptWork\":[],\"dryRun\":false}");
+		AllReeves();
+		Assert.Null(ManorRoles.Now().LookedAfter);
+		// A broken file is no answer either, never an error.
+		foreach (string broken in new[] { "{\"lookedAfter\":[\"C:\\\\r\\\\.claude\\\\worktrees\\\\wt\"", "", "[]", "{\"lookedAfter\":\"C:\\\\x\"}", "{\"lookedAfter\":[1]}", "{\"lookedAfter\":[\"relative\\\\wt\"]}" }) {
+			TidyRound(broken);
+			AllReeves();
+		}
+	}
+
+	[Fact]
+	public void TheActions_CleanAWorktreeReevesRoundDidntGoThrough() {
+		string repo = Path.Combine(dir, "repo"), wt = Path.Combine(dir, "wt");
+		Directory.CreateDirectory(repo);
+		Directory.CreateDirectory(wt);
+		File.WriteAllText(Path.Combine(wt, "file.txt"), "x");
+		var item = new DevItem("w", DevScanner.Worktrees, "wt", wt, [wt], 1, null, false, null, "", repo);
+		InstallManor();
+		Install(reeve);
+		var actions = new CleanupActions(new AgentConfig(), automatic: false);
+
+		TidyRound(Round(Path.Combine(dir, "another")));
+		CleanResult clean = actions.Clean(item);
+		// Past Reeve: here git is what stops it, as it is without Reeve (the repository isn't one).
+		Assert.DoesNotContain("Reeve", clean.Error ?? "");
+		Assert.True(File.Exists(Path.Combine(wt, "file.txt")));
+
+		TidyRound(Round(wt));
+		Assert.Equal("Reeve's worktree-tidy job removes merged worktrees and branches: Heiward leaves worktrees to it", actions.Clean(item).Error);
+	}
+
+	[Fact]
+	public void AutomaticCleanup_NeverTakesAWorktreeReevesRoundDidntGoThrough() {
+		InstallManor();
+		Install(reeve);
+		TidyRound(Round(@"C:\elsewhere"));
+		var (cleaned, pruned) = RunAutomaticCleanup();
+		Assert.Equal(new[] { "left", "tmp" }, cleaned.Order()); // wt is Heiward's now, but never ticked: the user cleans it
+		Assert.Empty(pruned);
+	}
+
 	[Fact]
 	public void View_StandaloneOrWithoutReeve_IsTheReportItself() {
 		DevReport report = Report();
@@ -323,6 +456,7 @@ public sealed class ManorRolesTests : IDisposable {
 		JsonElement roles = dev.GetProperty("roles");
 		Assert.Equal("Reeve", roles.GetProperty("worktrees").GetProperty("name").GetString());
 		Assert.Equal("http://reeve.localhost:18383/", roles.GetProperty("worktrees").GetProperty("url").GetString());
+		Assert.Equal("Reeve looks after it", roles.GetProperty("worktrees").GetProperty("kept").GetString()); // the page tells its worktrees apart by it
 		Assert.Equal("The Steward merges pull requests", roles.GetProperty("pullRequests").GetProperty("note").GetString());
 
 		// No host is asked for pull requests, no worktree is cleaned and no branch pruned here.
