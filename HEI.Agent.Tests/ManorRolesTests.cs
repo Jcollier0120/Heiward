@@ -244,6 +244,202 @@ public sealed class ManorRolesTests : IDisposable {
 		}
 	}
 
+	// ---- The worktrees Reeve keeps for you: the user's again
+
+	const string Uncommitted = "has changes that aren't committed";
+	static readonly DateTime Touched = new(2026, 9, 27, 14, 3, 12, DateTimeKind.Utc);
+
+	/// <summary>A round as Reeve writes it with keptForYou: its entries' JSON as given, so a test can break one.</summary>
+	static string RoundKeeping(string[] lookedAfter, string keptForYou) =>
+		$"{{\"worktrees\":3,\"keptWork\":[\"C:\\\\r: kept\"],\"dryRun\":false,\"lookedAfter\":{JsonSerializer.Serialize(lookedAfter)},\"keptForYou\":{keptForYou}}}";
+
+	static string Kept(string path, string why = Uncommitted, string touched = "2026-09-27T14:03:12.000Z") =>
+		JsonSerializer.Serialize(new { path, why, touched });
+
+	const string WtPath = @"C:\r\.claude\worktrees\wt", MinePath = @"C:\r\.claude\worktrees\mine";
+
+	[Fact]
+	public void KeptForYou_IsRead_ByRealPathIgnoringCase_AndIsntReevesToLookAfter() {
+		InstallManor();
+		Install(reeve);
+		// Reeve's paths are lookedAfter's; any case, a trailing separator, is the same folder.
+		TidyRound(RoundKeeping([WtPath, MinePath], $"[{Kept(@"C:\R\.CLAUDE\worktrees\MINE\")}]"));
+		ManorRoles roles = ManorRoles.Now();
+
+		Assert.Equal(new KeptWork(Uncommitted, Touched), roles.KeptFor(MinePath));
+		Assert.Equal(DateTimeKind.Utc, roles.KeptFor(MinePath)!.TouchedUtc.Kind);
+		Assert.False(roles.LooksAfter(MinePath)); // the user's again
+		Assert.Null(roles.KeptFor(WtPath));
+		Assert.True(roles.LooksAfter(WtPath)); // the rest of its round stays Reeve's
+		Assert.Equal(roles, ManorRoles.Now()); // two reads of one file are the same roles
+
+		// None kept: [] is every worktree its round went through, as Reeve's.
+		TidyRound(RoundKeeping([WtPath, MinePath], "[]"));
+		Assert.NotNull(ManorRoles.Now().KeptForYou);
+		Assert.True(ManorRoles.Now().LooksAfter(MinePath));
+		Assert.NotEqual(roles, ManorRoles.Now());
+	}
+
+	[Fact]
+	public void View_TagsAndTicks_EachKindOfWorktree() {
+		InstallManor();
+		Install(reeve);
+		DevReport report = Report();
+		report.Categories[0] = report.Categories[0] with {
+			Items = [
+				.. report.Categories[0].Items,
+				Worktree("mine") with { Suggested = false, Blocked = "Uncommitted changes", HoldsWork = true },
+				Worktree("busy") with { Suggested = false, Blocked = "A Claude Code session works in it" },
+				Worktree("own"),
+			],
+		};
+		TidyRound(RoundKeeping([WtPath, MinePath, @"C:\r\.claude\worktrees\busy"],
+			$"[{Kept(MinePath)}, {Kept(@"C:\r\.claude\worktrees\busy", "a git merge is under way in it")}]"));
+		List<DevItem> items = ManorRoles.Now().View(report).Categories[0].Items;
+		DevItem Of(string id) => items.Single(i => i.Id == id);
+
+		// Reeve's: tagged, no tick, never cleaned.
+		Assert.False(Of("wt").Suggested);
+		Assert.Equal(ManorRoles.WorktreeKept, Of("wt").Blocked);
+		Assert.Null(Of("wt").KeptForYou);
+		// Kept for you: its reason and when it was touched, no tag of Reeve's, never ticked for you, but yours to tick.
+		Assert.False(Of("mine").Suggested);
+		Assert.Null(Of("mine").Blocked);
+		Assert.Equal(Uncommitted, Of("mine").KeptForYou);
+		Assert.Equal(Touched, Of("mine").KeptTouchedUtc);
+		Assert.Equal(40 << 20, Of("mine").Bytes); // still measured
+		// Kept for you, but in use: Reeve's reason beside it, and still no tick until it's let go.
+		Assert.Equal("A Claude Code session works in it", Of("busy").Blocked);
+		Assert.Equal("a git merge is under way in it", Of("busy").KeptForYou);
+		// Not in its round: Heiward's, never ticked for you.
+		Assert.False(Of("own").Suggested);
+		Assert.Null(Of("own").Blocked);
+		Assert.Null(Of("own").KeptForYou);
+		// What a removal left: disk, Heiward's as ever.
+		Assert.True(Of("left").Suggested);
+		Assert.Null(Of("left").Blocked);
+	}
+
+	[Fact]
+	public void KeptForYou_MissingOrBroken_LeavesThemReevesAsBefore() {
+		InstallManor();
+		Install(reeve);
+		void AsBefore() {
+			DevItem mine = Worktrees(ManorRoles.Now().View(ReportWithMine())).Mine;
+			Assert.Equal(ManorRoles.WorktreeKept, mine.Blocked);
+			Assert.Null(mine.KeptForYou);
+		}
+
+		// An older Reeve: lookedAfter without keptForYou. What its round went through stays Reeve's.
+		TidyRound(Round(WtPath, MinePath));
+		Assert.Null(ManorRoles.Now().KeptForYou);
+		Assert.NotNull(ManorRoles.Now().LookedAfter);
+		AsBefore();
+
+		// Anything in it that isn't what Reeve writes: nothing the file says is believed, lookedAfter included.
+		foreach (string kept in new[] {
+			"\"" + MinePath.Replace(@"\", @"\\") + "\"", "null", "{}", "[1]", "[null]",
+			$"[{Kept(@"relative\mine")}]", $"[{Kept(MinePath, why: "  ")}]", $"[{Kept(MinePath, touched: "lately")}]",
+			$"[{JsonSerializer.Serialize(new { path = MinePath, why = Uncommitted })}]",
+			$"[{JsonSerializer.Serialize(new { path = MinePath, why = 5, touched = "2026-09-27T14:03:12.000Z" })}]",
+			$"[{Kept(MinePath)}, {Kept("")}]",
+		}) {
+			TidyRound(RoundKeeping([WtPath], kept));
+			Assert.Null(ManorRoles.Now().KeptForYou);
+			Assert.Null(ManorRoles.Now().LookedAfter);
+			AsBefore();
+		}
+		// Cut short as it was written.
+		TidyRound(RoundKeeping([WtPath, MinePath], $"[{Kept(MinePath)}]")[..^3]);
+		Assert.Null(ManorRoles.Now().KeptForYou);
+		AsBefore();
+	}
+
+	[Fact]
+	public void AutomaticCleanup_NeverTakesAWorktreeReeveKeepsForYou() {
+		InstallManor();
+		Install(reeve);
+		TidyRound(RoundKeeping([WtPath], $"[{Kept(WtPath)}]"));
+		var (cleaned, pruned) = RunAutomaticCleanup();
+		Assert.Equal(new[] { "left", "tmp" }, cleaned.Order());
+		Assert.Empty(pruned);
+
+		// It says why, where automatic cleanup says why it waits.
+		var cfg = new AgentConfig { DeveloperMode = "on", AutoClean = new AutoCleanConfig { Developer = true } };
+		AutoPlan plan = AutoCleaner.Plan(cfg, null, ManorRoles.Now().View(Report()), new Dictionary<string, Decision>(), new AutoCleanState(), DateTime.UtcNow);
+		Assert.Equal("It holds work Reeve keeps for you: only you remove it", plan.DevItems["wt"].Reason);
+		Assert.Null(plan.DevItems["wt"].DueUtc);
+	}
+
+	static string G(string dir, params string[] args) {
+		var psi = new System.Diagnostics.ProcessStartInfo(Git.Exe!) {
+			UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, WorkingDirectory = dir,
+		};
+		foreach (string a in new[] { "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false" }.Concat(args))
+			psi.ArgumentList.Add(a);
+		using var p = System.Diagnostics.Process.Start(psi)!;
+		Task<string> error = p.StandardError.ReadToEndAsync();
+		string output = p.StandardOutput.ReadToEnd();
+		p.WaitForExit();
+		Assert.True(p.ExitCode == 0, $"git {string.Join(' ', args)}: {output}{error.Result}");
+		return output;
+	}
+
+	[Fact]
+	public void TheActions_RemoveAWorktreeReeveKeepsForYou_OnlyByHand_WorkToTheRecycleBin() {
+		if (Git.Exe == null) return; // needs git
+		string repo = Path.Combine(dir, "repo");
+		Directory.CreateDirectory(repo);
+		G(repo, "init");
+		File.WriteAllText(Path.Combine(repo, ".gitignore"), "node_modules/\n");
+		File.WriteAllText(Path.Combine(repo, "a.txt"), "one");
+		G(repo, "add", ".");
+		G(repo, "commit", "-m", "one");
+		string wt = Path.Combine(dir, "wt");
+		G(repo, "worktree", "add", "-b", "kept", wt);
+		File.WriteAllText(Path.Combine(wt, "a.txt"), "two, not committed");
+		Directory.CreateDirectory(Path.Combine(wt, "node_modules", "pkg"));
+		File.WriteAllText(Path.Combine(wt, "node_modules", "pkg", "x.js"), new string('x', 4096));
+		string record = Path.Combine(repo, ".git", "worktrees", "wt");
+		Assert.True(Directory.Exists(record));
+		var item = new DevItem("w", DevScanner.Worktrees, "wt", wt, [wt], 1, null, false, null, "", repo, HoldsWork: true);
+		InstallManor();
+		Install(reeve);
+		TidyRound(RoundKeeping([RealPath.Of(wt)], $"[{Kept(RealPath.Of(wt))}]"));
+
+		// Never automatically: nothing is touched.
+		CleanResult auto = new CleanupActions(new AgentConfig(), automatic: true).Clean(item);
+		Assert.Equal("Reeve keeps it: has changes that aren't committed: only you remove it, never automatic cleanup", auto.Error);
+		Assert.Equal(0, auto.FreedBytes);
+		Assert.Equal("two, not committed", File.ReadAllText(Path.Combine(wt, "a.txt")));
+
+		// By hand: build output for good, the folder and git's record of it to the Recycle Bin, the branch kept.
+		CleanResult byHand = new CleanupActions(new AgentConfig(), automatic: false).Clean(item);
+		Assert.Null(byHand.Error);
+		Assert.Equal(0, byHand.LeftInUse);
+		Assert.True(byHand.FreedBytes >= 4096);
+		Assert.False(Directory.Exists(wt));
+		Assert.False(Directory.Exists(record));
+		Assert.Contains("kept", G(repo, "branch", "--list", "kept"));
+		Assert.Single(G(repo, "worktree", "list").Split('\n', StringSplitOptions.RemoveEmptyEntries)); // the clone's own, alone
+	}
+
+	[Fact]
+	public void TheActions_LeaveAWorktreeReeveNoLongerKeepsForYou_ToReeve() {
+		string repo = Path.Combine(dir, "repo"), wt = Path.Combine(dir, "wt");
+		Directory.CreateDirectory(repo);
+		Directory.CreateDirectory(wt);
+		File.WriteAllText(Path.Combine(wt, "file.txt"), "x");
+		var item = new DevItem("w", DevScanner.Worktrees, "wt", wt, [wt], 1, null, false, null, "", repo, HoldsWork: true);
+		InstallManor();
+		Install(reeve);
+		// The page listed it as kept for you; Reeve's next round looks after it again (the work was committed, say).
+		TidyRound(RoundKeeping([wt], "[]"));
+		Assert.Equal("Reeve's worktree-tidy job removes merged worktrees and branches: Heiward leaves worktrees to it",
+			new CleanupActions(new AgentConfig(), automatic: false).Clean(item).Error);
+		Assert.True(File.Exists(Path.Combine(wt, "file.txt")));
+	}
+
 	[Fact]
 	public void TheActions_CleanAWorktreeReevesRoundDidntGoThrough() {
 		string repo = Path.Combine(dir, "repo"), wt = Path.Combine(dir, "wt");
@@ -477,5 +673,55 @@ public sealed class ManorRolesTests : IDisposable {
 		Assert.Equal("the Steward", summary.GetProperty("roles").GetProperty("pullRequests").GetProperty("name").GetString());
 		Assert.Equal((40 << 20) + (5 << 20), summary.GetProperty("suggestedBytes").GetInt64());
 		Assert.Equal((40 << 20) * 2 + (5 << 20), summary.GetProperty("totalBytes").GetInt64()); // every worktree still measured
+	}
+
+	[Fact]
+	public async Task ThePage_AtAManor_GivesAWorktreeReeveKeepsForYouBack_WithItsReason() {
+		Report().Save();
+		InstallAll();
+		TidyRound(RoundKeeping([WtPath], $"[{Kept(WtPath)}]"));
+		await using Page page = await Page.StartAsync();
+
+		var (_, dev) = await page.GetAsync("/api/dev");
+		JsonElement wt = dev.GetProperty("report").GetProperty("categories")[0].GetProperty("items")[0];
+		Assert.False(wt.GetProperty("suggested").GetBoolean());
+		Assert.Equal(JsonValueKind.Null, wt.GetProperty("blocked").ValueKind); // yours to tick
+		Assert.Equal("has changes that aren't committed", wt.GetProperty("keptForYou").GetString());
+		Assert.Equal(Touched, wt.GetProperty("keptTouchedUtc").GetDateTime().ToUniversalTime());
+		Assert.Equal("Reeve keeps it", dev.GetProperty("roles").GetProperty("worktrees").GetProperty("keptForYou").GetString()); // its tag, before the reason
+
+		// Not ticked for you: only the leftover and the temp files are.
+		var (_, state) = await page.GetAsync("/api/state");
+		Assert.Equal((40 << 20) + (5 << 20), state.GetProperty("dev").GetProperty("suggestedBytes").GetInt64());
+
+		// Cleaning it from the page goes past the page's guard, to the removal itself (this one is no worktree git knows).
+		var (cleanStatus, clean) = await page.PostAsync("/api/dev/items/wt/clean");
+		Assert.Equal(HttpStatusCode.OK, cleanStatus);
+		Assert.Equal("Not a worktree git knows any more; check again", clean.GetProperty("error").GetString());
+	}
+
+	static string Asset(string name) {
+		using Stream s = typeof(ReviewServer).Assembly.GetManifestResourceStream("wwwroot/" + name)!;
+		using var reader = new StreamReader(s);
+		return reader.ReadToEnd();
+	}
+
+	[Fact]
+	public void ThePagesWords_ForAWorktreeReeveKeepsForYou() {
+		string script = Asset("app.js");
+		// Its tag: "Reeve keeps it: has changes that aren't committed", and beside it how long it's gone untouched.
+		Assert.Contains("const keptTag = (i) => ((reeveRole() || {}).keptForYou || 'Reeve keeps it') + ': ' + i.keptForYou;", script);
+		Assert.Contains("name.append(el('span', 'tag kept', keptTag(i)))", script);
+		Assert.Contains("return 'Untouched for ' + (days === 1 ? 'a day' : days < 60 ? days + ' days' : Math.round(days / 30) + ' months');", script);
+		// Its section says what it is, and that it's never ticked for you.
+		Assert.Contains("'Those tagged \"' + reeve.keptForYou + '\" hold work ' + reeve.name + '\\'s tidy won\\'t throw away, so ' +", script);
+		Assert.Contains("'they\\'re yours again. None is ticked for you; removing one asks first and says what goes with it.'", script);
+		Assert.Contains("const many = open.filter((i) => !i.keptForYou);", script); // Select all leaves it out
+		// Removing it asks first, and says what goes with it and where it can be got back.
+		Assert.Contains("') with the work in ' + (kept.length === 1 ? 'it' : 'them') + '?'), ...keptLoss(kept)];", script);
+		Assert.Contains("one ? reeve + ' keeps ' + kept[0].name + ' for you: ' + kept[0].keptForYou + '.'", script);
+		Assert.Contains("' uncommitted changes, the files git ignores and any merge or rebase under way; only build output is deleted for good. ' +", script);
+		Assert.Contains("(one ? 'Its branch and commits stay' : 'Their branches and commits stay') + ' in the repository.',", script);
+		Assert.Contains(".tag.kept {", Asset("app.css"));
 	}
 }

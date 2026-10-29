@@ -833,6 +833,8 @@ button.dev-item.game-install { width: 100%; text-align: left; font: inherit; col
 .blocked-group summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 4px 0; }
 .blocked-group .dev-list { margin-top: 6px; }
 .tag.suggested { border-color: transparent; background: var(--ok-bg); color: var(--ok); font-weight: 600; }
+/* A worktree Reeve keeps for you: its reason can be long, so it wraps. */
+.tag.kept { border-color: transparent; background: var(--warn-bg); color: var(--warn); white-space: normal; }
 
 .sel-bar {
   position: sticky; bottom: 0; z-index: 3; display: none; align-items: center; gap: 10px; max-width: 980px;

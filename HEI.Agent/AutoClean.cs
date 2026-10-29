@@ -146,6 +146,8 @@ namespace HEI.Agent {
 		internal const int WholeFolderSets = 20;
 		/// <summary>Why a set, developer item or repository on a drive scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) is left to the user.</summary>
 		internal const string OnRequestReason = "It's on a drive scanned only when you ask, so it waits for you";
+		/// <summary>Why a worktree Reeve keeps for the user (<see cref="DevItem.KeptForYou"/>) is never cleaned automatically.</summary>
+		internal const string KeptForYouReason = "It holds work Reeve keeps for you: only you remove it";
 		/// <summary>A set automatic cleanup couldn't move is tried again after this.</summary>
 		static readonly TimeSpan RetryAfter = TimeSpan.FromDays(1);
 		/// <summary>The drives a run deleted from are measured again at the first run at least this long after (<see cref="LookAgain"/>).</summary>
@@ -274,6 +276,7 @@ namespace HEI.Agent {
 							_ => "Emulators hold apps and data: always your call",
 						} :
 						!auto.DeveloperKinds.Contains(kind) ? $"Automatic cleanup is off for {Label(kind)}" :
+						i.KeptForYou != null ? KeptForYouReason :
 						i.Blocked ?? (i.Suggested ? null : kind is BuildOutputs or Worktrees ? $"Used in the last {cfg.StaleProjectDays} days" : "Not ticked for you");
 					// Kept as last measured, or on such a drive the check was asked to read: cleaning would wake it.
 					if (reason == null && DevScanner.OnRequestDrive(i, cfg) != null) reason = OnRequestReason;
@@ -549,7 +552,7 @@ namespace HEI.Agent {
 			CleanResult result;
 			using (CleanLock.Acquire()) {
 				var before = DriveSpace.Of(item.Location);
-				result = DevCleaner.Clean(item, cfg);
+				result = DevCleaner.Clean(item, cfg, byHand: !automatic);
 				if (before is { } b && DriveSpace.Free(b.Drive) is { } after) result = result with { Drive = new DriveFree(b.Drive, b.Free, after) };
 				// What went, when the item says ("Temp folder (1,204 items untouched for a day)"): no file's name.
 				if (result.FreedBytes > 0)
