@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.115
+
+**It carries the Steward's kit 2.145.0: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.145.0: Every block of output has a copy button at its top-right: `Output` carries one, and `CopyButton` puts one in a page's own `<pre>`. One click copies the whole block, the lines scrolled out of sight too.
+
+### Before you update
+
+- A page with its own `<pre>` of output (a log, a command's lines, a report to be sent) puts `<CopyButton text={…} label="…" />` first in it, or uses `Output`. A page that copies the kit's CSS by hand (Manor's app.css) copies the `button.ui-copy` rules too.
+
 ## 1.9.114
 
 **It carries the Steward's kit 2.144.2: the parts every agent of the manor shares.**
