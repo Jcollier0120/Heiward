@@ -144,10 +144,17 @@ namespace HEI.Agent {
 		static readonly object gate = new();
 		static (DateTime Written, long Length, Dictionary<string, string> Files)? last;
 
-		/// <summary>The file recorded for game <paramref name="id"/>, when there is one, it's a picture the page shows, and it's still there.</summary>
-		public static (string Path, string ContentType)? Of(string id) {
-			string? file = Recorded().GetValueOrDefault(id);
-			return file != null && GameCovers.ContentType(file) is { } type && File.Exists(file) ? (file, type) : null;
+		/// <summary>
+		/// The file recorded for game <paramref name="id"/>, opened to send, when there is one, it's a picture the page shows, and it's
+		/// still there. Opened so its launcher can still replace or remove it while the page sends it: Heiward never holds it.
+		/// </summary>
+		public static (FileStream File, string ContentType)? Open(string id) {
+			if (Recorded().GetValueOrDefault(id) is not { } file || GameCovers.ContentType(file) is not { } type) return null;
+			try {
+				return (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 14,
+					FileOptions.Asynchronous | FileOptions.SequentialScan), type);
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return null; } // gone, or going, since the check
 		}
 
 		static Dictionary<string, string> Recorded() {

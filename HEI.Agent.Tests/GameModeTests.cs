@@ -325,18 +325,23 @@ public sealed class GameModeTests : IDisposable {
 			using (HttpResponseMessage up = await page.Http.GetAsync("/api/games/cover/" + path))
 				Assert.NotEqual("image/jpeg", up.Content.Headers.ContentType?.MediaType);
 
-		// A new check: its covers at once.
+		// A new check: its covers at once. This one is big enough that the page is still sending it while its launcher removes it,
+		// which the launcher can do: Heiward never holds a launcher's picture.
+		byte[] big = new byte[16 << 20];
+		big[0] = 0x89;
+		File.WriteAllBytes(png, big);
 		Check(Game(A, png));
-		using (HttpResponseMessage again = await page.Http.GetAsync($"/api/games/cover/{A}")) {
+		using (HttpResponseMessage again = await page.Http.GetAsync($"/api/games/cover/{A}", HttpCompletionOption.ResponseHeadersRead)) {
 			Assert.Equal(HttpStatusCode.OK, again.StatusCode);
 			Assert.Equal("image/png", again.Content.Headers.ContentType?.MediaType);
+			File.Delete(png);
 		}
 		// The file gone since the check.
-		File.Delete(png);
 		Assert.Equal(HttpStatusCode.NotFound, await Status(A));
 
-		// The page's other rules: its own Host only, and nothing of the Games area with game mode off.
-		File.WriteAllBytes(png, [0x89, 0x50, 0x4E, 0x47]);
+		// The page's other rules, for a cover that's there: its own Host only, and nothing of the Games area with game mode off.
+		Check(Game(A, jpg));
+		Assert.Equal(HttpStatusCode.OK, await Status(A));
 		using (var foreign = new HttpRequestMessage(HttpMethod.Get, $"/api/games/cover/{A}")) {
 			foreign.Headers.Host = "example.com";
 			using HttpResponseMessage refused = await page.Http.SendAsync(foreign);
