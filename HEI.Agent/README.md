@@ -237,7 +237,13 @@ Only Steam records when a game was last played.
 5. **The same game installed twice,** in two launchers or two libraries.
 6. **Games not played in months** (90 days), biggest first.
 
-The last two are only pointed to: Heiward doesn't move or uninstall games. Each game's page says how its launcher does it (Steam: right-click the game › Properties › Installed Files › **Move install folder**; the Xbox app: **Manage › Files › Move**).
+The last two are only pointed to: Heiward never moves or deletes a game itself. Each game's page says how its launcher does it (Steam: right-click the game › Properties › Installed Files › **Move install folder**; the Xbox app: **Manage › Files › Move**).
+
+**Uninstall.** Each game's page has an **Uninstall** button beside its cover. It opens the uninstaller of the launcher the game came from, which asks before it removes anything; Heiward itself deletes nothing, and the next games check shows whether the game is gone. The page sends only the game's id: Heiward looks the game up in its last check and reads Windows' uninstall entries again (HKLM's 64-bit and 32-bit views, and HKCU), never running anything the request names.
+- **Steam:** with the game's entry `Steam App <app id>` there, it opens `steam://uninstall/<app id>`, and Steam asks in its own window.
+- **GOG GALAXY, the EA app, Ubisoft Connect, Battle.net:** the game's own entry (`<id>_is1`, `Uplay Install <id>`, the Blizzard entry it was found by, else the entry whose `InstallLocation` is the game's folder), whose `UninstallString` runs exactly as registered, never its `QuietUninstallString` and never with a flag added. One that would run without asking (`/S`, `/SILENT`, `/quiet`, `/qn`…), or that doesn't name its program by its full path, isn't used. It opens only from Heiward's own dialog, which shows the game, its size, launcher and folder, with **Cancel** first.
+- **Xbox and the Microsoft Store:** Windows' Installed apps (`ms-settings:appsfeatures`), to find the game there.
+- **Epic Games**, which writes no uninstall entry and lets no other app uninstall its games, and any game with no entry found: the button is greyed, and its tooltip says where to uninstall it instead.
 
 **Safety.** Nothing is removed until you tick it, and what you remove goes to the Recycle Bin, never deleted outright: what the Recycle Bin can't take (a network or removable drive, one set to delete at once, a folder too big for its bin) stays, and the page says why. Just before removing anything, Heiward reads the launchers' records again and checks what's running:
 - never an installed game's own files, or a folder that holds one;

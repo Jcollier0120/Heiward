@@ -58,9 +58,12 @@ namespace HEI.Agent {
 	/// the sign-in task, each scheduled scan and each install start it again (<see cref="EnsureRunningInBackground"/>).
 	/// </summary>
 	static partial class ReviewServer {
-		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct) {
+		/// <param name="uninstaller">What a game's Uninstall reads and opens with: Windows' registry and shell, unless a test gives
+		/// a fake registry and a recorder (no test ever starts an uninstaller).</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct, GameUninstaller? uninstaller = null) {
 			int port = cfg.Port;
 			var actions = new CleanupActions(cfg, automatic: false);
+			uninstaller ??= GameUninstaller.Windows();
 			if (await IsUpAsync(port)) {
 				Console.WriteLine($"The review page is already running: {PageUrl(port)}");
 				if (openBrowser) OpenBrowser(port);
@@ -374,9 +377,20 @@ namespace HEI.Agent {
 			gamesApi.MapPost("/items/{id}/remove", (string id) => {
 				GameItem? item = GameReport.Load()?.Items.FirstOrDefault(i => i.Id == id);
 				if (item == null) return Results.NotFound(new { error = "That item is no longer in the list; check again." });
-				if (item.Info) return Results.Conflict(new { error = "Heiward doesn't move or uninstall games. " + item.Removing });
+				if (item.Info) return Results.Conflict(new { error = "Heiward never moves or deletes a game itself. " + item.Removing });
 				if (item.Blocked != null) return Results.Conflict(new { error = item.Blocked });
 				return Guarded(() => Results.Json(actions.RemoveGame(item), AgentConfig.Json));
+			});
+			// A game's Uninstall (GameUninstall): the page sends only the game's id. The game is the last check's, and how its
+			// launcher uninstalls it is read again here, never taken from the request. Heiward opens Steam's question, the game's own
+			// uninstaller (after the page's own dialog) or Windows' Installed apps, each of which asks; it deletes nothing itself.
+			gamesApi.MapPost("/{id}/uninstall", (string id) => {
+				GameInstall? game = GameReport.Load()?.Games.FirstOrDefault(g => g.Id == id);
+				if (game == null) return Results.NotFound(new { error = "That game isn't in the last check; check again." });
+				GameUninstaller.Answer answer = uninstaller.Open(game);
+				if (!answer.Opened) return Results.Conflict(new { error = answer.Message });
+				AgentPaths.AppendLog($"{game.Name}: opened {(answer.Plan!.Way == GameUninstall.Entry ? "its uninstaller" : answer.Plan.Target)} from its page ({GameLaunchers.Name(game.Launcher)})");
+				return Results.Json(new { message = answer.Message, way = answer.Plan.Way });
 			});
 			// Automatic cleanup: its settings (saved to settings.json), and "leave it" / "allow" per thing.
 			app.MapPost("/api/auto/settings", (AutoCleanConfig wanted) => Guarded(() => {
