@@ -29,8 +29,10 @@ namespace HEI.Agent {
 	/// <param name="Library">The library folder it's in (a Steam library, an Epic Games folder), when the launcher has one.</param>
 	/// <param name="LastPlayedUtc">When it was last played; null when the launcher doesn't record it (only Steam does).</param>
 	/// <param name="UpdatedUtc">When the launcher last installed or updated it, when it records it.</param>
+	/// <param name="Cover">Its cover: the full path of the picture its launcher keeps on this PC (<see cref="GameCovers"/>); null when there's none.</param>
+	/// <param name="CoverShape">The cover's shape: "portrait" (2:3), "wide" (Steam's header banner) or "square" (an Xbox game's logo); null without one.</param>
 	sealed record GameInstall(string Id, string Launcher, string AppId, string Name, string Folder, string? Library, long Bytes,
-		DateTime? LastPlayedUtc, DateTime? UpdatedUtc) {
+		DateTime? LastPlayedUtc, DateTime? UpdatedUtc, string? Cover = null, string? CoverShape = null) {
 		/// <summary>How to move it to another drive or free its space, with its launcher (for the page's game page).</summary>
 		public string Advice => GameLaunchers.MoveAdvice(Launcher);
 	}
@@ -629,6 +631,8 @@ namespace HEI.Agent {
 			// Sizes the launcher doesn't record are measured.
 			var games = found.Games.Select(g => g.Bytes > 0 || ct.IsCancellationRequested ? g : g with { Bytes = DevScanner.Measure(g.Folder).Bytes })
 				.OrderByDescending(g => g.Bytes).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
+			// Each game's cover, from the picture its launcher keeps on this PC: nothing is downloaded.
+			games = GameCovers.Add(games, found.SteamRoot);
 			var report = new GameReport { ScannedAtUtc = now, Build = AppBuild.Current, Games = games, Launchers = found.Launchers };
 
 			report.Categories.Add(new GameCategory(Leftovers, "Leftovers of uninstalled games",
@@ -931,12 +935,18 @@ namespace HEI.Agent {
 				// Never played: counted from when Steam last installed or updated it.
 				DateTime? since = g.LastPlayedUtc ?? (g.Launcher == GameLaunchers.Steam ? g.UpdatedUtc : null);
 				if (since is not { } at || at >= before) continue;
-				int months = Math.Max(3, (int)((now - at).TotalDays / 30));
+				int months = Math.Max(3, MonthsAgo(at, now));
 				yield return new GameItem(IdOf("idle", g.Id), "idle", g.Name, g.Folder, [g.Folder], g.Bytes, g.LastPlayedUtc, false, null,
 					g.LastPlayedUtc != null ? $"Last played {months} months ago, in {GameLaunchers.Name(g.Launcher)}" : $"Not played since it was installed or updated {months} months ago",
 					GameLaunchers.MoveAdvice(g.Launcher), g.Launcher, g.Id, g.AppId, Info: true);
 			}
 		}
+
+		/// <summary>
+		/// Whole 30-day months from <paramref name="at"/> to <paramref name="now"/>, rounded down: "played 12 months ago" until 13 have
+		/// gone by. The page's playedText (app.js) counts the same way, so the two never say different months.
+		/// </summary>
+		internal static int MonthsAgo(DateTime at, DateTime now) => (int)Math.Floor((now - at).TotalDays / 30);
 
 		static DateTime? Stamp(DateTime newest) => newest == DateTime.MinValue ? null : newest;
 

@@ -358,6 +358,13 @@ namespace HEI.Agent {
 			var gamesApi = app.MapGroup("/api/games").AddEndpointFilter(async (context, next) =>
 				GameMode.Now(cfg) is { On: false } off ? Results.Conflict(new { error = off.PageOffText }) : await next(context));
 			gamesApi.MapGet("", () => Results.Json(new { report = GameReport.Load() ?? new GameReport() }, AgentConfig.Json));
+			// A game's cover (GameCovers): only the picture the last check recorded for that game, sent from where its launcher keeps
+			// it, never a path from the request. 404 when it has none, or the file has gone since. Streamed, and closed once sent.
+			gamesApi.MapGet("/cover/{id}", (string id, HttpContext ctx) => {
+				if (CoverFiles.Open(id) is not { } cover) return Results.NotFound();
+				ctx.Response.Headers.CacheControl = "private, max-age=86400";
+				return Results.Stream(cover.File, cover.ContentType);
+			});
 			gamesApi.MapPost("/scan", () => {
 				if (GamesBusy()) return Results.Conflict(new { error = "A games check is already running." });
 				GameLaunch.Started(StartDetached("games", "--scan"), DateTime.UtcNow);

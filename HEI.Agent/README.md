@@ -220,12 +220,14 @@ A manor without Reeve, or without the Steward, leaves that part with Heiward, so
 Game mode is for gamers' very large files. It's off until you turn it on with the **Game mode** switch in the review page's Settings (or `"gameMode": "on"`). Off, nothing of it is checked or shown. On, once a day after a scheduled scan (or **Check now**, or `hei games --scan`), Heiward looks at your games and lists them in the **Games** area of the review page, by game, by drive and by kind, each with its size, what it is, and what removing it means.
 
 **What it reads.** Only the launchers' own records, never a guess from a folder's name:
-- **Steam:** its library list (`libraryfolders.vdf`) and each game's app manifest, with the size and when it was last played.
+- **Steam:** its library list (`libraryfolders.vdf`) and each game's app manifest, with the size and when it was last played; and for each game's cover, your own custom art (`userdata\<account>\config\grid\<app id>p.png` or `.jpg`), else the library art Steam keeps in `appcache\librarycache` (`library_600x900.jpg`, else the wide `header.jpg`).
 - **Epic Games:** the launcher's manifests in `%ProgramData%\Epic\EpicGamesLauncher\Data\Manifests`.
 - **GOG GALAXY, the EA app, Ubisoft Connect, Battle.net:** what each writes to the registry (an EA game also has the EA app's `__Installer` folder; Blizzard's games are their uninstall entries).
-- **Xbox and the Microsoft Store:** each drive's `XboxGames` folder, a game per folder with its `MicrosoftGame.config`.
+- **Xbox and the Microsoft Store:** each drive's `XboxGames` folder, a game per folder with its `MicrosoftGame.config`, and the square logo it names in its `Content` folder for the game's cover.
 
 Only Steam records when a game was last played.
+
+**Covers.** The Overview shows the biggest games as a grid of covers (**Show all** for every game), the Games list a small one beside each game, and a game's page its cover beside its name. They're the pictures the launchers already keep on your PC: Heiward downloads none, copies none and makes no thumbnails, and the page asks for a game's by its id (`/api/games/cover/<id>`), served only from where the last check found it. Epic Games, GOG GALAXY, the EA app, Ubisoft Connect and Battle.net keep no plain picture per game, so their games show a tile with the game's name and launcher instead.
 
 **What it lists:**
 1. **Leftovers of uninstalled games.** Folders in a Steam library's `common` folder that no manifest claims, folders in the Epic Games folder with Epic's `.egstore` record and no manifest, and Steam Workshop downloads of games no longer installed. A folder with a saved game in it is never offered. In a Steam library where Steam lists no game at all (it may have lost track of it), leftovers are never ticked.
