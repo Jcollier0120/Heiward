@@ -68,6 +68,11 @@ public sealed class GlanceEndpointTests : IDisposable {
 			Assert.Equal(["glance"], light.RootElement.EnumerateObject().Select(p => p.Name));
 			JsonElement glance = light.RootElement.GetProperty("glance");
 			Assert.Equal(100, glance.GetProperty("reclaim").GetProperty("duplicates").GetInt64());
+			// Each drive counted, one by one, for Manor's disk space to list: as many as the glance counts.
+			JsonElement byDrive = glance.GetProperty("byDrive");
+			Assert.Equal(glance.GetProperty("drives").GetInt32(), byDrive.GetArrayLength());
+			foreach (JsonElement d in byDrive.EnumerateArray())
+				Assert.Equal(["root", "label", "type", "totalBytes", "freeBytes"], d.EnumerateObject().Select(p => p.Name));
 
 			// The same glance as the page's: its fields, and what can be reclaimed (free space may move between the two).
 			using var state = JsonDocument.Parse(await http.GetStringAsync("/api/state"));

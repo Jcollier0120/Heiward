@@ -26,6 +26,12 @@ namespace HEI.Agent {
 	/// <summary>A drive that's nearly full: under a tenth of it free, as its card's red bar says.</summary>
 	sealed record GlanceLow(string Root, string Name, long FreeBytes, double UsedShare);
 
+	/// <summary>One of the drives counted, for Manor's disk space to list them one by one.</summary>
+	/// <param name="Root">"C:\".</param>
+	/// <param name="Label">Its own name in Windows ("Games"), or "" when it has none.</param>
+	/// <param name="Type">"fixed", or "removable" for a USB drive.</param>
+	sealed record GlanceDrive(string Root, string Label, string Type, long TotalBytes, long FreeBytes);
+
 	/// <summary>What can be freed now: the duplicates to review, the developer files ticked, the Recycle Bin, the game leftovers ticked.</summary>
 	sealed record GlanceReclaim(long Duplicates, long Developer, long RecycleBin, long Games = 0) {
 		public long Total => Duplicates + Developer + RecycleBin + Games;
@@ -36,9 +42,10 @@ namespace HEI.Agent {
 	/// <param name="Kinds">The used space by kind, biggest first, ending with everything else Heiward doesn't sort.</param>
 	/// <param name="Types">The photos and videos by file type, biggest first; the rest are in <paramref name="OtherTypes"/>.</param>
 	/// <param name="Typed">Whether the last scan sorted its files by type (an index from before didn't).</param>
+	/// <param name="ByDrive">Each of the drives counted, in Windows' order, with its size and free space: they add up to the totals.</param>
 	sealed record DiskGlance(int Drives, int NetworkDrives, long TotalBytes, long UsedBytes, long FreeBytes,
 		List<GlanceKind> Kinds, List<GlanceType> Types, GlanceType? OtherTypes, bool Typed,
-		List<GlanceLow> Low, GlanceReclaim Reclaim, DateTime? ScannedAtUtc) {
+		List<GlanceLow> Low, GlanceReclaim Reclaim, DateTime? ScannedAtUtc, List<GlanceDrive> ByDrive) {
 
 		/// <summary>The file types listed by name; the rest are summed.</summary>
 		public const int TypesShown = 6;
@@ -94,8 +101,10 @@ namespace HEI.Agent {
 				.Select(d => new GlanceLow(d.Root, d.Name, d.FreeBytes, Math.Round(1 - (double)d.FreeBytes / d.TotalBytes, 3)))
 				.OrderByDescending(d => d.UsedShare).ToList();
 
+			var byDrive = local.Select(d => new GlanceDrive(d.Root, d.Label, d.Type, d.TotalBytes, d.FreeBytes)).ToList();
+
 			return new DiskGlance(local.Count, drives.Count(d => d.Type == "network"), total, used, free, kinds, shown, others, typed,
-				low, new GlanceReclaim(duplicatesBytes, developerTicked, recycleBinBytes, gamesTicked), index?.ScannedAtUtc);
+				low, new GlanceReclaim(duplicatesBytes, developerTicked, recycleBinBytes, gamesTicked), index?.ScannedAtUtc, byDrive);
 		}
 
 		/// <summary>"photo" or "video", by Heiward's own lists of the types it scans; anything else added in the settings, "other".</summary>

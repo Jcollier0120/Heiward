@@ -19,8 +19,9 @@ namespace HEI.Agent {
 	sealed record DupStats(int Copies, int Lookalikes, long Reclaim);
 
 	/// <param name="OnRequest">Scanned only when asked, from its page (<see cref="AgentConfig.OnRequestDrives"/>).</param>
+	/// <param name="Label">The drive's own name in Windows ("Games"), or "" when it has none: <paramref name="Name"/> says "Local Disk" then.</param>
 	sealed record DriveCard(string Root, string Name, string Type, long TotalBytes, long FreeBytes, bool Scanned,
-		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false);
+		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false, string Label = "");
 
 	sealed record Hotspot(string Folder, int Copies, long Reclaim);
 
@@ -57,12 +58,13 @@ namespace HEI.Agent {
 				catch (UnauthorizedAccessException) { }
 				string root = drive.RootDirectory.FullName;
 				string letter = root.TrimEnd(Path.DirectorySeparatorChar);
+				string own = (label ?? "").Trim();
 				if (string.IsNullOrWhiteSpace(label))
 					label = type switch { "removable" => "USB Drive", "network" => "Network Drive", _ => "Local Disk" };
 				bool scanned = roots.Any(r => r.Equals(root, StringComparison.OrdinalIgnoreCase));
 				DriveScan? scan = null;
 				index?.Drives.TryGetValue(root, out scan);
-				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), scanned && cfg.IsOnRequest(root)));
+				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), scanned && cfg.IsOnRequest(root), own));
 			}
 			// Extra folders that aren't a whole drive (a folder on a USB drive, a network share).
 			foreach (string root in roots.Where(r => !cards.Any(c => c.Root.Equals(r, StringComparison.OrdinalIgnoreCase)))) {
