@@ -4,7 +4,7 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.119
 
-**Brings 2 changes: The Games list no longer greys out games; Your games with their covers, in a grid.**
+**Brings 6 changes: The Games list no longer greys out games; Your games with their covers, in a grid; The Developer area no longer greys out repositories; Uninstall a game from its page, with its launcher's own uninstaller; Castellan's home page can list each of your drives; Heiward's home page uses the room a wide screen gives, rather than one long column.**
 
 ### What's new
 
@@ -12,16 +12,29 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - The covers are the pictures your launchers already keep on your PC: Steam's library art, or your own custom art in Steam, and an Xbox game's logo. Heiward downloads nothing for them.
 - A game without a cover shows a tile with its name and launcher instead.
 - The Games list has a small cover beside each game, and a game's own page shows its cover beside its name.
+- Each game's page has an **Uninstall** button beside its cover and name. It opens the uninstaller of the launcher the game came from, which asks before it removes anything. Heiward itself still deletes nothing: the next games check shows whether the game is gone.
+- **Steam:** Steam asks in its own window.
+- **GOG GALAXY, the EA app, Ubisoft Connect and Battle.net:** Heiward first shows the game, its size, launcher and folder, and opens the game's uninstaller only when you press **Uninstall** there. **Cancel**, or Esc, closes it with nothing opened.
+- **Xbox and Microsoft Store games:** Windows' Installed apps opens, to find the game there.
+- **Epic Games**, which doesn't let other apps uninstall its games, and any game whose uninstaller Windows doesn't list: the button is greyed, and pointing at it says where to uninstall it instead.
 
 ### What changed
 
 - Every game in the Games list shows at full strength. A game with nothing of its own to clean up used to have its name greyed, which looked as if it were turned off. Its own page still says when there's nothing of it to clean up.
 - Cleaner game pages: more space, and when you last played is said once.
 - "Played … months ago" now counts the same way everywhere, so a game's page and its list never give different months.
+- Every repository in the Developer area's list shows at full strength. One with no build outputs, merged branches or open pull requests used to have its name greyed, which looked as if it were turned off. Its own page still says when there's nothing in it to clean.
+- The Games area's advice no longer says Heiward doesn't uninstall games: it says Heiward never deletes a game itself, and that a game's page can open its launcher's uninstaller.
+- Heiward now tells Castellan each drive's name, size and free space, as well as the totals it already sent. Castellan's **Disk space** uses them to list your drives one by one, with a bar for each, under the summary of all of them together.
+- Heiward's own page is unchanged.
+- **On a 1080p screen** (and any window from 1200 px wide) the scan under way and your totals run across the top, with your drives on the left and the Developer area, the Games, where the duplicates are and the History beside them. Before, a window under 1700 px wide showed one column.
+- **On a 2K or 3K screen** the home page has three columns: your drives, then the Developer and Games areas, then where the duplicates are and the History. With developer and game mode off, where the duplicates are sits beside your drives.
+- **On a phone, or in a narrow window**, the page is one column, in the same order as before.
+- The Developer and Games cards now fill their column, as the list of folders below them does.
 
 ### Before you update
 
-- Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual. Castellan's list of drives needs this Heiward; until it has it, Castellan shows just the summary.
 
 ## 1.9.118
 
