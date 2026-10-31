@@ -2,6 +2,27 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.119
+
+**Brings 2 changes: The Games list no longer greys out games; Your games with their covers, in a grid.**
+
+### What's new
+
+- The Games area's Overview shows your biggest games as a grid of covers, like a launcher's library. **Show all** grows it to every game.
+- The covers are the pictures your launchers already keep on your PC: Steam's library art, or your own custom art in Steam, and an Xbox game's logo. Heiward downloads nothing for them.
+- A game without a cover shows a tile with its name and launcher instead.
+- The Games list has a small cover beside each game, and a game's own page shows its cover beside its name.
+
+### What changed
+
+- Every game in the Games list shows at full strength. A game with nothing of its own to clean up used to have its name greyed, which looked as if it were turned off. Its own page still says when there's nothing of it to clean up.
+- Cleaner game pages: more space, and when you last played is said once.
+- "Played … months ago" now counts the same way everywhere, so a game's page and its list never give different months.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.118
 
 **It carries the Steward's kit 2.146.3: the parts every agent of the manor shares.**
