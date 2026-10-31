@@ -80,10 +80,12 @@
   </main>
 
   <main id="home" class="view home">
-    <!-- Two columns in a wide window (app.css, .home-cols): the scan, the totals and the drives; beside them the
-         Developer area, the Games, where the duplicates are and the History. One column, in this order, otherwise. -->
-    <div class="home-cols">
-    <div class="home-col">
+    <!-- Laid out for three widths, as the Steward's kit lays out its agents' pages (its spec/LAYOUT.md; app.css,
+         .home-cols): the scan under way and the totals first, across the window. Then, from 1200 px wide (a 1080p
+         screen), the drives on the left and the rest beside them; from 2000 px (a 2K or 3K screen), three columns: the
+         drives, the Developer and Games areas, then where the duplicates are and the History. One column, in this
+         order, in a narrower window. -->
+    <div class="home-top">
     <!-- While a scan runs: which step it's on and how far (app.js, renderScanStatus). -->
     <section class="scan-status hidden" id="scan-status" role="status" aria-live="polite"></section>
 
@@ -92,7 +94,10 @@
       <div class="tile"><div class="tile-value" id="t-free">–</div><div class="muted small">you could free</div></div>
       <div class="tile"><div class="tile-value" id="t-freed">–</div><div class="muted small">freed so far</div></div>
     </section>
+    </div>
 
+    <div class="home-cols">
+    <div class="home-col">
     <section data-tour="drives">
       <h2>Devices and drives</h2>
       <div class="glance hidden" id="glance"></div>
@@ -101,6 +106,7 @@
     </div>
 
     <div class="home-col home-side">
+    <div class="home-areas">
     <section id="dev-section" class="hidden" data-tour="dev">
       <h2>Developer area</h2>
       <div id="dev-card"></div>
@@ -111,7 +117,9 @@
       <h2>Games</h2>
       <div id="games-card"></div>
     </section>
+    </div>
 
+    <div class="home-more">
     <section id="hotspots-section" data-tour="hotspots">
       <h2>Where the duplicates are</h2>
       <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
@@ -130,6 +138,7 @@
       <h2 id="manor-card-title">Castellan</h2>
       <div id="manor-card"></div>
     </section>
+    </div>
     </div>
     </div>
 
