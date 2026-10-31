@@ -2277,10 +2277,12 @@ function renderDev() {
   renderDevContent();
 }
 
+// Every row at full strength, as in the Games list: a repository with no build outputs, merged branches or open pull requests
+// isn't greyed, which read as turned off. Its own page says when there's nothing in it to clean.
 function renderDevNav() {
   const rows = [];
-  const row = (label, glyph, hash, badge, selected, dim, pulls) => {
-    const b = el('button', 'tree-row' + (dim ? ' empty' : ''));
+  const row = (label, glyph, hash, badge, selected, pulls) => {
+    const b = el('button', 'tree-row');
     b.style.paddingLeft = '8px';
     glyph.classList.add('glyph');
     b.append(glyph, el('span', 'label', label));
@@ -2299,7 +2301,7 @@ function renderDevNav() {
     if (groups.length) rows.push(el('div', 'tree-section', 'Repositories'));
     for (const g of groups)
       row(g.name, g.project ? icon('stack') : folderIcon(false), '#/dev/g/' + encodeURIComponent(g.id),
-        g.bytes >= 1 << 20 ? bytes(g.bytes) : g.merged ? count(g.merged, 'branch', 'branches') : '', route.group === g.id, !g.bytes && !g.merged && !g.open, g.waiting);
+        g.bytes >= 1 << 20 ? bytes(g.bytes) : g.merged ? count(g.merged, 'branch', 'branches') : '', route.group === g.id, g.waiting);
     const shared = devReport.categories.filter((c) => SHARED.includes(c.key));
     if (shared.length) rows.push(el('div', 'tree-section', 'Shared'));
     for (const c of shared) row(DEV_META[c.key].short, catIcon(c.key), '#/dev/s/' + c.key, bytes(devSize(c.items)), route.cat === c.key);

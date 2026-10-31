@@ -464,4 +464,16 @@ public sealed class PlainWordsTests {
 		Assert.Contains("for (const g of gameReport.games)", render);
 		Assert.DoesNotContain("empty", render);
 	}
+
+	[Fact]
+	public void TheDeveloperList_GreysNoRepository() {
+		// A repository with no build outputs, merged branches or open pull requests looked turned off when its name was greyed
+		// (.tree-row.empty), as games did in the Games list.
+		string script = Asset("app.js");
+		string render = ThePage.Function(script, "renderDevNav");
+		Assert.Contains("for (const g of groups)", render);
+		Assert.DoesNotContain("empty", render);
+		// Its own page still says when there's nothing in it to clean.
+		Assert.Contains("'Nothing to clean in this '", ThePage.Function(script, "groupPage"));
+	}
 }
