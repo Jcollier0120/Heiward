@@ -26,13 +26,14 @@ jobs:
       id: build
       run: dotnet publish HEI.Agent/HEI.Agent.csproj -c Release -r win-arm64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -nologo -v q
     # Every suite reports, also when one before it failed. None runs when the build
-    # failed (a skipped arm64 build means the x64 one failed).
+    # failed (a skipped arm64 build means the x64 one failed). A failing test says why (its
+    # assert's message and stack), where -v q alone gives only its name; passing ones stay unlisted.
     - name: Run Unit Tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: dotnet test HEI.Core.Tests/HEI.Core.Tests.csproj -c Release -v q
+      run: dotnet test HEI.Core.Tests/HEI.Core.Tests.csproj -c Release -v q --logger "console;verbosity=minimal"
     - name: Run Heiward Tests
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
-      run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q
+      run: dotnet test HEI.Agent.Tests/HEI.Agent.Tests.csproj -c Release -v q --logger "console;verbosity=minimal"
     # FFmpeg 9.0.2's essentials build, the one Chocolatey's ffmpeg package carried, from its maker's own GitHub
     # releases (Gyan's codexffmpeg) and checked against its SHA-256. Chocolatey's community feed answered 503 from
     # 2026-10-19, and choco still exited 0, so the integration tests ran without FFmpeg and 92 failed. Here a download

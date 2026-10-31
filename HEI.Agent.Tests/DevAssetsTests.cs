@@ -957,7 +957,10 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Equal(RealPath.Of(repo), listed.Repo);
 		Assert.True(listed.Bytes >= 3 << 20);
 		Assert.False(listed.Suggested);
-		Assert.Null(listed.Blocked);
+		// Nothing holds it (git's lock, a program, a scheduled task), but where the tests' folder is a tool's home it's kept for that
+		// tool, as any worktree there is: %TEMP% is in app data unless it's been moved, as on GitHub's Windows runner
+		// (C:\Users\runneradmin\AppData\Local\Temp).
+		Assert.Equal(DevScanner.ToolHome(wt) is { } tool ? $"Kept for the tool that made it ({tool})" : null, listed.Blocked);
 		Assert.Equal("worktree of repo · its repository is on D: (scanned when you ask)", listed.Detail);
 		// Its repository read with the rest: listed from its records instead.
 		Assert.Empty(DevScanner.UnreadRepoWorktrees(new[] { wt, sub }, default, noOne, _ => false, _ => @"D:\"));
