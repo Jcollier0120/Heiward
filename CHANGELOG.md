@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.120
+
+**It carries the Steward's kit 2.147.4: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.147.4: A fetch or push to Codeberg, or another host Git Credential Manager signs in to by OAuth, works again once its sign-in is an hour old. GCM handed back its expired access token, the host refused it, and since 2.146.6 nothing told GCM to make a new one.
+
+### Before you update
+
+- Nothing to do. An agent whose runner can't start `cmdkey` (it isn't on PATH) gets nothing from it, and the refusal stands as before.
+
 ## 1.9.119
 
 **Brings 6 changes: The Games list no longer greys out games; Your games with their covers, in a grid; The Developer area no longer greys out repositories; Uninstall a game from its page, with its launcher's own uninstaller; Castellan's home page can list each of your drives; Heiward's home page uses the room a wide screen gives, rather than one long column.**
