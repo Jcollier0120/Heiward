@@ -416,16 +416,27 @@ button { font: inherit; color: inherit; }
   background: var(--surface); border: 1px solid var(--line); border-radius: 0 0 8px 8px;
 }
 .home { overflow-y: auto; padding: 8px 24px 32px; }
-.home > section, .home > footer, .home-cols { max-width: 1180px; }
-/* The home page in a wide window (a 2K or 4K screen): the scan, the totals and the drives on the left; the Developer
-   area, the Games, where the duplicates are and the History beside them, rather than half the window left empty. */
-@media (min-width: 1700px) {
-  .home-cols {
-    max-width: 2600px; display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 0 32px; align-items: start;
-  }
-  .home > footer { max-width: 2600px; }
-  /* Its first heading level with the totals beside it. */
-  .home-side { margin-top: -12px; }
+.home > section, .home > footer, .home-top, .home-cols { max-width: 1180px; }
+/* The home page at three widths, the Steward's kit's (its spec/LAYOUT.md), rather than one column with the window's
+   rest left empty. Under 1200 px (a phone, a narrow window): one column, in the page's order. From 1200 px (a 1080p
+   screen): the scan under way and the totals across the top, then the drives on the left and the Developer area, the
+   Games, where the duplicates are and the History beside them. From 2000 px (a 2K or 3K screen): three columns, the
+   drives, then the Developer and Games areas, then where the duplicates are and the History. */
+@media (min-width: 1200px) {
+  .home > footer, .home-top, .home-cols { max-width: none; }
+  .home-cols { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 0 32px; align-items: start; }
+  /* The Developer and Games cards fill their column, as where the duplicates are does below them. */
+  .home-side .dev-card { max-width: none; }
+  /* With no folders of duplicates to list, the History lines up with the heading beside it. */
+  #hotspots-section.hidden + section > .history { margin-top: 26px; }
+}
+@media (min-width: 2000px) {
+  .home-cols { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr); }
+  /* The two parts of the side column become columns of their own. */
+  .home-side { display: contents; }
+  /* With neither area shown (developer and game mode off), where the duplicates are sits beside the drives. */
+  .home-areas:not(:has(> section:not(.hidden))) { display: none; }
+  .home-cols:not(:has(.home-areas > section:not(.hidden))) { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
 }
 
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 14px; }
