@@ -3258,10 +3258,12 @@ function renderGames() {
   renderGamesContent();
 }
 
+// Every row at full strength: a game with nothing of its own to clean up isn't greyed, which read as turned off. Its own page
+// says when there's nothing of it to clean up.
 function renderGamesNav() {
   const rows = [];
-  const row = (label, glyph, hash, badge, selected, dim) => {
-    const b = el('button', 'tree-row' + (dim ? ' empty' : ''));
+  const row = (label, glyph, hash, badge, selected) => {
+    const b = el('button', 'tree-row');
     b.style.paddingLeft = '8px';
     glyph.classList.add('glyph');
     b.append(glyph, el('span', 'label', label));
@@ -3280,10 +3282,8 @@ function renderGamesNav() {
     for (const d of drives)
       row(d.root, driveIcon('fixed'), '#/games/d/' + encodeURIComponent(d.root), bytes(d.games.reduce((a, g) => a + g.bytes, 0) + gameSize(d.items)), route.drive === d.root);
     if (gameReport.games.length) rows.push(el('div', 'tree-section', 'Games'));
-    for (const g of gameReport.games) {
-      const has = gameItems().some((i) => i.game === g.id);
-      row(g.name, icon('pad'), '#/games/g/' + encodeURIComponent(g.id), g.bytes ? bytes(g.bytes) : '', route.game === g.id, !has);
-    }
+    for (const g of gameReport.games)
+      row(g.name, icon('pad'), '#/games/g/' + encodeURIComponent(g.id), g.bytes ? bytes(g.bytes) : '', route.game === g.id);
   }
   $('games-tree').replaceChildren(...rows);
 }

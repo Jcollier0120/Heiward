@@ -394,4 +394,14 @@ public sealed class PlainWordsTests {
 		Assert.Contains("(route.view === 'games' && !state.games.enabled)", script);
 		Assert.Contains("saveSettings({ gameMode: next })", script);
 	}
+
+	[Fact]
+	public void TheGamesList_GreysNoGame() {
+		// A game with nothing of its own to clean up looked turned off when its name was greyed (.tree-row.empty).
+		string script = Asset("app.js");
+		int start = script.IndexOf("function renderGamesNav(", StringComparison.Ordinal);
+		string render = script[start..script.IndexOf("\nfunction ", start + 1, StringComparison.Ordinal)];
+		Assert.Contains("for (const g of gameReport.games)", render);
+		Assert.DoesNotContain("empty", render);
+	}
 }
