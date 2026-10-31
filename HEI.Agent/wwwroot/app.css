@@ -769,6 +769,53 @@ html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
 /* The Games area: what removing a thing means, under it; an installed game's row opens its page. */
 .game-removing { color: var(--fg); margin-top: 2px; }
 button.dev-item.game-install { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+/* Its things, each with room: the name, what it is, what removing it means (or what to do instead) as a block of its own, then
+   where it is on a line of its own; the size column to the right, the same in every row, with a tick box or without. */
+.dev-item.game-item { padding: 14px 16px; column-gap: 14px; }
+.dev-item.game-item.info, .dev-item.game-install { grid-template-columns: 1fr auto; }
+.game-item .dev-item-main { display: flex; flex-direction: column; gap: 4px; }
+.game-item .game-removing { margin-top: 6px; }
+.game-item .dev-item-main > .folder { margin-top: 8px; }
+.game-item .dev-item-side { display: flex; flex-direction: column; gap: 4px; }
+#games-content > .dev-section, #games-content > .sel-bar, #games-content > .dev-banner { margin-top: 24px; }
+#games-content > .folder-head + .dev-section { margin-top: 28px; }
+
+/* Covers, from the launchers' own pictures on this PC: the Overview's grid, as a launcher's library shows them. */
+.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(136px, 1fr)); gap: 18px 14px; max-width: 1180px; }
+.game-tile {
+  display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 0;
+  text-align: left; font: inherit; color: inherit; background: none; border: 0; cursor: pointer;
+}
+.game-tile:focus-visible { outline: none; }
+.game-tile:focus-visible .game-art { outline: 2px solid var(--accent); outline-offset: 2px; }
+.game-tile:hover .game-art { border-color: var(--accent); box-shadow: var(--shadow); }
+.game-tile:hover .game-tile-name { color: var(--accent-text); }
+.game-tile-name { margin-top: 4px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-tile-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-art {
+  position: relative; display: grid; place-items: center; width: 100%; aspect-ratio: 2 / 3; overflow: hidden;
+  border-radius: 8px; border: 1px solid var(--line); background: var(--surface-2);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.game-art img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* A wide banner or a square logo: whole, centred on a dark tile, never stretched. */
+.game-art.fit { background: #15171c; }
+.game-art.fit img { height: auto; max-height: 100%; object-fit: contain; }
+/* No cover: the game's name and launcher on a tile. */
+.game-art.none { align-content: center; gap: 6px; padding: 12px; text-align: center; background: var(--accent-soft); color: var(--new); }
+.game-art-name { font-weight: 600; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.game-art-launcher { font-size: 12px; color: var(--muted); }
+/* Beside a game's title on its own page. */
+.folder-head > .game-art.hero { width: 96px; flex: none; }
+.folder-head > .game-art.hero.none { display: none; }
+/* The Games list: a small cover in place of the pad glyph. */
+.tree-row.game-row { height: 38px; }
+.tree-row img.glyph.game-thumb { width: 20px; height: 30px; border-radius: 3px; object-fit: cover; }
+.tree-row img.glyph.game-thumb.fit { object-fit: contain; background: #15171c; }
+@media (max-width: 560px) {
+  .game-grid { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 14px 10px; }
+  .folder-head > .game-art.hero { width: 72px; }
+}
 .chip-link { cursor: pointer; font: inherit; font-size: 12px; }
 .chip-link:hover { border-color: var(--accent); color: var(--fg); }
 

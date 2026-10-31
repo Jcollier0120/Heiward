@@ -292,6 +292,61 @@ public sealed class GameModeTests : IDisposable {
 	}
 
 	[Fact]
+	public async Task ThePage_ACover_OnlyTheFileTheCheckRecorded() {
+		string covers = Path.Combine(dir, "covers");
+		Directory.CreateDirectory(covers);
+		string jpg = Path.Combine(covers, "100.jpg"), png = Path.Combine(covers, "a-longer-name.png"), secret = Path.Combine(covers, "secret.jpg");
+		File.WriteAllBytes(jpg, [0xFF, 0xD8, 0xFF, 1]);
+		File.WriteAllBytes(png, [0x89, 0x50, 0x4E, 0x47]);
+		File.WriteAllBytes(secret, [0xFF, 0xD8, 0xFF, 2]);
+		static GameInstall Game(string id, string? cover) =>
+			new(id, GameLaunchers.Steam, "100", "Game " + id, @"D:\Games\" + id, null, 1, null, null, cover, cover == null ? null : GameCovers.Portrait);
+		static void Check(params GameInstall[] games) => new GameReport { ScannedAtUtc = DateTime.UtcNow, Build = AppBuild.Current, Games = games.ToList() }.Save();
+		const string A = "0123456789abcdef";
+		Check(Game(A, jpg), Game("1111111111111111", null), Game("2222222222222222", @"C:\Windows\win.ini"));
+		await using Page page = await Page.StartAsync(Own(true));
+		async Task<HttpStatusCode> Status(string path) {
+			using HttpResponseMessage answer = await page.Http.GetAsync("/api/games/cover/" + path);
+			return answer.StatusCode;
+		}
+
+		using (HttpResponseMessage ok = await page.Http.GetAsync($"/api/games/cover/{A}?at=2026-10-31")) {
+			Assert.Equal(HttpStatusCode.OK, ok.StatusCode);
+			Assert.Equal("image/jpeg", ok.Content.Headers.ContentType?.MediaType);
+			Assert.True(ok.Headers.CacheControl is { Private: true } cache && cache.MaxAge == TimeSpan.FromDays(1));
+			Assert.Equal(new byte[] { 0xFF, 0xD8, 0xFF, 1 }, await ok.Content.ReadAsByteArrayAsync());
+		}
+		// No cover, an unknown game, a recorded file that isn't a picture, and paths in place of an id: none served.
+		foreach (string path in new[] { "1111111111111111", "ffffffffffffffff", "2222222222222222", "..%2Fcovers%2Fsecret.jpg", "..%5C..%5Ccovers%5Csecret.jpg",
+			Uri.EscapeDataString(secret), Uri.EscapeDataString(jpg), "C:%5Csecret.jpg" })
+			Assert.Equal(HttpStatusCode.NotFound, await Status(path));
+		// Dot segments leave the cover's route altogether (the path is normalised first): never a file.
+		foreach (string path in new[] { "../../covers/secret.jpg", "%2E%2E/%2E%2E/covers/secret.jpg" })
+			using (HttpResponseMessage up = await page.Http.GetAsync("/api/games/cover/" + path))
+				Assert.NotEqual("image/jpeg", up.Content.Headers.ContentType?.MediaType);
+
+		// A new check: its covers at once.
+		Check(Game(A, png));
+		using (HttpResponseMessage again = await page.Http.GetAsync($"/api/games/cover/{A}")) {
+			Assert.Equal(HttpStatusCode.OK, again.StatusCode);
+			Assert.Equal("image/png", again.Content.Headers.ContentType?.MediaType);
+		}
+		// The file gone since the check.
+		File.Delete(png);
+		Assert.Equal(HttpStatusCode.NotFound, await Status(A));
+
+		// The page's other rules: its own Host only, and nothing of the Games area with game mode off.
+		File.WriteAllBytes(png, [0x89, 0x50, 0x4E, 0x47]);
+		using (var foreign = new HttpRequestMessage(HttpMethod.Get, $"/api/games/cover/{A}")) {
+			foreign.Headers.Host = "example.com";
+			using HttpResponseMessage refused = await page.Http.SendAsync(foreign);
+			Assert.Equal(HttpStatusCode.MisdirectedRequest, refused.StatusCode);
+		}
+		Assert.Equal(HttpStatusCode.OK, (await page.PostAsync("/api/settings", new { gameMode = false })).Status);
+		Assert.Equal(HttpStatusCode.Conflict, await Status(A));
+	}
+
+	[Fact]
 	public async Task ThePage_WhileManorDecides_ItsOwnSwitchWaits() {
 		InstallManor("{\"name\":\"The Hall\",\"port\":19000,\"gameMode\":true}");
 		await using Page page = await Page.StartAsync(Own(false));

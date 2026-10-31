@@ -3145,6 +3145,8 @@ const gameSeen = new Set();    // ids whose default tick was applied (the user's
 let gameBusy = false;
 let gameResult = null;         // [ok, message, what wasn't removed] after the last removal, shown until the next
 let gameProgress = '';         // while removing: what, and how far along
+let gamesShowAll = false;      // the Overview's grid: every game, not only the biggest
+const BIGGEST_GAMES = 8;       // the games the Overview's grid shows until "Show all"
 
 const GAME_META = {
   leftovers: { short: 'Leftovers', icon: 'box' },
@@ -3234,6 +3236,46 @@ const gamePicked = () => gameItems().filter((i) => gameTicks.has(i.id) && !i.blo
 const driveOf = (p) => (p || '').slice(0, 3).toUpperCase();
 const gameById = (id) => ((gameReport && gameReport.games) || []).find((g) => g.id === id) || null;
 const launcherName = (id) => LAUNCHERS[id] || id || '';
+// A game's cover: the picture its launcher keeps on this PC (GameCovers), asked for by the game's id. Each check asks afresh.
+const coverUrl = (game) => '/api/games/cover/' + encodeURIComponent(game.id) + '?at=' + encodeURIComponent((gameReport && gameReport.scannedAtUtc) || '');
+
+/**
+ * A game's cover in a 2:3 frame: a portrait fills it; a wide banner or a square logo sits whole, centred on a dark tile; without one
+ * (or once its file has gone), a tile with its name and launcher.
+ */
+function gameArt(game, alt, cls) {
+  const art = el('span', 'game-art' + (cls ? ' ' + cls : ''));
+  const blank = () => {
+    art.className = 'game-art none' + (cls ? ' ' + cls : '');
+    art.replaceChildren(el('span', 'game-art-name', game.name), el('span', 'game-art-launcher', launcherName(game.launcher)));
+  };
+  if (!game.cover) { blank(); return art; }
+  if (game.coverShape !== 'portrait') art.classList.add('fit');
+  const img = el('img');
+  img.alt = alt;
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.addEventListener('error', blank, { once: true });
+  img.src = coverUrl(game);
+  art.append(img);
+  return art;
+}
+
+/** The Games list's small cover for a game (about 20×30), or its pad glyph when it has none. */
+function gameThumb(game) {
+  if (!game.cover) return icon('pad');
+  const img = el('img', 'game-thumb' + (game.coverShape !== 'portrait' ? ' fit' : ''));
+  img.alt = '';
+  img.loading = 'lazy';
+  img.decoding = 'async';
+  img.addEventListener('error', () => {
+    const pad = icon('pad');
+    pad.classList.add('glyph');
+    img.replaceWith(pad);
+  }, { once: true });
+  img.src = coverUrl(game);
+  return img;
+}
 
 function gameCategoryOf(i) {
   const c = ((gameReport && gameReport.categories) || []).find((x) => x.items.includes(i));
@@ -3262,8 +3304,8 @@ function renderGames() {
 // says when there's nothing of it to clean up.
 function renderGamesNav() {
   const rows = [];
-  const row = (label, glyph, hash, badge, selected) => {
-    const b = el('button', 'tree-row');
+  const row = (label, glyph, hash, badge, selected, cls) => {
+    const b = el('button', 'tree-row' + (cls ? ' ' + cls : ''));
     b.style.paddingLeft = '8px';
     glyph.classList.add('glyph');
     b.append(glyph, el('span', 'label', label));
@@ -3283,7 +3325,7 @@ function renderGamesNav() {
       row(d.root, driveIcon('fixed'), '#/games/d/' + encodeURIComponent(d.root), bytes(d.games.reduce((a, g) => a + g.bytes, 0) + gameSize(d.items)), route.drive === d.root);
     if (gameReport.games.length) rows.push(el('div', 'tree-section', 'Games'));
     for (const g of gameReport.games)
-      row(g.name, icon('pad'), '#/games/g/' + encodeURIComponent(g.id), g.bytes ? bytes(g.bytes) : '', route.game === g.id);
+      row(g.name, gameThumb(g), '#/games/g/' + encodeURIComponent(g.id), g.bytes ? bytes(g.bytes) : '', route.game === g.id, 'game-row');
   }
   $('games-tree').replaceChildren(...rows);
 }
@@ -3371,11 +3413,19 @@ function gamesOverview(g) {
     out.push(grid);
   }
   if (gameReport.games.length) {
-    out.push(el('h2', null, 'Biggest games'));
-    const list = el('div', 'dev-list');
-    for (const game of gameReport.games.slice(0, 8)) list.append(gameInstallRow(game));
-    out.push(list);
-    if (gameReport.games.length > 8) out.push(el('p', 'muted small', 'The rest are under Games, in the pane on the left.'));
+    // The biggest games as covers, a launcher's library: "Show all" grows it to every game.
+    const more = gameReport.games.length > BIGGEST_GAMES;
+    const all = gamesShowAll && more;
+    const head = el('div', 'list-head');
+    head.append(el('h2', null, all ? 'All games' : 'Biggest games'));
+    if (more) {
+      const toggle = el('button', 'link small', all ? 'Show the biggest' : 'Show all ' + gameReport.games.length);
+      toggle.addEventListener('click', () => { gamesShowAll = !all; renderGamesContent(); });
+      head.append(toggle);
+    }
+    const grid = el('div', 'game-grid');
+    for (const game of all ? gameReport.games : gameReport.games.slice(0, BIGGEST_GAMES)) grid.append(gameTile(game));
+    out.push(head, grid);
   }
   if (!gameReport.games.length && !gameReport.categories.length) out.push(el('div', 'empty-state', 'No games, and nothing they left behind.'));
   return out;
@@ -3399,9 +3449,20 @@ function gameKindCard(c) {
   return card;
 }
 
+/** A game in the Overview's grid: its cover (or a tile with its name), name, size and when last played; it opens the game's page. */
+function gameTile(game) {
+  const tile = el('button', 'game-tile');
+  tile.title = game.name;
+  tile.append(gameArt(game, game.name), el('span', 'game-tile-name', game.name),
+    el('span', 'game-tile-meta muted small', bytes(game.bytes) + (game.lastPlayedUtc ? ' · ' + playedText(game.lastPlayedUtc) : '')));
+  tile.addEventListener('click', () => { location.hash = '#/games/g/' + encodeURIComponent(game.id); });
+  tile.addEventListener('contextmenu', (e) => openPathMenu(e, { name: game.name, path: game.folder, folder: true }));
+  return tile;
+}
+
 /** An installed game: its launcher, size and when it was last played; it opens the game's page. */
 function gameInstallRow(game) {
-  const row = el('button', 'dev-item game-install');
+  const row = el('button', 'dev-item game-install game-item');
   const main = el('div', 'dev-item-main');
   main.append(el('div', 'dev-item-name', game.name));
   const where = el('div', 'folder muted small', launcherName(game.launcher) + ' · ' + game.folder);
@@ -3417,16 +3478,20 @@ function gameInstallRow(game) {
   return row;
 }
 
+// Whole 30-day months, rounded down, as the games check counts them (GameScanner.MonthsAgo): the two never say different months.
 function playedText(iso) {
   const days = (Date.now() - new Date(iso).getTime()) / 86400000;
   if (days < 1) return 'played today';
   if (days < 2) return 'played yesterday';
   if (days < 60) return 'played ' + Math.floor(days) + ' days ago';
-  return 'played ' + Math.round(days / 30) + ' months ago';
+  return 'played ' + Math.floor(days / 30) + ' months ago';
 }
 
-/** A kind of thing games leave, or one game's, or one drive's: its items, ticked ones first, those waiting folded. */
-function gameSection(k, items, showWhere) {
+/**
+ * A kind of thing games leave, or one game's, or one drive's: its items, ticked ones first, those waiting folded. On a game's own
+ * page (<game>), its items don't repeat what the page's head says: when it was last played, and its folder.
+ */
+function gameSection(k, items, showWhere, game) {
   const box = el('section', 'dev-section');
   const head = el('div', 'dev-section-head');
   head.append(gameCatIcon(k));
@@ -3445,7 +3510,7 @@ function gameSection(k, items, showWhere) {
   const listed = items.filter((i) => !i.blocked);
   if (listed.length) {
     const list = el('div', 'dev-list');
-    for (const i of listed) list.append(gameRow(i, showWhere));
+    for (const i of listed) list.append(gameRow(i, showWhere, game));
     box.append(list);
   }
   const blocked = items.filter((i) => i.blocked);
@@ -3453,17 +3518,21 @@ function gameSection(k, items, showWhere) {
     const group = el('details', 'blocked-group');
     group.append(el('summary', null, count(blocked.length, 'item waits', 'items wait') + ', ' + bytes(gameSize(blocked))));
     const list = el('div', 'dev-list');
-    for (const i of blocked) list.append(gameRow(i, showWhere));
+    for (const i of blocked) list.append(gameRow(i, showWhere, game));
     group.append(list);
     box.append(group);
   }
   return box;
 }
 
-/** One thing with its tick box (none for what Heiward only points to): what it is, what removing it means, its size. */
-function gameRow(i, showWhere) {
+/**
+ * One thing with its tick box (none for what Heiward only points to): what it is, what removing it means as a block of its own,
+ * where it is on a line of its own, and its size. On <game>'s own page, it doesn't say again when the game was last played (the
+ * page's chips do) or the game's folder (the page's head does).
+ */
+function gameRow(i, showWhere, game) {
   const on = gameTicks.has(i.id) && !i.blocked && !i.info;
-  const row = el(i.info ? 'div' : 'label', 'dev-item' + (i.blocked ? ' blocked' : '') + (on ? ' on' : ''));
+  const row = el(i.info ? 'div' : 'label', 'dev-item game-item' + (i.info ? ' info' : '') + (i.blocked ? ' blocked' : '') + (on ? ' on' : ''));
   if (!i.info) {
     const box = el('input');
     box.type = 'checkbox';
@@ -3479,11 +3548,12 @@ function gameRow(i, showWhere) {
   else if (i.suggested) name.append(el('span', 'tag suggested', 'Suggested'));
   else if (i.kind === 'shader' && i.game || i.kind === 'gpu-shader') name.append(el('span', 'tag', 'First launch may stutter'));
   main.append(name);
-  main.append(el('div', 'muted small', i.detail + '.'));
+  if (!(i.kind === 'idle' && game && game.lastPlayedUtc)) main.append(el('div', 'muted small', i.detail + '.'));
   main.append(el('div', 'small game-removing', (i.info ? '' : 'Removing it: ') + i.removing));
   const auto = state.auto.gameItems && state.auto.gameItems[i.id];
   if (auto && (auto.dueUtc || auto.held)) main.append(autoLine(auto, 'm:' + i.id, 'Goes to the Recycle Bin automatically ' + dueText(auto.dueUtc, 'games') + '.'));
-  if (showWhere !== false && !(i.kind === 'twice')) {
+  const itsFolder = !!game && (i.location || '').toLowerCase() === game.folder.toLowerCase();
+  if (showWhere !== false && i.kind !== 'twice' && !itsFolder) {
     const where = el('div', 'folder muted small', i.location);
     where.title = i.location;
     main.append(where);
@@ -3493,8 +3563,8 @@ function gameRow(i, showWhere) {
   row.append(main);
   const side = el('div', 'dev-item-side');
   side.append(el('div', 'dev-size', bytes(i.bytes)));
-  if (i.kind === 'idle' && i.lastUsedUtc) side.append(el('div', 'muted small', playedText(i.lastUsedUtc)));
-  else if (i.lastUsedUtc) side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
+  // Not played in months: its own line says when, once.
+  if (i.lastUsedUtc && i.kind !== 'idle') side.append(el('div', 'muted small', lastUsed(i.lastUsedUtc)));
   row.append(side);
   return row;
 }
@@ -3553,13 +3623,18 @@ function gamePage(game) {
   where.title = game.folder;
   where.addEventListener('contextmenu', (e) => openPathMenu(e, { name: game.name, path: game.folder, folder: true }));
   intro.append(where, el('div', 'dev-intro', game.advice + ' Heiward never touches the game\'s own files or its saves.'));
-  const glyph = el('span', 'cat-icon big hero');
-  glyph.append(icon('pad'));
+  // Its cover beside the title, when its launcher keeps one; else the pad glyph.
+  let glyph;
+  if (game.cover) glyph = gameArt(game, '', 'hero');
+  else {
+    glyph = el('span', 'cat-icon big hero');
+    glyph.append(icon('pad'));
+  }
   const out = [devHeader(glyph, game.name, intro, chips)];
   const mine = gameItems().filter((i) => i.game === game.id || (i.kind === 'twice' && (i.paths || []).some((p) => p.toLowerCase() === game.folder.toLowerCase())));
   for (const c of gameReport.categories) {
     const here = mine.filter((i) => c.items.includes(i));
-    if (here.length) out.push(gameSection(c.key, here));
+    if (here.length) out.push(gameSection(c.key, here, undefined, game));
   }
   if (!mine.length) out.push(el('p', 'muted small', 'Nothing else of it to look at: no shader cache, crash dumps or second copy found.'));
   return out;
