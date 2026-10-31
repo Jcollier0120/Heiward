@@ -452,6 +452,7 @@ function go(path) {
 }
 
 window.addEventListener('hashchange', () => {
+  closeUninstallDialog(); // a game's dialog belongs to its page
   route = parseRoute();
   groupsShown = PAGE;
   if (route.view === 'folder') expanded.add(key(route.path)); // opening a folder opens it in the tree too
@@ -2309,7 +2310,7 @@ function renderDevNav() {
   $('dev-tree').replaceChildren(...rows);
 }
 
-function devHeader(glyph, title, intro, chips) {
+function devHeader(glyph, title, intro, chips, actions) {
   const head = el('div', 'folder-head');
   head.append(glyph);
   const text = el('div');
@@ -2322,6 +2323,7 @@ function devHeader(glyph, title, intro, chips) {
     box.append(...chips);
     text.append(box);
   }
+  if (actions) text.append(actions);
   head.append(text);
   return head;
 }
@@ -3149,6 +3151,9 @@ let gameResult = null;         // [ok, message, what wasn't removed] after the l
 let gameProgress = '';         // while removing: what, and how far along
 let gamesShowAll = false;      // the Overview's grid: every game, not only the biggest
 const BIGGEST_GAMES = 8;       // the games the Overview's grid shows until "Show all"
+let gameOpening = null;        // the game whose Uninstall is being asked for, until the answer
+let gameUninstallAnswer = null; // [game id, ok, what happened] after its Uninstall, shown on its page
+let uninstallDialog = null;    // Heiward's own dialog before a game's own uninstaller opens: { box, keydown, held, back }
 
 const GAME_META = {
   leftovers: { short: 'Leftovers', icon: 'box' },
@@ -3238,6 +3243,8 @@ const gamePicked = () => gameItems().filter((i) => gameTicks.has(i.id) && !i.blo
 const driveOf = (p) => (p || '').slice(0, 3).toUpperCase();
 const gameById = (id) => ((gameReport && gameReport.games) || []).find((g) => g.id === id) || null;
 const launcherName = (id) => LAUNCHERS[id] || id || '';
+// A launcher's name to start a sentence with: "The EA app opens its own uninstaller".
+const launcherSubject = (id) => ({ epic: 'The Epic Games Launcher', ea: 'The EA app', xbox: 'The Xbox app' })[id] || launcherName(id);
 // A game's cover: the picture its launcher keeps on this PC (GameCovers), asked for by the game's id. Each check asks afresh.
 const coverUrl = (game) => '/api/games/cover/' + encodeURIComponent(game.id) + '?at=' + encodeURIComponent((gameReport && gameReport.scannedAtUtc) || '');
 
@@ -3632,7 +3639,12 @@ function gamePage(game) {
     glyph = el('span', 'cat-icon big hero');
     glyph.append(icon('pad'));
   }
-  const out = [devHeader(glyph, game.name, intro, chips)];
+  // Uninstall, under its name beside its cover; what its last press did, beside it.
+  const actions = el('div', 'actions');
+  actions.append(gameUninstallButton(game));
+  if (gameUninstallAnswer && gameUninstallAnswer[0] === game.id)
+    actions.append(el('div', 'result small game-uninstall-answer ' + (gameUninstallAnswer[1] ? 'ok' : 'bad'), gameUninstallAnswer[2]));
+  const out = [devHeader(glyph, game.name, intro, chips, actions)];
   const mine = gameItems().filter((i) => i.game === game.id || (i.kind === 'twice' && (i.paths || []).some((p) => p.toLowerCase() === game.folder.toLowerCase())));
   for (const c of gameReport.categories) {
     const here = mine.filter((i) => c.items.includes(i));
@@ -3640,6 +3652,103 @@ function gamePage(game) {
   }
   if (!mine.length) out.push(el('p', 'muted small', 'Nothing else of it to look at: no shader cache, crash dumps or second copy found.'));
   return out;
+}
+
+/**
+ * A game's Uninstall: its launcher's own uninstaller, which asks before it removes anything; Heiward itself deletes nothing.
+ * Steam asks in its own window and an Xbox game opens Windows' Installed apps, so those open at once. An uninstaller Windows
+ * lists for the game (GOG GALAXY, the EA app, Ubisoft Connect, Battle.net) opens only from Heiward's own dialog. With none (the
+ * Epic Games Launcher, or no uninstaller found) the button is greyed, yet still reached by the pointer and the keyboard, so its
+ * tooltip says where to uninstall it instead.
+ */
+function gameUninstallButton(game) {
+  const btn = el('button', 'btn secondary', 'Uninstall');
+  btn.id = 'game-uninstall';
+  if (!game.uninstall) {
+    btn.setAttribute('aria-disabled', 'true');
+    btn.addEventListener('click', (e) => e.preventDefault()); // greyed: nothing happens
+    const wrap = el('span', 'tip below start');
+    const body = el('div', 'tip-body', game.uninstallNote || 'Uninstall it from ' + launcherName(game.launcher) + '.');
+    body.id = 'game-uninstall-tip';
+    body.setAttribute('role', 'tooltip');
+    btn.setAttribute('aria-describedby', body.id);
+    wrap.append(btn, body);
+    return wrap;
+  }
+  btn.title = game.uninstall === 'settings' ? 'Opens Windows\' Installed apps, to uninstall it there'
+    : game.uninstall === 'steam' ? 'Steam asks whether to uninstall it' : 'Opens its uninstaller, once you say so here';
+  btn.disabled = gameOpening === game.id;
+  btn.addEventListener('click', () => (game.uninstall === 'entry' ? openUninstallDialog(game) : uninstallGame(game)));
+  return btn;
+}
+
+/**
+ * Heiward's own dialog before a game's uninstaller opens: the game, its size, launcher and folder, and that its uninstaller asks
+ * before it removes anything. Cancel has the focus, and Esc or a click beside the dialog is Cancel too: only "Uninstall <game>"
+ * asks for it. The page under it is held (inert) until it closes.
+ */
+function openUninstallDialog(game) {
+  closeUninstallDialog();
+  const box = el('div', 'modal');
+  box.id = 'uninstall-dialog';
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-modal', 'true');
+  box.setAttribute('aria-labelledby', 'uninstall-title');
+  box.setAttribute('aria-describedby', 'uninstall-what');
+  const card = el('div', 'tour-card');
+  const title = el('h2', null, 'Uninstall ' + game.name + '?');
+  title.id = 'uninstall-title';
+  const what = el('p', null, launcherSubject(game.launcher) + ' opens its own uninstaller, which asks before it removes anything.');
+  what.id = 'uninstall-what';
+  const facts = el('dl', 'modal-facts');
+  for (const [k, v] of [['Game', game.name], ['Size', bytes(game.bytes)], ['Launcher', launcherName(game.launcher)], ['Folder', game.folder]])
+    facts.append(el('dt', null, k), el('dd', null, v));
+  const safe = el('p', 'muted small', 'Heiward itself deletes nothing: the uninstaller does, once you say so there. The next games check shows whether the game is gone.');
+  const buttons = el('div', 'tour-buttons');
+  const cancel = el('button', 'btn secondary', 'Cancel');
+  cancel.addEventListener('click', closeUninstallDialog);
+  const go = el('button', 'btn', 'Uninstall ' + game.name);
+  go.addEventListener('click', () => { closeUninstallDialog(); uninstallGame(game); });
+  buttons.append(cancel, go);
+  card.append(title, what, facts, safe, buttons);
+  box.append(card);
+  box.addEventListener('click', (e) => { if (e.target === box) closeUninstallDialog(); });
+  const keydown = (e) => { if (e.key === 'Escape') { e.preventDefault(); closeUninstallDialog(); } };
+  document.addEventListener('keydown', keydown);
+  const back = document.activeElement;
+  const held = [...document.body.children].filter((c) => !c.inert);
+  for (const c of held) c.inert = true;
+  document.body.append(box);
+  uninstallDialog = { box, keydown, held, back };
+  cancel.focus();
+}
+
+function closeUninstallDialog() {
+  if (!uninstallDialog) return;
+  const { box, keydown, held, back } = uninstallDialog;
+  uninstallDialog = null;
+  document.removeEventListener('keydown', keydown);
+  for (const c of held) c.inert = false;
+  box.remove();
+  // Back to the Uninstall button: the page may have been drawn again meanwhile.
+  const btn = $('game-uninstall') || back;
+  if (btn && btn.focus) btn.focus();
+}
+
+/** Asks Heiward to open the game's uninstaller: the page sends only the game's id, and says what happened, never that it's gone. */
+async function uninstallGame(game) {
+  if (gameOpening) return;
+  gameOpening = game.id;
+  gameUninstallAnswer = null;
+  renderGamesContent();
+  try {
+    const r = await post('/api/games/' + encodeURIComponent(game.id) + '/uninstall');
+    gameUninstallAnswer = [game.id, true, r.message];
+  } catch (e) {
+    gameUninstallAnswer = [game.id, false, e.message];
+  }
+  gameOpening = null;
+  renderGamesContent();
 }
 
 /** Appears once something is ticked, on any page: the one place to remove from. */

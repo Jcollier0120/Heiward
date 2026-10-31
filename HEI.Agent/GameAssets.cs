@@ -31,10 +31,15 @@ namespace HEI.Agent {
 	/// <param name="UpdatedUtc">When the launcher last installed or updated it, when it records it.</param>
 	/// <param name="Cover">Its cover: the full path of the picture its launcher keeps on this PC (<see cref="GameCovers"/>); null when there's none.</param>
 	/// <param name="CoverShape">The cover's shape: "portrait" (2:3), "wide" (Steam's header banner) or "square" (an Xbox game's logo); null without one.</param>
+	/// <param name="Uninstall">How its page's Uninstall opens its launcher's uninstaller, as the check found it (<see cref="GameUninstall"/>'s
+	/// ways: steam, entry, settings); null when it can't from here, and the button is greyed.</param>
 	sealed record GameInstall(string Id, string Launcher, string AppId, string Name, string Folder, string? Library, long Bytes,
-		DateTime? LastPlayedUtc, DateTime? UpdatedUtc, string? Cover = null, string? CoverShape = null) {
+		DateTime? LastPlayedUtc, DateTime? UpdatedUtc, string? Cover = null, string? CoverShape = null, string? Uninstall = null) {
 		/// <summary>How to move it to another drive or free its space, with its launcher (for the page's game page).</summary>
 		public string Advice => GameLaunchers.MoveAdvice(Launcher);
+
+		/// <summary>Why its Uninstall is greyed, and where to uninstall it instead (the button's tooltip); null when it isn't.</summary>
+		public string? UninstallNote => GameUninstall.Note(Launcher, Uninstall);
 	}
 
 	/// <summary>
@@ -245,7 +250,7 @@ namespace HEI.Agent {
 			_ => [],
 		};
 
-		/// <summary>How to free a game's space, or move it to another drive, with the launcher's own tools: Heiward doesn't move or uninstall games.</summary>
+		/// <summary>How to free a game's space, or move it to another drive, with the launcher's own tools: Heiward never moves or deletes a game itself.</summary>
 		public static string MoveAdvice(string id) => id switch {
 			Steam => "To move it to another drive: in Steam, right-click the game › Properties › Installed Files › Move install folder. Or uninstall it there; your Steam Cloud saves stay.",
 			Xbox => "To move it to another drive: in the Xbox app, right-click the game › Manage › Files › Move. Or uninstall it there.",
@@ -633,6 +638,8 @@ namespace HEI.Agent {
 				.OrderByDescending(g => g.Bytes).ThenBy(g => g.Name, StringComparer.OrdinalIgnoreCase).ToList();
 			// Each game's cover, from the picture its launcher keeps on this PC: nothing is downloaded.
 			games = GameCovers.Add(games, found.SteamRoot);
+			// How each game's page can open its launcher's uninstaller, from Windows' uninstall entries (read again when it's pressed).
+			games = GameUninstall.Mark(games, env.Registry);
 			var report = new GameReport { ScannedAtUtc = now, Build = AppBuild.Current, Games = games, Launchers = found.Launchers };
 
 			report.Categories.Add(new GameCategory(Leftovers, "Leftovers of uninstalled games",
@@ -650,11 +657,12 @@ namespace HEI.Agent {
 				"What games and Windows wrote when a game crashed, for its makers. Nothing uses them once the crash is reported.",
 				DumpItems(env, found, games, running).OrderByDescending(i => i.Bytes).ToList()));
 			report.Categories.Add(new GameCategory(Twice, "The same game installed twice",
-				"A game in two launchers, or in two libraries. Uninstall the copy you don't play from its launcher: Heiward doesn't uninstall games.",
+				"A game in two launchers, or in two libraries. Uninstall the copy you don't play: its page's Uninstall opens its launcher's own uninstaller. " +
+				"Heiward itself never deletes a game.",
 				TwiceItems(games).OrderByDescending(i => i.Bytes).ToList()));
 			report.Categories.Add(new GameCategory(Idle, "Games not played in months",
 				$"Installed games not played for {IdleDays / 30} months or more, biggest first. Only Steam records when a game was last played. " +
-				"Heiward doesn't move or uninstall games: each says how to with its launcher.",
+				"Heiward never moves or deletes a game itself: each says how to with its launcher, and its page's Uninstall opens the launcher's own uninstaller.",
 				IdleItems(games, now).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.RemoveAll(c => c.Items.Count == 0);
@@ -924,7 +932,7 @@ namespace HEI.Agent {
 				string where = string.Join(" and ", copies.Select(c => $"{GameLaunchers.Name(c.Launcher)} ({c.Folder})"));
 				yield return new GameItem(IdOf("twice", same.Key), "twice", copies[0].Name, copies[0].Folder, copies.Select(c => c.Folder).ToList(),
 					copies.Skip(1).Sum(c => c.Bytes), copies.Max(c => c.LastPlayedUtc), false, null, "Installed in " + where,
-					"Uninstall the copy you don't play from its launcher to free its space. Heiward doesn't uninstall games.",
+					"Uninstall the copy you don't play to free its space: its page's Uninstall opens its launcher's own uninstaller. Heiward itself never deletes a game.",
 					copies[0].Launcher, copies[0].Id, copies[0].AppId, Info: true);
 			}
 		}
@@ -957,7 +965,7 @@ namespace HEI.Agent {
 		/// the check found them. Null when it can.
 		/// </summary>
 		public static string? Recheck(GameItem item, GamePlaces env) {
-			if (item.Info) return "Heiward doesn't move or uninstall games. " + item.Removing;
+			if (item.Info) return "Heiward never moves or deletes a game itself. " + item.Removing;
 			if (item.Kind is not ("orphan" or "workshop" or "download" or "paused" or "cache" or "shader" or "gpu-shader" or "dump" or "crash" or "wer"))
 				return "Unknown item";
 			GameLibraries.Found found = GameLibraries.Find(env);

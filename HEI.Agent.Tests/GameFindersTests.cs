@@ -447,7 +447,7 @@ public sealed class GameSafetyTests : IDisposable {
 	[Fact]
 	public void Remove_NeverMovesAGame_NorAFolderThatGotSaves() {
 		GameItem idle = GameScanner.Run(pc.Places).Items.First(i => i.Kind == "idle");
-		Assert.StartsWith("Heiward doesn't move or uninstall games.", GameCleaner.Remove(idle, pc.Places).Error);
+		Assert.StartsWith("Heiward never moves or deletes a game itself.", GameCleaner.Remove(idle, pc.Places).Error);
 		// Saved since the check: refused now, whatever the list said.
 		GameItem old = Item("orphan", "Old Game");
 		pc.File(Path.Combine(pc.Lib2, "steamapps", "common", "Old Game", "profile.save"), 10);

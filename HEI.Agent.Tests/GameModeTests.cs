@@ -288,7 +288,7 @@ public sealed class GameModeTests : IDisposable {
 		await using Page page = await Page.StartAsync(Own(true));
 		var (status, body) = await page.PostAsync("/api/games/items/0123456789abcdef/remove");
 		Assert.Equal(HttpStatusCode.Conflict, status);
-		Assert.Contains("Heiward doesn't move or uninstall games", body);
+		Assert.Contains("Heiward never moves or deletes a game itself", body);
 	}
 
 	[Fact]
