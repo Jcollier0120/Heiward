@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.118
+
+**It carries the Steward's kit 2.146.3: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.146.3: assistants.ts, tried with the real assistants: Copilot CLI is the eleventh, each assistant says the names it connects by, Claude Desktop from the Store and Cline 4 are connected where they read their settings now, claude runs in the home it was given, and CODEX_HOME and GEMINI_CLI_HOME are followed.
+
+### Before you update
+
+- Nothing to do. `copilot-cli` is a new `AssistantId`: code that names every id (a `switch` over them, a list of its own) has one more to name.
+
 ## 1.9.117
 
 **It carries the Steward's kit 2.146.2: the parts every agent of the manor shares.**
