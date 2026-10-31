@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.117
+
+**It carries the Steward's kit 2.146.2: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.146.2: The Repositories spec says where a repository's own build and release steps are: its `.steward.json`.
+
+### Before you update
+
+- Nothing: no code changed.
+
 ## 1.9.116
 
 **It carries the Steward's kit 2.146.1: the parts every agent of the manor shares.**
