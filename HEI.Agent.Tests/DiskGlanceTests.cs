@@ -57,6 +57,22 @@ public sealed class DiskGlanceTests {
 	}
 
 	[Fact]
+	public void EachDriveCounted_IsListed_WithItsOwnName_ItsSizeAndFreeSpace() {
+		var drives = new[] {
+			Drive(@"C:\", "fixed", 1000 * GB, 100 * GB) with { Label = "Windows" },
+			Drive(@"E:\", "removable", 500 * GB, 400 * GB),
+			Drive(@"\\nas\share\", "network", 8000 * GB, 2000 * GB),
+			Drive(@"F:\", "fixed", 0, 0), // not ready: no size
+		};
+		var g = DiskGlance.Build(drives, null, 0, 0, 0, 0);
+		Assert.Equal(new[] { new GlanceDrive(@"C:\", "Windows", "fixed", 1000 * GB, 100 * GB), new GlanceDrive(@"E:\", "", "removable", 500 * GB, 400 * GB) }, g.ByDrive);
+		// They add up to the glance's own figures, so Manor's list and its totals agree.
+		Assert.Equal(g.Drives, g.ByDrive.Count);
+		Assert.Equal(g.TotalBytes, g.ByDrive.Sum(d => d.TotalBytes));
+		Assert.Equal(g.FreeBytes, g.ByDrive.Sum(d => d.FreeBytes));
+	}
+
+	[Fact]
 	public void TheUsedSpace_ByKind_BiggestFirst_ThenEverythingElse() {
 		var drives = new[] { Drive(@"C:\", "fixed", 1000 * GB, 400 * GB), Drive(@"D:\", "fixed", 1000 * GB, 1000 * GB) };
 		var index = Index((@"C:\v\a.mp4", 200 * GB), (@"C:\v\b.mov", 50 * GB), (@"C:\p\c.jpg", 30 * GB), (@"D:\p\d.heic", 10 * GB));
