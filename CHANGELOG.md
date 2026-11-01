@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.123
+
+**It carries the Steward's kit 2.148.3: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.148.3: Connect your AI splits what the staff member connects by itself from the rest, under a heading each (the owner, 2026-11-01).
+
+### Before you update
+
+- **A test that spells out the Connect card's markup** between its action and its setup tabs now finds the two headings there. Nothing else changes.
+
 ## 1.9.122
 
 **It carries the Steward's kit 2.148.2: the parts every agent of the manor shares.**
