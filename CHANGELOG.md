@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.122
+
+**It carries the Steward's kit 2.148.2: the parts every agent of the manor shares.**
+
+### What changed
+
+- The Steward's kit 2.148.2: "Where its work runs" names the staff's own text reader, the kit's model on the NPU where it runs there, else on the processor, where the Clerk's and the Warrener's lines still said Windows' own OCR, on the processor (the owner, 2026-11-01).
+
+### Before you update
+
+- **A test that spells out the old line fails**: "Windows' own OCR" or "only to packaged apps" in the Clerk's or the Warrener's section. Nothing else changes.
+
 ## 1.9.121
 
 **Brings 2 changes: It carries the Steward's kit 2.148.0: the parts every agent of the manor shares; It carries the Steward's kit 2.148.1: the parts every agent of the manor shares.**
