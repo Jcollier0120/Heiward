@@ -4,12 +4,13 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.121
 
-**It carries the Steward's kit 2.148.0: the parts every agent of the manor shares.**
+**Brings 2 changes: It carries the Steward's kit 2.148.0: the parts every agent of the manor shares; It carries the Steward's kit 2.148.1: the parts every agent of the manor shares.**
 
 ### What changed
 
 - The Steward's kit 2.148.0: While the Watchman rolls back a graphics card's driver, or a new driver is being installed on it, no model work goes to that card until it's done. The other cards and the processor go on.
 - The Steward's kit 2.147.5: A refused sign-in on gitlab.com no longer takes the whole GitLab sign-in with it. The kit forgets a sign-in only where Git Credential Manager keeps its refresh token as `refresh_token.<host>`, shown stale or not.
+- The Steward's kit 2.148.1: A note's label names the staff member who wrote it, in its own word for its notes or for what it did: "summary from the Herald", "explained by the Surveyor", where it said "note from the local AI, unverified" (the owner, 2026-10-31).
 
 ### Before you update
 
@@ -17,6 +18,11 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - An agent that shows its accelerators' state can show `driver` (`say.driverWaiting`) where it shows a failure. Manor's accelerator card does, in a release of its own.
 - Not covered: a program that runs its model on a card in its own process (Heiward's DirectML). The guard's own 20-second wait, and its stopping the manor's servers on the card, still apply to a server an older kit started.
 - Nothing to do. A sign-in shown stale with no `refresh_token.<host>` beside it, or off Windows, is no longer forgotten. The refusal stands until the person signs git in again, and nothing in the kit says so beyond git's own message.
+- **A test that spells out the old label fails**, plain ("note from the local AI, unverified") or a developer's ("note from the NVIDIA GeForce RTX 4090, unverified", `/unverified/`). A test that compares with `noteLabel(from)` itself passes. A note kept with its label (`label: 'note from the NPU, unverified'` in a fixture) is data, and still passes. The staff tests kit 2.148.1's trial found spelling out the old words (2026-11-01, all 27 staff tried):
+  - **Porter**, `test/notes-view.test.ts:241`: a developer's label matches `/unverified/`. It fails until Porter's test is brought up.
+  - **Bridgeward**, `test/reports.test.ts:195`: `'note from the local AI, unverified'`. The Steward's kit bump brings it up itself, to `'summary from the Bridgeward'`.
+- A staff member whose notes aren't summaries passes its own word or action, in its own release: the Clerk's captions (`'caption'`), the Surveyor's and the Watchman's explanations (`'explanation'`, or `{ did: 'explained' }`), the Bridgeward's reports (`'report'`).
+- A label drawn by the agent's own code, not through `noteLabel`, says what it said: bring it to `noteLabel(from, developer, what)`.
 
 ## 1.9.120
 
