@@ -4,16 +4,17 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.125
 
-**It carries kit 2.149.0: the parts all the staff share.**
+**It carries kit 2.149.1: the parts all the staff share.**
 
 ### What changed
 
 - Kit 2.148.5: Settings read more easily: a long help can be laid out as points, and in a narrow window a repository's or record's line keeps its padding when it wraps.
 - Kit 2.149.0: A note's label says only who wrote it, for developers too: "summary from the Herald", without ", written on the NPU".
+- Kit 2.149.1: "Where its work runs" draws where the model work goes: a card for each accelerator, with an arrow to the next, in the order a request tries them, in place of a long paragraph.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.124
 
