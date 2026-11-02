@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.125
+
+**It carries kit 2.149.0: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.148.5: Settings read more easily: a long help can be laid out as points, and in a narrow window a repository's or record's line keeps its padding when it wraps.
+- Kit 2.149.0: A note's label says only who wrote it, for developers too: "summary from the Herald", without ", written on the NPU".
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.124
 
 **It carries the Steward's kit 2.148.4: the parts every agent of the manor shares.**
