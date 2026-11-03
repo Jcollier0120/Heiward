@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.126
+
+**It carries kit 2.150.0: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.150.0: A list setting can carry a few words for each item, drawn under it: the Warrener's destinations, each with what belongs there, in one list.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.125
 
 **It carries kit 2.149.1: the parts all the staff share.**
