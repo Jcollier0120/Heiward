@@ -31,7 +31,7 @@ namespace HEI.Agent {
 	/// again), <c>edited</c> (the AI sees the same picture with changes: colour, filter),
 	/// <c>variant</c> (cropped, mirrored, or a different shot that looks alike).
 	/// </param>
-	/// <param name="Suggested">Pre-ticked for the Recycle Bin: identical files and pixel-level copies only.</param>
+	/// <param name="Suggested">Pre-checked for the Recycle Bin: identical files and pixel-level copies only.</param>
 	/// <param name="Synced">In a cloud-synced folder: deleting it also deletes it from the cloud and other devices.</param>
 	sealed record ReportItem(
 		string Path, string Name, string Folder, long Size, int Width, int Height, string? Format,
@@ -41,7 +41,7 @@ namespace HEI.Agent {
 	/// <summary>
 	/// A set of files that look like copies of each other. <see cref="Kind"/>: <c>identical</c> (all
 	/// byte-for-byte the same), <c>copies</c> (some files are plain copies of the kept one and are
-	/// pre-ticked), <c>similar</c> (only edited versions and look-alikes: nothing is pre-ticked).
+	/// pre-checked), <c>similar</c> (only edited versions and look-alikes: nothing is pre-checked).
 	/// </summary>
 	sealed record ReportGroup(string Key, string Kind, string Media, string KeepPath, string KeepReason,
 		long ReclaimBytes, float MinSimilarity, List<ReportItem> Items);
@@ -172,15 +172,15 @@ namespace HEI.Agent {
 	/// <summary>
 	/// Turns the engine's duplicate groups into the review report. Code decides everything here —
 	/// which file to keep and why, and what each other file is to it — and only plain copies are
-	/// pre-ticked. What the AI alone matched (an edit, a crop, a look-alike shot) is labelled for the
-	/// user to judge, never pre-ticked: a model's "these look the same" is not a reason to delete.
+	/// pre-checked. What the AI alone matched (an edit, a crop, a look-alike shot) is labelled for the
+	/// user to judge, never pre-checked: a model's "these look the same" is not a reason to delete.
 	/// </summary>
 	static class ReportBuilder {
 		/// <summary>AI matches at or above this cosine (percent) are the same picture edited; below it, crops and look-alikes.</summary>
 		internal const float SamePictureAiPercent = 97f;
 		/// <summary>
 		/// A classic (grayscale) match at or above this is the same picture, pixel for pixel: a plain copy
-		/// that may be pre-ticked. Calibrated on photos; videos should get their own value once measured.
+		/// that may be pre-checked. Calibrated on photos; videos should get their own value once measured.
 		/// </summary>
 		internal const float PlainCopyPercent = 99.5f;
 		/// <summary>
@@ -311,7 +311,7 @@ namespace HEI.Agent {
 		/// <summary>
 		/// A VDF group can hold more than one set of copies: two look-alike burst shots, each imported
 		/// twice. Judged against a single kept file, the second shot's copy is only a look-alike and
-		/// isn't ticked. Such a group becomes one group per picture, each with its own kept file; files
+		/// isn't checked. Such a group becomes one group per picture, each with its own kept file; files
 		/// that copy none of the others (look-alikes) leave the report.
 		/// </summary>
 		static IEnumerable<List<DuplicateItem>> SplitByPicture(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts, CancellationToken ct) {
@@ -342,7 +342,7 @@ namespace HEI.Agent {
 		/// or more, with one shot of each burst (<see cref="BurstSeries"/>) at most: the kept file, or else
 		/// the shot most like it. The burst's other shots leave, however alike, as do less alike pictures.
 		/// Without that, IMG_0569 and IMG_0570 both stayed as look-alikes of an older IMG_0538, and a
-		/// burst shot scoring 99.9% against a renamed copy of its neighbour was ticked as a resaved copy.
+		/// burst shot scoring 99.9% against a renamed copy of its neighbour was checked as a resaved copy.
 		/// Other versions of a video (<see cref="IsOtherVersion"/>: another language, another soundtrack)
 		/// leave the same way. What's left over is judged again around its own kept file, so a burst
 		/// shot's copy in a backup folder still finds its original; a version that a set already shows
@@ -407,7 +407,7 @@ namespace HEI.Agent {
 
 		static (DuplicateItem, string) PickKeeper(List<DuplicateItem> items) => items[0].IsImage ? PickPhotoKeeper(items) : PickVideoKeeper(items);
 
-		/// <summary>The relations that are the same picture, pixel for pixel: the ones pre-ticked.</summary>
+		/// <summary>The relations that are the same picture, pixel for pixel: the ones pre-checked.</summary>
 		internal static bool IsPlainCopy(string relation) => relation is "identical" or "smaller" or "compressed" or "resaved";
 
 		static ReportGroup BuildGroup(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
@@ -453,7 +453,7 @@ namespace HEI.Agent {
 		static string Relation(DuplicateItem i, DuplicateItem keep, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts, bool askAi = true) {
 			// IMG_1234 next to IMG_1235, or 0084.png next to 0085.png: a burst, a retake, or an image
 			// sequence's frames. Burst shots match 99% and more, which below would pass for a resaved
-			// copy and be ticked. A still stretch of an animation is even the same bytes, and each frame
+			// copy and be checked. A still stretch of an animation is even the same bytes, and each frame
 			// is still one the sequence needs, so this comes before "identical".
 			if (bursts.AreSiblings(i.Path, keep.Path))
 				return "burst";

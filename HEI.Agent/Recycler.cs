@@ -22,7 +22,7 @@ namespace HEI.Agent {
 	sealed record RecycleResult(List<string> Recycled, List<RecycleFailure> Failed, long RecycledBytes);
 
 	/// <summary>
-	/// Moves files the user ticked to the Recycle Bin — and only there. With "no confirmation", the
+	/// Moves files the user checked to the Recycle Bin — and only there. With "no confirmation", the
 	/// shell silently deletes for good whatever the bin can't take (network and removable drives,
 	/// files bigger than the bin, volumes set to "don't move files to the Recycle Bin"), so every
 	/// such file is refused up front instead. Also refused: files outside the group, files changed

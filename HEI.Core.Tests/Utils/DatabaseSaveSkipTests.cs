@@ -49,7 +49,7 @@ public class DatabaseSaveSkipTests : IDisposable {
 	static void Add(string path) =>
 		DatabaseUtils.Database.Add(new FileEntry { _Path = path, Folder = Path.GetDirectoryName(path)!, FileSize = 1000 });
 
-	// Saves, and says whether the file was written. (Not by the file's write time: two saves within one tick of the
+	// Saves, and says whether the file was written. (Not by the file's write time: two saves within one check of the
 	// system clock, some 15 ms, get the same one.)
 	static bool SaveWrote() {
 		bool wrote = false;

@@ -125,7 +125,7 @@ namespace HEI.GUI.Tests {
 			Assert.Single(vm.Rows.OfType<MetadataValueRow>());
 		}
 
-		// Ticking a file in the window is ticking it in the results list: the same object.
+		// Checking a file in the window is checking it in the results list: the same object.
 		[Fact]
 		public void FileColumns_AreTheResultItems() {
 			var a = Item("a.mp4");

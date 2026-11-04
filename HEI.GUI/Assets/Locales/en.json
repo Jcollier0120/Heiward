@@ -654,7 +654,7 @@
 	"MetadataCompare.Files": "Compared files",
 	"MetadataCompare.Loading": "Reading metadata...",
 	"MetadataCompare.NoMetadata": "These files carry no metadata tags.",
-	"MetadataCompare.AllEqual": "Every tag is the same in all files. Untick \"Only show differences\" to see them.",
+	"MetadataCompare.AllEqual": "Every tag is the same in all files. Uncheck \"Only show differences\" to see them.",
 	"MetadataCompare.Container": "Container",
 	"MetadataCompare.Stream": "Stream {0}: {1}",
 	"MetadataCompare.Exif": "EXIF",

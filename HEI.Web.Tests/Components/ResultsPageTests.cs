@@ -159,7 +159,7 @@ public sealed class ResultsPageTests : BunitContext {
 			Assert.Contains("(differs)", odd.TextContent); // said to screen readers, not only colored
 			Assert.Equal("Container", page.Find(".metadata-section th").TextContent);
 
-			// Untick the filter: the shared creation_time shows too, unmarked.
+			// Uncheck the filter: the shared creation_time shows too, unmarked.
 			await page.Find(".metadata-toolbar input").ChangeAsync(false);
 			Assert.Equal(2, page.FindAll(".metadata-table th[scope=row]").Count);
 			Assert.Single(page.FindAll("td.metadata-odd"));

@@ -23,7 +23,7 @@ const TOUR_PARTS = [
   ['games', 'Games',
     'Your games by launcher and drive, and what they leave behind: leftovers of uninstalled games, download caches, shader caches and crash dumps. What you remove goes to the Recycle Bin.'],
   ['hotspots', 'Where the duplicates are',
-    'The folders where cleaning up frees the most. Only identical files and pixel-level copies are ticked for you: look-alikes are your call.'],
+    'The folders where cleaning up frees the most. Only identical files and pixel-level copies are checked for you: look-alikes are your call.'],
   ['history', 'History',
     'What was freed, week by week, and what you sent to the Recycle Bin or kept, so a choice can be undone.'],
 ];
@@ -154,7 +154,7 @@ function drawTour() {
     body.append(
       el('p', null, 'It finds duplicate photos and videos, including resized, recompressed, cropped and edited copies, with a vision model on this PC: on its NPU when it has one. ' +
         tourScanWords(state) + ' It keeps everything here: nothing about you or your files leaves this PC.'),
-      el('p', null, 'It lists what it finds for you to review. Nothing is removed until you say so, and what you tick goes to the Recycle Bin.'));
+      el('p', null, 'It lists what it finds for you to review. Nothing is removed until you say so, and what you check goes to the Recycle Bin.'));
   } else if (tourStep === 1) {
     title.textContent = 'Your choices';
     body.append(el('p', null, 'It works as it is: every fixed drive, leaving out Windows, programs, games, app data and code. A few things are yours to decide, now or any time in Settings:'));

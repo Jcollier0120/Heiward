@@ -21,7 +21,7 @@ using HEI.Core.ViewModels;
 namespace HEI.Agent.Tests;
 
 /// <summary>
-/// What gets kept and what gets pre-ticked for the Recycle Bin. Fingerprint values are the ones
+/// What gets kept and what gets pre-checked for the Recycle Bin. Fingerprint values are the ones
 /// measured on the test set (resized 99.9+, recompressed 99.8+, crops/flips/colour edits 96.2–98.0,
 /// different shots 94.3), so these tests pin the calibration, not just the code paths.
 /// </summary>
@@ -151,7 +151,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	public void CopiesAreJudgedAgainstTheKeeper_NotAgainstWhateverPulledThemIntoTheGroup() {
 		// Regression: VDF records each member's similarity to the member that pulled it into the group.
 		// When that chain ran through an edited copy, plain resized copies of the original looked like
-		// variants and lost their ticks. Their own fingerprints against the kept file decide now.
+		// variants and lost their checks. Their own fingerprints against the kept file decide now.
 		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1), modified: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
 		var resized = Photo("p.resized.jpg", 1280, 960, Bytes(2000, 2), gray: 99.93f, modified: new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc));
 		resized.Similarity = 96.5f; // VDF's tree edge, e.g. to an edited copy: must not matter
@@ -181,7 +181,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	[Fact]
 	public void TwoSetsOfCopiesInOneGroup_EachKeepsOneAndTicksTheOther() {
 		// Regression (a real library): two look-alike burst shots, each imported twice, came as one
-		// VDF group. Judged against one kept file, the second shot's copy was a look-alike, unticked.
+		// VDF group. Judged against one kept file, the second shot's copy was a look-alike, unchecked.
 		byte[] a = Bytes(8000, 1), b = Bytes(8100, 2);
 		var shotA = Photo("20151008_204237.jpg", 5312, 2988, a, modified: new DateTime(2015, 10, 8, 20, 42, 37, DateTimeKind.Utc));
 		var copyA = Photo("20151008_204237(1).jpg", 5312, 2988, a, modified: new DateTime(2015, 10, 8, 20, 42, 37, DateTimeKind.Utc));
@@ -199,7 +199,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	[InlineData("IMG_1234-edited.jpg", "IMG_1234.jpg")]                         // Google Photos
 	public void APhotoAndItsNamedEdit_AreBothKept(string edited, string original) {
 		// Regression (a real library): a light edit scored 99.68% against its original, above the
-		// plain-copy line, and the original was pre-ticked.
+		// plain-copy line, and the original was pre-checked.
 		var g = Single(
 			Photo(edited, 1836, 3264, Bytes(7900, 1), modified: new DateTime(2014, 11, 18, 0, 0, 0, DateTimeKind.Utc)),
 			Photo(original, 1836, 3264, Bytes(10900, 2), gray: 99.68f, modified: new DateTime(2014, 11, 19, 0, 0, 0, DateTimeKind.Utc)));
@@ -212,7 +212,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	[InlineData("IMG_3785.GIF", "IMG_3784.JPG")]
 	public void AnimatedPictures_MatchedByTheirFirstFrame_AreNotTicked(string a, string b) {
 		// Regression (a real library): two different GIFs that start with the same frame, and a still
-		// taken from a GIF, were pre-ticked as copies. (IMG_3784 and IMG_3785 are also numbered in a
+		// taken from a GIF, were pre-checked as copies. (IMG_3784 and IMG_3785 are also numbered in a
 		// row, so they're now no set at all.)
 		var groups = ReportBuilder.Build(new[] { Photo(a, 720, 404, Bytes(9000, 1)), Photo(b, 588, 330, Bytes(2000, 2), gray: 99.87f) }, fingerprints);
 		Assert.DoesNotContain(groups.SelectMany(g => g.Items), i => i.Suggested);
@@ -220,7 +220,7 @@ public sealed class ReportBuilderTests : IDisposable {
 
 	[Fact]
 	public void BurstShots_AreNoSet_ThoughTheyMatchLikeResavedCopies() {
-		// Regression: burst shots score 99.9%, above the plain-copy line, and were ticked as "compressed" copies.
+		// Regression: burst shots score 99.9%, above the plain-copy line, and were checked as "compressed" copies.
 		DuplicateItem Shot(int n) => Photo($@"Camera\IMG_{n}.jpg", 4032, 3024, Bytes(8000 + n, (byte)n), gray: 99.9f);
 		Assert.Empty(ReportBuilder.Build(new[] { Shot(1001), Shot(1002), Shot(1003), Shot(1004) }, fingerprints));
 	}
@@ -255,7 +255,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	[Fact]
 	public void FramesOfAnImageSequence_AreNoSet() {
 		// Regression (a real PC): an animation's frames, 0084.png to 0099.png, barely change from one to
-		// the next and were 16 "more compressed copies" of 0093.png, all ticked.
+		// the next and were 16 "more compressed copies" of 0093.png, all checked.
 		var frames = Enumerable.Range(84, 16)
 			.Select(n => Photo($@"Animator\Content\TestData\Color\{n:0000}.png", 480, 640, Bytes(n == 93 ? 9000 : 8000 + n, (byte)n), gray: 99.8f))
 			.ToArray();
@@ -285,7 +285,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	[Fact]
 	public void ABurstShot_IsNoCopy_OfARenamedCopyOfItsNeighbour() {
 		// holiday.jpg is IMG_1002 copied and renamed. IMG_1003, the next shot, scores 99.9% against it,
-		// which passes for a resaved copy: it was ticked for the Recycle Bin.
+		// which passes for a resaved copy: it was checked for the Recycle Bin.
 		byte[] shot = Bytes(8002, 2);
 		var g = Single(
 			Photo(@"Holiday\holiday.jpg", 4032, 3024, shot, modified: new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)),
@@ -303,7 +303,7 @@ public sealed class ReportBuilderTests : IDisposable {
 	[InlineData(@"Game\Movies\INTRO_ENG.wmv", @"Old\intro_ger.wmv")]               // elsewhere, still the German one
 	public void OneVideoInTwoLanguages_ByItsNames_IsNoSet(string a, string b) {
 		// Regression: an older game's cutscenes, one per language with the same pictures, matched
-		// frame for frame and were ticked as resaved copies of each other.
+		// frame for frame and were checked as resaved copies of each other.
 		Assert.Empty(ReportBuilder.Build(new[] { Video(a, Bytes(9000, 1)), Video(b, Bytes(9000, 2), gray: 99.9f) }, fingerprints));
 	}
 
@@ -339,7 +339,7 @@ public sealed class ReportBuilderTests : IDisposable {
 
 	[Fact]
 	public void AVideoWithoutSound_IsNoPlainCopyOfOneWithSound() {
-		// The muted copy is smaller, which would make it the one kept; the one with sound is kept, and nothing is ticked.
+		// The muted copy is smaller, which would make it the one kept; the one with sound is kept, and nothing is checked.
 		var g = Single(Video(@"Videos\party.mp4", Bytes(9000, 1)), Video(@"Videos\party muted.mp4", Bytes(8000, 2), gray: 99.9f, sound: false));
 		Assert.Equal(Path.Combine(dir, @"Videos\party.mp4"), g.KeepPath);
 		Assert.Equal("variant", Named(g, "party muted.mp4").Relation);

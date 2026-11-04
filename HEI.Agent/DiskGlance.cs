@@ -32,7 +32,7 @@ namespace HEI.Agent {
 	/// <param name="Type">"fixed", or "removable" for a USB drive.</param>
 	sealed record GlanceDrive(string Root, string Label, string Type, long TotalBytes, long FreeBytes);
 
-	/// <summary>What can be freed now: the duplicates to review, the developer files ticked, the Recycle Bin, the game leftovers ticked.</summary>
+	/// <summary>What can be freed now: the duplicates to review, the developer files checked, the Recycle Bin, the game leftovers checked.</summary>
 	sealed record GlanceReclaim(long Duplicates, long Developer, long RecycleBin, long Games = 0) {
 		public long Total => Duplicates + Developer + RecycleBin + Games;
 	}

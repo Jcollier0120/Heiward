@@ -281,10 +281,10 @@ namespace HEI.Agent {
 		/// of it is checked or shown. Heiward's own switch: when Manor's settings say "gameMode", Manor decides instead (<see cref="HEI.Agent.GameMode"/>).
 		/// </summary>
 		public string GameMode { get; set; } = "off";
-		/// <summary>A project untouched this many days has its build outputs ticked for cleaning.</summary>
+		/// <summary>A project untouched this many days has its build outputs checked for cleaning.</summary>
 		public int StaleProjectDays { get; set; } = 30;
 		/// <summary>
-		/// Temp files untouched this many days are ticked for cleaning, and Claude Code's ended sessions' temp files idle as long; a
+		/// Temp files untouched this many days are checked for cleaning, and Claude Code's ended sessions' temp files idle as long; a
 		/// day at least. What's in Temp is a program's scratch: what a program still needs it has open, or touched within the day.
 		/// Until 1.9.97 the setting was "tempOlderThanDays", 7, which nothing offered to change: a settings file's is left behind.
 		/// </summary>
@@ -359,7 +359,7 @@ namespace HEI.Agent {
 
 	/// <summary>
 	/// Automatic cleanup, for once the user trusts what the page suggests: after a scan, Heiward cleans
-	/// what the page ticks for them, once it has been listed for <see cref="AfterDays"/> days (<see cref="AutoCleaner"/>).
+	/// what the page checks for them, once it has been listed for <see cref="AfterDays"/> days (<see cref="AutoCleaner"/>).
 	/// </summary>
 	sealed class AutoCleanConfig {
 		/// <summary>Plain copies of photos, and byte-identical videos, go to the Recycle Bin.</summary>

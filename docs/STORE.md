@@ -49,7 +49,7 @@ Once the app has a published submission, the workflow also submits each new rele
 3. **Add them to the repository** (GitHub, **Settings > Secrets and variables > Actions > Secrets**): `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_CLIENT_ID`, `PARTNER_CENTER_CLIENT_SECRET` (the key) and `PARTNER_CENTER_SELLER_ID`.
 4. **Turn it on** once the first submission is published (steps 2 to 4 above): under **Variables**, `STORE_SUBMIT` set to `true`. Without it, or before it, nothing is sent: the bundle is only built and kept.
 
-To send a release again, or to look before it goes to certification: **Actions > Microsoft Store > Run workflow**, with the release's tag (empty: the newest), and **Leave the submission as a draft** ticked to send it yourself from Partner Center. The key expires (you choose when, up to two years): make a new one in step 1 and replace the secret.
+To send a release again, or to look before it goes to certification: **Actions > Microsoft Store > Run workflow**, with the release's tag (empty: the newest), and **Leave the submission as a draft** checked to send it yourself from Partner Center. The key expires (you choose when, up to two years): make a new one in step 1 and replace the secret.
 
 ### What each page asks
 
@@ -69,13 +69,13 @@ To send a release again, or to look before it goes to certification: **Actions >
 **Store listings (English, United States):**
 - **Description:**
   ```
-  Heiward keeps your Windows PC tidy in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a review page on your PC. Nothing is removed until you say so, and files you tick go to the Recycle Bin. Once you trust what it suggests, it can clean up by itself.
+  Heiward keeps your Windows PC tidy in the background. It finds duplicate photos and videos and, in developer mode, stale developer files, then lists them on a review page on your PC. Nothing is removed until you say so, and files you check go to the Recycle Bin. Once you trust what it suggests, it can clean up by itself.
 
   Light on power. AI matching runs on the NPU where there is one (Qualcomm Snapdragon, Intel Core Ultra, or AMD Ryzen AI), with hourly scans. Otherwise it uses the graphics card or the processor, every 6 hours on AC power, or only when you ask. Scheduled scans run in Windows' efficiency mode.
 
   The whole PC, minus what isn't yours. Every fixed drive, leaving out Windows, programs, games, app data and code repositories. Cloud-only files are never downloaded. Right-click a folder on the page to include it or leave it out.
 
-  Laid out like File Explorer. A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are ticked for you. Burst shots and pictures less than 75% alike aren't offered as look-alikes.
+  Laid out like File Explorer. A card per drive, a folder tree, and the duplicates of the folder you're in. Only identical files and pixel-level copies are checked for you. Burst shots and pictures less than 75% alike aren't offered as look-alikes.
 
   Developer mode, repository by repository. Each repository's open pull requests, from GitHub, Azure DevOps and TFS, GitLab, Bitbucket, Gitea or Forgejo, with those ready to merge or waiting for a review first. Then its build outputs, finished worktrees, and a button that prunes local branches already merged into main, plus package caches, unused emulator images and old temp files.
 
@@ -122,7 +122,7 @@ To send a release again, or to look before it goes to certification: **Actions >
 
   1. Start Heiward from the Start menu. The page opens with first-run setup.
   2. Pick where the AI runs (the NPU when the PC has one, otherwise the graphics card or the processor) and how hard scans work, then start. Setup downloads the AI components (ONNX Runtime and a small image model from GitHub and NuGet; about 215 MB more for the graphics card), so the PC needs internet access.
-  3. The first scan starts by itself (unless "Only when I press Scan now" was chosen: then Scan now starts it); its progress is on the page. With few photos on the PC it finds little: copy a photo to a second folder to see a set of duplicates. Tick a copy and move it to the Recycle Bin.
+  3. The first scan starts by itself (unless "Only when I press Scan now" was chosen: then Scan now starts it); its progress is on the page. With few photos on the PC it finds little: copy a photo to a second folder to see a set of duplicates. Check a copy and move it to the Recycle Bin.
   4. "hei" in a terminal is the command line (hei --help).
   ```
 
@@ -156,7 +156,7 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
   - **How hard scans work:** asked on every PC.
     - **In the background:** Windows' efficiency mode, low priority. Slower.
     - **At full speed:** as many cores as it takes, at normal priority.
-  - **A copy from GitHub:** when one is installed, a ticked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
+  - **A copy from GitHub:** when one is installed, a checked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
     - The removal takes the copy's processes, shortcuts, notification name, `heiward:` links, Apps & Features entry and folder.
     - A one-time task, `\Heiward (<account>)\Remove GitHub copy`, deletes the registry keys with `reg.exe`, then itself. The package's registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay. So do the changes of every program it starts, so `reg.exe` started from the package wouldn't do. Task Scheduler starts its tasks outside it.
     - A `Heiward.lnk` is deleted only when it names the GitHub copy's folder: the Store version's desktop shortcut has the same name.

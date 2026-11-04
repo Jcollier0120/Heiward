@@ -12,7 +12,7 @@ let route = parseRoute();
 let groupsShown = PAGE;
 let groupFilter = 'copies';
 let sortBy = { key: 'reclaim', desc: true };
-const ticks = new Map();      // group key -> Set of ticked paths (the user's edits survive refreshes)
+const checks = new Map();      // group key -> Set of checked paths (the user's edits survive refreshes)
 const listings = new Map();   // folder path (lower case, + '|all') -> /api/tree answer
 const expanded = new Set();   // lower-case folder paths open in the tree
 const showAll = new Set();    // lower-case folder paths showing their empty subfolders too
@@ -418,9 +418,9 @@ function setupPauseMenu() {
   });
 }
 
-function ticked(g) {
-  if (!ticks.has(g.key)) ticks.set(g.key, new Set(g.items.filter((i) => i.suggested).map((i) => i.path)));
-  return ticks.get(g.key);
+function checked(g) {
+  if (!checks.has(g.key)) checks.set(g.key, new Set(g.items.filter((i) => i.suggested).map((i) => i.path)));
+  return checks.get(g.key);
 }
 
 // ---------------------------------------------------------------- routing
@@ -429,7 +429,7 @@ function parseRoute() {
   const h = location.hash;
   if (h === '#/settings') return { view: 'settings' };
   if (h === '#/about') return { view: 'about' };
-  // Settings > Apps' uninstall (Installer.OpenUninstallWindow); /purge: --purge, so keeping the settings starts unticked.
+  // Settings > Apps' uninstall (Installer.OpenUninstallWindow); /purge: --purge, so keeping the settings starts unchecked.
   if (h === '#/uninstall' || h === '#/uninstall/purge') return { view: 'uninstall', purge: h === '#/uninstall/purge' };
   if (h === '#/dev') return { view: 'dev', cat: null };
   if (h.startsWith('#/dev/g/')) return { view: 'dev', group: decodeURIComponent(h.slice(8)) };
@@ -740,9 +740,9 @@ function renderHome(s) {
   tiles.push(tile('copies', 'Copies to review', scanned ? count(copies, 'set', 'sets') : '–',
     !scanned ? 'After the first scan' : copies ? bytes(s.totals.reclaimableBytes) + ' to free' + (autoCopies ? ' · ' + autoCopies + (autoCopies === 1 ? ' goes' : ' go') + ' automatically' : '') : 'None: nothing to free', scanned && !copies ? 'success' : ''));
   if (devShown) tiles.push(tile('dev', 'Developer files', s.dev.scannedAtUtc ? bytes(s.dev.totalBytes) : '–',
-    !s.dev.scannedAtUtc ? 'Not checked yet' : s.dev.suggestedBytes ? bytes(s.dev.suggestedBytes) + ' ticked to clean' : 'Nothing ticked for you'));
+    !s.dev.scannedAtUtc ? 'Not looked at yet' : s.dev.suggestedBytes ? bytes(s.dev.suggestedBytes) + ' checked to clean' : 'Nothing checked for you'));
   if (gamesShown) tiles.push(tile('games', 'Games', s.games.scannedAtUtc ? count(s.games.installed, 'game', 'games') : '–',
-    !s.games.scannedAtUtc ? 'Not checked yet' : s.games.totalBytes ? bytes(s.games.totalBytes) + ' left behind' : 'Nothing left behind'));
+    !s.games.scannedAtUtc ? 'Not looked at yet' : s.games.totalBytes ? bytes(s.games.totalBytes) + ' left behind' : 'Nothing left behind'));
   tiles.push(tile('history', 'Freed so far', bytes(s.totals.recycledBytes), last ? 'Last cleanup ' + new Date(last.atUtc).toLocaleDateString([], { day: 'numeric', month: 'short' }) : 'Nothing yet'));
   $('tiles').replaceChildren(...tiles);
 
@@ -992,8 +992,8 @@ function renderGlance(g) {
     return li;
   };
   if (r.duplicates) list.append(toTab(bytes(r.duplicates) + ' in copies to review:', 'copies', 'Duplicates'));
-  if (r.developer) list.append(toTab(bytes(r.developer) + ' of developer files ticked to clean:', 'dev', 'Developer'));
-  if (r.games) list.append(toTab(bytes(r.games) + ' that games left behind, ticked to remove:', 'games', 'Games'));
+  if (r.developer) list.append(toTab(bytes(r.developer) + ' of developer files checked to clean:', 'dev', 'Developer'));
+  if (r.games) list.append(toTab(bytes(r.games) + ' that games left behind, checked to remove:', 'games', 'Games'));
   if (r.recycleBin) list.append(el('li', null, bytes(r.recycleBin) + ' in the Recycle Bin: empty it to get that space back.'));
   if (!list.childElementCount) list.append(el('li', 'muted', 'No drive is nearly full, and there\'s nothing to free right now.'));
   notes.append(list);
@@ -1164,7 +1164,7 @@ function renderDevModeCard(s) {
   }
   text.append(el('div', 'muted small', on
     ? 'Once a day Heiward also looks for what development tools recreate: ' + what + '. The Developer area, from the home page, shows them' +
-      (stewardRole() ? '' : ' beside your repositories\' open pull requests') + ', and automatic cleanup can take what it ticks.'
+      (stewardRole() ? '' : ' beside your repositories\' open pull requests') + ', and automatic cleanup can take what it checks.'
     : 'Off: nothing of it is checked or shown. For developers: a Developer area with your repositories\' open pull requests, and what development tools recreate: ' + what + '.'));
   // At a manor, who looks after the rest.
   if (on) for (const role of [reeveRole(), stewardRole()]) if (role) text.append(roleNote(role));
@@ -1744,16 +1744,16 @@ function setupForm(s) {
     const box = el('fieldset', 'setup-question');
     box.append(el('legend', 'auto-title', 'Heiward from GitHub'));
     const row = el('label', 'setup-option');
-    const tick = el('input');
-    tick.type = 'checkbox';
-    tick.checked = setupAnswers.removeGitHubCopy;
-    tick.addEventListener('change', () => { setupAnswers.removeGitHubCopy = tick.checked; });
+    const check = el('input');
+    check.type = 'checkbox';
+    check.checked = setupAnswers.removeGitHubCopy;
+    check.addEventListener('change', () => { setupAnswers.removeGitHubCopy = check.checked; });
     const text = el('span');
     text.append(el('span', 'setup-label', 'Remove the copy installed from GitHub' + (setup.gitHubCopy ? ' (' + setup.gitHubCopy + ')' : '') + ' (recommended)'),
       el('span', 'muted small', 'The Microsoft Store keeps this version up to date by itself: new versions arrive automatically, with ' +
         'nothing to download from GitHub. Removing the old copy takes away its shortcuts, its entry in Installed apps and its folder. ' +
         'Your settings, the report and the history stay: this version uses them.'));
-    row.append(tick, text);
+    row.append(check, text);
     box.append(row);
     parts.push(box);
   }
@@ -1922,15 +1922,15 @@ function uninstallAsk() {
   const box = el('fieldset', 'setup-question');
   box.append(el('legend', 'auto-title', 'Settings and report'));
   const row = el('label', 'setup-option');
-  const tick = el('input');
-  tick.type = 'checkbox';
-  tick.checked = uninstall.keepData;
-  tick.addEventListener('change', () => { uninstall.keepData = tick.checked; });
+  const check = el('input');
+  check.type = 'checkbox';
+  check.checked = uninstall.keepData;
+  check.addEventListener('change', () => { uninstall.keepData = check.checked; });
   const words = el('span');
   words.append(el('span', 'setup-label', 'Keep Heiward\'s settings and its report'),
     el('span', 'muted small', 'Kept, installing Heiward again picks up where it left off: your settings, what it found, and what you decided. ' +
       'Not kept, they\'re deleted too.'));
-  row.append(tick, words);
+  row.append(check, words);
   box.append(row);
   const go = el('button', 'btn setup-go', 'Uninstall');
   go.addEventListener('click', () => runUninstall(go));
@@ -2018,7 +2018,7 @@ function leaveUninstall() {
 
 // ---------------------------------------------------------------- automatic cleanup
 
-// Automatic cleanup (AutoCleaner): after each scan Heiward cleans what this page would tick, once it has
+// Automatic cleanup (AutoCleaner): after each scan Heiward cleans what this page would check, once it has
 // been listed for a few days. The card turns it on and off; each set and developer item says when it goes,
 // with a "Leave it" button.
 let autoBusy = false;
@@ -2147,11 +2147,11 @@ function renderAutoCard(s) {
       devStatus = el('div', 'auto-status small', parts.join(' ') || 'Nothing is due yet.');
     }
     card.append(row(set.developer, 'Developer leftovers',
-      'The kinds you tick below are deleted by themselves right after the daily developer check, ' + waitText +
+      'The kinds you check below are deleted by themselves right after the daily developer look, ' + waitText +
       '. They\'re deleted permanently, not to the Recycle Bin: tools recreate them. Package caches and emulators always wait for you.',
       async (on, box) => {
         if (on && !confirm('Clean up developer leftovers automatically?\n\n' +
-            'Right after the daily developer check, Heiward deletes what this page ticks for you (of the kinds you pick) ' + waitText + '. ' +
+            'Right after the daily developer check, Heiward deletes what this page checks for you (of the kinds you pick) ' + waitText + '. ' +
             'They\'re deleted permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer. ' +
             'Merged branches go only when every commit is in the remote\'s main branch; worktrees only when everything is committed and pushed.\n\n' +
             'Package caches and emulators always wait for you.')) { box.checked = false; return; }
@@ -2159,7 +2159,7 @@ function renderAutoCard(s) {
       }, [kinds, reeveNote, devStatus]));
   }
 
-  // Game mode: what games leave behind, to the Recycle Bin, of the kinds ticked (AutoCleaner.GameKinds).
+  // Game mode: what games leave behind, to the Recycle Bin, of the kinds checked (AutoCleaner.GameKinds).
   if (s.games.enabled) {
     let kinds = null, gameStatus = null;
     if (set.games) {
@@ -2183,11 +2183,11 @@ function renderAutoCard(s) {
       gameStatus = el('div', 'auto-status small', a.upcoming.games && a.upcoming.games.count ? upcomingText(a.upcoming.games, 'item', 'items', 'games') : 'Nothing is due yet.');
     }
     card.append(row(!!set.games, 'What games leave behind',
-      'The kinds you tick below go to the Recycle Bin by themselves right after the daily look at your games, ' + waitText +
+      'The kinds you check below go to the Recycle Bin by themselves right after the daily look at your games, ' + waitText +
       '. Paused downloads, and shader caches of games you have, always wait for you.',
       async (on, box) => {
         if (on && !confirm('Clean up what games leave behind automatically?\n\n' +
-            'Right after the daily look at your games, Heiward moves what the Games area ticks for you (of the kinds you pick) to the Recycle Bin ' + waitText + '. ' +
+            'Right after the daily look at your games, Heiward moves what the Games area checks for you (of the kinds you pick) to the Recycle Bin ' + waitText + '. ' +
             'You can restore it from there.\n\n' +
             'Installed games\' own files and saved games are never touched, and nothing of a launcher or game that\'s running.')) { box.checked = false; return; }
         await saveAuto({ ...set, games: on });
@@ -2262,8 +2262,8 @@ function autoLine(e, target, dueLabel) {
 // ---------------------------------------------------------------- developer area
 
 let devReport = null;         // /api/dev
-const devTicks = new Set();   // ticked item ids
-const devSeen = new Set();    // ids whose default tick was applied (the user's edits survive refreshes)
+const devTicks = new Set();   // checked item ids
+const devSeen = new Set();    // ids whose default check was applied (the user's edits survive refreshes)
 let devBusy = false;
 
 async function startDevCheck() {
@@ -2286,7 +2286,7 @@ function renderDevCard(dev) {
   } else {
     // Each kind, beside the card, opens its own page (renderHome's kindRows).
     text.append(el('div', 'drive-name', bytes(dev.totalBytes) + ' that tools can recreate'),
-      el('div', 'muted small', (dev.suggestedBytes ? bytes(dev.suggestedBytes) + ' ticked for cleaning · ' : 'Nothing ticked for you · ') +
+      el('div', 'muted small', (dev.suggestedBytes ? bytes(dev.suggestedBytes) + ' checked for cleaning · ' : 'Nothing checked for you · ') +
         (dev.running ? 'checking again…' : 'checked ' + ago(dev.scannedAtUtc))));
   }
   top.append(text);
@@ -2393,10 +2393,10 @@ function lastUsed(iso) {
 // The developer view, project first: each repository (or a project the user bundled several into)
 // has its own page with a section per cleanup area; machine-wide things (package caches, emulators,
 // temp files) sit under Shared. Laid out like the folder view: navigation pane, one page at a time,
-// and a selection bar that appears once something is ticked.
+// and a selection bar that appears once something is checked.
 const DEV_META = {
   projects: { short: 'Build outputs', icon: 'layers', blurb: 'node_modules, bin and obj, Gradle and Cargo build folders, Python environments. The next install or build recreates them.' },
-  orphans: { short: 'Build outputs without a project', icon: 'layers', blurb: 'bin and obj folders whose project file is gone (a project renamed or moved, usually), with nothing in them that git keeps. Nothing proves a build made them, so they\'re never ticked and never cleaned automatically: look at each first.' },
+  orphans: { short: 'Build outputs without a project', icon: 'layers', blurb: 'bin and obj folders whose project file is gone (a project renamed or moved, usually), with nothing in them that git keeps. Nothing proves a build made them, so they\'re never checked and never cleaned automatically: look at each first.' },
   worktrees: { short: 'Worktrees', icon: 'branch', blurb: 'Extra working folders; git removes one only when it has no uncommitted changes, and the branch stays. One a program or a Claude Code session works in waits.' },
   repos: { short: 'Merged branches', icon: 'merge', blurb: 'Local branches already merged into the remote\'s main or master.' },
   caches: { short: 'Package caches', icon: 'db' },
@@ -2614,7 +2614,7 @@ function devOverview(dev) {
     out.push(head);
     if (groupMode) {
       // Picking is easier on small cards.
-      out.push(el('p', 'muted small', 'Tick the repositories that belong together (an app and its backend, a monorepo split in two), then name the project.'));
+      out.push(el('p', 'muted small', 'Check the repositories that belong together (an app and its backend, a monorepo split in two), then name the project.'));
       const grid = el('div', 'cat-grid');
       const biggest = Math.max(1, ...groups.map((g) => g.bytes));
       for (const g of groups) grid.append(projectCard(g, biggest));
@@ -2704,7 +2704,7 @@ function pullColumn(g, multi) {
   return col;
 }
 
-/** The overview's cleanup of a repository: ticked and biggest first, then its merged branches with their Prune button. */
+/** The overview's cleanup of a repository: checked and biggest first, then its merged branches with their Prune button. */
 function cleanColumn(g, multi) {
   const col = el('div', 'repo-col');
   col.append(colHead('layers', 'Cleanup', g.bytes ? bytes(g.bytes) : ''));
@@ -2985,7 +2985,7 @@ function bigFolder() {
   return f;
 }
 
-/** One cleanup area of a project: its items, ticked ones first to clean, the blocked ones folded. */
+/** One cleanup area of a project: its items, checked ones first to clean, the blocked ones folded. */
 function devSection(k, items, showRepo) {
   const box = el('section', 'dev-section');
   const head = el('div', 'dev-section-head');
@@ -2994,7 +2994,7 @@ function devSection(k, items, showRepo) {
   title.append(el('span', null, DEV_META[k].short), el('span', 'muted', ' · ' + bytes(devSize(items))));
   head.append(title);
   const open = items.filter((i) => !i.blocked);
-  // A worktree Reeve keeps for you holds work: ticked one at a time, never all at once.
+  // A worktree Reeve keeps for you holds work: checked one at a time, never all at once.
   const many = open.filter((i) => !i.keptForYou);
   if (many.length > 1) {
     const allOn = many.every((i) => devTicks.has(i.id));
@@ -3007,14 +3007,14 @@ function devSection(k, items, showRepo) {
   const reeve = k === 'worktrees' ? reeveRole() : null;
   if (reeve) {
     box.append(el('p', 'muted small', 'Extra working folders, and the space they take.'), roleNote(reeve));
-    // Those it keeps for you hold work it won't throw away: yours again, never ticked for you, asked about before they go.
+    // Those it keeps for you hold work it won't throw away: yours again, never checked for you, asked about before they go.
     if (items.some((i) => i.keptForYou))
       box.append(el('p', 'muted small', 'Those tagged "' + reeve.keptForYou + '" hold work ' + reeve.name + '\'s tidy won\'t throw away, so ' +
-        'they\'re yours again. None is ticked for you; removing one asks first and says what goes with it.'));
-    // Those its tidy round doesn't go through are Heiward's: never ticked for you, cleaned when you tick one.
+        'they\'re yours again. None is checked for you; removing one asks first and says what goes with it.'));
+    // Those its tidy round doesn't go through are Heiward's: never checked for you, cleaned when you check one.
     if (items.some((i) => !i.leftover && i.blocked !== reeve.kept && !i.keptForYou))
       box.append(el('p', 'muted small', 'Those without a tag from ' + reeve.name + ' aren\'t in its tidy: ' +
-        'they\'re yours to clean here. None is ticked for you; git removes one only when it has no uncommitted changes, and the branch stays.'));
+        'they\'re yours to clean here. None is checked for you; git removes one only when it has no uncommitted changes, and the branch stays.'));
   } else box.append(el('p', 'muted small', DEV_META[k].blurb));
   if (open.length) {
     const list = el('div', 'dev-list');
@@ -3097,7 +3097,7 @@ function categoryPage(c) {
   return [devHeader(bigIcon(DEV_META[c.key].icon), c.title, c.explain, chips), devSection(c.key, items, false)];
 }
 
-/** One thing to clean, with its tick box. Compact (the overview): its facts on one line, its folder on hover. */
+/** One thing to clean, with its checkbox. Compact (the overview): its facts on one line, its folder on hover. */
 function devRow(i, showRepo, compact) {
   const row = el('label', 'dev-item' + (i.blocked ? ' blocked' : '') + (devTicks.has(i.id) && !i.blocked ? ' on' : ''));
   const box = el('input');
@@ -3254,7 +3254,7 @@ async function pruneRepo(r) {
   refresh(true);
 }
 
-/** Appears once something is ticked, on any page: the one place to clean from. */
+/** Appears once something is checked, on any page: the one place to clean from. */
 function selectionBar() {
   const picked = devPicked();
   const bar = el('div', 'sel-bar' + (picked.length || devBusy ? ' show' : ''));
@@ -3336,11 +3336,11 @@ async function cleanDev(picked) {
 // ---------------------------------------------------------------- games area
 
 // Game mode: the games every launcher has installed, by game and by drive, and what games and launchers leave behind.
-// Laid out like the Developer area: a navigation pane, a page at a time, and a selection bar once something is ticked.
+// Laid out like the Developer area: a navigation pane, a page at a time, and a selection bar once something is checked.
 // Everything removed goes to the Recycle Bin; an installed game's files and anyone's saves are never touched (GameSafety).
 let gameReport = null;         // /api/games
-const gameTicks = new Set();   // ticked item ids
-const gameSeen = new Set();    // ids whose default tick was applied (the user's edits survive refreshes)
+const gameTicks = new Set();   // checked item ids
+const gameSeen = new Set();    // ids whose default check was applied (the user's edits survive refreshes)
 let gameBusy = false;
 let gameResult = null;         // [ok, message, what wasn't removed] after the last removal, shown until the next
 let gameProgress = '';         // while removing: what, and how far along
@@ -3399,7 +3399,7 @@ function renderGamesCard(g) {
   } else {
     text.append(el('div', 'drive-name', count(g.installed, 'game', 'games') + ' installed, ' + bytes(g.installedBytes)),
       el('div', 'muted small', (g.totalBytes ? bytes(g.totalBytes) + ' left behind · ' : 'Nothing left behind · ') +
-        (g.suggestedBytes ? bytes(g.suggestedBytes) + ' ticked to remove · ' : '') + (g.running ? 'checking again…' : 'checked ' + ago(g.scannedAtUtc))));
+        (g.suggestedBytes ? bytes(g.suggestedBytes) + ' checked to remove · ' : '') + (g.running ? 'looking again…' : 'looked at ' + ago(g.scannedAtUtc))));
     // Each kind, beside the card, opens its own page (renderHome's kindRows).
   }
   top.append(text);
@@ -3569,7 +3569,7 @@ function renderGamesContent() {
   content.scrollTop = y;
 }
 
-const GAMES_SAFE = 'Nothing is removed until you tick it, and what you remove goes to the Recycle Bin. Heiward never touches an installed game\'s own files or your saved games.';
+const GAMES_SAFE = 'Nothing is removed until you check it, and what you remove goes to the Recycle Bin. Heiward never touches an installed game\'s own files or your saved games.';
 
 function gamesOverview(g) {
   const again = el('button', 'link small', g.running ? 'Checking…' : 'Check again');
@@ -3685,7 +3685,7 @@ function playedText(iso) {
 }
 
 /**
- * A kind of thing games leave, or one game's, or one drive's: its items, ticked ones first, those waiting folded. On a game's own
+ * A kind of thing games leave, or one game's, or one drive's: its items, checked ones first, those waiting folded. On a game's own
  * page (<game>), its items don't repeat what the page's head says: when it was last played, and its folder.
  */
 function gameSection(k, items, showWhere, game) {
@@ -3723,7 +3723,7 @@ function gameSection(k, items, showWhere, game) {
 }
 
 /**
- * One thing with its tick box (none for what Heiward only points to): what it is, what removing it means as a block of its own,
+ * One thing with its checkbox (none for what Heiward only points to): what it is, what removing it means as a block of its own,
  * where it is on a line of its own, and its size. On <game>'s own page, it doesn't say again when the game was last played (the
  * page's chips do) or the game's folder (the page's head does).
  */
@@ -3939,7 +3939,7 @@ async function uninstallGame(game) {
   renderGamesContent();
 }
 
-/** Appears once something is ticked, on any page: the one place to remove from. */
+/** Appears once something is checked, on any page: the one place to remove from. */
 function gameSelectionBar() {
   const picked = gamePicked();
   const bar = el('div', 'sel-bar' + (picked.length || gameBusy ? ' show' : ''));
@@ -4889,7 +4889,7 @@ function duplicatesSection(path) {
   }
   if (groupFilter === 'copies' && copies.length) box.append(cleanupBar(path, copies));
   if (groupFilter === 'similar') {
-    box.append(el('p', 'muted small', 'These look alike but may be edits or different shots. Nothing is ticked; pick what you don\'t need, set by set. ' +
+    box.append(el('p', 'muted small', 'These look alike but may be edits or different shots. Nothing is checked; pick what you don\'t need, set by set. ' +
       'Burst shots (photos numbered in a row, like IMG_1234 and IMG_1235) and pictures less than 75% alike aren\'t listed: they\'re different photos.'));
     if (similar.length) box.append(skipBar(path, similar));
   }
@@ -4928,7 +4928,7 @@ function skipBar(path, groups) {
     btn.disabled = true;
     try {
       const r = await post('/api/groups/skip', { keys: groups.map((g) => g.key), batch: batchId(), folder: trimSep(path) });
-      for (const g of groups) ticks.delete(g.key);
+      for (const g of groups) checks.delete(g.key);
       groupsShown = PAGE;
       showNotice('Skipped ' + count(r.skipped, 'look-alike set', 'look-alike sets') + '.');
       refresh(true);
@@ -4945,7 +4945,7 @@ function skipBar(path, groups) {
 function cleanupBar(path, groups) {
   const plan = [];
   for (const g of groups) {
-    const set = ticked(g);
+    const set = checked(g);
     const paths = g.items.filter((i) => set.has(i.path) && isUnder(i.path, path)).map((i) => i.path);
     if (paths.length && paths.length < g.items.length) plan.push({ g, paths });
   }
@@ -4956,8 +4956,8 @@ function cleanupBar(path, groups) {
   const bar = el('div', 'cleanup');
   const text = el('div');
   text.append(el('div', null, files
-    ? 'Ticked in this folder: ' + count(files, 'file', 'files') + ', ' + bytes(size) + ', in ' + count(plan.length, 'set', 'sets') + '.'
-    : 'Nothing ticked in this folder.'));
+    ? 'Checked in this folder: ' + count(files, 'file', 'files') + ', ' + bytes(size) + ', in ' + count(plan.length, 'set', 'sets') + '.'
+    : 'Nothing checked in this folder.'));
   text.append(el('div', 'muted small', 'Each set keeps its kept file. Files go to the Recycle Bin, where you can restore them.'));
   const result = el('div', 'result small');
   text.append(result);
@@ -4965,7 +4965,7 @@ function cleanupBar(path, groups) {
   const btn = el('button', 'btn', files ? 'Move ' + count(files, 'file', 'files') + ' to Recycle Bin' : 'Move to Recycle Bin');
   btn.disabled = !files;
   btn.addEventListener('click', async () => {
-    let msg = 'Move ' + count(files, 'ticked file', 'ticked files') + ' (' + bytes(size) + ') from ' + count(plan.length, 'set', 'sets') + ' to the Recycle Bin?';
+    let msg = 'Move ' + count(files, 'checked file', 'checked files') + ' (' + bytes(size) + ') from ' + count(plan.length, 'set', 'sets') + ' to the Recycle Bin?';
     if (synced) msg += '\n\n' + count(synced, 'of them is', 'of them are') +
       ' in a cloud-synced folder (iCloud Photos, OneDrive…): the Recycle Bin move also deletes ' + (synced === 1 ? 'it' : 'them') +
       ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days).';
@@ -4981,7 +4981,7 @@ function cleanupBar(path, groups) {
         moved += r.recycled.length;
         freed += r.recycledBytes;
         for (const f of r.failed) failed.push(f.path.split(SEP).pop() + ' (' + f.reason + ')');
-        ticks.delete(p.g.key);
+        checks.delete(p.g.key);
       } catch (e) {
         failed.push(p.g.items[0].name + ' (' + e.message + ')');
       }
@@ -4995,9 +4995,9 @@ function cleanupBar(path, groups) {
 }
 
 function itemTile(g, item, index, folder) {
-  const set = ticked(g);
+  const set = checked(g);
   const outside = folder && !isUnder(item.path, folder);
-  const tile = el('div', 'item' + (item.keep ? ' keep' : '') + (set.has(item.path) ? ' ticked' : '') + (outside ? ' outside' : ''));
+  const tile = el('div', 'item' + (item.keep ? ' keep' : '') + (set.has(item.path) ? ' checked' : '') + (outside ? ' outside' : ''));
   const img = el('img', 'thumb');
   img.loading = 'lazy';
   img.alt = item.name;
@@ -5021,7 +5021,7 @@ function itemTile(g, item, index, folder) {
   else body.append(el('div', 'relation small', (RELATION[item.relation] || item.relation) + (item.aiMatched ? ' · ' + Math.round(item.similarity) + '% alike' : '')));
   if (item.synced) body.append(el('div', 'synced small', 'Synced to the cloud: deleting it here deletes it everywhere'));
 
-  const label = el('label', 'tick');
+  const label = el('label', 'check');
   const box = el('input');
   box.type = 'checkbox';
   box.checked = set.has(item.path);
@@ -5043,7 +5043,7 @@ function groupCard(g, folder) {
   left.append(el('span', 'badge ' + cls, label));
   left.append(el('span', 'muted small', g.items.length + ' files' + (g.media === 'video' ? ' (video)' : '')));
   head.append(left);
-  const set = ticked(g);
+  const set = checked(g);
   const selectedBytes = g.items.filter((i) => set.has(i.path)).reduce((a, i) => a + i.size, 0);
   head.append(el('span', 'muted small', set.size ? 'frees ' + bytes(selectedBytes) : ''));
   card.append(head);
@@ -5051,14 +5051,14 @@ function groupCard(g, folder) {
   if (auto && g.kind !== 'similar')
     card.append(autoLine(auto, 'g:' + g.key, count(auto.count, 'copy goes', 'copies go') + ' to the Recycle Bin automatically ' + dueText(auto.dueUtc, false) + '.'));
   if (g.kind !== 'similar' && g.items.some((i) => !i.keep && !i.suggested))
-    card.append(el('p', 'muted small', 'Plain copies are ticked. Edited, cropped or look-alike versions are not: tick them only if you don\'t want them.'));
+    card.append(el('p', 'muted small', 'Plain copies are checked. Edited, cropped or look-alike versions are not: check them only if you don\'t want them.'));
 
   const items = el('div', 'items');
   g.items.forEach((item, i) => items.append(itemTile(g, item, i, folder)));
   card.append(items);
 
   const actions = el('div', 'actions');
-  const recycle = el('button', 'btn', set.size ? 'Move ' + set.size + ' to Recycle Bin' : 'Tick the files to remove');
+  const recycle = el('button', 'btn', set.size ? 'Move ' + set.size + ' to Recycle Bin' : 'Check the files to remove');
   recycle.disabled = set.size === 0 || set.size >= g.items.length;
   if (set.size >= g.items.length) recycle.textContent = 'Keep at least one copy';
   const keep = el('button', 'btn secondary', g.kind === 'similar' ? 'Keep them all' : 'Not duplicates, keep all');
@@ -5076,7 +5076,7 @@ function groupCard(g, folder) {
       for (const f of r.failed) lines.push('Not moved: ' + f.path.split(SEP).pop() + ' (' + f.reason + ')');
       result.textContent = lines.join(' ');
       result.className = 'result small ' + (r.failed.length ? 'bad' : 'ok');
-      ticks.delete(g.key);
+      checks.delete(g.key);
       setTimeout(() => refresh(true), r.failed.length ? 4000 : 800);
     } catch (e) {
       result.textContent = e.message;
@@ -5087,7 +5087,7 @@ function groupCard(g, folder) {
   keep.addEventListener('click', async () => {
     try {
       await post('/api/groups/' + encodeURIComponent(g.key) + '/keep');
-      ticks.delete(g.key);
+      checks.delete(g.key);
       refresh(true);
     } catch (e) { showError(e.message); }
   });

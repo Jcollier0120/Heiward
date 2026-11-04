@@ -53,7 +53,7 @@ public sealed class ExplorerViewTests : IDisposable {
 	public void Stats_CountCopiesAndLookAlikes_AndOnlyTheTickedBytesInside() {
 		string photos = Dir("Photos"), other = Dir("Other");
 		var pending = new List<ReportGroup> {
-			// The kept file elsewhere, the ticked copy here: 5 bytes to free here.
+			// The kept file elsewhere, the checked copy here: 5 bytes to free here.
 			Group("identical", Item(Path.Combine(other, "a.jpg"), 5, false, keep: true), Item(Path.Combine(photos, "a (1).jpg"), 5, true)),
 			// Both here: the kept one frees nothing.
 			Group("copies", Item(Path.Combine(photos, "b.jpg"), 7, false, keep: true), Item(Path.Combine(photos, "b small.jpg"), 3, true)),

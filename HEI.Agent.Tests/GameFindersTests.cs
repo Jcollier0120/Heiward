@@ -257,7 +257,7 @@ public sealed class GameFindersTests : IDisposable {
 		GameItem depot = items["Steam's download cache"];
 		Assert.True(depot.Suggested);
 		Assert.Null(depot.Blocked);
-		// Downloads: of a game no longer listed, a leftover; of one Steam lists, a paused download, never ticked.
+		// Downloads: of a game no longer listed, a leftover; of one Steam lists, a paused download, never checked.
 		GameItem leftover = items["Unfinished download of Steam game 400"];
 		Assert.Equal("download", leftover.Kind);
 		Assert.True(leftover.Suggested);

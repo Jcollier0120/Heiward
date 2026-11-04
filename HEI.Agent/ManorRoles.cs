@@ -38,9 +38,9 @@ namespace HEI.Agent {
 	/// <item><see cref="Worktrees"/>: Reeve, when it's installed too (%USERPROFILE%\.reeve\app, or REEVE_HOME's app). Its
 	/// worktree-tidy job removes merged, clean worktrees and deletes merged local branches. Heiward still measures the
 	/// worktrees and shows the space they take, read-only, those its last round went through (<see cref="LookedAfter"/>):
-	/// no ticks, no automatic cleanup, no Prune. Of those, the ones it keeps for a reason only the user can clear
+	/// no checks, no automatic cleanup, no Prune. Of those, the ones it keeps for a reason only the user can clear
 	/// (<see cref="KeptForYou"/>: uncommitted changes, a merge under way) are the user's again, with Reeve's reason. A
-	/// worktree its round doesn't go through is Heiward's, never ticked for the user. What a removal that stopped
+	/// worktree its round doesn't go through is Heiward's, never checked for the user. What a removal that stopped
 	/// partway left (no .git any more, so no worktree git knows) is disk, not git state, and stays Heiward's.</item>
 	/// <item><see cref="PullRequests"/>: the Steward, when it's installed too (%USERPROFILE%\.steward\app, or STEWARD_HOME's
 	/// app). It merges, catches up and releases the pull requests; Heiward no longer asks hosts for them or shows them.</item>
@@ -214,10 +214,10 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// The developer report as Heiward acts on it: with Reeve keeping git state, the worktrees it looks after are
-		/// read-only (never ticked, never cleaned, here or automatically: <see cref="WorktreeKept"/>); those it keeps for the
-		/// user hold work, so they're the user's to remove, never ticked for them and never cleaned automatically, with
+		/// read-only (never checked, never cleaned, here or automatically: <see cref="WorktreeKept"/>); those it keeps for the
+		/// user hold work, so they're the user's to remove, never checked for them and never cleaned automatically, with
 		/// Reeve's reason (<see cref="DevItem.KeptForYou"/>): what blocked them for that work alone no longer does, though
-		/// being in use still does. Those its round doesn't go through are Heiward's, never ticked for the user; what
+		/// being in use still does. Those its round doesn't go through are Heiward's, never checked for the user; what
 		/// removals left behind is Heiward's as ever. It has no merged branches to prune. Otherwise the report as it is.
 		/// The saved report is left whole, so it's right again as soon as Reeve or Manor is gone.
 		/// </summary>
