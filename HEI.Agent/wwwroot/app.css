@@ -415,33 +415,51 @@ button { font: inherit; color: inherit; }
   flex: 1; min-height: 0; margin: 0 12px 12px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 0 0 8px 8px;
 }
-.home { overflow-y: auto; padding: 8px 24px 32px; }
-.home > section, .home > footer, .home-top, .home-cols { max-width: 1180px; }
-/* The home page at three widths, the Steward's kit's (its spec/LAYOUT.md), rather than one column with the window's
-   rest left empty. Under 1200 px (a phone, a narrow window): one column, in the page's order. From 1200 px (a 1080p
-   screen): the scan under way and the totals across the top, then the drives on the left and the Developer area, the
-   Games, where the duplicates are and the History beside them. From 2000 px (a 2K or 3K screen): three columns, the
-   drives, then the Developer and Games areas, then where the duplicates are and the History. */
-@media (min-width: 1200px) {
-  .home > footer, .home-top, .home-cols { max-width: none; }
-  .home-cols { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 0 32px; align-items: start; }
-  /* The Developer and Games cards fill their column, as where the duplicates are does below them. */
-  .home-side .dev-card { max-width: none; }
-  /* With no folders of duplicates to list, the History lines up with the heading beside it. */
-  #hotspots-section.hidden + section > .history { margin-top: 26px; }
+/* On a wide screen the page stops at 1680 px, centred, as every staff page does (the owner's wide-screen design,
+   2026-10-31): the title bar, the command bar and the view. The setup keeps the whole window. */
+body > .commandbar, body > .banners, body > .view:not(.setup) {
+  box-sizing: border-box; width: calc(100% - 24px); max-width: 1680px; margin-left: auto; margin-right: auto;
 }
-@media (min-width: 2000px) {
-  .home-cols { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr); }
-  /* The two parts of the side column become columns of their own. */
-  .home-side { display: contents; }
-  /* With neither area shown (developer and game mode off), where the duplicates are sits beside the drives. */
-  .home-areas:not(:has(> section:not(.hidden))) { display: none; }
-  .home-cols:not(:has(.home-areas > section:not(.hidden))) { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
-}
+body > .titlebar { box-sizing: border-box; width: 100%; max-width: 1704px; margin-left: auto; margin-right: auto; }
 
-.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-top: 14px; }
-.tile { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; }
-.tile-value { font-size: 24px; font-weight: 600; }
+.home { overflow-y: auto; padding: 8px 24px 32px; }
+
+/* The tiles: the answers first, each opening its tab, as the kit's Glance has them. */
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 14px; }
+.tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; min-width: 0; font: inherit; line-height: 1.35;
+  text-align: left; color: var(--fg); background: var(--surface-2); border: 1px solid var(--line); border-top: 3px solid var(--line);
+  border-radius: 10px; padding: 10px 14px; cursor: pointer;
+}
+.tile:hover { background: var(--hover); }
+.tile:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tile-success { border-top-color: var(--ok); }
+.tile-caution { border-top-color: var(--warn); }
+.tile-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.tile-value { font-size: 20px; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+.tile-note { font-size: 12px; color: var(--muted); }
+
+/* The tabs, at every width, as the kit's are. */
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid var(--line); margin: 18px 0 0; }
+.tab {
+  font: inherit; font-size: 14px; background: none; border: 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+  padding: 8px 14px; color: var(--muted); cursor: pointer; border-radius: 6px 6px 0 0;
+}
+.tab:hover { color: var(--fg); background: var(--hover); }
+.tab[aria-selected="true"] { color: var(--fg); font-weight: 600; border-bottom-color: var(--accent); }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tab-count { margin-left: 6px; padding: 0 6px; border-radius: 9px; background: var(--line); color: var(--muted); font-size: 12px; font-weight: 600; }
+.tab-panel[hidden] { display: none; }
+.tab-panel > section > h2:first-child { margin-top: 18px; }
+/* A tab's two parts: side by side (5:7) from 1100 px, one above the other in a narrower window. */
+.pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 24px; align-items: start; }
+.pair .dev-card { max-width: none; }
+@media (min-width: 1100px) {
+  .pair { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+  .pair .drives { grid-template-columns: minmax(0, 1fr); }
+}
+#manor-card-section, .home > footer { max-width: 1180px; }
+.home > footer { margin-top: 26px; }
 
 /* Drive cards, as in This PC */
 .drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
@@ -533,10 +551,23 @@ button { font: inherit; color: inherit; }
 .glance-item { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .glance-item .swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
 .glance-item .swatch.k-free { box-shadow: inset 0 0 0 1px var(--faint); }
-.glance-lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px 24px; border-top: 1px solid var(--line); padding-top: 10px; }
+.glance-notes { border-top: 1px solid var(--line); padding-top: 10px; }
 .glance-sub { font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .type-rows { display: flex; flex-direction: column; gap: 4px; }
 .type-row { display: grid; grid-template-columns: 4.5em minmax(0, 1fr) 3em 5.5em; align-items: center; gap: 8px; font-size: 13px; }
+/* The Developer and Games tabs' kinds: a row each, opening its page. */
+.kind-rows { gap: 0; }
+.kind-row { grid-template-columns: minmax(8em, 13em) minmax(0, 1fr) 3em 6em; padding: 7px 8px; margin: 0 -8px; background: none; border: 0; border-radius: 6px; text-align: left; cursor: pointer; }
+.kind-row:hover { background: var(--hover); }
+.kind-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* History's weeks: a bar a week, each kind of what was freed in its colour, the axis under them. */
+.week-chart { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 4px; align-items: end; height: 120px; border-bottom: 1px solid var(--line); }
+.week { height: 100%; display: flex; align-items: flex-end; cursor: default; }
+.week-bar { width: 100%; display: flex; flex-direction: column-reverse; border-radius: 4px 4px 0 0; overflow: hidden; }
+.week-bar .seg { flex-basis: 0; min-height: 2px; }
+.week-bar .seg + .seg { box-shadow: 0 2px 0 var(--surface-2); }
+.week:hover .week-bar { filter: brightness(1.15); }
+.week-axis { display: flex; justify-content: space-between; margin-top: -4px; }
 .type-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .type-meter { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
 .type-meter .fill { display: block; height: 100%; border-radius: 3px; }
@@ -952,10 +983,13 @@ button.dev-item.game-install { width: 100%; text-align: left; font: inherit; col
 .tip-body li { margin: 2px 0; }
 .tip-title { font-weight: 600; }
 
-.history summary { cursor: pointer; font-size: 13px; font-weight: 600; color: var(--muted); padding: 4px 0; }
-.history-bar { display: flex; gap: 10px 14px; align-items: flex-start; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.history-bar { display: flex; gap: 10px 14px; align-items: flex-start; flex-wrap: wrap; padding: 0 0 10px; border-bottom: 1px solid var(--line); }
 .history-bar .auto-text { flex: 1 1 260px; }
-.done-row { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.done-row { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.done-when { flex: none; min-width: 9.5em; font-variant-numeric: tabular-nums; }
+#done .more { margin-top: 8px; }
+.hotspots:has(> .empty-state) { border: 0; }
+.hotspots > .empty-state { margin-top: 0; }
 .done-row .where { font-weight: 600; }
 
 /* A notice after an action (a folder included, sets skipped), with an optional button. */
@@ -1136,13 +1170,12 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
   .content { overflow: visible; padding: 14px 14px 32px; }
   .home { padding: 8px 14px 28px; }
   .details .col-files { display: none; }
-  .tiles { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
   .tile { padding: 8px 10px; }
   .tile-value { font-size: 17px; }
   .glance { padding: 12px; }
   .glance-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .glance-value { font-size: 17px; }
-  .glance-lower { grid-template-columns: minmax(0, 1fr); }
 }
 
 /* The tour (tour.js): a card at the bottom right, and the part it is about outlined on the page. */

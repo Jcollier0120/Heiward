@@ -80,67 +80,84 @@
   </main>
 
   <main id="home" class="view home">
-    <!-- Laid out for three widths, as the Steward's kit lays out its agents' pages (its spec/LAYOUT.md; app.css,
-         .home-cols): the scan under way and the totals first, across the window. Then, from 1200 px wide (a 1080p
-         screen), the drives on the left and the rest beside them; from 2000 px (a 2K or 3K screen), three columns: the
-         drives, the Developer and Games areas, then where the duplicates are and the History. One column, in this
-         order, in a narrower window. -->
-    <div class="home-top">
+    <!-- As every staff page is laid out (the owner's wide-screen design, 2026-10-31): the tiles first, each the answer
+         to one question and opening its tab; then the tabs, at every width, with two parts side by side (5:7) in each
+         from 1100 px, one above the other in a narrower window (app.js, renderHome and showTab). -->
     <!-- While a scan runs: which step it's on and how far (app.js, renderScanStatus). -->
     <section class="scan-status hidden" id="scan-status" role="status" aria-live="polite"></section>
 
-    <section class="tiles" data-tour="tiles">
-      <div class="tile"><div class="tile-value" id="t-groups">–</div><div class="muted small" id="t-groups-label">sets of copies to review</div></div>
-      <div class="tile"><div class="tile-value" id="t-free">–</div><div class="muted small">you could free</div></div>
-      <div class="tile"><div class="tile-value" id="t-freed">–</div><div class="muted small">freed so far</div></div>
-    </section>
+    <section class="tiles" id="tiles" data-tour="tiles"></section>
+
+    <div class="tabs" id="home-tabs" role="tablist" aria-label="Heiward">
+      <button class="tab" role="tab" id="tab-drives" data-tab="drives" aria-controls="panel-drives">Drives</button>
+      <button class="tab" role="tab" id="tab-copies" data-tab="copies" aria-controls="panel-copies">Duplicates</button>
+      <button class="tab hidden" role="tab" id="tab-dev" data-tab="dev" aria-controls="panel-dev">Developer</button>
+      <button class="tab hidden" role="tab" id="tab-games" data-tab="games" aria-controls="panel-games">Games</button>
+      <button class="tab" role="tab" id="tab-history" data-tab="history" aria-controls="panel-history">History</button>
     </div>
 
-    <div class="home-cols">
-    <div class="home-col">
-    <section data-tour="drives">
-      <h2>Devices and drives</h2>
-      <div class="glance hidden" id="glance"></div>
-      <div class="drives" id="drives"></div>
-    </section>
+    <div class="tab-panel pair" id="panel-drives" role="tabpanel" aria-labelledby="tab-drives">
+      <section data-tour="drives">
+        <h2>Devices and drives</h2>
+        <div class="drives" id="drives"></div>
+      </section>
+      <section>
+        <h2>At a glance</h2>
+        <div class="glance hidden" id="glance"></div>
+      </section>
     </div>
 
-    <div class="home-col home-side">
-    <div class="home-areas">
-    <section id="dev-section" class="hidden" data-tour="dev">
-      <h2>Developer area</h2>
-      <div id="dev-card"></div>
-    </section>
+    <div class="tab-panel pair" id="panel-copies" role="tabpanel" aria-labelledby="tab-copies" hidden>
+      <section>
+        <h2>Photos and videos by type</h2>
+        <div class="glance" id="types"></div>
+      </section>
+      <section id="hotspots-section" data-tour="hotspots">
+        <h2>Where the duplicates are</h2>
+        <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
+        <div class="hotspots" id="hotspots"></div>
+      </section>
+    </div>
+
+    <div class="tab-panel pair" id="panel-dev" role="tabpanel" aria-labelledby="tab-dev" hidden>
+      <section id="dev-section" class="hidden" data-tour="dev">
+        <h2>Developer area</h2>
+        <div id="dev-card"></div>
+      </section>
+      <section>
+        <h2>What tools can recreate</h2>
+        <div class="glance" id="dev-kinds"></div>
+      </section>
+    </div>
 
     <!-- Game mode: the Games area's card (app.js, renderGamesCard). -->
-    <section id="games-section" class="hidden" data-tour="games">
-      <h2>Games</h2>
-      <div id="games-card"></div>
-    </section>
+    <div class="tab-panel pair" id="panel-games" role="tabpanel" aria-labelledby="tab-games" hidden>
+      <section id="games-section" class="hidden" data-tour="games">
+        <h2>Games</h2>
+        <div id="games-card"></div>
+      </section>
+      <section>
+        <h2>What games leave behind</h2>
+        <div class="glance" id="game-kinds"></div>
+      </section>
     </div>
 
-    <div class="home-more">
-    <section id="hotspots-section" data-tour="hotspots">
-      <h2>Where the duplicates are</h2>
-      <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
-      <div class="hotspots" id="hotspots"></div>
-    </section>
-
-    <section data-tour="history">
-      <details class="history" id="history">
-        <summary>History</summary>
+    <div class="tab-panel pair" id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
+      <section>
+        <h2>Freed</h2>
+        <div class="glance" id="freed"></div>
+      </section>
+      <section class="history" id="history" data-tour="history">
+        <h2>What was cleaned up or kept</h2>
         <div id="done"></div>
-      </details>
-    </section>
+      </section>
+    </div>
 
     <!-- Without Manor: a few lines on what it adds, last on the page, until "Not now" (app.js, renderManorCard). -->
     <section id="manor-card-section" class="hidden" aria-labelledby="manor-card-title">
       <h2 id="manor-card-title">Castellan</h2>
       <div id="manor-card"></div>
     </section>
-    </div>
-    </div>
-    </div>
 
     <footer class="muted small" id="footer"></footer>
   </main>

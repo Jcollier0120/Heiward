@@ -442,7 +442,11 @@ It needs the page's token, as every POST does (another program reads it from the
 
 It's laid out like File Explorer, so you can go where you care most instead of scrolling every duplicate on the PC:
 
-- **This PC:** a card per drive with its free space, how many photos and videos it holds, how long its last scan took, and its sets of copies and space to free. Below the cards, the folders where cleaning up frees the most, and the history of what you've done:
+- **This PC:** tiles at the top answer the page's questions (the free space, the copies to review and the space they take, the developer files and games when those modes are on, and what you've freed so far), each opening its tab. The tabs, at every width, show two parts side by side on a wide window, one above the other in a narrow one, and the page stops at 1680 pixels wide, centred:
+  - **Drives:** a card per drive with its free space, how many photos and videos it holds, how long its last scan took, and its sets of copies and space to free, beside **At a glance**, all the drives together.
+  - **Duplicates:** the photos and videos by file type, beside the folders where cleaning up frees the most.
+  - **Developer** and **Games** (with those modes on): the area's card, beside each kind of thing it found as a bar, opening its page.
+  - **History:** what was freed, all told, in the last 30 days and a bar a week for the last 12 weeks, beside the list of what you've done, the newest 25 first:
   - A folder's cleanup, or its **Skip all**, is one line.
   - **Clear history** empties the list and forgets the file names in it. Sets you kept stay hidden, and "freed so far" stays.
   - **Keep a history** off (in Settings) lists nothing new.
