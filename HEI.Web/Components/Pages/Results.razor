@@ -437,7 +437,7 @@ else {
             else {
                 var shown = _metadataRows.Where(r => !_metadataOnlyDiff || r.Differs).ToList();
                 if (shown.Count == 0) {
-                    <p class="metadata-status">Every tag is the same in all files. Untick "Only show differences" to see them.</p>
+                    <p class="metadata-status">Every tag is the same in all files. Uncheck "Only show differences" to see them.</p>
                 }
                 else {
                     <div class="metadata-scroll">

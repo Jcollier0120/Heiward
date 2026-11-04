@@ -812,7 +812,7 @@ html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
 .game-removing { color: var(--fg); margin-top: 2px; }
 button.dev-item.game-install { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 /* Its things, each with room: the name, what it is, what removing it means (or what to do instead) as a block of its own, then
-   where it is on a line of its own; the size column to the right, the same in every row, with a tick box or without. */
+   where it is on a line of its own; the size column to the right, the same in every row, with a checkbox or without. */
 .dev-item.game-item { padding: 14px 16px; column-gap: 14px; }
 .dev-item.game-item.info, .dev-item.game-install { grid-template-columns: 1fr auto; }
 .game-item .dev-item-main { display: flex; flex-direction: column; gap: 4px; }
@@ -1137,7 +1137,7 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
 .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 12px; }
 .item { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; background: var(--surface-2); }
 .item.keep { border-color: var(--ok); }
-.item.ticked { border-color: var(--alert); }
+.item.checked { border-color: var(--alert); }
 .item.outside { opacity: 0.62; }
 .item.outside:hover { opacity: 1; }
 .thumb { width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: var(--bg); display: block; }
@@ -1147,7 +1147,7 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
 .elsewhere { font-size: 11px; font-weight: 600; color: var(--muted); }
 .relation { color: var(--muted); font-weight: 600; }
 .synced { color: var(--warn); }
-.tick { display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; }
+.check { display: flex; align-items: center; gap: 6px; margin-top: 6px; cursor: pointer; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
 .result { margin-top: 8px; }
 .result.ok { color: var(--ok); }

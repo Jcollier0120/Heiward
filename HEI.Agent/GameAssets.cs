@@ -44,7 +44,7 @@ namespace HEI.Agent {
 
 	/// <summary>
 	/// Something games or their launchers left on a drive, or something worth knowing about an installed game. <see cref="Blocked"/>
-	/// says why it can't go now (a launcher or game running, saves inside); <see cref="Suggested"/> items start ticked on the page.
+	/// says why it can't go now (a launcher or game running, saves inside); <see cref="Suggested"/> items start checked on the page.
 	/// <see cref="Info"/> items (a game installed twice, one not played in months) are never removed by Heiward: <see cref="Removing"/>
 	/// says what to do in the launcher instead.
 	/// </summary>
@@ -651,7 +651,7 @@ namespace HEI.Agent {
 				CacheItems(env, found, running).OrderByDescending(i => i.Bytes).ToList()));
 			report.Categories.Add(new GameCategory(Shaders, "Shader caches",
 				"What graphics drivers and Steam build so games' graphics load quickly. Those of uninstalled games are safe to remove. " +
-				"Those of installed games rebuild by themselves, but the first launch afterwards may stutter for a while, so they're never ticked for you.",
+				"Those of installed games rebuild by themselves, but the first launch afterwards may stutter for a while, so they're never checked for you.",
 				ShaderItems(env, found, games, running).OrderByDescending(i => i.Bytes).ToList()));
 			report.Categories.Add(new GameCategory(Dumps, "Crash dumps and reports",
 				"What games and Windows wrote when a game crashed, for its makers. Nothing uses them once the crash is reported.",
@@ -739,7 +739,7 @@ namespace HEI.Agent {
 
 		// ------------------------------------------------------------------ download caches
 
-		/// <summary>The launchers' cache folders Heiward knows: (launcher, name, folder, ticked, what it is, what removing it means).</summary>
+		/// <summary>The launchers' cache folders Heiward knows: (launcher, name, folder, checked, what it is, what removing it means).</summary>
 		internal static IEnumerable<(string Launcher, string Name, string Path, bool Suggested, string Detail, string Removing)> KnownCaches(GamePlaces env, GameLibraries.Found found) {
 			if (found.SteamRoot is { } steam) {
 				yield return (GameLaunchers.Steam, "Steam's download cache", Path.Combine(steam, "depotcache"), true,
@@ -1034,7 +1034,7 @@ namespace HEI.Agent {
 				GameReport report = GameScanner.Run(GamePlaces.Current(cfg), ct);
 				if (!ct.IsCancellationRequested) report.Save();
 				AgentPaths.AppendLog($"games check: {report.Games.Count} game(s), {report.Items.Count(i => !i.Info)} item(s), " +
-					$"{Format.Bytes(report.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked, in {report.DurationSec:N0} s");
+					$"{Format.Bytes(report.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} checked, in {report.DurationSec:N0} s");
 				return report;
 			}
 		}

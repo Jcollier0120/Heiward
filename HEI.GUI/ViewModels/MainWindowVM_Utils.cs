@@ -24,7 +24,7 @@ namespace HEI.GUI.ViewModels {
 
 		// Near-tie tolerances (#839): without them, near-continuous values decide alone —
 		// a re-encode 200ms longer beat a file with double the resolution because
-		// durations almost never tie to the tick. Values within tolerance pass the
+		// durations almost never tie to the check. Values within tolerance pass the
 		// decision on to the next criterion. Meaningful differences (a trimmed copy vs.
 		// the full video, 25 vs. 50 fps) still decide.
 		static bool DurationTies(IComparable a, IComparable b) {

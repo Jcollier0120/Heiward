@@ -1250,7 +1250,7 @@ namespace HEI.Core.FFTools {
 			psi.ArgumentList.Add("-vf");
 			// round=up: with the keyframe-only stream, fps' default nearest-rounding emits
 			// ZERO frames for videos whose only keyframe sits at t=0 (short clips) — the
-			// single frame lands between output ticks and is dropped at EOF.
+			// single frame lands between output checks and is dropped at EOF.
 			psi.ArgumentList.Add(FormattableString.Invariant(
 				$"fps=1/{intervalSeconds:0.###}:round=up,scale={AI.OnnxEmbedder.InputSide}:{AI.OnnxEmbedder.InputSide}:flags=bicubic,format=rgb24"));
 			psi.ArgumentList.Add("-frames:v"); psi.ArgumentList.Add(maxFrames.ToString(CultureInfo.InvariantCulture));

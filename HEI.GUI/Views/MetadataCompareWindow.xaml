@@ -81,7 +81,7 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:MetadataFileColumn">
-                  <!-- Ticking the file here checks it in the results list too. -->
+                  <!-- Checking the file here checks it in the results list too. -->
                   <StackPanel Width="280" Margin="0,0,4,0" ToolTip.Tip="{Binding Path}">
                     <CheckBox IsChecked="{Binding Item.Checked}"
                               AutomationProperties.Name="{Binding CheckName}">

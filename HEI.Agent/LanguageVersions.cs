@@ -87,7 +87,7 @@ namespace HEI.Agent {
 		/// Words that name a language (ISO 639-1 and 639-2 codes, and English and native names), or a
 		/// country after one ("en-US", "pt_BR"), to the language's code. Two-letter codes are words too
 		/// ("it", "no", "de"): a name that differs from another by one of those alone is rare, and the
-		/// cost of a mistake is a set not offered, never a file ticked.
+		/// cost of a mistake is a set not offered, never a file checked.
 		/// </summary>
 		static readonly Dictionary<string, string> Language = Build(
 			("en", "en eng english"), ("de", "de ger deu german deutsch"), ("fr", "fr fre fra french francais français"),

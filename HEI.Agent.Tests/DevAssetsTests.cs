@@ -759,7 +759,7 @@ public sealed class DevAssetsTests : IDisposable {
 		Assert.Equal("VDF.Core", item.Name);
 		Assert.Equal(repo, item.Repo);
 		Assert.Equal(new[] { Path.Combine(repo, "VDF.Core", "bin"), Path.Combine(repo, "VDF.Core", "obj") }, item.Paths);
-		Assert.False(item.Suggested); // low confidence: never ticked
+		Assert.False(item.Suggested); // low confidence: never checked
 		Assert.Null(item.Blocked);
 		Assert.StartsWith("bin, obj · no project file beside them", item.Detail);
 
@@ -925,7 +925,7 @@ public sealed class DevAssetsTests : IDisposable {
 
 	/// <summary>
 	/// A worktree on a drive the check reads, of a repository on a drive scanned only when asked (E:\worktrees\x of a clone
-	/// on D:\): found by the walk, measured, never ticked, and of the repository only its record of it read. Cleaning it, the
+	/// on D:\): found by the walk, measured, never checked, and of the repository only its record of it read. Cleaning it, the
 	/// user's ask, asks git as ever.
 	/// </summary>
 	[Fact]
@@ -1058,7 +1058,7 @@ public sealed class DevAssetsTests : IDisposable {
 
 	/// <summary>
 	/// A cache is where its tool's setting puts it (a Dev Drive, say: npm's cache= in .npmrc, NUGET_PACKAGES); the folder it
-	/// used before is listed, ticked, as nothing uses it, unless it's a link to the new one. On a drive left unread, neither is read.
+	/// used before is listed, checked, as nothing uses it, unless it's a link to the new one. On a drive left unread, neither is read.
 	/// </summary>
 	[Fact]
 	public void Caches_AreWhereTheirSettingsPutThem_AndTheOldFolderIsOffered() {
@@ -1094,7 +1094,7 @@ public sealed class DevAssetsTests : IDisposable {
 	}
 
 	/// <summary>
-	/// Emulators on a drive scanned only when asked aren't read, and as one there may use any system image, no image is ticked;
+	/// Emulators on a drive scanned only when asked aren't read, and as one there may use any system image, no image is checked;
 	/// the system images' own folder there isn't read either.
 	/// </summary>
 	[Fact]
@@ -1109,7 +1109,7 @@ public sealed class DevAssetsTests : IDisposable {
 		DateTime staleBefore = DateTime.UtcNow.AddDays(-30);
 		bool running = DevScanner.EmulatorRunning();
 
-		// Nothing rests: the emulator, and the image it doesn't use, ticked.
+		// Nothing rests: the emulator, and the image it doesn't use, checked.
 		var items = DevScanner.AndroidItems(staleBefore, _ => false, avdHome, sdk).ToList();
 		Assert.Equal(new[] { "avd", "sysimage" }, items.Select(i => i.Kind));
 		Assert.Contains("android-33", items[1].Name);

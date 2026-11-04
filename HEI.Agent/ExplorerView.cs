@@ -15,7 +15,7 @@
 //
 
 namespace HEI.Agent {
-	/// <summary>Duplicates that touch a folder: sets with copies to clean up, look-alike sets, and the ticked bytes inside it.</summary>
+	/// <summary>Duplicates that touch a folder: sets with copies to clean up, look-alike sets, and the checked bytes inside it.</summary>
 	sealed record DupStats(int Copies, int Lookalikes, long Reclaim);
 
 	/// <param name="OnRequest">Scanned only when asked, from its page (<see cref="AgentConfig.OnRequestDrives"/>).</param>
@@ -77,7 +77,7 @@ namespace HEI.Agent {
 			return cards;
 		}
 
-		/// <summary>The folders where cleaning up frees the most, by ticked bytes directly inside them.</summary>
+		/// <summary>The folders where cleaning up frees the most, by checked bytes directly inside them.</summary>
 		public static List<Hotspot> Hotspots(List<ReportGroup> pending, int count) =>
 			pending.SelectMany(g => g.Items.Where(i => i.Suggested).Select(i => (Group: g.Key, Item: i)))
 				.GroupBy(x => x.Item.Folder, StringComparer.OrdinalIgnoreCase)
@@ -133,8 +133,8 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// Sets with copies to clean up in the folder or below it (a ticked file inside; a set that only
-		/// keeps its original here isn't one), look-alike sets with a file inside, and the ticked bytes inside.
+		/// Sets with copies to clean up in the folder or below it (a checked file inside; a set that only
+		/// keeps its original here isn't one), look-alike sets with a file inside, and the checked bytes inside.
 		/// </summary>
 		internal static DupStats Stats(string folder, List<ReportGroup> pending) {
 			string prefix = folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;

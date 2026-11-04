@@ -28,7 +28,7 @@ namespace HEI.Core.Utils {
 			public bool Ascending { get; }
 			// Optional near-tie test: when it returns true for two values, they count as
 			// tied and the NEXT criterion decides. Without it only exact equality ties,
-			// which made near-continuous values (duration in ticks, bitrate in kbps)
+			// which made near-continuous values (duration in checks, bitrate in kbps)
 			// effectively always decisive - a file 200ms longer beat one with double the
 			// resolution (#839).
 			public Func<IComparable, IComparable, bool>? NearTie { get; }

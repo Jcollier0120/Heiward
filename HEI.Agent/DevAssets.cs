@@ -26,14 +26,14 @@ namespace HEI.Agent {
 	/// <summary>
 	/// Something a developer's tools recreate when needed, and what cleaning it takes. <see cref="Blocked"/>
 	/// says why it can't be cleaned right now (in use, uncommitted work); <see cref="Suggested"/> items
-	/// start ticked on the page. <paramref name="Leftover"/>: what a worktree removal that stopped partway left behind, a
+	/// start checked on the page. <paramref name="Leftover"/>: what a worktree removal that stopped partway left behind, a
 	/// folder git no longer knows (disk, not git state: Heiward's even where Reeve keeps the worktrees, <see cref="ManorRoles"/>).
 	/// <paramref name="OnRequest"/>: the drive it's on ("E:\"), scanned only when you ask, when this check left it unread: it's as
 	/// the check of <paramref name="MeasuredUtc"/> found it (<see cref="DevScanner.KeepResting"/>).
 	/// <paramref name="HoldsWork"/>: a worktree <see cref="Blocked"/> for the work in it git would lose (<see cref="DevScanner.WorktreeBlocker"/>),
 	/// not for being in use or someone else's. <paramref name="KeptForYou"/>: Reeve's reason for keeping a worktree for you
 	/// ("has changes that aren't committed"), and <paramref name="KeptTouchedUtc"/> when it was last touched, as Reeve found it
-	/// (<see cref="ManorRoles.View"/>): yours to remove, with that work, never ticked for you.
+	/// (<see cref="ManorRoles.View"/>): yours to remove, with that work, never checked for you.
 	/// </summary>
 	sealed record DevItem(string Id, string Kind, string Name, string Location, List<string> Paths, long Bytes,
 		DateTime? LastUsedUtc, bool Suggested, string? Blocked, string Detail, string? Repo = null, bool Leftover = false,
@@ -128,13 +128,13 @@ namespace HEI.Agent {
 
 			report.Categories.Add(new DevCategory(Projects, "Build outputs and dependencies in your projects",
 				"node_modules, bin and obj, Gradle build folders, target, Python virtual environments. The next install or build recreates them. " +
-				$"Ticked in projects untouched for {cfg.StaleProjectDays} days.",
+				$"Checked in projects untouched for {cfg.StaleProjectDays} days.",
 				walks.Select(w => ProjectItem(w.Repo, w.Walk.Outputs, staleBefore)).Where(i => i != null).Select(i => i!)
 					.OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Orphans, "Build outputs with no project beside them",
 				"bin and obj folders whose project file is gone (a project renamed or moved, usually), with nothing in them that git keeps. " +
-				"Nothing proves a build made them, so they're never ticked and never cleaned automatically: look at each before you clean it.",
+				"Nothing proves a build made them, so they're never checked and never cleaned automatically: look at each before you clean it.",
 				walks.Where(w => w.Walk.Orphans.Count > 0 && Directory.Exists(Path.Combine(w.Repo, ".git")))
 					.SelectMany(w => OrphanItems(w.Repo, w.Walk.Orphans, ct)).OrderByDescending(i => i.Bytes).ToList()));
 
@@ -147,11 +147,11 @@ namespace HEI.Agent {
 
 			report.Categories.Add(new DevCategory(Caches, "Package and build caches",
 				"Downloads that Gradle, NuGet, npm and other tools keep, where their settings put them (a Dev Drive, say). They're downloaded again when " +
-				"a build needs them, so the next build is slower. Never ticked for you, but for a folder a tool moved its cache away from: nothing uses it.",
+				"a build needs them, so the next build is slower. Never checked for you, but for a folder a tool moved its cache away from: nothing uses it.",
 				CacheItems(resting).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Android, "Android emulators",
-				"Emulator system images that no emulator uses (ticked), and emulators you haven't started in a while. Deleting an emulator deletes the apps and data inside it.",
+				"Emulator system images that no emulator uses (checked), and emulators you haven't started in a while. Deleting an emulator deletes the apps and data inside it.",
 				AndroidItems(staleBefore, resting).OrderByDescending(i => i.Bytes).ToList()));
 
 			report.Categories.Add(new DevCategory(Temp, "Temporary files and crash dumps",
@@ -334,7 +334,7 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// The bin and obj folders with no project beside them that git keeps nothing of, one item per folder that holds
-		/// them (VDF.Agent: bin, obj). Never ticked: the user looks first.
+		/// them (VDF.Agent: bin, obj). Never checked: the user looks first.
 		/// </summary>
 		internal static IEnumerable<DevItem> OrphanItems(string repo, List<string> candidates, CancellationToken ct = default) {
 			foreach (var folder in UntrackedOrIgnored(repo, candidates).GroupBy(p => Path.GetDirectoryName(p)!, StringComparer.OrdinalIgnoreCase)) {
@@ -447,7 +447,7 @@ namespace HEI.Agent {
 		/// <summary>
 		/// The worktrees on the drives this check reads whose repository is on a drive it leaves unread (<see cref="Resting"/>):
 		/// E:\worktrees\x of a clone on D:\, scanned only when asked. Git would read the repository to say what's in one, so
-		/// they're only measured: never ticked, what git says checked when the user cleans one (<see cref="DevCleaner.Clean"/>).
+		/// they're only measured: never checked, what git says checked when the user cleans one (<see cref="DevCleaner.Clean"/>).
 		/// Found by the walk (a worktree's .git is a file naming its repository's record of it), not by the repository's records.
 		/// Of the repository, only that record's line naming its folder is read, and whether git locked it: a copy of a worktree
 		/// (C:\worktrees.old\x, left by a move) names the same record, which names another folder.
@@ -777,7 +777,7 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// Each tool's cache where its settings put it now, and the folder it used before, when a setting moved it and the old
-		/// one is still there: nothing uses that one any more, so it's ticked. Either, on a drive left unread (<paramref name="resting"/>),
+		/// one is still there: nothing uses that one any more, so it's checked. Either, on a drive left unread (<paramref name="resting"/>),
 		/// isn't looked at: the last check's stays (<see cref="KeepResting"/>).
 		/// </summary>
 		/// <param name="setting">A tool's setting's value (<see cref="CacheSetting"/>); <paramref name="tools"/>: the tools and their caches (<see cref="CacheDefs"/>).</param>
@@ -1160,7 +1160,7 @@ namespace HEI.Agent {
 				if (!ct.IsCancellationRequested) report.Save();
 				int resting = report.Categories.Sum(c => c.Items.Count(i => i.OnRequest != null));
 				AgentPaths.AppendLog($"developer check: {report.Categories.Sum(c => c.Items.Count)} item(s), " +
-					$"{Format.Bytes(report.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes))} ticked, in {report.DurationSec:N0} s" +
+					$"{Format.Bytes(report.Categories.SelectMany(c => c.Items).Where(i => i.Suggested).Sum(i => i.Bytes))} checked, in {report.DurationSec:N0} s" +
 					(resting > 0 ? $"; {resting} on drives scanned only when you ask kept as last measured" : "") +
 					(drives is { Count: > 0 } ? $"; read {string.Join(", ", drives)} as asked" : ""));
 				return report;

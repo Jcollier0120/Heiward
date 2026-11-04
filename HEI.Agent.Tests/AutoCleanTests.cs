@@ -276,7 +276,7 @@ public sealed class AutoCleanTests : IDisposable {
 		Assert.Equal(Now, s.FirstSeenUtc["g:new"]);
 		Assert.Equal(Now, s.FirstSeenUtc["d:fresh"]);
 		Assert.False(s.FirstSeenUtc.ContainsKey("g:gone"));
-		Assert.False(s.FirstSeenUtc.ContainsKey("d:idle")); // worked on again: its clock starts over when it's ticked again
+		Assert.False(s.FirstSeenUtc.ContainsKey("d:idle")); // worked on again: its clock starts over when it's checked again
 		Assert.Equal(new[] { "g:stay" }, s.Held);
 		Assert.Empty(s.Failed); // a day later, it's tried again
 	}

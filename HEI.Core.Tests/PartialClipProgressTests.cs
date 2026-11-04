@@ -121,7 +121,7 @@ public class PartialClipProgressTests {
 
 	/// <summary>
 	/// The last item's push has processed == maxPosition, which drove the old expression
-	/// one tick negative. It rendered as "~0s left" — on a phase that was still running.
+	/// one check negative. It rendered as "~0s left" — on a phase that was still running.
 	/// </summary>
 	[Theory]
 	[InlineData(10, 10)] // final item: nothing left
@@ -167,7 +167,7 @@ public class PartialClipProgressTests {
 
 	/// <summary>
 	/// The heartbeat fires on a threadpool timer thread, outside the scan task's catch. A
-	/// subscriber that throws there would take the whole process down over a cosmetic clock tick.
+	/// subscriber that throws there would take the whole process down over a cosmetic clock check.
 	/// </summary>
 	[Fact]
 	public async Task Heartbeat_SurvivesAThrowingProgressSubscriber() {

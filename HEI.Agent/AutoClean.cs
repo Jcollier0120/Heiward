@@ -114,7 +114,7 @@ namespace HEI.Agent {
 	}
 
 	/// <summary>
-	/// Automatic cleanup. After each scan it cleans what the review page would tick for the user, once that
+	/// Automatic cleanup. After each scan it cleans what the review page would check for the user, once that
 	/// has been listed for <see cref="AutoCleanConfig.AfterDays"/> days (counted from when automatic cleanup
 	/// was turned on, at the earliest), through the same guarded actions as the page's buttons. It's stricter
 	/// than the page, since nobody looks first:
@@ -125,7 +125,7 @@ namespace HEI.Agent {
 	/// when the set looks like part of a copy of a whole folder: <see cref="WholeFolderSets"/> or more sets
 	/// between the same two folders are most likely a backup.</item>
 	/// <item>Developer leftovers: only right after the daily developer check, so "untouched for 30 days" is
-	/// today's answer; only items the page ticks, of the kinds the user picked; never package caches or
+	/// today's answer; only items the page checks, of the kinds the user picked; never package caches or
 	/// emulators.</item>
 	/// <item>Whatever the user decided on the page, or held back with "leave it", stays as it is.</item>
 	/// </list>
@@ -203,8 +203,8 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// Notes when each set, ticked developer item and merged branch was first listed, and forgets what's
-		/// gone: a developer item that stops being ticked (worked on again, or blocked) starts over.
+		/// Notes when each set, checked developer item and merged branch was first listed, and forgets what's
+		/// gone: a developer item that stops being checked (worked on again, or blocked) starts over.
 		/// </summary>
 		public static void Observe(AutoCleanState s, Report? report, DevReport? dev, DateTime now, GameReport? games = null) {
 			var groups = (report?.Groups ?? new()).Select(g => "g:" + g.Key).ToHashSet();
@@ -277,7 +277,7 @@ namespace HEI.Agent {
 						} :
 						!auto.DeveloperKinds.Contains(kind) ? $"Automatic cleanup is off for {Label(kind)}" :
 						i.KeptForYou != null ? KeptForYouReason :
-						i.Blocked ?? (i.Suggested ? null : kind is BuildOutputs or Worktrees ? $"Used in the last {cfg.StaleProjectDays} days" : "Not ticked for you");
+						i.Blocked ?? (i.Suggested ? null : kind is BuildOutputs or Worktrees ? $"Used in the last {cfg.StaleProjectDays} days" : "Not checked for you");
 					// Kept as last measured, or on such a drive the check was asked to read: cleaning would wake it.
 					if (reason == null && DevScanner.OnRequestDrive(i, cfg) != null) reason = OnRequestReason;
 					bool held = s.Held.Contains(key);
@@ -309,7 +309,7 @@ namespace HEI.Agent {
 						kind == null ? (i.Kind == "paused" ? "A paused download is always your call"
 							: "Shader caches of installed games are always your call: they rebuild, and the next launch may stutter") :
 						!auto.GameKinds.Contains(kind) ? $"Automatic cleanup is off for {GameLabel(kind)}" :
-						i.Blocked ?? (i.Suggested ? null : "Not ticked for you");
+						i.Blocked ?? (i.Suggested ? null : "Not checked for you");
 					bool held = s.Held.Contains(key);
 					DateTime? due = reason == null && !held ? Due(key, s.GamesSinceUtc) : null;
 					plan.GameItems[i.Id] = new AutoPlanEntry(due, reason, held, Count: i.Paths.Count, Bytes: i.Bytes);
@@ -576,7 +576,7 @@ namespace HEI.Agent {
 				result = GameCleaner.Remove(item, GamePlaces.Current(cfg));
 				if (result.FreedBytes > 0)
 					DecisionStore.Record(cfg, "game:" + item.Id, new Decision("game-recycled", DateTime.UtcNow, new() { item.Name }, result.FreedBytes, automatic));
-				// Gone, or what's left (in use, refused) kept for another try, unticked.
+				// Gone, or what's left (in use, refused) kept for another try, unchecked.
 				if (result.Error == null)
 					GameReport.Update(item.Id, result.LeftInUse == 0 ? null : item with { Bytes = Math.Max(0, item.Bytes - result.FreedBytes), Suggested = false });
 			}

@@ -55,7 +55,7 @@ namespace HEI.Agent {
 	/// partner one to one, and each pair judged by Heiward's own rules for photos (<see cref="ReportBuilder.ByLook"/>):
 	/// the same bytes are <c>identical</c>; a grayscale match of <see cref="ReportBuilder.PlainCopyPercent"/> or more is
 	/// the same picture, pixel for pixel (<c>smaller</c>, <c>compressed</c>, <c>resaved</c>: the plain copies the review
-	/// page pre-ticks); below that the AI's cosine says <c>edited</c> or <c>variant</c>. A picture less alike to every
+	/// page pre-checks); below that the AI's cosine says <c>edited</c> or <c>variant</c>. A picture less alike to every
 	/// other than <see cref="ReportBuilder.MinAlikePercent"/> has no partner, as it would leave a set on the review page.
 	/// </summary>
 	static class PictureCompare {

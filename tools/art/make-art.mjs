@@ -208,7 +208,7 @@ const npu = slide('npu', {
 const safe = slide('safe', {
   eyebrow: 'YOU DECIDE',
   title: ['Nothing goes until', [['you '], ['say so.', 'url(#hl)']]],
-  body: ['Heiward lists what it finds on a review page.', 'What you tick goes to the Recycle Bin, so it', 'can come back. The originals stay, and', 'cloud-only files are never downloaded.'],
+  body: ['Heiward lists what it finds on a review page.', 'What you check goes to the Recycle Bin, so it', 'can come back. The originals stay, and', 'cloud-only files are never downloaded.'],
   art: (() => {
     const x = 540, y = 140, w = 470;
     const sets = [
@@ -216,11 +216,11 @@ const safe = slide('safe', {
       ['Birthday video', 'VID_0193.mp4, saved twice', 1, 'video'],
       ['Sunset', 'An edit beside its original', 0, 'edited'],
     ];
-    const rows = sets.map(([t, d, ticked, k], i) => {
+    const rows = sets.map(([t, d, checked, k], i) => {
       const ry = y + 62 + i * 92;
       return `<rect x="${x + 16}" y="${ry}" width="${w - 32}" height="80" rx="12" fill="#0b1222" stroke="#1e293b"/>
       ${photo(x + 30, ry + 14, k, 66, 52)}${text(x + 112, ry + 33, t, { size: 16, weight: 700, fill: '#f1f5f9' })}${text(x + 112, ry + 56, d, { size: 13, fill: '#94a3b8' })}
-      ${ticked ? `${checkbox(x + w - 58, ry + 31, true)}${text(x + w - 66, ry + 45, `${ticked} ticked`, { size: 13, weight: 600, fill: '#6ee7b7', anchor: 'end' })}` : `${checkbox(x + w - 58, ry + 31, false)}${text(x + w - 66, ry + 45, 'kept', { size: 13, weight: 600, fill: '#94a3b8', anchor: 'end' })}`}`;
+      ${checked ? `${checkbox(x + w - 58, ry + 31, true)}${text(x + w - 66, ry + 45, `${checked} checked`, { size: 13, weight: 600, fill: '#6ee7b7', anchor: 'end' })}` : `${checkbox(x + w - 58, ry + 31, false)}${text(x + w - 66, ry + 45, 'kept', { size: 13, weight: 600, fill: '#94a3b8', anchor: 'end' })}`}`;
     }).join('');
     const bx = 1060, by = 300;
     return `${windowBox(x, y, w, 360, 'Review · 3 sets')}${rows}

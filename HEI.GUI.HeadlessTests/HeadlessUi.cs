@@ -59,7 +59,7 @@ public static class HeadlessUi {
 		body();
 	}, CancellationToken.None).WaitAsync(Timeout);
 
-	/// <summary>For tests that have to let time pass: timers only tick while the body awaits.</summary>
+	/// <summary>For tests that have to let time pass: timers only check while the body awaits.</summary>
 	public static Task Run(Func<Task> body) => session.Value.Dispatch(async () => {
 		EnsureInitialized();
 		await body();

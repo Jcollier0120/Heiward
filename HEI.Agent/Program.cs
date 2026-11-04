@@ -391,7 +391,7 @@ dev.SetAction(r => {
 	foreach (ManorRole? role in new[] { roles.Worktrees, roles.PullRequests })
 		if (role != null) Console.WriteLine($"{role.Note} ({role.Url}).");
 	foreach (DevCategory c in report.Categories) {
-		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked");
+		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} checked");
 		foreach (DevItem i in c.Items.Take(8))
 			Console.WriteLine($"  {(i.Suggested ? "[x]" : i.Blocked != null ? "[-]" : "[ ]")} {Format.Bytes(i.Bytes),9}  {i.Name}  {i.Detail}{(i.Blocked != null ? $" ({i.Blocked})" : "")}" +
 				(i.KeptForYou != null ? $" ({ManorRoles.KeptForYouTag}: {i.KeptForYou})" : ""));
@@ -419,7 +419,7 @@ gamesCmd.SetAction(r => {
 	foreach (GameInstall g in report.Games.Take(10))
 		Console.WriteLine($"  {Format.Bytes(g.Bytes),9}  {g.Name} ({GameLaunchers.Name(g.Launcher)}){(g.LastPlayedUtc is { } p ? $", last played {p.ToLocalTime():d}" : "")}");
 	foreach (GameCategory c in report.Categories) {
-		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} ticked");
+		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} checked");
 		foreach (GameItem i in c.Items.Take(8))
 			Console.WriteLine($"  {(i.Info ? "   " : i.Suggested ? "[x]" : i.Blocked != null ? "[-]" : "[ ]")} {Format.Bytes(i.Bytes),9}  {i.Name}  {i.Detail}{(i.Blocked != null ? $" ({i.Blocked})" : "")}");
 	}

@@ -128,7 +128,7 @@ public class QualityRankerTests {
 		nearTie: (a, b) => Math.Abs(((TimeSpan)a - (TimeSpan)b).TotalSeconds) <= 1);
 
 	// Regression test for issue #839: with exact-equality ties a file 200ms longer beat
-	// one with much higher resolution, because TimeSpans almost never tie to the tick.
+	// one with much higher resolution, because TimeSpans almost never tie to the check.
 	[Fact]
 	public void Issue839_NearTiedDuration_PassesDecisionToNextCriterion() {
 		var longer720p   = new Item("A_720p_longer", Resolution: 2000, Duration: TimeSpan.FromSeconds(1200.2), Bitrate: 5000, Fps: 30, AudioSampleRate: 44100);

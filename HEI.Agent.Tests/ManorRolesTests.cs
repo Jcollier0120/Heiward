@@ -170,7 +170,7 @@ public sealed class ManorRolesTests : IDisposable {
 
 		Assert.False(wt.Suggested);
 		Assert.Equal(ManorRoles.WorktreeKept, wt.Blocked);
-		// Not in its round: Heiward's, as without Reeve, but never ticked for the user.
+		// Not in its round: Heiward's, as without Reeve, but never checked for the user.
 		Assert.False(mine.Suggested);
 		Assert.Null(mine.Blocked);
 		Assert.Equal(40 << 20, mine.Bytes);
@@ -298,20 +298,20 @@ public sealed class ManorRolesTests : IDisposable {
 		List<DevItem> items = ManorRoles.Now().View(report).Categories[0].Items;
 		DevItem Of(string id) => items.Single(i => i.Id == id);
 
-		// Reeve's: tagged, no tick, never cleaned.
+		// Reeve's: tagged, no check, never cleaned.
 		Assert.False(Of("wt").Suggested);
 		Assert.Equal(ManorRoles.WorktreeKept, Of("wt").Blocked);
 		Assert.Null(Of("wt").KeptForYou);
-		// Kept for you: its reason and when it was touched, no tag of Reeve's, never ticked for you, but yours to tick.
+		// Kept for you: its reason and when it was touched, no tag of Reeve's, never checked for you, but yours to check.
 		Assert.False(Of("mine").Suggested);
 		Assert.Null(Of("mine").Blocked);
 		Assert.Equal(Uncommitted, Of("mine").KeptForYou);
 		Assert.Equal(Touched, Of("mine").KeptTouchedUtc);
 		Assert.Equal(40 << 20, Of("mine").Bytes); // still measured
-		// Kept for you, but in use: Reeve's reason beside it, and still no tick until it's let go.
+		// Kept for you, but in use: Reeve's reason beside it, and still no check until it's let go.
 		Assert.Equal("A Claude Code session works in it", Of("busy").Blocked);
 		Assert.Equal("a git merge is under way in it", Of("busy").KeptForYou);
-		// Not in its round: Heiward's, never ticked for you.
+		// Not in its round: Heiward's, never checked for you.
 		Assert.False(Of("own").Suggested);
 		Assert.Null(Of("own").Blocked);
 		Assert.Null(Of("own").KeptForYou);
@@ -467,7 +467,7 @@ public sealed class ManorRolesTests : IDisposable {
 		Install(reeve);
 		TidyRound(Round(@"C:\elsewhere"));
 		var (cleaned, pruned) = RunAutomaticCleanup();
-		Assert.Equal(new[] { "left", "tmp" }, cleaned.Order()); // wt is Heiward's now, but never ticked: the user cleans it
+		Assert.Equal(new[] { "left", "tmp" }, cleaned.Order()); // wt is Heiward's now, but never checked: the user cleans it
 		Assert.Empty(pruned);
 	}
 
@@ -631,7 +631,7 @@ public sealed class ManorRolesTests : IDisposable {
 		Assert.Equal(HttpStatusCode.OK, (await page.GetAsync("/api/dev/pulls")).Status);
 		var (_, state) = await page.GetAsync("/api/state");
 		Assert.Equal(JsonValueKind.Null, state.GetProperty("dev").GetProperty("roles").GetProperty("worktrees").ValueKind);
-		Assert.Equal((40 << 20) * 2 + (5 << 20), state.GetProperty("dev").GetProperty("suggestedBytes").GetInt64()); // wt, left and tmp ticked
+		Assert.Equal((40 << 20) * 2 + (5 << 20), state.GetProperty("dev").GetProperty("suggestedBytes").GetInt64()); // wt, left and tmp checked
 	}
 
 	[Fact]
@@ -666,7 +666,7 @@ public sealed class ManorRolesTests : IDisposable {
 		Assert.Equal(HttpStatusCode.Conflict, pruneStatus);
 		Assert.Equal("Reeve's worktree-tidy job removes merged worktrees and branches: Heiward leaves branches to it.", prune.GetProperty("error").GetString());
 
-		// The page's poll says who looks after what, and ticks only what's Heiward's (the leftover and the temp files).
+		// The page's poll says who looks after what, and checks only what's Heiward's (the leftover and the temp files).
 		var (_, state) = await page.GetAsync("/api/state");
 		JsonElement summary = state.GetProperty("dev");
 		Assert.Equal("Reeve's worktree-tidy job removes merged worktrees and branches", summary.GetProperty("roles").GetProperty("worktrees").GetProperty("note").GetString());
@@ -685,12 +685,12 @@ public sealed class ManorRolesTests : IDisposable {
 		var (_, dev) = await page.GetAsync("/api/dev");
 		JsonElement wt = dev.GetProperty("report").GetProperty("categories")[0].GetProperty("items")[0];
 		Assert.False(wt.GetProperty("suggested").GetBoolean());
-		Assert.Equal(JsonValueKind.Null, wt.GetProperty("blocked").ValueKind); // yours to tick
+		Assert.Equal(JsonValueKind.Null, wt.GetProperty("blocked").ValueKind); // yours to check
 		Assert.Equal("has changes that aren't committed", wt.GetProperty("keptForYou").GetString());
 		Assert.Equal(Touched, wt.GetProperty("keptTouchedUtc").GetDateTime().ToUniversalTime());
 		Assert.Equal("Reeve keeps it", dev.GetProperty("roles").GetProperty("worktrees").GetProperty("keptForYou").GetString()); // its tag, before the reason
 
-		// Not ticked for you: only the leftover and the temp files are.
+		// Not checked for you: only the leftover and the temp files are.
 		var (_, state) = await page.GetAsync("/api/state");
 		Assert.Equal((40 << 20) + (5 << 20), state.GetProperty("dev").GetProperty("suggestedBytes").GetInt64());
 
@@ -713,9 +713,9 @@ public sealed class ManorRolesTests : IDisposable {
 		Assert.Contains("const keptTag = (i) => ((reeveRole() || {}).keptForYou || 'Reeve keeps it') + ': ' + i.keptForYou;", script);
 		Assert.Contains("name.append(el('span', 'tag kept', keptTag(i)))", script);
 		Assert.Contains("return 'Untouched for ' + (days === 1 ? 'a day' : days < 60 ? days + ' days' : Math.round(days / 30) + ' months');", script);
-		// Its section says what it is, and that it's never ticked for you.
+		// Its section says what it is, and that it's never checked for you.
 		Assert.Contains("'Those tagged \"' + reeve.keptForYou + '\" hold work ' + reeve.name + '\\'s tidy won\\'t throw away, so ' +", script);
-		Assert.Contains("'they\\'re yours again. None is ticked for you; removing one asks first and says what goes with it.'", script);
+		Assert.Contains("'they\\'re yours again. None is checked for you; removing one asks first and says what goes with it.'", script);
 		Assert.Contains("const many = open.filter((i) => !i.keptForYou);", script); // Select all leaves it out
 		// Removing it asks first, and says what goes with it and where it can be got back.
 		Assert.Contains("') with the work in ' + (kept.length === 1 ? 'it' : 'them') + '?'), ...keptLoss(kept)];", script);
