@@ -664,22 +664,105 @@ function renderCrumbs() {
 
 // ---------------------------------------------------------------- home: This PC
 
-function renderHome(s) {
-  $('t-groups').textContent = s.totals.groups - s.totals.similar;
-  const autoCopies = s.auto.settings.duplicates ? s.auto.upcoming.groups.count : 0;
-  $('t-groups-label').textContent = autoCopies ? 'sets of copies · ' + autoCopies + (autoCopies === 1 ? ' goes' : ' go') + ' automatically' : 'sets of copies to review';
-  $('t-free').textContent = bytes(s.totals.reclaimableBytes);
-  $('t-freed').textContent = bytes(s.totals.recycledBytes);
+/** The home page's tabs, in order. The one showing is kept for this browser, a convenience: without it, Drives. */
+const HOME_TABS = ['drives', 'copies', 'dev', 'games', 'history'];
+const HOME_TAB_KEY = 'heiward.tab';
+let homeTab = (() => { try { return localStorage.getItem(HOME_TAB_KEY) || 'drives'; } catch { return 'drives'; } })();
 
-  renderGlance(s.glance);
+/** Shows a home tab; one that isn't there (Developer mode off, say) shows Drives instead. */
+function showTab(name) {
+  if (!HOME_TABS.includes(name) || $('tab-' + name).classList.contains('hidden')) name = 'drives';
+  homeTab = name;
+  for (const t of HOME_TABS) {
+    const on = t === name;
+    $('tab-' + t).setAttribute('aria-selected', String(on));
+    $('tab-' + t).tabIndex = on ? 0 : -1;
+    $('panel-' + t).hidden = !on;
+  }
+}
+
+function pickTab(name) {
+  showTab(name);
+  try { localStorage.setItem(HOME_TAB_KEY, homeTab); } catch { /* kept for this visit only */ }
+}
+
+/** The tab a part of the home page is in, for the tour: false when that tab isn't there; else it's shown. */
+function showTabOf(node) {
+  const panel = node && node.closest('.tab-panel');
+  if (!panel) return true;
+  const name = panel.id.slice('panel-'.length);
+  if ($('tab-' + name).classList.contains('hidden')) return false;
+  showTab(name);
+  return true;
+}
+
+for (const t of HOME_TABS) $('tab-' + t).addEventListener('click', () => pickTab(t));
+// The arrow keys move between the tabs, as in any tab list.
+$('home-tabs').addEventListener('keydown', (e) => {
+  if (!['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) return;
+  const shown = HOME_TABS.filter((t) => !$('tab-' + t).classList.contains('hidden'));
+  const at = shown.indexOf(homeTab);
+  const next = e.key === 'Home' ? 0 : e.key === 'End' ? shown.length - 1 : (at + (e.key === 'ArrowRight' ? 1 : shown.length - 1)) % shown.length;
+  pickTab(shown[next]);
+  $('tab-' + shown[next]).focus();
+  e.preventDefault();
+});
+
+/** A tab's name, with a count beside it when there's one to give. */
+function tabLabel(name, text, n) {
+  const b = $('tab-' + name);
+  b.replaceChildren(text);
+  if (n) b.append(el('span', 'tab-count', String(n)));
+}
+
+/** A tile: the answer to one of the page's questions, at the top, opening the tab with the rest. */
+function tile(tab, label, value, note, tone) {
+  const t = el('button', 'tile' + (tone ? ' tile-' + tone : ''));
+  t.append(el('span', 'tile-label', label), el('span', 'tile-value', value));
+  if (note) t.append(el('span', 'tile-note', note));
+  t.addEventListener('click', () => pickTab(tab));
+  return t;
+}
+
+function renderHome(s) {
+  renderDevCard(s.dev);
+  renderGamesCard(s.games);
+  const devShown = !$('dev-section').classList.contains('hidden');
+  const gamesShown = !$('games-section').classList.contains('hidden');
+
+  const g = s.glance;
+  const copies = s.totals.groups - s.totals.similar;
+  const scanned = s.drives.some((d) => d.scan);
+  const autoCopies = s.auto.settings.duplicates ? s.auto.upcoming.groups.count : 0;
+  const last = s.done.find((d) => d.recycledBytes > 0);
+  const tiles = [];
+  if (g && g.drives) tiles.push(tile('drives', 'Free space', bytes(g.freeBytes), 'of ' + bytes(g.totalBytes) + ' on ' + count(g.drives, 'drive', 'drives'), g.low.length ? 'caution' : ''));
+  tiles.push(tile('copies', 'Copies to review', scanned ? count(copies, 'set', 'sets') : '–',
+    !scanned ? 'After the first scan' : copies ? bytes(s.totals.reclaimableBytes) + ' to free' + (autoCopies ? ' · ' + autoCopies + (autoCopies === 1 ? ' goes' : ' go') + ' automatically' : '') : 'None: nothing to free', scanned && !copies ? 'success' : ''));
+  if (devShown) tiles.push(tile('dev', 'Developer files', s.dev.scannedAtUtc ? bytes(s.dev.totalBytes) : '–',
+    !s.dev.scannedAtUtc ? 'Not checked yet' : s.dev.suggestedBytes ? bytes(s.dev.suggestedBytes) + ' ticked to clean' : 'Nothing ticked for you'));
+  if (gamesShown) tiles.push(tile('games', 'Games', s.games.scannedAtUtc ? count(s.games.installed, 'game', 'games') : '–',
+    !s.games.scannedAtUtc ? 'Not checked yet' : s.games.totalBytes ? bytes(s.games.totalBytes) + ' left behind' : 'Nothing left behind'));
+  tiles.push(tile('history', 'Freed so far', bytes(s.totals.recycledBytes), last ? 'Last cleanup ' + new Date(last.atUtc).toLocaleDateString([], { day: 'numeric', month: 'short' }) : 'Nothing yet'));
+  $('tiles').replaceChildren(...tiles);
+
+  $('tab-dev').classList.toggle('hidden', !devShown);
+  $('tab-games').classList.toggle('hidden', !gamesShown);
+  tabLabel('copies', 'Duplicates', copies);
+  tabLabel('history', 'History', s.done.length);
+  showTab(homeTab);
+
+  renderGlance(g);
+  renderTypes(g);
   const drives = $('drives');
   drives.replaceChildren(...s.drives.map(driveCard));
   if (!s.drives.length) drives.append(el('p', 'muted', 'No drives found.'));
 
   const spots = s.hotspots;
-  $('hotspots-section').classList.toggle('hidden', !spots.length);
   const max = Math.max(1, ...spots.map((h) => h.reclaim));
-  $('hotspots').replaceChildren(...spots.map((h) => {
+  if (!spots.length) {
+    $('hotspots').replaceChildren(el('div', 'empty-state', scanned ? 'No copies to review: the last scan found none to free.' : 'After the first scan.'));
+  } else $('hotspots').replaceChildren(...spots.map((h) => {
     const row = el('button', 'hotspot');
     row.append(folderIcon(false));
     const where = el('div', 'where');
@@ -703,11 +786,121 @@ function renderHome(s) {
     return row;
   }));
 
-  renderDevCard(s.dev);
-  renderGamesCard(s.games);
+  kindRows($('dev-kinds'), (s.dev.categories || []).map((c) => ({
+    name: (DEV_META[c.key] || {}).short || c.title, title: c.title, bytes: c.bytes, tone: 'developer',
+    open: () => { location.hash = SHARED.includes(c.key) ? '#/dev/s/' + c.key : '#/dev'; },
+  })), s.dev.scannedAtUtc ? 'Nothing that tools recreate.' : 'After the first check.');
+  kindRows($('game-kinds'), ((s.games && s.games.categories) || []).map((c) => ({
+    name: (GAME_META[c.key] || {}).short || c.title, title: c.title, bytes: c.bytes, note: count(c.count, 'game', 'games'), tone: 'games',
+    open: () => { location.hash = '#/games/k/' + c.key; },
+  })), s.games && s.games.scannedAtUtc ? 'Nothing left behind.' : 'After the first check.');
+  renderFreed(s);
   renderDone(s);
   renderManorCard(s.manorCard);
   renderFooter(s);
+}
+
+/**
+ * The Developer and Games tabs' second part: each kind of thing as a bar of its share, biggest first, opening its
+ * page. A kind with no size (games installed twice, say) gives its count instead.
+ */
+function kindRows(box, kinds, empty) {
+  const total = kinds.reduce((n, k) => n + (k.bytes || 0), 0);
+  const rows = el('div', 'type-rows kind-rows');
+  for (const k of [...kinds].sort((a, b) => (b.bytes || 0) - (a.bytes || 0))) {
+    const row = el('button', 'type-row kind-row');
+    row.title = k.title;
+    const meter = el('span', 'type-meter');
+    if (k.bytes) {
+      const fill = el('span', 'fill k-' + k.tone);
+      fill.style.width = Math.max(1.5, (100 * k.bytes) / total) + '%';
+      meter.append(fill);
+    }
+    row.append(el('span', 'type-name', k.name), meter, el('span', 'type-pct', k.bytes ? share(k.bytes, total) : ''),
+      el('span', 'muted small type-bytes', k.bytes ? bytes(k.bytes) : k.note || ''));
+    row.addEventListener('click', k.open);
+    rows.append(row);
+  }
+  box.replaceChildren(kinds.length ? rows : el('div', 'muted small', empty));
+}
+
+/** What a history entry freed, by kind: the copies of photos and videos, developer files, or what games left. */
+function freedKind(d) {
+  return d.action === 'dev-cleaned' || d.action === 'branches-pruned' ? 'developer' : d.action === 'game-recycled' ? 'games' : 'photos';
+}
+
+const FREED_KINDS = [['photos', 'Copies'], ['developer', 'Developer files'], ['games', 'Games']];
+const WEEKS = 12;
+
+/** Monday 00:00 of the week a time falls in, on this PC's clock. */
+function weekOf(t) {
+  const d = new Date(t);
+  d.setHours(0, 0, 0, 0);
+  d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+  return d.getTime();
+}
+
+/**
+ * History's first part: what was freed, all told and in the last 30 days, then a bar a week for the last 12 weeks,
+ * each kind in its colour (At a glance's), from the history's entries.
+ */
+function renderFreed(s) {
+  const box = $('freed');
+  const now = Date.now();
+  const month = s.done.filter((d) => now - Date.parse(d.atUtc) < 30 * 86400000).reduce((n, d) => n + (d.recycledBytes || 0), 0);
+  const stats = el('div', 'glance-stats freed-stats');
+  const stat = (value, label) => {
+    const x = el('div', 'glance-stat');
+    x.append(el('div', 'glance-value', value), el('div', 'muted small', label));
+    return x;
+  };
+  stats.append(stat(bytes(s.totals.recycledBytes), 'freed so far'), stat(month ? bytes(month) : '–', 'in the last 30 days'));
+  if (!s.done.length) {
+    box.replaceChildren(stats, el('div', 'muted small', s.config.keepHistory ? 'Each week\'s will show here once something is cleaned up.' : 'History is off, so there are no weeks to show.'));
+    return;
+  }
+
+  const first = weekOf(now) - (WEEKS - 1) * 7 * 86400000;
+  const weeks = Array.from({ length: WEEKS }, (_, i) => ({ at: first + i * 7 * 86400000, by: { photos: 0, developer: 0, games: 0 } }));
+  for (const d of s.done) {
+    const i = Math.floor((weekOf(Date.parse(d.atUtc)) - first) / (7 * 86400000));
+    if (i >= 0 && i < WEEKS && d.recycledBytes > 0) weeks[i].by[freedKind(d)] += d.recycledBytes;
+  }
+  const most = Math.max(1, ...weeks.map((w) => w.by.photos + w.by.developer + w.by.games));
+  const day = (t) => new Date(t).toLocaleDateString([], { day: 'numeric', month: 'short' });
+  const chart = el('div', 'week-chart');
+  chart.setAttribute('role', 'img');
+  chart.setAttribute('aria-label', 'Freed a week, for the last ' + WEEKS + ' weeks: ' +
+    weeks.map((w) => day(w.at) + ' ' + bytes(w.by.photos + w.by.developer + w.by.games)).join(', '));
+  for (const w of weeks) {
+    const sum = w.by.photos + w.by.developer + w.by.games;
+    const col = el('div', 'week');
+    col.title = 'Week of ' + day(w.at) + ': ' + (sum ? bytes(sum) + FREED_KINDS.filter(([k]) => w.by[k]).map(([k, label]) => '\n' + label + ' ' + bytes(w.by[k])).join('') : 'nothing freed');
+    const bar = el('div', 'week-bar');
+    bar.style.height = sum ? Math.max(3, (100 * sum) / most) + '%' : '0';
+    for (const [k] of FREED_KINDS) {
+      if (!w.by[k]) continue;
+      const seg = el('div', 'seg k-' + k);
+      seg.style.flexGrow = String(w.by[k]);
+      bar.append(seg);
+    }
+    col.append(bar);
+    chart.append(col);
+  }
+  const axis = el('div', 'week-axis muted small');
+  axis.append(el('span', null, day(weeks[0].at)), el('span', null, day(weeks[Math.floor(WEEKS / 2)].at)), el('span', null, 'this week'));
+  const legend = el('div', 'glance-legend');
+  for (const [k, label] of FREED_KINDS) {
+    const amount = weeks.reduce((n, w) => n + w.by[k], 0);
+    if (!amount) continue;
+    const it = el('div', 'glance-item');
+    const text = el('span', null, label + ' ');
+    text.append(el('b', null, bytes(amount)));
+    it.append(el('span', 'swatch k-' + k), text);
+    legend.append(it);
+  }
+  const head = el('div', 'glance-sub', 'A week at a time, the last ' + WEEKS + ' weeks');
+  box.replaceChildren(stats, head, chart, axis, legend);
 }
 
 // ---------------------------------------------------------------- home: at a glance
@@ -731,9 +924,9 @@ const GLANCE_TIPS = {
 const kindClass = (kind) => (kind === 'video' ? 'videos' : kind === 'photo' ? 'photos' : 'other');
 
 /**
- * Every drive of this PC in one card, above the drive cards: how big, how full, what the used space is
- * (photos, videos, developer files, the Recycle Bin, everything else), the photos and videos by type,
- * the drives nearly full, and what could be freed now. Network drives have their cards but aren't counted.
+ * Every drive of this PC in one card, beside the drive cards: how big, how full, what the used space is
+ * (photos, videos, developer files, the Recycle Bin, everything else), the drives nearly full, and what could
+ * be freed now, each with its tab. Network drives have their cards but aren't counted.
  */
 function renderGlance(g) {
   const box = $('glance');
@@ -741,7 +934,8 @@ function renderGlance(g) {
   if (!g || !g.drives) { box.replaceChildren(); return; }
 
   const head = el('div', 'glance-head');
-  head.append(el('div', 'glance-title', 'At a glance'), el('div', 'muted small', count(g.drives, 'drive', 'drives') + ' on this PC' +
+  // Its heading is the section's (At a glance): here, what it counts.
+  head.append(el('div', 'muted small', count(g.drives, 'drive', 'drives') + ' on this PC' +
     (g.networkDrives ? ' · ' + count(g.networkDrives, 'network drive', 'network drives') + ' not counted' : '')));
 
   const stats = el('div', 'glance-stats');
@@ -780,31 +974,6 @@ function renderGlance(g) {
   legend.append(item('free', 'Free', g.freeBytes, share(g.freeBytes, g.totalBytes), 'Free space on these drives.'));
   const note = el('div', 'muted small', 'Each kind\'s share is of the used space; free is of the total.');
 
-  // The photos and videos, by file type.
-  const types = el('div', 'glance-types');
-  types.append(el('div', 'glance-sub', 'Photos and videos by type'));
-  const media = g.types.reduce((n, t) => n + t.bytes, 0) + (g.otherTypes ? g.otherTypes.bytes : 0);
-  if (!g.typed) {
-    types.append(el('div', 'muted small', g.scannedAtUtc ? 'After the next scan: the last one was made before Heiward sorted files by type.' : 'After the first scan.'));
-  } else if (!media) {
-    types.append(el('div', 'muted small', 'The last scan found no photos or videos on these drives.'));
-  } else {
-    const rows = el('div', 'type-rows');
-    for (const t of g.otherTypes ? [...g.types, g.otherTypes] : g.types) {
-      const mixed = t.kind === 'mixed';
-      const row = el('div', 'type-row');
-      row.title = (mixed ? t.type + ' types: ' : '') + count(t.files, 'file', 'files') + ', ' + bytes(t.bytes) + (mixed ? '' : ' (' + kindClass(t.kind) + ')');
-      const meter = el('span', 'type-meter');
-      const fill = el('span', 'fill k-' + (mixed ? 'other' : kindClass(t.kind)));
-      fill.style.width = Math.max(1.5, (100 * t.bytes) / media) + '%';
-      meter.append(fill);
-      row.append(el('span', 'type-name' + (mixed ? ' muted' : ''), mixed ? 'Others' : t.type.toUpperCase() || '(none)'),
-        meter, el('span', 'type-pct', share(t.bytes, media)), el('span', 'muted small type-bytes', bytes(t.bytes)));
-      rows.append(row);
-    }
-    types.append(rows);
-  }
-
   // What needs a look: drives nearly full, and what can be freed now.
   const notes = el('div', 'glance-notes');
   notes.append(el('div', 'glance-sub', 'Worth knowing'));
@@ -815,16 +984,50 @@ function renderGlance(g) {
     list.append(li);
   }
   const r = g.reclaim;
-  if (r.duplicates) list.append(el('li', null, bytes(r.duplicates) + ' in copies to review (Where the duplicates are, below).'));
-  if (r.developer) list.append(el('li', null, bytes(r.developer) + ' of developer files ticked to clean (Developer area).'));
-  if (r.games) list.append(el('li', null, bytes(r.games) + ' that games left behind, ticked to remove (Games area).'));
+  const toTab = (text, tab, label) => {
+    const li = el('li', null, text + ' ');
+    const link = el('button', 'link', label);
+    link.addEventListener('click', () => pickTab(tab));
+    li.append(link);
+    return li;
+  };
+  if (r.duplicates) list.append(toTab(bytes(r.duplicates) + ' in copies to review:', 'copies', 'Duplicates'));
+  if (r.developer) list.append(toTab(bytes(r.developer) + ' of developer files ticked to clean:', 'dev', 'Developer'));
+  if (r.games) list.append(toTab(bytes(r.games) + ' that games left behind, ticked to remove:', 'games', 'Games'));
   if (r.recycleBin) list.append(el('li', null, bytes(r.recycleBin) + ' in the Recycle Bin: empty it to get that space back.'));
   if (!list.childElementCount) list.append(el('li', 'muted', 'No drive is nearly full, and there\'s nothing to free right now.'));
   notes.append(list);
 
-  const lower = el('div', 'glance-lower');
-  lower.append(types, notes);
-  box.replaceChildren(head, stats, bar, legend, note, lower);
+  box.replaceChildren(head, stats, bar, legend, note, notes);
+}
+
+/** The Duplicates tab's first part: the photos and videos the last scan found, by file type, each type's share. */
+function renderTypes(g) {
+  const box = $('types');
+  const media = g ? g.types.reduce((n, t) => n + t.bytes, 0) + (g.otherTypes ? g.otherTypes.bytes : 0) : 0;
+  if (!g || !g.drives || !g.typed) {
+    box.replaceChildren(el('div', 'muted small', g && g.scannedAtUtc ? 'After the next scan: the last one was made before Heiward sorted files by type.' : 'After the first scan.'));
+    return;
+  }
+  if (!media) {
+    box.replaceChildren(el('div', 'muted small', 'The last scan found no photos or videos on these drives.'));
+    return;
+  }
+  const rows = el('div', 'type-rows');
+  for (const t of g.otherTypes ? [...g.types, g.otherTypes] : g.types) {
+    const mixed = t.kind === 'mixed';
+    const row = el('div', 'type-row');
+    row.title = (mixed ? t.type + ' types: ' : '') + count(t.files, 'file', 'files') + ', ' + bytes(t.bytes) + (mixed ? '' : ' (' + kindClass(t.kind) + ')');
+    const meter = el('span', 'type-meter');
+    const fill = el('span', 'fill k-' + (mixed ? 'other' : kindClass(t.kind)));
+    fill.style.width = Math.max(1.5, (100 * t.bytes) / media) + '%';
+    meter.append(fill);
+    row.append(el('span', 'type-name' + (mixed ? ' muted' : ''), mixed ? 'Others' : t.type.toUpperCase() || '(none)'),
+      meter, el('span', 'type-pct', share(t.bytes, media)), el('span', 'muted small type-bytes', bytes(t.bytes)));
+    rows.append(row);
+  }
+  const files = g.types.reduce((n, t) => n + t.files, 0) + (g.otherTypes ? g.otherTypes.files : 0);
+  box.replaceChildren(el('div', 'muted small', count(files, 'photo or video', 'photos and videos') + ', ' + bytes(media) + ' in all'), rows);
 }
 
 // ---------------------------------------------------------------- settings
@@ -2081,18 +2284,10 @@ function renderDevCard(dev) {
     text.append(el('div', 'drive-name', 'Developer leftovers'),
       el('div', 'muted small', dev.running ? 'Checking build outputs, worktrees and caches…' : 'Build outputs, git worktrees, package caches and emulators that tools recreate. Not checked yet.'));
   } else {
+    // Each kind, beside the card, opens its own page (renderHome's kindRows).
     text.append(el('div', 'drive-name', bytes(dev.totalBytes) + ' that tools can recreate'),
       el('div', 'muted small', (dev.suggestedBytes ? bytes(dev.suggestedBytes) + ' ticked for cleaning · ' : 'Nothing ticked for you · ') +
         (dev.running ? 'checking again…' : 'checked ' + ago(dev.scannedAtUtc))));
-    const chips = el('div', 'chips');
-    chips.style.marginTop = '6px';
-    for (const c of dev.categories || []) {
-      // Each chip opens its category.
-      const chip = el('button', 'chip quiet chip-link', ((DEV_META[c.key] || {}).short || c.title) + ' ' + bytes(c.bytes));
-      chip.addEventListener('click', () => { location.hash = SHARED.includes(c.key) ? '#/dev/s/' + c.key : '#/dev'; });
-      chips.append(chip);
-    }
-    text.append(chips);
   }
   top.append(text);
   const actions = el('div', 'actions');
@@ -3205,14 +3400,7 @@ function renderGamesCard(g) {
     text.append(el('div', 'drive-name', count(g.installed, 'game', 'games') + ' installed, ' + bytes(g.installedBytes)),
       el('div', 'muted small', (g.totalBytes ? bytes(g.totalBytes) + ' left behind · ' : 'Nothing left behind · ') +
         (g.suggestedBytes ? bytes(g.suggestedBytes) + ' ticked to remove · ' : '') + (g.running ? 'checking again…' : 'checked ' + ago(g.scannedAtUtc))));
-    const chips = el('div', 'chips');
-    chips.style.marginTop = '6px';
-    for (const c of g.categories || []) {
-      const chip = el('button', 'chip quiet chip-link', ((GAME_META[c.key] || {}).short || c.title) + (c.bytes ? ' ' + bytes(c.bytes) : ' · ' + c.count));
-      chip.addEventListener('click', () => { location.hash = '#/games/k/' + c.key; });
-      chips.append(chip);
-    }
-    text.append(chips);
+    // Each kind, beside the card, opens its own page (renderHome's kindRows).
   }
   top.append(text);
   const actions = el('div', 'actions');
@@ -4081,9 +4269,12 @@ function historyBar(s, withSwitch) {
   return bar;
 }
 
+/** The history's first entries, the newest; Show all lists the rest. */
+const HISTORY_FIRST = 25;
+let historyAll = false;
+
 function renderDone(s) {
   const box = $('done');
-  $('history').querySelector('summary').textContent = 'History' + (s.done.length ? ' (' + s.done.length + ')' : '');
   if (!s.done.length) {
     box.replaceChildren(historyBar(s), el('p', 'muted small', s.config.keepHistory ? 'Nothing yet.' : 'Nothing listed.'));
     return;
@@ -4094,9 +4285,20 @@ function renderDone(s) {
     w.addEventListener('contextmenu', (e) => openPathMenu(e, { name: nameOf(folder), path: folder, folder: true }));
     return w;
   };
-  box.replaceChildren(historyBar(s), ...s.done.map((d) => {
+  const shown = historyAll ? s.done : s.done.slice(0, HISTORY_FIRST);
+  const more = [];
+  if (s.done.length > HISTORY_FIRST) {
+    const b = el('button', 'link small more', historyAll ? 'Show the newest ' + HISTORY_FIRST : 'Show all ' + s.done.length);
+    b.addEventListener('click', () => { historyAll = !historyAll; renderDone(s); });
+    more.push(b);
+  }
+  box.replaceChildren(historyBar(s), ...shown.map((d) => {
     const row = el('div', 'done-row');
-    row.append(el('span', 'muted small', new Date(d.atUtc).toLocaleString()));
+    // One line each: when, then what; the full time on hover.
+    const at = new Date(d.atUtc);
+    const when = el('span', 'muted small done-when', at.toLocaleString([], { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }));
+    when.title = at.toLocaleString();
+    row.append(when);
     if (d.auto) row.append(el('span', 'tag auto', 'Automatic'));
     if (d.batch && d.action === 'kept') {
       // "Skip all" on a folder's look-alikes.
@@ -4133,7 +4335,7 @@ function renderDone(s) {
       }
     }
     return row;
-  }));
+  }), ...more);
 }
 
 // ---------------------------------------------------------------- home: the Castellan card

@@ -14,8 +14,8 @@ const TOURED = 'heiward.toured';
 const TOUR_PARTS = [
   ['controls', 'Where the AI runs, and Scan now',
     'The badge says where AI matching runs: on the NPU when this PC has one, else the graphics card or the processor. It reads "Running on the NPU" only while a scan is matching pictures there. Pause holds the scheduled scans for a while; About, beside Settings, has its version, its license and where its work runs; Scan now starts one at full speed.'],
-  ['tiles', 'What you could free',
-    'The sets of copies waiting for your review, the space they take, and what you have freed so far.'],
+  ['tiles', 'At the top',
+    'The free space on your drives, the copies waiting for your review and the space they take, and what you have freed so far. Click one to open its tab.'],
   ['drives', 'Devices and drives',
     'A card per drive, as File Explorer has them. Open one to walk its folders and see the copies in each. Right-click a folder to include it or leave it out, or a drive to scan it only when you ask, so an archive disk can sleep.'],
   ['dev', 'Developer area',
@@ -25,13 +25,14 @@ const TOUR_PARTS = [
   ['hotspots', 'Where the duplicates are',
     'The folders where cleaning up frees the most. Only identical files and pixel-level copies are ticked for you: look-alikes are your call.'],
   ['history', 'History',
-    'What you sent to the Recycle Bin and what you kept, so a choice can be undone.'],
+    'What was freed, week by week, and what you sent to the Recycle Bin or kept, so a choice can be undone.'],
 ];
 
 let tourStep = null; // null: closed; else 0 (intro), 1 (your choices), 2.. (the page's parts)
 let tourParts = [];
 let tourFrom = null;
 let tourFocus = null;
+let tourTab = null; // the home tab showing when the tour began, shown again after it
 
 function toured() {
   try { return localStorage.getItem(TOURED) === '1'; } catch { return false; }
@@ -77,6 +78,7 @@ function startTour(from) {
   if (!state || setupShowing(state) || uninstallShowing()) return; // the setup (and its Done until Open Heiward), and the uninstall
   tourFrom = from;
   tourStep = 0;
+  tourTab = homeTab;
   // The page under it is the home page, whose parts the tour walks.
   if (isTourHash(location.hash)) history.replaceState(null, '', '#/');
   route = parseRoute();
@@ -96,6 +98,8 @@ function endTour(back) {
   const box = $('tour');
   if (box) box.remove();
   holdPage(false);
+  if (tourTab) showTab(tourTab);
+  tourTab = null;
   if (back && tourFrom) location.href = tourFrom;
   tourFrom = null;
 }
@@ -105,11 +109,16 @@ function clearTourFocus() {
   tourFocus = null;
 }
 
-/** The page's parts showing now: the Developer area only with Developer mode on, and so on. */
+/**
+ * The page's parts showing now: the Developer area only with Developer mode on, and so on. A part in one of the home
+ * page's tabs counts while its tab is there: its step opens it.
+ */
 function partsShowing() {
   return TOUR_PARTS.filter(([name]) => {
     const e = document.querySelector('[data-tour="' + name + '"]');
-    return e && !e.classList.contains('hidden') && e.offsetParent !== null;
+    if (!e || e.classList.contains('hidden')) return false;
+    const panel = e.closest('.tab-panel');
+    return panel ? !$('tab-' + panel.id.slice('panel-'.length)).classList.contains('hidden') : e.offsetParent !== null;
   });
 }
 
@@ -193,7 +202,7 @@ function drawTour() {
       title.textContent = part[1];
       body.append(el('p', null, part[2]));
       const target = document.querySelector('[data-tour="' + part[0] + '"]');
-      if (target) {
+      if (target && showTabOf(target)) {
         target.classList.add('tour-focus');
         tourFocus = target;
         target.scrollIntoView({ block: 'center', behavior: 'smooth' });
