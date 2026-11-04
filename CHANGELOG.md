@@ -4,15 +4,16 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.128
 
-**It carries kit 2.150.1: the parts all the staff share.**
+**It carries kit 2.150.2: the parts all the staff share.**
 
 ### What changed
 
 - Kit 2.150.1: A staff member's Settings sends you to Manor's Settings, Employees for the settings kept there: Manor folded its Staff settings tab into Employees.
+- Kit 2.150.2: "Where its work runs" calls the NPU the NPU, the word the ads and Task Manager use, and says the staff where it said agents.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.127
 
