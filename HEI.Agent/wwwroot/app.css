@@ -983,7 +983,9 @@ button.dev-item.game-install { width: 100%; text-align: left; font: inherit; col
 .tip-body li { margin: 2px 0; }
 .tip-title { font-weight: 600; }
 
-.history-bar { display: flex; gap: 10px 14px; align-items: flex-start; flex-wrap: wrap; padding: 0 0 10px; border-bottom: 1px solid var(--line); }
+.history-bar { display: flex; gap: 10px 14px; align-items: flex-start; flex-wrap: wrap; padding: 10px 0; border-bottom: 1px solid var(--line); }
+/* On the History tab the bar sits right under its heading. */
+#done > .history-bar { padding-top: 0; }
 .history-bar .auto-text { flex: 1 1 260px; }
 .done-row { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .done-when { flex: none; min-width: 9.5em; font-variant-numeric: tabular-nums; }
