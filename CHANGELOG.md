@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.128
+
+**It carries kit 2.150.1: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.150.1: A staff member's Settings sends you to Manor's Settings, Employees for the settings kept there: Manor folded its Staff settings tab into Employees.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.127
 
 **Heiward's page, laid out for a wide screen.**
