@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.130
+
+**It carries kit 2.150.4: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.150.4: A round's time limit, and a PowerShell script's, count only the time the PC was awake: a round a sleep caught goes on after the wake instead of being let go.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.129
 
 **Checkboxes are checked now, not ticked.**
