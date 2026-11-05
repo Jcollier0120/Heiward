@@ -40,7 +40,7 @@ public sealed class TaskFolderTests : IDisposable {
 
 	[Theory]
 	// As Manor's and the Steward's kit's: the profile folder's name, which renaming the account doesn't change.
-	[InlineData(@"C:\Users\Jcoll", "jeremy", "Jcoll")]
+	[InlineData(@"C:\Users\Sam", "jeremy", "Sam")]
 	[InlineData(@"C:\Users\Pat Smith\", null, "Pat Smith")]
 	[InlineData(@"C:\Users\a:b*c?""d<e>f|g", null, "a_b_c__d_e_f_g")] // what a task's name can't hold
 	[InlineData(null, "pat", "pat")] // no profile folder: the user's name

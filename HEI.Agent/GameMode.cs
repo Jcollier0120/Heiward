@@ -41,7 +41,7 @@ namespace HEI.Agent {
 
 		string OnOff => On ? "on" : "off";
 
-		/// <summary>"Weasel Manor turns this on", as the page's Settings says it in place of the switch.</summary>
+		/// <summary>"Hill Manor turns this on", as the page's Settings says it in place of the switch.</summary>
 		public string? ManorNote => ByManor ? $"{Manor.Name} turns this {OnOff}" : null;
 
 		/// <summary>The games requests' answer while it's off: where it's turned on.</summary>
@@ -57,7 +57,7 @@ namespace HEI.Agent {
 		/// <summary>Why the page's Settings can't turn it on or off while Manor decides.</summary>
 		public string? ManorDecidesText => ByManor ? $"{Manor.Name} turns game mode {OnOff}. Change it in {Manor.Name}." : null;
 
-		/// <summary>"on", "off", "on (Weasel Manor's)": for <c>hei status</c> and heiward.log.</summary>
+		/// <summary>"on", "off", "on (Hill Manor's)": for <c>hei status</c> and heiward.log.</summary>
 		public string Describe() => ByManor ? $"{OnOff} ({Manor.Name}'s)" : OnOff;
 	}
 }
