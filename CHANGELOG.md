@@ -10,6 +10,7 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 - The page, its tour and help say "check": the copies it checks for you, **Check the files to remove**, and "Nothing is removed until you check it". The tag compare, in the desktop and web apps, says **Uncheck "Only show differences"**.
 - Where the page meant its daily look, it says so: "Not looked at yet", "looked at 5 min ago", "right after the daily developer look".
+- Kit 2.150.3: A staff member's About and page say "check" for a checkbox, not "tick".
 
 ### Before you update
 
