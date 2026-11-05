@@ -76,8 +76,8 @@ public sealed class ManorTests : IDisposable {
 
 	[Fact]
 	public void SettingsAndApp_IsManorInstalled() {
-		Manor? manor = Manor.Load(ManorAt("{\"name\":\"Weasel Manor\",\"port\":18585,\"theme\":\"onyx\"}"));
-		Assert.Equal(new Manor("Weasel Manor", 18585, "onyx"), manor);
+		Manor? manor = Manor.Load(ManorAt("{\"name\":\"Hill Manor\",\"port\":18585,\"theme\":\"onyx\"}"));
+		Assert.Equal(new Manor("Hill Manor", 18585, "onyx"), manor);
 		Assert.Equal("http://manor.localhost:18585/", manor!.Url);
 	}
 
@@ -271,11 +271,11 @@ public sealed class ManorTests : IDisposable {
 
 	[Fact]
 	public void TheReviewPage_IsStamped_AndKeepsItsToken() {
-		string page = Manor.Stamp(Asset("index.html").Replace("__AGENT_TOKEN__", "0123456789abcdef"), new Manor("Weasel Manor", 18600, "rosegold"));
-		Assert.Contains("<html lang=\"en\" data-theme=\"rosegold\" data-manor=\"Weasel Manor\" data-manor-url=\"http://manor.localhost:18600/\">", page);
+		string page = Manor.Stamp(Asset("index.html").Replace("__AGENT_TOKEN__", "0123456789abcdef"), new Manor("Hill Manor", 18600, "rosegold"));
+		Assert.Contains("<html lang=\"en\" data-theme=\"rosegold\" data-manor=\"Hill Manor\" data-manor-url=\"http://manor.localhost:18600/\">", page);
 		// As the kit's pages have it (kit/test/manor.test.ts): the way back first in the title bar.
-		Assert.Matches(new Regex("<header class=\"titlebar[^\"]*\"[^>]*>\\s*<a class=\"manor-back\" href=\"http://manor\\.localhost:18600/\" title=\"Back to Weasel Manor\">" +
-			"<img src=\"/manor-icon\\.svg\" alt=\"\" width=\"22\" height=\"22\"><span>Back to Weasel Manor</span></a><span class=\"manor-sep\" aria-hidden=\"true\"></span>\\s*<a class=\"brand\""), page);
+		Assert.Matches(new Regex("<header class=\"titlebar[^\"]*\"[^>]*>\\s*<a class=\"manor-back\" href=\"http://manor\\.localhost:18600/\" title=\"Back to Hill Manor\">" +
+			"<img src=\"/manor-icon\\.svg\" alt=\"\" width=\"22\" height=\"22\"><span>Back to Hill Manor</span></a><span class=\"manor-sep\" aria-hidden=\"true\"></span>\\s*<a class=\"brand\""), page);
 		Assert.Equal("0123456789abcdef", ReviewServer.TokenIn(page));
 	}
 

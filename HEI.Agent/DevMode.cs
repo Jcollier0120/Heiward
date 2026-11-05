@@ -41,7 +41,7 @@ namespace HEI.Agent {
 
 		string OnOff => On ? "on" : "off";
 
-		/// <summary>"Weasel Manor's Developer options turn this on", as the page's Settings says it in place of the switch.</summary>
+		/// <summary>"Hill Manor's Developer options turn this on", as the page's Settings says it in place of the switch.</summary>
 		public string? ManorNote => ByManor ? $"{Manor.Name}'s Developer options turn this {OnOff}" : null;
 
 		/// <summary>The developer requests' answer while it's off: where it's turned on.</summary>
@@ -59,7 +59,7 @@ namespace HEI.Agent {
 			? $"{Manor.Name}'s Developer options turn developer mode {OnOff}, for every agent in the manor. Change it in {Manor.Name}."
 			: null;
 
-		/// <summary>"on", "off", "on (Weasel Manor's Developer options)": for <c>hei status</c> and heiward.log.</summary>
+		/// <summary>"on", "off", "on (Hill Manor's Developer options)": for <c>hei status</c> and heiward.log.</summary>
 		public string Describe() => ByManor ? $"{OnOff} ({Manor.Name}'s Developer options)" : OnOff;
 	}
 }
