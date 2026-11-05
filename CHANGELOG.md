@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.131
+
+**It carries kit 2.151.0: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.151.0: An installed copy's license check can't be switched off or fooled from outside: no environment variable turns it off or adds a key, and a device.json copied from another PC is that PC's.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.130
 
 **It carries kit 2.150.4: the parts all the staff share.**
