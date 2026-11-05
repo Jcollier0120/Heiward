@@ -2,6 +2,19 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.129
+
+**Checkboxes are checked now, not ticked.**
+
+### What changed
+
+- The page, its tour and help say "check": the copies it checks for you, **Check the files to remove**, and "Nothing is removed until you check it". The tag compare, in the desktop and web apps, says **Uncheck "Only show differences"**.
+- Where the page meant its daily look, it says so: "Not looked at yet", "looked at 5 min ago", "right after the daily developer look".
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.9.128
 
 **It carries kit 2.150.2: the parts all the staff share.**
