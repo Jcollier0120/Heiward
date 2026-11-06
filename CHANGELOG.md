@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.132
+
+**It carries kit 2.152.0: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.152.0: A release carries no source: the server's code is V8 bytecode, built for the Node.js the staff run on, on Arm64 and x64.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.131
 
 **It carries kit 2.151.0: the parts all the staff share.**
