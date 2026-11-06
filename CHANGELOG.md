@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.133
+
+**It carries kit 2.152.1: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.152.1: A lock's holder and a starting model server are judged by the time the PC was awake, so a sleep no longer evicts a live holder or fails a server's start.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.132
 
 **It carries kit 2.152.0: the parts all the staff share.**
