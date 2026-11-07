@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.135
+
+**It carries kit 2.152.3: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.152.3: The NPU benchmark and the NPU check look past a block of ports Windows keeps, instead of giving up 100 ports above a route's.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.134
 
 **It carries kit 2.152.2: the parts all the staff share.**
