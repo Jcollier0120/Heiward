@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.9.134
+
+**It carries kit 2.152.2: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.152.2: A Snapdragon X2's NPU chats and reads pictures on llama-server on the Hexagon, which carries the model's add-ons, and a request can name its job to have its add-on applied there.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.9.133
 
 **It carries kit 2.152.1: the parts all the staff share.**
