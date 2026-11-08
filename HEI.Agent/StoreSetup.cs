@@ -30,7 +30,8 @@ namespace HEI.Agent {
 	/// The setup's questions on the review page, then <c>hei install --yes</c> with the answers in its own process,
 	/// its output kept for the page. Two first runs use it:
 	/// <list type="bullet">
-	/// <item>the Store version's, which has no console: the install writes <see cref="AgentPaths.StoreSetUp"/> when it's done;</item>
+	/// <item>the Store version's, which has no console: the install writes <see cref="AgentPaths.StoreSetUp"/> when it's done.
+	/// While Castellan keeps the copy from GitHub, it asks nothing and installs nothing (<see cref="CastellanCopy"/>);</item>
 	/// <item>the GitHub exe's, double-clicked: it copies itself to the install folder and starts that copy's page with
 	/// <c>serve --setup</c> in a window of its own (<see cref="Installer.OpenSetupWindowAsync"/>); <see cref="FirstRun"/>
 	/// holds until the install succeeds.</item>
@@ -54,7 +55,11 @@ namespace HEI.Agent {
 			reuseFrom = reuse ?? Array.Empty<string>();
 		}
 
-		public static bool Needed => StorePackage.IsPackaged ? !File.Exists(AgentPaths.StoreSetUp) : FirstRun && !installedHere;
+		/// <summary>
+		/// The page shows the setup: the Store version's until it's set up, and while Castellan keeps the copy from GitHub,
+		/// which it stands aside for (no scans, nothing to set up); the setup window's until the install succeeds.
+		/// </summary>
+		public static bool Needed => StorePackage.IsPackaged ? !File.Exists(AgentPaths.StoreSetUp) || CastellanCopy.StoreStandsAside : FirstRun && !installedHere;
 
 		public static bool Running { get { lock (gate) return running; } }
 
@@ -63,12 +68,14 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// The GitHub exe's setup window was closed before the install started: nothing asks for this page, so it can
-		/// stop rather than stay up for a Heiward that isn't installed. The next double-click starts it again.
+		/// stop rather than stay up for a Heiward that isn't installed. The next double-click starts it again. The Store
+		/// version's page, standing aside for Castellan's copy, the same once it's closed: the Start menu starts it again.
 		/// </summary>
 		public static bool Abandoned(DateTime nowUtc) {
-			lock (gate) return Abandoned(FirstRun, installedHere, running, lastSeenUtc, nowUtc);
+			lock (gate) return Abandoned(FirstRun || CastellanCopy.StoreStandsAside, installedHere, running, lastSeenUtc, nowUtc);
 		}
 
+		/// <param name="firstRun">The setup window's page, or the Store version's standing aside: a page that stops once it's closed.</param>
 		internal static bool Abandoned(bool firstRun, bool installed, bool running, DateTime lastSeenUtc, DateTime nowUtc) =>
 			firstRun && !installed && !running && nowUtc - lastSeenUtc > TimeSpan.FromMinutes(3);
 
@@ -78,11 +85,15 @@ namespace HEI.Agent {
 		/// <summary>
 		/// For the page's state poll: whether to show the questions, the NPU it found (the page names it and
 		/// advises against the GPU or CPU next to it), a copy from GitHub it can remove, and the install's progress.
+		/// The Store version standing aside for Castellan's copy asks none of it: <c>castellan</c> gives that copy's page instead.
 		/// </summary>
-		public static object View() {
+		/// <param name="reviewPort">The review page's port, settings.json's, which the copy from GitHub shares: Castellan's copy's page is there.</param>
+		public static object View(int reviewPort) {
 			bool needed = Needed;
-			bool npu = needed && NpuComponents.IsSupportedPlatform;
-			IReadOnlyList<GpuAdapter>? cards = needed ? GpuAdapters.List() : null;
+			bool aside = CastellanCopy.StoreStandsAside;
+			bool ask = needed && !aside;
+			bool npu = ask && NpuComponents.IsSupportedPlatform;
+			IReadOnlyList<GpuAdapter>? cards = ask ? GpuAdapters.List() : null;
 			lock (gate) {
 				return new {
 					needed,
@@ -99,9 +110,11 @@ namespace HEI.Agent {
 					npuName = NpuComponents.NpuName,
 					npuHardware = npu ? HardwareName(NpuHardware.Name) : "",
 					// An NPU this version can't use yet, named so the page can say why the AI runs elsewhere.
-					unsupportedNpu = needed && !npu && NpuHardware.Vendor != NpuVendor.None ? HardwareName(NpuHardware.Name) : "",
-					// Only the Store version replaces a copy from GitHub: the GitHub exe's own setup is that copy.
-					gitHubCopy = needed && !running && StorePackage.IsPackaged ? Installer.GitHubCopyVersion() : null,
+					unsupportedNpu = ask && !npu && NpuHardware.Vendor != NpuVendor.None ? HardwareName(NpuHardware.Name) : "",
+					// Only the Store version replaces a copy from GitHub: the GitHub exe's own setup is that copy. Never Castellan's.
+					gitHubCopy = ask && !running && StorePackage.IsPackaged ? Installer.GitHubCopyVersion() : null,
+					// Castellan keeps the copy from GitHub (CastellanCopy): the page says so, links to that copy's page, and asks nothing.
+					castellan = aside ? new { url = ReviewServer.PageUrl(reviewPort) } : null,
 					// More than one graphics card: the page asks which one does the GPU work, suggesting the recommended one.
 					gpus = cards?.Select(g => new { key = g.Key, memory = (long)g.DedicatedMemory }).ToList(),
 					recommendedGpu = cards != null ? GpuAdapters.Recommended(cards)?.Key : null,

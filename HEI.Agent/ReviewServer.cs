@@ -61,10 +61,18 @@ namespace HEI.Agent {
 		/// <param name="uninstaller">What a game's Uninstall reads and opens with: Windows' registry and shell, unless a test gives
 		/// a fake registry and a recorder (no test ever starts an uninstaller).</param>
 		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct, GameUninstaller? uninstaller = null) {
-			int port = cfg.Port;
+			// The Store version standing aside for Castellan's copy (CastellanCopy): a page that says so, on a free port of its
+			// own, so it never stops or stands in for that copy's page; the one it started last, when that's still up.
+			bool aside = CastellanCopy.StoreStandsAside;
+			if (aside && CastellanCopy.PagePort() is int asidePort && await IsUpAsync(asidePort, fromStore: true)) {
+				Console.WriteLine($"Heiward's page is already running: {PageUrl(asidePort)}");
+				if (openBrowser) OpenBrowser(asidePort);
+				return 0;
+			}
+			int port = aside ? CastellanCopy.FreePort() : cfg.Port;
 			var actions = new CleanupActions(cfg, automatic: false);
 			uninstaller ??= GameUninstaller.Windows();
-			if (await IsUpAsync(port)) {
+			if (!aside && await IsUpAsync(port)) {
 				Console.WriteLine($"The review page is already running: {PageUrl(port)}");
 				if (openBrowser) OpenBrowser(port);
 				return 0;
@@ -259,6 +267,8 @@ namespace HEI.Agent {
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
 			app.MapPost("/api/setup", (SetupRequest request) => {
+				// Castellan keeps the copy from GitHub: nothing of it is removed, and this copy's tasks don't replace its.
+				if (CastellanCopy.StoreStandsAside) return Results.Conflict(new { error = "Castellan already keeps Heiward on this PC: this copy from the Microsoft Store isn't set up." });
 				if (!StoreSetup.Needed) return Results.Conflict(new { error = "Heiward is set up already." });
 				// What the install writes to settings.json, which this page read before it ran.
 				void Reload() {
@@ -478,6 +488,16 @@ namespace HEI.Agent {
 
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
+			// Standing aside, the page only says so: no scans, no journal or disk watch, no task moves (Castellan's copy does
+			// that work), and it stops once nobody looks at it.
+			if (aside) {
+				CastellanCopy.SavePagePort(port);
+				AgentPaths.AppendLog($"the Microsoft Store version's page up on port {port}: Castellan keeps Heiward on this PC, so it stands aside");
+				if (openBrowser) OpenBrowser(port);
+				_ = StopWhenAbandonedAsync(app.Lifetime);
+				await app.WaitForShutdownAsync(ct);
+				return 0;
+			}
 			AgentPaths.AppendLog($"review page up on port {port}");
 			_ = DiskWatch.RunAsync(app.Lifetime.ApplicationStopping);
 			// The drives' change journals, read between scans so the next one needn't walk a drive whose journal moved on.
@@ -728,7 +748,7 @@ namespace HEI.Agent {
 				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = ScanView(),
-				setup = StoreSetup.View(),
+				setup = StoreSetup.View(cfg.Port),
 				agent = AgentView(cfg),
 				// Settings' About: this build ("1.6.0+<commit>") and where it came from.
 				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current, update = SelfUpdate.View(cfg) },
@@ -836,14 +856,17 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// The setup window closed before Heiward was set up: nothing else will ask for this page, and a Heiward that
-		/// isn't installed has no business staying up. Once it's set up, the page stays as the installed copy's.
+		/// isn't installed has no business staying up. Once it's set up, the page stays as the installed copy's. The Store
+		/// version's page standing aside for Castellan's copy stops the same way, once it's closed.
 		/// </summary>
 		static async Task StopWhenAbandonedAsync(IHostApplicationLifetime lifetime) {
 			try {
 				while (!lifetime.ApplicationStopping.IsCancellationRequested && StoreSetup.Needed) {
 					await Task.Delay(TimeSpan.FromSeconds(30), lifetime.ApplicationStopping);
 					if (StoreSetup.Abandoned(DateTime.UtcNow)) {
-						AgentPaths.AppendLog("setup window closed before Heiward was set up: the page stops");
+						AgentPaths.AppendLog(CastellanCopy.StoreStandsAside
+							? "the Microsoft Store version's page was closed: it stops (Castellan keeps Heiward on this PC)"
+							: "setup window closed before Heiward was set up: the page stops");
 						lifetime.StopApplication();
 						return;
 					}
@@ -925,6 +948,21 @@ namespace HEI.Agent {
 		public static void EnsureRunningInBackground(AgentConfig cfg) {
 			if (IsUpAsync(cfg.Port).GetAwaiter().GetResult()) return;
 			StartDetached("serve", "--no-browser");
+		}
+
+		/// <summary>
+		/// The Store version's page standing aside for Castellan's copy (<see cref="CastellanCopy"/>), started in its own
+		/// process unless it's up: on a free port of its own, never the review page's. Its port once it answers; null when
+		/// it didn't within 10 seconds.
+		/// </summary>
+		public static async Task<int?> EnsureAsideRunningAsync(CancellationToken ct) {
+			if (CastellanCopy.PagePort() is int up && await IsUpAsync(up, fromStore: true)) return up;
+			StartDetached("serve", "--no-browser");
+			for (int i = 0; i < 40; i++) {
+				await Task.Delay(250, ct);
+				if (CastellanCopy.PagePort() is int port && await IsUpAsync(port, fromStore: true)) return port;
+			}
+			return null;
 		}
 
 		/// <summary>

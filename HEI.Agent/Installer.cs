@@ -109,6 +109,13 @@ namespace HEI.Agent {
 				Console.WriteLine("This is the Microsoft Store version, started by its path: open Heiward from the Start menu, or run \"hei\".");
 				return 1;
 			}
+			// Castellan keeps the copy from GitHub (CastellanCopy): the Store version removes none of it, and its tasks,
+			// which have the same names, never replace that copy's.
+			if (CastellanCopy.StoreStandsAside) {
+				Console.WriteLine(CastellanCopy.Refusal);
+				AgentPaths.AppendLog("install: the Microsoft Store version isn't set up, because Castellan keeps Heiward on this PC");
+				return 1;
+			}
 			// The Store installs the package built for the PC.
 			if (!StorePackage.IsPackaged && !WrongBuildConfirmed(assumeYes)) {
 				Console.WriteLine("Nothing installed.");
@@ -609,7 +616,8 @@ namespace HEI.Agent {
 		/// there under its own name, and this asks Task Scheduler that alone. The copy from GitHub's move as it updates, by its install.
 		/// </summary>
 		public static void MoveStoreTasks(AgentConfig cfg, bool scanning) {
-			if (!StorePackage.IsPackaged || DevBuild.Current || scanning || !File.Exists(AgentPaths.StoreSetUp)) return;
+			// Not while it stands aside for Castellan's copy, whose tasks those names are now.
+			if (!StorePackage.IsPackaged || DevBuild.Current || scanning || !File.Exists(AgentPaths.StoreSetUp) || CastellanCopy.StoreStandsAside) return;
 			try {
 				if (Scheduler.Exists(Scheduler.OpenTask) || !Scheduler.HasOld()) return;
 				if (RegisterTasks(cfg) is string why) AgentPaths.AppendLog("the tasks keep their older names: " + why);
