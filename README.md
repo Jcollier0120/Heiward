@@ -64,6 +64,17 @@ To remove it, uninstall **Heiward** in Settings > Apps. Its window says when it'
 
 To build it yourself, see [Build](HEI.Agent/README.md#build). Settings, commands and how it decides what to check are in [HEI.Agent/README.md](HEI.Agent/README.md).
 
+## Heiward from the Microsoft Store, or with Castellan
+
+Heiward comes two ways, as separate copies:
+
+- **From the Microsoft Store**, on its own. The Store keeps that copy up to date.
+- **With Castellan.** Castellan installs Heiward from the releases here and keeps its own copy up to date itself, never through the Store, even when Castellan itself came from the Store.
+
+Only one copy runs on a PC. If Castellan already keeps Heiward on the PC, the Store's copy doesn't set itself up or remove Castellan's: its page says Castellan keeps Heiward here, links to Castellan's Heiward, and you can uninstall the Store app in Settings > Apps. A copy from the Store that was there before Castellan is the one Castellan uses, and the Store keeps updating it.
+
+Both copies keep their settings, the report and the history in the same place, `%LOCALAPPDATA%\Heiward`, so they carry over from one copy to the other.
+
 ## Where its work runs
 
 The review page's Settings says the same, for the PC it runs on: where the model runs there, the schedule, and how hard scans work.

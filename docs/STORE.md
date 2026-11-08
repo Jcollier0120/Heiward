@@ -156,7 +156,7 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
   - **How hard scans work:** asked on every PC.
     - **In the background:** Windows' efficiency mode, low priority. Slower.
     - **At full speed:** as many cores as it takes, at normal priority.
-  - **A copy from GitHub:** when one is installed, a checked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
+  - **A copy from GitHub:** when one is installed, and isn't Castellan's (below), a checked box removes it. The page says why: the Microsoft Store keeps this version up to date by itself.
     - The removal takes the copy's processes, shortcuts, notification name, `heiward:` links, Apps & Features entry and folder.
     - A one-time task, `\Heiward (<account>)\Remove GitHub copy`, deletes the registry keys with `reg.exe`, then itself. The package's registry changes stay inside the package: its view of HKCU shows them gone while the user's keys stay. So do the changes of every program it starts, so `reg.exe` started from the package wouldn't do. Task Scheduler starts its tasks outside it.
     - A `Heiward.lnk` is deleted only when it names the GitHub copy's folder: the Store version's desktop shortcut has the same name.
@@ -164,7 +164,8 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
     - It runs after the AI components were copied from that folder, and before the Store version's tasks take over the same names.
 
   The page then runs `hei install --yes` with the answers, shows its output, and switches to the home page once the first scan starts (or, with scans only on demand, once it is set up: no scan starts until Scan now). The GitHub installer asks the same speed question in its console.
-- **The review page's port:** both versions use it. When a GitHub copy's page answers there (its ping doesn't say `"store":true`), the Store version stops that copy first, so its own page, and its setup, is the one that opens.
+- **Castellan's copy:** Castellan installs Heiward from GitHub and keeps it up to date itself, so when the copy from GitHub is Castellan's (Manor's `agents.json` employs `heiward`, and the first of that entry's `paths.hei` that exists is the copy's `hei.exe`), the Store version stands aside (`CastellanCopy`). Its page says Castellan already keeps Heiward on this PC and up to date, links to that copy's page, and says this app can be uninstalled in **Settings > Apps**. It removes nothing and sets nothing up (`hei install` refuses), so its tasks never replace that copy's; and its page is on a free port of its own, never stops that copy's, and stops once nobody looks at it.
+- **The review page's port:** both versions use it. When a GitHub copy's page answers there (its ping doesn't say `"store":true`), the Store version stops that copy first, so its own page, and its setup, is the one that opens. Never Castellan's copy (above).
 - **The installer:** the package is the install.
   - There's no copy to `%LOCALAPPDATA%\Programs`, no shortcuts, no notification name and no Apps & Features entry: the package has all of those.
   - The AI components are copied from a GitHub copy's folder when there is one, otherwise downloaded. FFmpeg is in the package already.

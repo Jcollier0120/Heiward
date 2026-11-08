@@ -558,12 +558,15 @@ static void PrintAutoClean(AgentConfig cfg, bool detail) {
 
 /// <summary>Starts the review page in the background if needed, waits until it answers, opens it.</summary>
 static async Task OpenReviewPageAsync(AgentConfig cfg, CancellationToken ct) {
-	await EnsurePageUpAsync(cfg, ct);
-	ReviewServer.OpenBrowser(cfg.Port);
+	ReviewServer.OpenBrowser(await EnsurePageUpAsync(cfg, ct));
 }
 
 /// <summary>Starts the review page in the background if needed, and waits until it answers.</summary>
-static async Task EnsurePageUpAsync(AgentConfig cfg, CancellationToken ct) {
+/// <returns>The page's port: the review page's, or the Store version's own while it stands aside for Castellan's copy.</returns>
+static async Task<int> EnsurePageUpAsync(AgentConfig cfg, CancellationToken ct) {
+	// Castellan keeps the copy from GitHub (CastellanCopy): its page stays as it is, and the Store version's page, which
+	// says so, is on a port of its own. Should that page not answer, Castellan's copy's is the one to open.
+	if (CastellanCopy.StoreStandsAside) return await ReviewServer.EnsureAsideRunningAsync(ct) ?? cfg.Port;
 	// Both versions use the same port: a GitHub copy's page there would stand in for the Store version's own
 	// (and its setup), so the Store version stops it first.
 	if (StorePackage.IsPackaged && await ReviewServer.IsUpAsync(cfg.Port) && !await ReviewServer.IsUpAsync(cfg.Port, fromStore: true)) {
@@ -573,6 +576,7 @@ static async Task EnsurePageUpAsync(AgentConfig cfg, CancellationToken ct) {
 	ReviewServer.EnsureRunningInBackground(cfg);
 	for (int i = 0; i < 40 && !await ReviewServer.IsUpAsync(cfg.Port); i++)
 		await Task.Delay(250, ct);
+	return cfg.Port;
 }
 
 namespace HEI.Agent {

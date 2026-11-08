@@ -90,8 +90,7 @@ namespace HEI.Agent {
 			if (manorFolder == null || Manor.Load(manorFolder) == null) return false;
 			try {
 				using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(manorFolder, "agents.json")));
-				return doc.RootElement.TryGetProperty("agents", out var agents) && agents.ValueKind == JsonValueKind.Array &&
-					agents.EnumerateArray().Any(a => a.ValueKind == JsonValueKind.Object && a.TryGetProperty("id", out var id) && id.ValueKind == JsonValueKind.String && id.GetString() == "heiward");
+				return CastellanCopy.Entry(doc.RootElement) != null;
 			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
 				return false;

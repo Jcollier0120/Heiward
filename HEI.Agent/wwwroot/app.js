@@ -1609,6 +1609,20 @@ function renderSetup(s) {
   const setup = s.setup;
   $('setup-version').textContent = setup.version ? 'Version ' + setup.version : '';
   for (const a of document.querySelectorAll('#setup a[data-castellan]')) a.href = setup.site;
+  // The Store version, while Castellan keeps Heiward on this PC (CastellanCopy): no setup, only where Heiward is.
+  if (setup.castellan) {
+    document.title = 'Heiward';
+    $('setup-steps').replaceChildren();
+    if (setupShown === 'castellan') return;
+    setupShown = 'castellan';
+    setupRun = null;
+    clearInterval(slideTimer);
+    const card = $('setup-card');
+    card.className = 'setup-card setup-pc setup-kept';
+    card.replaceChildren(...setupKeptByCastellan(setup));
+    $('setup').scrollTop = 0;
+    return;
+  }
   // The Store version's setup has no welcome: Heiward's Store page was that.
   if (!setup.firstRun && setupStep === 'welcome') setupStep = 'pc';
   const view = !setup.needed ? 'done' : setup.running || (setup.failed && !setupRetry) ? 'progress' : setupStep;
@@ -1624,6 +1638,25 @@ function renderSetup(s) {
   else if (view === 'pc') card.replaceChildren(...setupForm(s));
   else card.replaceChildren(...setupDone(s));
   $('setup').scrollTop = 0;
+}
+
+/**
+ * Castellan installed Heiward from GitHub and keeps it up to date: this copy from the Microsoft Store stands aside. It
+ * removes nothing, sets nothing up, and leaves that copy's page where it is; Open Heiward goes there.
+ */
+function setupKeptByCastellan(setup) {
+  const head = el('div', 'setup-head');
+  head.append(el('div', 'setup-eyebrow', 'Heiward from the Microsoft Store'),
+    el('h1', 'setup-title', 'Castellan already keeps Heiward on this PC'),
+    el('p', 'setup-lead', 'Castellan installed Heiward here and keeps it up to date, so this copy from the Microsoft Store isn\'t needed. ' +
+      'Only one copy runs on a PC: Castellan\'s carries on as it is, with your settings, the report and the history.'));
+  const open = el('a', 'btn setup-go', 'Open Heiward');
+  open.href = setup.castellan.url;
+  const actions = el('div', 'setup-actions');
+  actions.append(open);
+  return [head, actions,
+    el('p', 'muted setup-note', 'You can uninstall this app from the Microsoft Store in Settings > Apps > Installed apps. ' +
+      'Castellan\'s Heiward, your settings and the history stay.')];
 }
 
 function setupWelcome(setup) {
