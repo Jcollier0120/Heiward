@@ -45,7 +45,8 @@ namespace HEI.Agent {
 
 		static async Task<bool> OpenUninstallWindowAsync(bool purge, CancellationToken ct) {
 			if (!File.Exists(InstalledExe)) return false;
-			int port = AgentConfig.Load().Port;
+			// This account's port: another account's page may hold the usual one (ReviewServer.OwnPort).
+			int port = ReviewServer.OwnPort(AgentConfig.Load());
 			if (!await MakeWayForPageAsync(port, ct)) return false;
 			if (!await PageUninstallsAsync(port)) {
 				// No page, or one from before it had #/uninstall: the installed copy's, started now.
@@ -64,17 +65,9 @@ namespace HEI.Agent {
 			return true;
 		}
 
-		/// <summary>Whether the page on <paramref name="port"/> is the installed copy's, with #/uninstall (its ping says uninstallPage).</summary>
-		static async Task<bool> PageUninstallsAsync(int port) {
-			try {
-				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-				using var ping = JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping"));
-				JsonElement root = ping.RootElement;
-				return root.TryGetProperty("uninstallPage", out var page) && page.ValueKind == JsonValueKind.True
-					&& root.TryGetProperty("exe", out var exe) && exe.ValueKind == JsonValueKind.String && RunsFrom(exe.GetString(), InstallDir);
-			}
-			catch { return false; }
-		}
+		/// <summary>Whether the page on <paramref name="port"/> is this account's installed copy's, with #/uninstall (its ping says uninstallPage).</summary>
+		static async Task<bool> PageUninstallsAsync(int port) =>
+			await ReviewServer.PingAsync(port) is { UninstallPage: true } ping && RunsFrom(ping.Exe, InstallDir);
 
 		internal static string UninstallPageUrl(int port, bool purge) => ReviewServer.PageUrl(port) + (purge ? "#/uninstall/purge" : "#/uninstall");
 
