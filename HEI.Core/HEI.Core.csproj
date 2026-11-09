@@ -35,6 +35,7 @@
     <EmbeddedResource Include="Assets\Locales\ko.json" />
     <EmbeddedResource Include="Assets\Locales\pt.json" />
     <EmbeddedResource Include="Assets\Locales\zh-Hans.json" />
+    <EmbeddedResource Include="Assets\text-selfcheck.png" />
   </ItemGroup>
 
 </Project>

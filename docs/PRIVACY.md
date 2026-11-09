@@ -1,6 +1,6 @@
 # Heiward privacy policy
 
-Effective 11 October 2026. It covers Heiward from the Microsoft Store and from [GitHub](https://github.com/Jcollier0120/Heiward/releases).
+Effective 9 November 2026. It covers Heiward from the Microsoft Store and from [GitHub](https://github.com/Jcollier0120/Heiward/releases).
 
 **In short: nothing about you or your files leaves your PC.** Heiward has no account, no telemetry, no ads and no analytics. The developer receives no data from it. The one exception is yours to turn on: in developer mode, Heiward asks the services that host your code for their open pull requests (see [below](#pull-requests-in-developer-mode)).
 
@@ -9,6 +9,8 @@ Effective 11 October 2026. It covers Heiward from the Microsoft Store and from [
 To find duplicate photos and videos, and stale developer files, Heiward reads the files on your PC's fixed drives. It leaves out Windows, programs, games, app data and code repositories, and any folder you exclude. It never downloads cloud-only files (OneDrive and the like) to read them.
 
 It reads them on your PC, including the AI matching, which runs on your PC's NPU, graphics card or processor.
+
+To tell a copy from a look-alike, it also reads the words in photos that look the same (two screenshots of a chat, two receipts, two pages of a form), with a small text-reading model, on your PC's NPU or processor. Two pictures are copies only when their words match too. The words it reads never leave your PC.
 
 In developer mode, so as not to offer a worktree you're still using, it also looks at which folder each of your running programs works in, which programs have a file open that a cleanup couldn't delete (as Windows' Restart Manager tells installers), and, if you use Claude Code, which folders its sessions work in (`%USERPROFILE%\.claude\sessions`) and when their transcripts were last written (`%USERPROFILE%\.claude\projects`; only the date, never what's in them). None of it is kept or sent anywhere.
 
@@ -24,6 +26,7 @@ Everything it keeps stays on your PC, in `%LOCALAPPDATA%\Heiward`:
 - your settings;
 - the latest scan's report: the sets of copies it found, with their paths;
 - a scan index, so the next scan only reads what changed;
+- the words read in the latest report's look-alike photos (`texts.json`), so the next scan reads only the photos that changed. A photo that leaves the report leaves this file too;
 - small thumbnails of the photos and videos on the review page;
 - the history of what was cleaned up and kept, if you leave History on in Settings. Turn it off, and no file names are kept for it;
 - the last disk reading (`disk.json`): each drive's size and free space, and each tool cache's folder, size and file count.
@@ -41,7 +44,8 @@ The review page runs in your browser, served by Heiward on your own PC at `127.0
 When it sets up, Heiward downloads the AI components it needs, and nothing else. Each one is checked against a fixed SHA-256 before use:
 - ONNX Runtime and DirectML, from Microsoft (GitHub and NuGet);
 - the NPU runtime for your chip: Qualcomm QNN, Intel OpenVINO or Windows ML, from NuGet. With Windows ML (AMD's NPUs), Windows ML then downloads your chip's own NPU package itself, from Microsoft's catalog of them, and keeps it updated as Windows does: Microsoft's download, under Microsoft's privacy statement, not checked by Heiward's SHA-256s;
-- the image model (DINOv2 small), from GitHub or Hugging Face.
+- the image model (DINOv2 small), from GitHub or Hugging Face;
+- the text-reading model (PaddleOCR's PP-OCR, about 4 MB), from GitHub.
 
 The version from GitHub also downloads FFmpeg, from GitHub; the Store version comes with it.
 

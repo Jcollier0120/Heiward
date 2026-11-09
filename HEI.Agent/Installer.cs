@@ -755,6 +755,16 @@ namespace HEI.Agent {
 				}
 			}
 
+			// The text check (two pictures are copies only when their words match too) reads with its own small model.
+			if (!TextComponents.IsInstalled) {
+				Console.WriteLine($"  Text-reading model ({TextComponents.Description})...");
+				try { await TextComponents.DownloadAsync(null, ct); }
+				catch (Exception e) when (e is not OperationCanceledException) {
+					// The rest of the install goes on: until it's here, pictures are judged by their look alone, and the next update tries again.
+					Console.WriteLine($"  Text-reading model: not downloaded yet: {e.Message}");
+				}
+			}
+
 			if (NpuComponents.IsSupportedPlatform && !NpuComponents.IsInstalled) {
 				// The pack carries no version marker, so a copy has to run the model on the NPU, in its own process: that is
 				// the NPU's check too when the plugin ends the process (NpuCheck).

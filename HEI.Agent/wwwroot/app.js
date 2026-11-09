@@ -35,6 +35,7 @@ const RELATION = {
   edited: 'Edited version',
   variant: 'Edited, cropped, flipped, or a similar shot',
   original: 'Smaller, but may be the original: your call',
+  wording: 'Looks the same, but its words differ: your call',
 };
 
 // ---------------------------------------------------------------- icons

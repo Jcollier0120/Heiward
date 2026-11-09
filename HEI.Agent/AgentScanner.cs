@@ -203,11 +203,17 @@ namespace HEI.Agent {
 				// The device the embeddings actually ran on, after any fallback (the engine knows; a guess could say NPU for a CPU run).
 				device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 				string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
-				var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, stopped.Token) { MayRead = mayRead };
+				var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, stopped.Token) { MayRead = mayRead, TextDevice = settings.AiDevice };
 				var hashes = ReportBuilder.ContentHashes.Load();
 				Finish(SortingSets);
-				groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, mayRead, engine.FoundFiles.Select(f => f.Path),
-					(done, total) => Finish(SortingSets, done, total), stopped.Token);
+				try {
+					groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, mayRead, engine.FoundFiles.Select(f => f.Path),
+						(done, total) => Finish(SortingSets, done, total), stopped.Token);
+				}
+				finally {
+					// The text reader's sessions (the NPU's graphs) are let go as soon as the sets are sorted.
+					if (fingerprints.FinishReading() is { } read) AgentPaths.AppendLog(read);
+				}
 				Finish("Saving the report");
 				try { hashes.Save(); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }

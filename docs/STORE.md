@@ -143,7 +143,7 @@ dotnet run --project HEI.StoreSubmit -- notes --target 1.9.137 --after 1.9.130 -
   Heiward's window is a page in the default browser, served by Heiward on http://127.0.0.1:18484. No account or sign-in is needed.
 
   1. Start Heiward from the Start menu. The page opens with first-run setup.
-  2. Pick where the AI runs (the NPU when the PC has one, otherwise the graphics card or the processor) and how hard scans work, then start. Setup downloads the AI components (ONNX Runtime and a small image model from GitHub and NuGet; about 215 MB more for the graphics card), so the PC needs internet access.
+  2. Pick where the AI runs (the NPU when the PC has one, otherwise the graphics card or the processor) and how hard scans work, then start. Setup downloads the AI components (ONNX Runtime, a small image model and a smaller text-reading model from GitHub and NuGet; about 215 MB more for the graphics card), so the PC needs internet access.
   3. The first scan starts by itself (unless "Only when I press Scan now" was chosen: then Scan now starts it); its progress is on the page. With few photos on the PC it finds little: copy a photo to a second folder to see a set of duplicates. Check a copy and move it to the Recycle Bin.
   4. "hei" in a terminal is the command line (hei --help).
   ```
@@ -191,6 +191,7 @@ Use `layout-arm64` on an Arm PC. To remove it: `Get-AppxPackage TheNexus.Heiward
 - **The installer:** the package is the install.
   - There's no copy to `%LOCALAPPDATA%\Programs`, no shortcuts, no notification name and no Apps & Features entry: the package has all of those.
   - The AI components are copied from a GitHub copy's folder when there is one, otherwise downloaded. FFmpeg is in the package already.
+  - The text-reading model (PaddleOCR's PP-OCR, about 4 MB, Apache-2.0, from the manor's public releases, `ocr-model-v2`) is downloaded with them, not packed, like the image model: it runs on the ONNX Runtime the AI components bring and sits beside them with its license and notice, and a new version of it needs no new package. Until it's there, pictures are judged by their look alone, as before.
   - `hei uninstall` stops the scheduled scans and points to **Settings > Apps**.
 - **Storage:** the package's folder is read-only.
   - The AI components and the setup marker go in the package's own storage, `%LOCALAPPDATA%\Packages\TheNexus.Heiward_mcanr0hfqkj1g\LocalCache`, which Windows removes with the app.

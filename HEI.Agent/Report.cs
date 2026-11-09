@@ -30,7 +30,8 @@ namespace HEI.Agent {
 	/// resolution), <c>compressed</c> (same picture, fewer bytes), <c>resaved</c> (same picture saved
 	/// again), <c>edited</c> (the AI sees the same picture with changes: colour, filter),
 	/// <c>variant</c> (cropped, mirrored, or a different shot that looks alike), <c>original</c> (a smaller photo that may be
-	/// the original the kept one was enlarged from: the user's call).
+	/// the original the kept one was enlarged from: the user's call), <c>wording</c> (looks the same, but its words differ:
+	/// another message in a chat, another total on a receipt; the user's call).
 	/// </param>
 	/// <param name="Suggested">Pre-checked for the Recycle Bin: identical files and pixel-level copies only.</param>
 	/// <param name="Synced">In a cloud-synced folder: deleting it also deletes it from the cloud and other devices.</param>
@@ -106,6 +107,13 @@ namespace HEI.Agent {
 		/// apart); null when it can't be told: a file that can't be decoded, or one on a resting drive.
 		/// </summary>
 		bool? SameUpClose(string a, string b);
+		/// <summary>Photos: the picture's size as the text reader decodes it (turned as it's shown); null when its words can't be read.</summary>
+		(int W, int H)? PictureSize(string path) => null;
+		/// <summary>
+		/// Photos: the picture's words read at <paramref name="size"/> (<see cref="TextMatch.Serialize"/>, "" for none); null when they
+		/// can't be read: no text reader (its model isn't downloaded), a file that can't be decoded, or one on a resting drive.
+		/// </summary>
+		string? ReadWords(string path, (int W, int H) size) => null;
 	}
 
 	/// <summary>The fingerprints of the scan that just ran: its database's gray frames and its embedding cache.</summary>
@@ -173,6 +181,69 @@ namespace HEI.Agent {
 			var sims = keys.Select(k => (x: embeddings.GetEmbedding(ea, k), y: embeddings.GetEmbedding(eb, k)))
 				.Where(p => p.x != null && p.y != null).Select(p => 100f * EmbeddingMath.CosineSimilarity(p.x!, p.y!)).ToList();
 			return sims.Count > 0 ? sims.Average() : null;
+		}
+
+		/// <summary>
+		/// The AI setting the text reader follows: on the NPU for Auto and NPU (when this PC's NPU can read with it, see
+		/// <see cref="OcrReader.Open"/>), otherwise on the processor; for the graphics card, through its DirectML runtime, so a
+		/// later scan's AI can still use the card.
+		/// </summary>
+		public AiDevice TextDevice { get; init; } = AiDevice.Auto;
+
+		OcrReader? ocr;
+		bool ocrOpened, ocrFailed;
+		// The pictures last decoded for their words: a pair's two, asked for their sizes and then read.
+		readonly List<(string Path, TextPicture Picture)> decoded = new(2);
+
+		/// <summary>The text reader, opened the first time a pair's words are asked for; null without its model or ONNX Runtime.</summary>
+		OcrReader? Ocr() {
+			if (ocrOpened) return ocr;
+			ocrOpened = true;
+			if (TextDevice == AiDevice.Gpu) GpuComponents.TrySelectRuntime();
+			ocr = OcrReader.Open(useNpu: TextDevice is AiDevice.Auto or AiDevice.Npu, fullSpeed: Pace.FullSpeed);
+			AgentPaths.AppendLog(ocr == null
+				? "text check: the text-reading model isn't downloaded, so pictures are judged by their look alone"
+				: $"text check: reading on the {ocr.DeviceName}{(ocr.FallbackReason is { } why ? $" ({why})" : "")}");
+			return ocr;
+		}
+
+		TextPicture? Picture(string path) {
+			foreach (var (p, pic) in decoded)
+				if (string.Equals(p, path, StringComparison.OrdinalIgnoreCase)) return pic;
+			if (TextPicture.Load(path) is not { } loaded) return null;
+			if (decoded.Count == 2) decoded.RemoveAt(0);
+			decoded.Add((path, loaded));
+			return loaded;
+		}
+
+		public (int W, int H)? PictureSize(string path) =>
+			MayRead?.Invoke(path) == false || Ocr() == null || Picture(path) is not { } pic ? null : (pic.Width, pic.Height);
+
+		public string? ReadWords(string path, (int W, int H) size) {
+			ct.ThrowIfCancellationRequested();
+			if (MayRead?.Invoke(path) == false || Ocr() is not { } reader || Picture(path) is not { } pic) return null;
+			try {
+				return TextCheck.ReadAt(reader, pic, size);
+			}
+			catch (Exception e) when (e is not OperationCanceledException) {
+				// The NPU failing mid-scan: the processor reads the rest. The processor failing too: judged by look alone.
+				AgentPaths.AppendLog($"text check: reading {Path.GetFileName(path)} on the {reader.DeviceName} failed: {Accelerators.OneLine(e.Message)}");
+				reader.Dispose();
+				ocr = ocrFailed || reader.DeviceName == "CPU" ? null : OcrReader.Open(useNpu: false, fullSpeed: Pace.FullSpeed);
+				ocrFailed = true;
+				return null;
+			}
+		}
+
+		/// <summary>Closes the text reader, and says for the scan's log how much it read and where; null when it read nothing.</summary>
+		public string? FinishReading() {
+			decoded.Clear();
+			if (ocr == null) return null;
+			string? summary = ocr.Pictures == 0 ? null
+				: $"text check: {ocr.Pictures} pictures read on the {ocr.DeviceName} in {ocr.Time.Elapsed.TotalSeconds:F1} s";
+			ocr.Dispose();
+			ocr = null;
+			return summary;
 		}
 
 		/// <summary>The frames both files have, compared and averaged. A plain loop: the report asks it for every pair in a set.</summary>
@@ -408,7 +479,8 @@ namespace HEI.Agent {
 						otherVersions.Add(i);
 						continue;
 					}
-					if (percent < MinAlikePercent || (!IsPlainCopy(relation) && (shown.Contains(keep) || shown.Contains(i))))
+					// Clearly another document (other words throughout): judged again around its own kept file, like a picture less alike.
+					if (relation == "different" || percent < MinAlikePercent || (!IsPlainCopy(relation) && (shown.Contains(keep) || shown.Contains(i))))
 						continue;
 					set.Add(i);
 				}
@@ -426,7 +498,7 @@ namespace HEI.Agent {
 		/// </summary>
 		static (float Percent, bool ByAi) Alike(DuplicateItem i, DuplicateItem keep, string relation, IFingerprints fingerprints) {
 			if (ReferenceEquals(i, keep)) return (100f, false);
-			float? ai = relation is "edited" or "variant" ? fingerprints.AiPercent(i.Path, keep.Path) : null;
+			float? ai = relation is "edited" or "variant" or "wording" ? fingerprints.AiPercent(i.Path, keep.Path) : null;
 			return ai != null ? (ai.Value, true) : (fingerprints.GrayPercent(i.Path, keep.Path) ?? i.Similarity, false);
 		}
 
@@ -469,7 +541,7 @@ namespace HEI.Agent {
 			else if (reportItems.Any(i => i.Relation == "original"))
 				reason = kind == "similar" ? $"your pick: {EnlargedNote}" : $"{reason}; but {EnlargedNote}: that one is your call";
 			else if (kind == "similar")
-				reason = "your pick: these are different shots or edits (suggested: " +
+				reason = (reportItems.Any(i => i.Relation == "wording") ? "your pick: these look alike, but their words differ" : "your pick: these are different shots or edits") + " (suggested: " +
 					(reason.StartsWith("highest resolution", StringComparison.Ordinal) ? "the highest resolution" : "the first one taken") + ")";
 			return new ReportGroup(GroupKey(items.Select(i => i.Path)), kind, isImage ? "image" : "video", keep.Path, reason,
 				reportItems.Where(i => i.Suggested).Sum(i => i.Size), items.Min(i => i.Similarity), reportItems);
@@ -486,6 +558,8 @@ namespace HEI.Agent {
 		/// <c>burst</c>: another shot of the kept file's burst, which is no duplicate however alike;
 		/// <c>language</c> and <c>soundtrack</c>: the same video in another language or with another
 		/// soundtrack (<see cref="LanguageVersions"/>, <see cref="SameSoundtrackPercent"/>).
+		/// Photos are also read (<see cref="ContentHashes.SameWords"/>): <c>wording</c> when the words differ, a look-alike for
+		/// the user to judge; <c>different</c> when they're clearly another document, which leaves the set.
 		/// </summary>
 		/// <param name="askAi">False where only <see cref="IsPlainCopy"/> matters: below the plain-copy match the AI tells edited from
 		/// variant, neither of them a plain copy, so it isn't asked (says variant).</param>
@@ -529,7 +603,16 @@ namespace HEI.Agent {
 			// An enlarged export (an AI upscale, a print-size copy) matches its original pixel for pixel and is kept for its
 			// resolution. When the smaller photo has the capture date the kept one lacks, or is clearly older, it may be the
 			// original: that one is the user's call, never checked for them.
-			return look == "smaller" && photos && MayBeOriginal(i, keep) ? "original" : look;
+			string relation = look == "smaller" && photos && MayBeOriginal(i, keep) ? "original" : look;
+			// Duplicates only when the words match too: two screenshots of a chat one message apart, two receipts with other
+			// totals or two pages of one form look alike pixel for pixel. Other words are the user's call; clearly another
+			// document leaves the set. Where only a plain copy matters (askAi false), look-alikes aren't read.
+			if (photos && (IsPlainCopy(relation) || relation == "original" || askAi))
+				switch (hashes.SameWords(i.Path, keep.Path, fingerprints)) {
+					case TextVerdict.Differs: return "wording";
+					case TextVerdict.Unrelated: return "different";
+				}
+			return relation;
 		}
 
 		/// <summary>The smaller photo has an EXIF capture date the kept one lacks, or is more than an hour older: it may be the original the kept one was enlarged from.</summary>
@@ -677,16 +760,28 @@ namespace HEI.Agent {
 			readonly Dictionary<string, bool> looked = new(StringComparer.OrdinalIgnoreCase);
 			readonly Dictionary<string, Look> looksEarlier, looksNow = new(StringComparer.OrdinalIgnoreCase);
 
-			/// <summary>Hashes for this report alone, kept nowhere (tests).</summary>
-			public ContentHashes() : this(new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase)) { }
+			/// <summary>
+			/// A photo's words (<see cref="SameWords"/>): how they were read (<see cref="TextCheck.Version"/>), the file's size and
+			/// last-modified time then, the picture's size as decoded, and what was read at each size it was read at ("1080x2340").
+			/// </summary>
+			internal sealed record Words(string Reader, long Size, DateTime ModifiedUtc, int Width, int Height, Dictionary<string, string> Reads);
 
-			ContentHashes(Dictionary<string, Stored> earlier, Dictionary<string, Look> looks) => (this.earlier, looksEarlier) = (earlier, looks);
+			readonly Dictionary<string, Words> wordsEarlier, wordsNow = new(StringComparer.OrdinalIgnoreCase);
+			readonly Dictionary<string, TextVerdict?> worded = new(StringComparer.OrdinalIgnoreCase);
+
+			/// <summary>Hashes for this report alone, kept nowhere (tests).</summary>
+			public ContentHashes() : this(new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase)) { }
+
+			ContentHashes(Dictionary<string, Stored> earlier, Dictionary<string, Look> looks, Dictionary<string, Words> words) =>
+				(this.earlier, looksEarlier, wordsEarlier) = (earlier, looks, words);
 
 			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
 			public static string LooksPath => Path.Combine(AgentPaths.Home, "looks.json");
+			/// <summary>The words read in the report's photos: they stay on this PC, in this file, and nowhere else.</summary>
+			public static string TextsPath => Path.Combine(AgentPaths.Home, "texts.json");
 
-			/// <summary>The hashes and close looks the last scan kept.</summary>
-			public static ContentHashes Load() => new(Read<Stored>(FilePath), Read<Look>(LooksPath));
+			/// <summary>The hashes, close looks and words the last scan kept.</summary>
+			public static ContentHashes Load() => new(Read<Stored>(FilePath), Read<Look>(LooksPath), Read<Words>(TextsPath));
 
 			static Dictionary<string, T> Read<T>(string path) {
 				try {
@@ -697,10 +792,59 @@ namespace HEI.Agent {
 				return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
 			}
 
-			/// <summary>Keeps this scan's hashes and close looks, and only those: a file no report needs any more drops out.</summary>
+			/// <summary>Keeps this scan's hashes, close looks and words, and only those: a file no report needs any more drops out.</summary>
 			public void Save() {
 				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
 				AgentPaths.WriteAtomic(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
+				AgentPaths.WriteAtomic(TextsPath, JsonSerializer.Serialize(wordsNow, AgentConfig.Json));
+			}
+
+			/// <summary>
+			/// Whether two photos say the same in words (<see cref="TextMatch"/>), both read at one size (<see cref="TextCheck.Sizes"/>):
+			/// asked once a pair, and each picture read once a size and kept like the hashes, so the next scan reads only what
+			/// changed; on a resting drive what was read before is taken on trust. Null when it can't be told (no text reader, a
+			/// file that can't be decoded, a resting drive's file never read at that size): the pair is judged by its look alone.
+			/// </summary>
+			public TextVerdict? SameWords(string a, string b, IFingerprints fingerprints) {
+				if (string.Compare(a, b, StringComparison.OrdinalIgnoreCase) > 0) (a, b) = (b, a);
+				string key = a + "\n" + b;
+				if (!worded.TryGetValue(key, out TextVerdict? verdict))
+					worded[key] = verdict = CompareWords(a, b, fingerprints);
+				return verdict;
+			}
+
+			TextVerdict? CompareWords(string a, string b, IFingerprints fingerprints) {
+				if (WordsOf(a, fingerprints) is not { } wa || WordsOf(b, fingerprints) is not { } wb) return null;
+				(int, int) shapeA = (wa.Width, wa.Height), shapeB = (wb.Width, wb.Height);
+				var (sa, sb) = TextCheck.Sizes(shapeA, shapeB);
+				if (ReadAt(a, wa, sa, fingerprints) is not { } ra || ReadAt(b, wb, sb, fingerprints) is not { } rb) return null;
+				return TextCheck.Judge(ra, rb, TextCheck.SameShape(shapeA, shapeB));
+			}
+
+			Words? WordsOf(string path, IFingerprints fingerprints) {
+				if (wordsNow.TryGetValue(path, out Words? w)) return w;
+				if (!CanRead(path)) {
+					if (!wordsEarlier.TryGetValue(path, out Words? kept) || kept.Reader != TextCheck.Version) return null;
+					return wordsNow[path] = kept;
+				}
+				try {
+					var file = new FileInfo(path);
+					if (!file.Exists) return null;
+					if (wordsEarlier.TryGetValue(path, out Words? s) && s.Reader == TextCheck.Version && s.Size == file.Length && s.ModifiedUtc == file.LastWriteTimeUtc)
+						return wordsNow[path] = s;
+					if (fingerprints.PictureSize(path) is not (int width, int height)) return null;
+					return wordsNow[path] = new Words(TextCheck.Version, file.Length, file.LastWriteTimeUtc, width, height, new Dictionary<string, string>());
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+					return null;
+				}
+			}
+
+			static string? ReadAt(string path, Words words, (int W, int H) size, IFingerprints fingerprints) {
+				string key = $"{size.W}x{size.H}";
+				if (words.Reads.TryGetValue(key, out string? read)) return read;
+				if (!CanRead(path) || fingerprints.ReadWords(path, size) is not { } now) return null;
+				return words.Reads[key] = now;
 			}
 
 			/// <summary>
