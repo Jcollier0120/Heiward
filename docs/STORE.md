@@ -65,6 +65,8 @@ What it does by itself:
 
 To send the newest release now instead of on Friday, to send a release again, or to look before it goes to certification: **Actions > Microsoft Store > Run workflow**, with the release's tag (empty: the newest), and **Leave the submission as a draft** checked to send it yourself from Partner Center. The Friday runs wait until you send or delete that draft.
 
+To check that everything is set up, without sending anything: the same **Run workflow**, with **Dry run** checked. It signs in to Partner Center and asks it, then says what a real run would do now (send that release, or wait and why) and the What's new it would write. It builds nothing and leaves Partner Center as it is.
+
 To see the What's new a submission would get, when the Store has 1.9.130:
 
 ```

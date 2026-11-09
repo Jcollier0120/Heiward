@@ -17,7 +17,8 @@ name: Microsoft Store
 # run passes. Its What's new covers every release since the Store's last one.
 #
 # Started by hand (Actions > Microsoft Store > Run workflow), it does the same at once for a release's tag (empty: the
-# newest), and it can leave the submission as a draft in Partner Center instead of sending it to certification.
+# newest), and it can leave the submission as a draft in Partner Center instead of sending it to certification. A dry
+# run only asks Partner Center and says what it would send, with its What's new: it builds and sends nothing.
 
 on:
   release:
@@ -34,6 +35,10 @@ on:
         required: false
       draft:
         description: "Leave the submission as a draft in Partner Center, for you to send"
+        type: boolean
+        default: false
+      dry_run:
+        description: "Dry run: only ask Partner Center and say what would be sent (builds and sends nothing)"
         type: boolean
         default: false
 
@@ -63,7 +68,8 @@ jobs:
       tag: ${{ steps.which.outputs.tag }}
       version: ${{ steps.which.outputs.version }}
       build: ${{ steps.plan.outputs.build }}
-      submit: ${{ steps.ask.outputs.submit || 'false' }}
+      # A dry run never sends: the submit job doesn't start.
+      submit: ${{ !inputs.dry_run && steps.ask.outputs.submit || 'false' }}
     steps:
       # The workflow's own commit: HEI.StoreSubmit, and the changelog.
       - uses: actions/checkout@v5
@@ -137,6 +143,22 @@ jobs:
           PARTNER_CENTER_CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
           PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
         run: dotnet run --project HEI.StoreSubmit -c Release -- check --target "$VERSION"
+      # A dry run says what the run would have done, and the What's new it would have written, then stops.
+      - name: Dry run
+        if: inputs.dry_run && steps.ask.outcome == 'success'
+        env:
+          VERSION: ${{ steps.which.outputs.version }}
+          SUBMIT: ${{ steps.ask.outputs.submit }}
+          PUBLISHED: ${{ steps.ask.outputs.published }}
+        run: |
+          if [[ "$SUBMIT" == "true" ]]; then
+            echo "::notice title=Microsoft Store::Dry run: Partner Center answered, and Heiward $VERSION would go to the Microsoft Store now. Nothing was built or sent. Its What's new is in this step's log."
+            notes=(notes --target "$VERSION" --changelog CHANGELOG.md)
+            if [[ -n "$PUBLISHED" ]]; then notes+=(--after "$PUBLISHED"); fi
+            dotnet run --project HEI.StoreSubmit -c Release --no-build -- "${notes[@]}"
+          else
+            echo "::notice title=Microsoft Store::Dry run: Partner Center answered. Nothing was built or sent, and without the dry run nothing would be sent now either: the other notice says why."
+          fi
       # Even when Partner Center couldn't be asked (the job fails then, and says why): a release still gets its bundle.
       - name: Build or not
         id: plan
@@ -145,9 +167,11 @@ jobs:
           SKIP: ${{ steps.heiward.outputs.skip }}
           SUBMIT: ${{ steps.ask.outputs.submit }}
           EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          # A release, or a run by hand, keeps its bundle as the run's artifact; a scheduled run builds only what it sends.
-          if [[ "$SKIP" == "true" ]] || [[ "$EVENT" == "schedule" && "$SUBMIT" != "true" ]]; then
+          # A release, or a run by hand, keeps its bundle as the run's artifact; a scheduled run builds only what it sends,
+          # and a dry run builds nothing.
+          if [[ "$SKIP" == "true" ]] || [[ "$DRY_RUN" == "true" ]] || [[ "$EVENT" == "schedule" && "$SUBMIT" != "true" ]]; then
             echo "build=false" >> "$GITHUB_OUTPUT"
           else
             echo "build=true" >> "$GITHUB_OUTPUT"
