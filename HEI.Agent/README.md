@@ -85,9 +85,19 @@ Code decides everything shown on the page. No model output is trusted to delete 
 | On the page | Meaning | Checked for the Recycle Bin? |
 |---|---|---|
 | Identical copy | Byte-for-byte the same file (SHA-256) | yes |
-| Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed | yes |
+| Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed, with the same words in it | yes |
+| Looks the same, but its words differ | The same picture by look, but its words read differently: a chat screenshot one message on, a receipt with another total, a caption with another year | no |
 | Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`) | no |
 | Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only, and a video without sound next to the same video with it (the one with sound is kept) | no |
+
+**The words count too.** Two screenshots of a chat one message apart, or two receipts with other totals, match pixel for pixel: the new message or the other figures are a few cells of the picture. So two photos that look like copies, edits or look-alikes are also read, with a small text-reading model (PaddleOCR's PP-OCR, about 4 MB, downloaded with the AI components):
+- Both are read at one size, the smaller one's, so a copy's words come from nearly the same pixels; never more than 2,048 pixels a side.
+- What a misread changes doesn't count: lower and upper case, punctuation, accents, a space read or lost, the shapes the reader confuses (`0` and `O`, `1` and `l`, `8` and `B`, `5` and `S`), a letter or two in a word, and words it wasn't sure of (a photo's grass or brickwork read as letters).
+- Another figure always counts: a total, a date, a time, a page number.
+- Words that differ make the photo **Looks the same, but its words differ**, for you to judge, never checked. Words different throughout, in pictures of the same shape, are another document: it leaves the set.
+- It reads on the NPU when the AI does (Qualcomm's, or Intel's NPU 3720), after reading a picture of its own the way the processor does; otherwise on the processor, in the background at two threads. Each photo is read once, at each size it's compared at, and kept in `texts.json` while the file is unchanged.
+- Without the model (not downloaded yet), photos are judged by their look alone, as before.
+- Measured with the benchmarks' copy probe (`HEI.Benchmarks --probe-copies <folder> --text`, on fixtures from `tools/text-fixtures.ps1`): of 226 true copies of screenshots, receipts, forms and captioned photos (half and quarter size, 1,024 wide, JPEG, PNG, HEIC), the text check kept every one the look alone did (186); of 68 twins with other words, the look alone took 5 for plain copies, the text check none. A picture read in 33 ms on a Snapdragon X2's NPU, 267 ms on its processor in the background.
 
 **Not listed at all:**
 - **Burst shots and retakes.** Photos numbered one after another, like `IMG_1234` and `IMG_1235`, or `20260101_120000_001` and `_002`, are different moments, even at 99% alike, which would otherwise pass for a resaved copy. So are photos named after the time they were taken a few seconds apart, like `20201105_205359` and `20201105_205401` (Samsung), `PXL_…` (Pixel) or `Screenshot_…`.
@@ -99,6 +109,7 @@ Code decides everything shown on the page. No model output is trusted to delete 
   - **The names** differ only by a language, in the file name or a folder above it: `intro_en.wmv` and `intro_de.wmv`, `intro.wmv` and `intro_fr.wmv`, `Movies\English\intro.bik` and `Movies\German\intro.bik`, `EN-US` and `EN-GB`. This holds even for the same bytes: a game without a German dub ships the English one twice, and opens both names.
   - **The audio tracks' language tags** differ, when both files have them (`ENG` and `GER`).
   - **The sound** differs: the two soundtracks' audio fingerprints match less than 90%, at the offset where they match best. Heiward makes a fingerprint only for the videos in the report, once, and keeps it with the scan's database. The same sound re-encoded, even to 24 kb/s WMA, scored 96% and more; another voice over the same music 79–85%. A copy whose sound is shifted by half a second (trimmed mid-second) scores like another soundtrack, so it isn't offered.
+- **Another document in the same layout:** two pages of one form, whose words differ throughout (above).
 - **Pictures less than 75% alike** to the kept one (the percentage the page shows). The engine's sets chain, so a picture like one that is like another could end up in a set it has nothing to do with.
 
 A folder's **Look-alikes** tab has **Skip all**: every look-alike set with a file in that folder is kept as it is and leaves the list, as one line in History, where **review again** brings them back.

@@ -33,9 +33,11 @@ namespace HEI.Benchmarks.Scenarios;
 public static class CopyCellProbe {
 	public static int Run(string[] args) {
 		if (args.Length < 2 || !Directory.Exists(args[1])) {
-			Console.Error.WriteLine("usage: --probe-copies <folder> [--rows]");
+			Console.Error.WriteLine("usage: --probe-copies <folder> [--rows] | --probe-copies <folder> --text --state <folder holding ai\\> [--models <folder>] [--npu] [--background] [--reads <file>] [--rows]");
 			return 2;
 		}
+		if (args.Contains("--text"))
+			return TextCopyProbe.Run(args);
 		var rows = new List<(string Kind, string Name, double Sim, int Cell, double? Close)>();
 		foreach (string orig in Directory.EnumerateFiles(args[1], "*__orig.*").Order()) {
 			string stem = Path.GetFileName(orig)[..Path.GetFileName(orig).IndexOf("__", StringComparison.Ordinal)];

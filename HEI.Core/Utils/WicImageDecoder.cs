@@ -420,6 +420,105 @@ namespace HEI.Core.Utils {
 			}
 		}
 
+		/// <summary>
+		/// The picture at its own size, upright, as rows of 24-bit BGR with no padding: what the text reader reads
+		/// (<see cref="AI.TextReader"/>). A picture of more than <paramref name="maxPixels"/> isn't decoded.
+		/// </summary>
+		internal static bool TryDecodeBgr(string path, long maxPixels, out byte[]? bgr, out int width, out int height) {
+			bgr = null; width = height = 0;
+			lastFailure = null;
+			if (!IsAvailable) return Fail("not Windows");
+			nint factory = GetFactory();
+			if (factory == 0) return Fail("no WIC factory");
+			nint decoder = 0;
+			try {
+				int hr;
+				fixed (char* p = path)
+					if ((hr = Call(factory, Factory_CreateDecoderFromFilename, (nint)p, 0, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) < 0)
+						return Fail("no codec (CreateDecoderFromFilename)", hr);
+				return DecodeBgr(factory, decoder, maxPixels, out bgr, out width, out height);
+			}
+			catch (Exception e) when (e is not OutOfMemoryException) {
+				return Fail($"{e.GetType().Name}: {e.Message}");
+			}
+			finally {
+				Release(decoder);
+			}
+		}
+
+		/// <summary><see cref="TryDecodeBgr(string, long, out byte[], out int, out int)"/> for a picture held in memory.</summary>
+		internal static bool TryDecodeBgr(byte[] data, long maxPixels, out byte[]? bgr, out int width, out int height) {
+			bgr = null; width = height = 0;
+			lastFailure = null;
+			if (!IsAvailable) return Fail("not Windows");
+			if (data.Length == 0) return Fail("no bytes");
+			nint factory = GetFactory();
+			if (factory == 0) return Fail("no WIC factory");
+			nint stream = 0, decoder = 0;
+			try {
+				fixed (byte* p = data)
+					stream = SHCreateMemStream(p, (uint)data.Length);
+				if (stream == 0) return Fail("SHCreateMemStream");
+				int hr;
+				if ((hr = ((delegate* unmanaged[Stdcall]<nint, nint, Guid*, int, nint*, int>)Slot(factory, Factory_CreateDecoderFromStream))(
+						factory, stream, null, WICDecodeMetadataCacheOnDemand, &decoder)) < 0)
+					return Fail("no codec (CreateDecoderFromStream)", hr);
+				return DecodeBgr(factory, decoder, maxPixels, out bgr, out width, out height);
+			}
+			catch (Exception e) when (e is not OutOfMemoryException) {
+				return Fail($"{e.GetType().Name}: {e.Message}");
+			}
+			finally {
+				Release(decoder);
+				Release(stream);
+			}
+		}
+
+		/// <summary>The decoder's first frame, turned upright (a flip-rotator over it), converted to 24-bit BGR at its own size.</summary>
+		static bool DecodeBgr(nint factory, nint decoder, long maxPixels, out byte[]? bgr, out int width, out int height) {
+			bgr = null; width = height = 0;
+			nint frame = 0, rotator = 0, converter = 0;
+			try {
+				int hr;
+				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)Slot(decoder, Decoder_GetFrame))(decoder, 0, &frame)) < 0)
+					return Fail("GetFrame", hr);
+				uint w, h;
+				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint*, uint*, int>)Slot(frame, Source_GetSize))(frame, &w, &h)) < 0 || w == 0 || h == 0)
+					return Fail("GetSize", hr);
+				if (maxPixels > 0 && (long)w * h > maxPixels)
+					return Fail($"too big ({w} × {h})");
+				Orientation orientation = IsHeif(decoder) ? Orientation.None : ReadOrientation(frame);
+				int transform = orientation switch {
+					Orientation.FlipH => 8, Orientation.Rotate180 => 2, Orientation.FlipV => 16, Orientation.Transpose => 1 | 8,
+					Orientation.Rotate90 => 1, Orientation.Transverse => 3 | 8, Orientation.Rotate270 => 3, _ => 0
+				};
+				nint source = frame;
+				if (transform != 0 &&
+					((delegate* unmanaged[Stdcall]<nint, nint*, int>)Slot(factory, Factory_CreateBitmapFlipRotator))(factory, &rotator) >= 0 &&
+					((delegate* unmanaged[Stdcall]<nint, nint, int, int>)Slot(rotator, FlipRotator_Initialize))(rotator, frame, transform) >= 0) {
+					source = rotator;
+					if ((transform & 1) != 0) (w, h) = (h, w);
+				}
+				Guid format = GUID_WICPixelFormat24bppBGR;
+				if (((delegate* unmanaged[Stdcall]<nint, nint*, int>)Slot(factory, Factory_CreateFormatConverter))(factory, &converter) < 0 ||
+					((delegate* unmanaged[Stdcall]<nint, nint, Guid*, int, nint, double, int, int>)Slot(converter, Converter_Initialize))(
+						converter, source, &format, WICBitmapDitherTypeNone, 0, 0.0, WICBitmapPaletteTypeCustom) < 0)
+					return Fail("format converter");
+				uint stride = w * 3;
+				var pixels = new byte[checked((int)(stride * h))];
+				fixed (byte* pp = pixels)
+					if ((hr = ((delegate* unmanaged[Stdcall]<nint, void*, uint, uint, byte*, int>)Slot(converter, Source_CopyPixels))(converter, null, stride, (uint)pixels.Length, pp)) < 0)
+						return Fail("CopyPixels", hr);
+				(bgr, width, height) = (pixels, (int)w, (int)h);
+				return true;
+			}
+			finally {
+				Release(converter);
+				Release(rotator);
+				Release(frame);
+			}
+		}
+
 		enum Orientation : ushort { None = 1, FlipH = 2, Rotate180 = 3, FlipV = 4, Transpose = 5, Rotate90 = 6, Transverse = 7, Rotate270 = 8 }
 
 		/// <summary>EXIF orientation (System.Photo.Orientation), 1 when absent or unreadable.</summary>

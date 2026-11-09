@@ -50,6 +50,14 @@ public sealed class ReportBuilderTests : IDisposable {
 			CloseLooks++;
 			return UpCloseToKeeper.TryGetValue(a, out bool? x) ? x : UpCloseToKeeper.TryGetValue(b, out bool? y) ? y : true;
 		}
+		/// <summary>A photo's words as the text reader reads them, a word a space apart (unset: no text reader, judged by look alone).</summary>
+		public readonly Dictionary<string, string> Words = new(StringComparer.OrdinalIgnoreCase);
+		public int Reads;
+		public (int W, int H)? PictureSize(string path) => Words.ContainsKey(path) ? (1080, 2340) : null;
+		public string? ReadWords(string path, (int W, int H) size) {
+			Reads++;
+			return Words.TryGetValue(path, out string? w) ? w : null;
+		}
 	}
 
 	public ReportBuilderTests() => Directory.CreateDirectory(dir);
@@ -182,6 +190,68 @@ public sealed class ReportBuilderTests : IDisposable {
 		ReportItem item = Named(Single(Photo("p.jpg", 4032, 3024, Bytes(8000, 1)), copy), "p.resaved.jpg");
 		Assert.Equal("variant", item.Relation);
 		Assert.False(item.Suggested);
+	}
+
+	[Fact]
+	public void TwoChatScreenshots_OneMessageApart_AreTheUsersCall() {
+		// Pixel for pixel they match (the new message is a few cells of the 32×32 frame); their words don't.
+		var before = Photo("chat with Sam.png", 1080, 2340, Bytes(9000, 1));
+		var after = Photo("chat with Sam, later.png", 1080, 2340, Bytes(8000, 2), gray: 99.9f);
+		fingerprints.Words[before.Path] = "Sam Taylor Are we still on for Saturday? 9:14 Yes see you at the station 9:20";
+		fingerprints.Words[after.Path] = "Sam Taylor Are we still on for Saturday? 9:14 Can we make it Sunday instead 9:21";
+		ReportGroup g = Single(before, after);
+		ReportItem item = Named(g, "chat with Sam, later.png");
+		Assert.Equal("wording", item.Relation);
+		Assert.False(item.Suggested);
+		Assert.Equal("similar", g.Kind);
+		Assert.Contains("words differ", g.KeepReason);
+	}
+
+	[Fact]
+	public void ACopyOfAScreenshot_ReadALittleDifferently_IsStillAPlainCopy() {
+		// A smaller copy's words read from other pixels: a letter taken for a figure, a space lost.
+		var original = Photo("settings.png", 1920, 1080, Bytes(9000, 1));
+		var copy = Photo("settings small.png", 960, 540, Bytes(3000, 2), gray: 99.9f);
+		fingerprints.Words[original.Path] = "Color profile sRGB Refresh rate 60 Hz Display resolution 1920 x 1080";
+		fingerprints.Words[copy.Path] = "Color profile sRG8 Refreshrate 60 Hz Display resolutlon 1920 x 1O80";
+		ReportItem item = Named(Single(original, copy), "settings small.png");
+		Assert.Equal("smaller", item.Relation);
+		Assert.True(item.Suggested);
+	}
+
+	[Fact]
+	public void TwoReceipts_WithAnotherTotal_AreNotCopies() {
+		var a = Photo("receipt.jpg", 800, 1800, Bytes(9000, 1));
+		var b = Photo("receipt (1).jpg", 800, 1800, Bytes(8900, 2), gray: 99.95f);
+		fingerprints.Words[a.Path] = "FRESH MART MILK 2L 1.20 BREAD 2.40 TOTAL 3.60";
+		fingerprints.Words[b.Path] = "FRESH MART MILK 2L 1.20 BREAD 3.00 TOTAL 4.20";
+		ReportItem item = Named(Single(a, b), "receipt (1).jpg");
+		Assert.Equal("wording", item.Relation);
+		Assert.False(item.Suggested);
+	}
+
+	[Fact]
+	public void ClearlyAnotherDocument_LeavesTheSet() {
+		// Two pages of one form: the same layout, other words throughout.
+		var page1 = Photo("form page 1.png", 1700, 2200, Bytes(9000, 1));
+		var copy = Photo("form page 1 (copy).png", 1700, 2200, Bytes(8000, 2), gray: 99.9f);
+		var page2 = Photo("form page 2.png", 1700, 2200, Bytes(8500, 3), gray: 99.6f);
+		fingerprints.Words[page1.Path] = fingerprints.Words[copy.Path] = "Full name Address Postcode Telephone Email Date of birth";
+		fingerprints.Words[page2.Path] = "Vehicle registration Make and model Colour Permit zone Signature";
+		ReportGroup g = Single(page1, copy, page2);
+		Assert.DoesNotContain(g.Items, i => i.Name == "form page 2.png");
+		Assert.True(Named(g, "form page 1 (copy).png").Suggested);
+	}
+
+	[Fact]
+	public void EachPictureIsReadOnce() {
+		var keep = Photo("chat.png", 1080, 2340, Bytes(9000, 1));
+		var copy1 = Photo("chat (1).png", 1080, 2340, Bytes(8000, 2), gray: 99.9f);
+		var copy2 = Photo("chat (2).png", 1080, 2340, Bytes(8100, 3), gray: 99.9f);
+		foreach (var p in new[] { keep, copy1, copy2 }) fingerprints.Words[p.Path] = "See you at the station";
+		ReportGroup g = Single(keep, copy1, copy2);
+		Assert.All(g.Items.Where(i => !i.Keep), i => Assert.True(i.Suggested));
+		Assert.Equal(3, fingerprints.Reads);
 	}
 
 	[Fact]
