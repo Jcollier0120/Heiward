@@ -14,8 +14,6 @@
 // */
 //
 
-using System.Net;
-
 namespace HEI.Agent.Tests;
 
 /// <summary>Which host a remote's pull requests are on, what each waits for, and what a repository uses.</summary>
@@ -141,19 +139,7 @@ public sealed class PullRequestsTests : IDisposable {
 		Assert.Null(VersionControl.Of(Repo("h", "src")));
 	}
 
-	[Theory]
-	[InlineData("10.1.2.3", true)]
-	[InlineData("172.20.0.5", true)]
-	[InlineData("192.168.1.10", true)]
-	[InlineData("127.0.0.1", true)]
-	[InlineData("fd12:3456::1", true)]
-	[InlineData("8.8.8.8", false)]
-	[InlineData("172.32.0.1", false)]
-	[InlineData("2606:4700::1111", false)]
-	public void WindowsSignIn_GoesOnlyToThisNetwork(string address, bool mine) => Assert.Equal(mine, PullRequests.IsPrivate(IPAddress.Parse(address)));
-
-	[Fact]
-	public void ANameWithoutDots_IsOnThisNetwork() => Assert.True(PullRequests.OnThisNetwork("tfs:8080"));
+	// The Windows sign-in goes only to the servers named in windowsSignInHosts: SafeGitTests.
 
 	// As Azure DevOps and Azure DevOps Server answer GET …/pullrequests (trimmed).
 	[Fact]

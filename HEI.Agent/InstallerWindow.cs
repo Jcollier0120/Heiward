@@ -39,11 +39,12 @@ namespace HEI.Agent {
 			IntPtr console = GetConsoleWindow();
 			ShowWindow(console, SwHide);
 			try {
-				int port = AgentConfig.Load().Port;
+				// This account's port: another account's page may hold the usual one (ReviewServer.OwnPort).
+				int port = ReviewServer.OwnPort(AgentConfig.Load());
 				Directory.CreateDirectory(InstallDir);
 				StopRunningAgents();
 				if (await ReviewServer.IsUpAsync(port)) {
-					// Another copy's page (the Store version's, or one run from elsewhere): the console says what to do.
+					// This account's page of another copy (the Store version's, or one run from elsewhere): the console says what to do.
 					AgentPaths.AppendLog($"setup window: port {port} is another copy's page, so the setup runs in the console");
 					ShowWindow(console, SwShow);
 					return false;

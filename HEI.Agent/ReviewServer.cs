@@ -47,6 +47,8 @@ namespace HEI.Agent {
 	/// <summary>
 	/// The review page on http://127.0.0.1:{port}. LOCAL ONLY, AND THE BUTTONS ARE GUARDED:
 	/// <list type="bullet">
+	/// <item>It answers only programs of the Windows account it runs as (<see cref="PageAccount"/>): another account on
+	/// this PC gets nothing, not even the page and its token. That account's own Heiward has a page of its own.</item>
 	/// <item>It binds the loopback address only, and answers only requests whose Host is its own
 	/// (a DNS-rebinding page can't talk to it).</item>
 	/// <item>Every action (POST) needs the token that exists only inside the page this process served,
@@ -60,7 +62,11 @@ namespace HEI.Agent {
 	static partial class ReviewServer {
 		/// <param name="uninstaller">What a game's Uninstall reads and opens with: Windows' registry and shell, unless a test gives
 		/// a fake registry and a recorder (no test ever starts an uninstaller).</param>
-		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct, GameUninstaller? uninstaller = null) {
+		/// <param name="caller">Who is at the other end of a connection (its remote end, then the page's own): its process and that
+		/// process's account, from Windows' TCP table (<see cref="PageAccount.Caller"/>), unless a test says another account calls.</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool openBrowser, CancellationToken ct, GameUninstaller? uninstaller = null,
+			Func<IPEndPoint, IPEndPoint, (int? Pid, string? Sid)>? caller = null) {
+			caller ??= (remote, local) => PageAccount.Caller(remote.Address, remote.Port, local.Address, local.Port);
 			// The Store version standing aside for Castellan's copy (CastellanCopy): a page that says so, on a free port of its
 			// own, so it never stops or stands in for that copy's page; the one it started last, when that's still up.
 			bool aside = CastellanCopy.StoreStandsAside;
@@ -69,7 +75,9 @@ namespace HEI.Agent {
 				if (openBrowser) OpenBrowser(asidePort);
 				return 0;
 			}
-			int port = aside ? CastellanCopy.FreePort() : cfg.Port;
+			// Another account's page on the review page's port (more than one account signs in on this PC): this account's
+			// moves to one of its own, kept in settings.json.
+			int port = aside ? CastellanCopy.FreePort() : OwnPort(cfg);
 			var actions = new CleanupActions(cfg, automatic: false);
 			uninstaller ??= GameUninstaller.Windows();
 			if (!aside && await IsUpAsync(port)) {
@@ -84,10 +92,27 @@ namespace HEI.Agent {
 
 			var builder = WebApplication.CreateSlimBuilder();
 			builder.Logging.ClearProviders();
-			builder.WebHost.UseKestrel(o => o.Listen(IPAddress.Loopback, port));
+			// Each connection's caller is told once, as it's accepted: whose program opened it (PageAccount). Its requests
+			// are answered, or refused below, by that.
+			var callers = new System.Collections.Concurrent.ConcurrentDictionary<string, bool>();
+			builder.WebHost.UseKestrel(o => o.Listen(IPAddress.Loopback, port, listen => listen.Use(next => async connection => {
+				callers[connection.ConnectionId] = FromThisAccount(connection.RemoteEndPoint, connection.LocalEndPoint, caller);
+				try { await next(connection); }
+				finally { callers.TryRemove(connection.ConnectionId, out _); }
+			})));
 			var app = builder.Build();
 
 			app.Use(async (ctx, next) => {
+				bool thisAccount = callers.TryGetValue(ctx.Connection.Id, out bool told) ? told
+					: FromThisAccount(ctx.Connection.RemoteIpAddress is { } ip ? new IPEndPoint(ip, ctx.Connection.RemotePort) : null,
+						ctx.Connection.LocalIpAddress is { } own ? new IPEndPoint(own, ctx.Connection.LocalPort) : null, caller);
+				if (!thisAccount) {
+					ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
+					ctx.Response.ContentType = "text/plain; charset=utf-8";
+					ctx.Response.Headers.CacheControl = "no-store";
+					await ctx.Response.WriteAsync(AnotherAccountsPage);
+					return;
+				}
 				if (!hosts.Contains(ctx.Request.Host.Value ?? "")) {
 					ctx.Response.StatusCode = StatusCodes.Status421MisdirectedRequest;
 					return;
@@ -516,7 +541,8 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// /api/ping's answer. exe: whose page this is. Copies share a port (all but a development build), so the
-		/// installer asks another copy's to close (/api/quit). running, stoppedSince and summary: as <c>hei status --json</c>
+		/// installer asks another copy's to close (/api/quit). account: the Windows account it's for (<see cref="PageAccount.Hash"/>),
+		/// so another account's page is never taken for this one's (<see cref="PingAsync"/>). running, stoppedSince and summary: as <c>hei status --json</c>
 		/// says them (<see cref="AgentStatus"/>). Then the scans at a glance, for Manor's employee cards
 		/// (<see cref="RunTimes"/>): lastRunAt, lastRunOk, nextRunAt and runningSince, UTC times or null. pictures: the version of
 		/// /api/pictures/compare (<see cref="PicturesRoute"/>), for an agent that asks Heiward to compare pictures.
@@ -535,6 +561,8 @@ namespace HEI.Agent {
 			catch { }
 			return new {
 				app = "heiward", store = StorePackage.IsPackaged, exe = Environment.ProcessPath,
+				// Whose page this is (PageAccount.Hash of the account's SID): this account's programs take no other account's page for theirs.
+				account = PageAccount.Mine,
 				// On duty (not paused), since when it's been stopped (always there, null while on duty), and the same in a
 				// sentence: a ping that says them spares Manor running hei status --json every round to learn them.
 				running = pause == null, stoppedSince = AgentStatus.Utc(pause?.SinceUtc), summary,
@@ -896,28 +924,94 @@ namespace HEI.Agent {
 			return r.ReadToEnd();
 		}
 
+		/// <summary>This account's Heiward page answers on <paramref name="port"/> (<see cref="PingAsync"/>): never another account's.</summary>
 		/// <param name="fromStore">Only the Store version's page counts (a GitHub copy's says "store":false, or nothing).</param>
-		public static async Task<bool> IsUpAsync(int port, bool fromStore = false) {
+		public static async Task<bool> IsUpAsync(int port, bool fromStore = false) =>
+			await PingAsync(port) is { } ping && (!fromStore || ping.Store);
+
+		/// <summary>
+		/// The exe serving this account's Heiward page on <paramref name="port"/>: "" from a build whose ping doesn't say, null
+		/// when none answers (another account's page is none).
+		/// </summary>
+		public static async Task<string?> PageExeAsync(int port) => (await PingAsync(port))?.Exe;
+
+		/// <summary>What this account's Heiward page on a port says of itself: its exe ("" when it doesn't say), whether it's the Store version's, and whether it has #/uninstall.</summary>
+		internal sealed record PagePing(string Exe, bool Store, bool UninstallPage);
+
+		/// <summary>This account's Heiward page's /api/ping on <paramref name="port"/> (<see cref="ReadPing"/>); null when none answers there.</summary>
+		internal static async Task<PagePing?> PingAsync(int port) {
 			try {
 				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-				string body = await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping");
-				return body.Contains("\"heiward\"", StringComparison.Ordinal) && (!fromStore || body.Contains("\"store\":true", StringComparison.Ordinal));
+				return ReadPing(await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping"), () => PageAccount.ListenedByThisAccount(port));
 			}
-			catch { return false; }
+			catch { return null; }
 		}
 
 		/// <summary>
-		/// The exe serving the Heiward page on <paramref name="port"/>: "" from a build whose ping doesn't say, null
-		/// when no Heiward page answers.
+		/// A ping that's this account's Heiward page's: app "heiward", and account this account's (<see cref="PageAccount.Mine"/>).
+		/// A build from before pings said the account is this account's when this account's program is the one listening
+		/// (<paramref name="listenedByThisAccount"/>, Windows' TCP table). Null for anything else: another account's page, or not Heiward.
 		/// </summary>
-		public static async Task<string?> PageExeAsync(int port) {
+		internal static PagePing? ReadPing(string body, Func<bool> listenedByThisAccount) {
 			try {
-				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-				using var ping = System.Text.Json.JsonDocument.Parse(await http.GetStringAsync($"http://127.0.0.1:{port}/api/ping"));
-				if (!ping.RootElement.TryGetProperty("app", out var app) || app.ValueKind != System.Text.Json.JsonValueKind.String || app.GetString() != "heiward") return null;
-				return ping.RootElement.TryGetProperty("exe", out var exe) && exe.ValueKind == System.Text.Json.JsonValueKind.String ? exe.GetString() ?? "" : "";
+				using var ping = System.Text.Json.JsonDocument.Parse(body);
+				var root = ping.RootElement;
+				if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+				string? Text(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.String ? v.GetString() : null;
+				bool True(string name) => root.TryGetProperty(name, out var v) && v.ValueKind == System.Text.Json.JsonValueKind.True;
+				if (Text("app") != "heiward") return null;
+				bool ours = root.TryGetProperty("account", out _) ? Text("account") == PageAccount.Mine : listenedByThisAccount();
+				return ours ? new PagePing(Text("exe") ?? "", True("store"), True("uninstallPage")) : null;
 			}
-			catch { return null; }
+			catch (System.Text.Json.JsonException) { return null; }
+		}
+
+		/// <summary>What another account's program gets from this page: nothing of it, and where its own Heiward is.</summary>
+		internal const string AnotherAccountsPage =
+			"This Heiward page belongs to another account on this PC. Each account has its own: open Heiward from your Start menu.";
+
+		/// <summary>
+		/// The connection from <paramref name="remote"/> to the page's <paramref name="local"/> end comes from a program of this
+		/// account (<see cref="PageAccount"/>); false when it's another account's, or when that can't be told.
+		/// </summary>
+		static bool FromThisAccount(System.Net.EndPoint? remote, System.Net.EndPoint? local, Func<IPEndPoint, IPEndPoint, (int? Pid, string? Sid)> caller) {
+			if (remote is not IPEndPoint from || local is not IPEndPoint to) return false;
+			(int? pid, string? sid) = caller(from, to);
+			if (PageAccount.IsThisAccount(sid)) return true;
+			// Once in ten minutes at most: a program asking every few seconds would fill the log.
+			DateTime now = DateTime.UtcNow;
+			if (now - lastRefusalLogged > TimeSpan.FromMinutes(10)) {
+				lastRefusalLogged = now;
+				AgentPaths.AppendLog($"review page: refused {(pid is int p ? $"process {p}" : "a program Windows didn't name")}, " +
+					(sid == null ? "whose account Windows wouldn't say (another account's, a service's or one run as administrator)" : "of another Windows account"));
+			}
+			return false;
+		}
+
+		static DateTime lastRefusalLogged = DateTime.MinValue;
+
+		/// <summary>
+		/// The port this account's page uses: <see cref="AgentConfig.Port"/>, unless a program of another account listens there
+		/// (its Heiward, on a PC where more than one account signs in, or anything else). Then a free port of its own, saved in
+		/// settings.json, so this account's programs find its page there from now on, and it keeps that port.
+		/// </summary>
+		/// <param name="heldByAnother">Whether another account's program listens on a port: Windows' TCP table (<see cref="PageAccount.HeldByAnother"/>), unless a test says.</param>
+		internal static int OwnPort(AgentConfig cfg, Func<int, bool>? heldByAnother = null) {
+			heldByAnother ??= PageAccount.HeldByAnother;
+			if (!heldByAnother(cfg.Port)) return cfg.Port;
+			int was = cfg.Port, port = CastellanCopy.FreePort();
+			// What settings.json says now, and this port: never what this process changed in memory and didn't save.
+			try {
+				AgentConfig saved = AgentConfig.Load();
+				saved.Port = port;
+				saved.Save();
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				AgentPaths.AppendLog($"review page: port {port} couldn't be kept in settings.json: {e.Message}");
+			}
+			cfg.Port = port;
+			AgentPaths.AppendLog($"review page: another Windows account's program has port {was}, so this account's page moves to port {port}, kept in settings.json");
+			return port;
 		}
 
 		/// <summary>
@@ -925,8 +1019,10 @@ namespace HEI.Agent {
 		/// its own buttons would. A program on this PC can read that page; another web page can't (the Host and
 		/// Origin checks).
 		/// </summary>
-		/// <returns>True once it said it would: false from a build without /api/quit, or during the Store version's setup.</returns>
+		/// <returns>True once it said it would: false from a build without /api/quit, during the Store version's setup, or
+		/// for another account's page, which is never asked.</returns>
 		public static async Task<bool> AskToCloseAsync(int port) {
+			if (await PingAsync(port) == null) return false;
 			try {
 				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
 				if (TokenIn(await http.GetStringAsync($"http://127.0.0.1:{port}/")) is not string token) return false;
@@ -944,9 +1040,12 @@ namespace HEI.Agent {
 
 		static readonly Regex PageToken = new("<meta name=\"agent-token\" content=\"([0-9a-f]+)\">", RegexOptions.CultureInvariant);
 
-		/// <summary>Starts the review page in its own process (no window) unless it is already up.</summary>
+		/// <summary>
+		/// Starts the review page in its own process (no window) unless it is already up: on this account's port (<see cref="OwnPort"/>),
+		/// which <paramref name="cfg"/> then has.
+		/// </summary>
 		public static void EnsureRunningInBackground(AgentConfig cfg) {
-			if (IsUpAsync(cfg.Port).GetAwaiter().GetResult()) return;
+			if (IsUpAsync(OwnPort(cfg)).GetAwaiter().GetResult()) return;
 			StartDetached("serve", "--no-browser");
 		}
 

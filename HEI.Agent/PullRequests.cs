@@ -167,7 +167,7 @@ namespace HEI.Agent {
 		}
 
 		static async Task<Dictionary<string, RepoPulls>> FetchAsync(List<(string Key, PullSource Source)> wanted, CancellationToken ct) {
-			var signIns = new SignIns();
+			var signIns = new SignIns(AgentConfig.Load().WindowsSignInHosts);
 			var results = new ConcurrentDictionary<string, RepoPulls>();
 			var work = new List<Task>();
 			// GitHub: one query per server for all its repositories.
@@ -198,6 +198,8 @@ namespace HEI.Agent {
 		static string NoSignIn(PullSource s) => s.Kind switch {
 			"github" => "Sign in with the GitHub CLI (gh auth login), or with git (Git Credential Manager), to see its pull requests.",
 			"azure" => "Sign in to Azure DevOps with git (Git Credential Manager) or the Azure CLI (az login) to see its pull requests.",
+			"azure-server" => $"Sign in to {s.Host} with git (Git Credential Manager) to see its pull requests, or, to use your Windows sign-in there, " +
+				$"add \"{s.Host}\" to windowsSignInHosts in Heiward's settings.json.",
 			_ => $"Sign in to {s.Host} with git (Git Credential Manager) to see its pull requests.",
 		};
 
@@ -291,8 +293,8 @@ fragment pulls on Repository {
 
 		static async Task<RepoPulls> AzureAsync(PullSource s, SignIns signIns, CancellationToken ct) {
 			string pullsPath = $"/{Uri.EscapeDataString(s.Owner)}/_apis/git/repositories/{Uri.EscapeDataString(s.Name)}/pullrequests?searchCriteria.status=active&$top=50&api-version=";
-			// A server on this network takes Windows' own sign-in; anything else, or a refusal, the sign-in git keeps.
-			bool windows = s.Kind == "azure-server" && OnThisNetwork(s.Host);
+			// A server you named takes Windows' own sign-in; anything else, or a refusal, the sign-in git keeps.
+			bool windows = s.Kind == "azure-server" && Named(s.Host, signIns.WindowsHosts);
 			Credential? signIn = windows ? null : await signIns.For(s);
 			if (!windows && signIn == null) return Failed(s, NoSignIn(s));
 			HttpClient http = windows ? WindowsSignIn : Http;
@@ -496,7 +498,9 @@ fragment pulls on Repository {
 		}
 
 		/// <summary>Each host's sign-in, asked for once per fetch.</summary>
-		sealed class SignIns {
+		/// <param name="WindowsHosts">The servers you named for Windows' own sign-in (<see cref="AgentConfig.WindowsSignInHosts"/>).</param>
+		sealed class SignIns(IReadOnlyList<string> WindowsHosts) {
+			public IReadOnlyList<string> WindowsHosts { get; } = WindowsHosts;
 			readonly ConcurrentDictionary<string, Lazy<Task<Credential?>>> byHost = new();
 
 			public Task<Credential?> For(PullSource s) =>
@@ -524,10 +528,12 @@ fragment pulls on Repository {
 		/// </summary>
 		static (string User, string Secret)? GitSignIn(string host, string? path) {
 			if (Git.Exe == null) return null;
+			// Run in Windows' own folder, no repository's: only your own git settings name the credential helper (Git.SafeArgs).
 			var psi = new ProcessStartInfo(Git.Exe) {
 				UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true,
+				WorkingDirectory = Environment.SystemDirectory,
 			};
-			foreach (string a in new[] { "-c", "credential.interactive=false", "-c", "core.askPass=", "credential", "fill" }) psi.ArgumentList.Add(a);
+			foreach (string a in Git.SafeArgs().Concat(["-c", "credential.interactive=false", "-c", "core.askPass=", "credential", "fill"])) psi.ArgumentList.Add(a);
 			psi.Environment["GIT_TERMINAL_PROMPT"] = "0";
 			psi.Environment["GCM_INTERACTIVE"] = "never";
 			psi.Environment["GCM_GUI_PROMPT"] = "false";
@@ -558,28 +564,21 @@ fragment pulls on Repository {
 		}
 
 		/// <summary>
-		/// A host Windows' own sign-in may go to: a name without dots, or one whose every address is on this network
-		/// (private, link-local, loopback). A repository's remote could name any server, and Windows' sign-in sent to one
-		/// outside could be replayed.
+		/// A host Windows' own sign-in may go to: one you named (<see cref="AgentConfig.WindowsSignInHosts"/>), by its name, and
+		/// by its port too when you gave one. Never one a repository's remote names by itself: a folder from anywhere (a zip in
+		/// Downloads) can name any server, a name without dots included (it can lead to any PC on the network), and Windows'
+		/// sign-in sent to it could be replayed.
 		/// </summary>
-		internal static bool OnThisNetwork(string hostPort) {
-			string host = hostPort.Split(':')[0];
-			if (!host.Contains('.')) return true;
-			try {
-				IPAddress[] addresses = Dns.GetHostAddresses(host);
-				return addresses.Length > 0 && addresses.All(IsPrivate);
+		internal static bool Named(string hostPort, IEnumerable<string>? named) {
+			static (string Host, string? Port) Split(string hp) {
+				string s = hp.Trim().TrimEnd('/').ToLowerInvariant();
+				if (s.Contains("://")) s = s[(s.IndexOf("://", StringComparison.Ordinal) + 3)..].Split('/')[0];
+				int colon = s.LastIndexOf(':');
+				return colon > 0 && !s.EndsWith(']') ? (s[..colon], s[(colon + 1)..]) : (s, null);
 			}
-			catch (Exception e) when (e is SocketException or ArgumentException) { return false; }
-		}
-
-		internal static bool IsPrivate(IPAddress a) {
-			if (IPAddress.IsLoopback(a)) return true;
-			if (a.IsIPv4MappedToIPv6) a = a.MapToIPv4();
-			if (a.AddressFamily == AddressFamily.InterNetwork) {
-				byte[] b = a.GetAddressBytes();
-				return b[0] == 10 || b[0] == 172 && b[1] is >= 16 and <= 31 || b[0] == 192 && b[1] == 168 || b[0] == 169 && b[1] == 254;
-			}
-			return a.IsIPv6LinkLocal || a.IsIPv6SiteLocal || a.IsIPv6UniqueLocal;
+			var (host, port) = Split(hostPort);
+			if (host.Length == 0) return false;
+			return (named ?? []).Select(Split).Any(n => n.Host == host && (n.Port == null || n.Port == port));
 		}
 
 		// ------------------------------------------------------------------ HTTP

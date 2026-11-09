@@ -467,6 +467,47 @@ public sealed class DevAssetsTests : IDisposable {
 	}
 
 	[Fact]
+	public void ARepositoryWhoseOwnSettingsCouldRunAProgram_IsntCheckedWithGit_NorOfferedForCleanup() {
+		if (Git.Exe == null) return; // needs git
+		var (repo, wt, _) = AgentWorktree("watched");
+		DateTime staleBefore = DateTime.UtcNow.AddDays(1);
+		var noOne = new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new());
+		Assert.Null(Git.Refusal(repo));
+		Assert.Null(Git.Refusal(wt));
+		Assert.Null(Assert.Single(DevScanner.WorktreeItems(repo, staleBefore, default, noOne)).Blocked);
+
+		// As a folder unzipped from the internet could come: a file watcher that's a program of the repository's own.
+		string config = Path.Combine(repo, ".git", "config");
+		string before = File.ReadAllText(config);
+		File.AppendAllText(config, "[core]\n\tfsmonitor = .git/run-me.exe\n");
+		string why = "Not checked with git: its git settings set core.fsmonitor, which can run a program or reach another computer";
+		Assert.Equal(why, Git.Refusal(repo));
+		Assert.Equal(why, Git.Refusal(wt)); // the worktree's settings are its repository's
+		Assert.Equal((-1, why), Git.Run(repo, "status"));
+		DevItem listed = Assert.Single(DevScanner.WorktreeItems(repo, staleBefore, default, noOne));
+		Assert.Equal(why, listed.Blocked);
+		Assert.False(listed.Suggested);
+		Assert.False(listed.HoldsWork);
+		RepoBranches branches = BranchPruner.Inspect(repo)!;
+		Assert.Equal(why, branches.Note);
+		Assert.Empty(branches.Merged);
+		Assert.Equal(why, BranchPruner.Prune(repo).Error);
+
+		File.WriteAllText(config, before);
+		G(repo, "worktree", "remove", wt);
+	}
+
+	[Fact]
+	public void EveryGitHeiwardRuns_HasTheRepositorysFileWatcherAndHooksOff() {
+		if (Git.Exe == null) return; // needs git
+		string repo = Dir("plain");
+		G(repo, "init");
+		Assert.Equal("false", Git.Run(repo, "config", "--get", "core.fsmonitor").Output.Trim());
+		Assert.Equal(Path.Combine(AgentPaths.Home, "no-git-hooks"), Git.Run(repo, "config", "--get", "core.hooksPath").Output.Trim());
+		Assert.Equal("never", Git.Run(repo, "config", "--get", "protocol.ext.allow").Output.Trim());
+	}
+
+	[Fact]
 	public void Clean_RemovesAWorktreeDeeperThanWindowsPathLimit() {
 		if (Git.Exe == null) return; // needs git
 		var (repo, wt, item) = AgentWorktree("deep");
