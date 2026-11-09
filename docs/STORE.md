@@ -36,20 +36,42 @@ Heiward is registered under the publisher **The Nexus**, with Store ID `9NX5K0L4
 2. **The first submission goes to a private audience.** The Store installs a flight only for an app that has a published submission, and an app published to everyone can't go back to private. So the first one is the test (**Pricing and availability > Visibility > Private audience**), with a known user group holding your personal Microsoft account's email address.
 3. **Install it from the Store** with the link Partner Center gives for the private audience, and try it on each architecture you can: setup, a scan, Scan now, the desktop shortcut, a `heiward:` link, `hei` in a terminal, and a notification.
    - First remove any copy registered from a build folder (`Get-AppxPackage TheNexus.Heiward | Remove-AppxPackage`). It has the same identity, so the Store can't install next to it. Removing it deletes its AI components and setup marker: setup runs again, with the settings and history kept.
-4. **Go public:** a new submission with **Public audience**. It may go through certification again.
+4. **Go public:** a new submission with **Public audience**. It may go through certification again. While it's a draft in Partner Center, the Friday runs from CI wait for it (below).
 
 ### Releasing from CI
 
-[`.github/workflows/store.yml`](../.github/workflows/store.yml) runs `store.ps1` on GitHub's Windows runner for every release of Heiward, and keeps the bundle as the run's artifact (**Actions > Microsoft Store**, 30 days). So step 1 above is done for you: the bundle for the first, private submission can be downloaded from there. Tags that aren't Heiward's (VDF's `v4.1.1` and the like) are skipped.
+[`.github/workflows/store.yml`](../.github/workflows/store.yml) runs `store.ps1` on GitHub's Windows runner for every release of Heiward, as an early check that the release builds, and keeps the bundle as the run's artifact (**Actions > Microsoft Store**, 30 days). So step 1 above is done for you: the bundle for the first, private submission can be downloaded from there. A release sends nothing to the Store. Tags that aren't Heiward's (VDF's `v4.1.1` and the like) are skipped.
 
-Once the app has a published submission, the workflow also submits each new release to Partner Center itself. Each submission copies the last one's listing, pricing and audience, with the new package in its place, and goes to certification; the Store publishes it when it passes, and Windows updates the installed copies. To set that up, once:
+Once the app has a published submission, the workflow sends the newest release to the Store itself, once a week: **on Fridays at 10:00 New York time** (the same hour in summer and winter). If the Store already has that version, or one is still in progress, the run sends nothing. Each submission copies the last one's listing, pricing and audience, with the new bundle in place of the old. Its **What's new in this version** is written from `CHANGELOG.md`: every version since the one the Store has, newest first, in plain text and cut to the Store's 1500 characters. It goes to certification; the Store publishes it when it passes, and Windows updates the installed copies.
 
-1. **Give Partner Center an app to sign in as.** In Partner Center, **Account settings > User management > Microsoft Entra applications**: **Create Microsoft Entra application** (if it asks, first associate your account with a Microsoft Entra tenant: an individual account gets one free). Give it the **Manager** role. Open it and **Add new key**: note its **Client ID**, its **Key** (shown once) and the **Tenant ID** on the same page.
-2. **Note your Seller ID**: **Account settings > Legal info > Developer**.
-3. **Add them to the repository** (GitHub, **Settings > Secrets and variables > Actions > Secrets**): `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_CLIENT_ID`, `PARTNER_CENTER_CLIENT_SECRET` (the key) and `PARTNER_CENTER_SELLER_ID`.
-4. **Turn it on** once the first submission is published (steps 2 to 4 above): under **Variables**, `STORE_SUBMIT` set to `true`. Without it, or before it, nothing is sent: the bundle is only built and kept.
+To set that up, once:
 
-To send a release again, or to look before it goes to certification: **Actions > Microsoft Store > Run workflow**, with the release's tag (empty: the newest), and **Leave the submission as a draft** checked to send it yourself from Partner Center. The key expires (you choose when, up to two years): make a new one in step 1 and replace the secret.
+1. **Make the app Partner Center is reached through.** In Partner Center, **Account settings > User management > Microsoft Entra applications**: **Create Microsoft Entra application** (if it asks, first associate your account with a Microsoft Entra tenant: an individual account gets one free). Give it the **Manager** role. Open it and **Add new key**: note its **Client ID**, its **Key** (shown once) and the **Tenant ID** on the same page. Your **Seller ID** is under **Account settings > Legal info > Developer**. One app serves all your Store apps: if you made it already for Castellan's weekly Store job, use the same one and its key here.
+2. **Add the 4 secrets** to the repository (GitHub, **Settings > Secrets and variables > Actions > Secrets**): `PARTNER_CENTER_TENANT_ID`, `PARTNER_CENTER_CLIENT_ID`, `PARTNER_CENTER_CLIENT_SECRET` (the key) and `PARTNER_CENTER_SELLER_ID`.
+
+That's all. Sending starts by itself on the first Friday after the first submission is published ([Releasing](#releasing), steps 2 and 3); until then, each Friday run leaves a notice that says so and sends nothing.
+
+**To switch it off**, add the repository variable `STORE_SUBMIT` (the same page, **Variables**) set to `false`. The bundle is still built and kept. Delete the variable to switch it on again.
+
+The key expires (you choose when, up to two years). When it has, the Friday runs fail and GitHub emails you: make a new key in step 1 and replace `PARTNER_CENTER_CLIENT_SECRET` (and the same key wherever else the app is used).
+
+What it does by itself:
+
+- **Only the newest release.** The Friday run asks Partner Center first (on Linux, in about a minute) and builds nothing unless there's a release to send. The releases of the week between go to the Store together, as the newest one, and its What's new covers them all.
+- **One submission at a time.** Partner Center keeps one submission in progress per app. So the newest release waits while another is in certification, or while a draft is in Partner Center (yours, or one left for you to send), and is never sent in place of either. The run passes, with a notice that names the version waiting and what holds it, and the next Friday run looks again. A submission whose commit failed is replaced.
+- **A failed certification** waits for you. The run warns; Partner Center's report says why. Once you delete that submission in Partner Center (or fix it and send it again), the next Friday run sends the newest release.
+- **A run that fails halfway** deletes the draft it made, so the draft doesn't hold later releases back. The run fails, and the next Friday run tries again.
+- GitHub may start the Friday run a few minutes late when it's busy, and on rare days skips it. Then run it by hand (below), or the next Friday run sends it.
+
+To send the newest release now instead of on Friday, to send a release again, or to look before it goes to certification: **Actions > Microsoft Store > Run workflow**, with the release's tag (empty: the newest), and **Leave the submission as a draft** checked to send it yourself from Partner Center. The Friday runs wait until you send or delete that draft.
+
+To see the What's new a submission would get, when the Store has 1.9.130:
+
+```
+dotnet run --project HEI.StoreSubmit -- notes --target 1.9.137 --after 1.9.130 --changelog CHANGELOG.md
+```
+
+[`HEI.StoreSubmit`](../HEI.StoreSubmit) does the talking with Partner Center (its [submission API](https://learn.microsoft.com/windows/uwp/monetize/manage-app-submissions)): the check, the What's new and the commit. `msstore publish --noCommit` uploads the bundle. It ships in no copy of Heiward, and `StoreSubmitTests` test it against the API's JSON.
 
 ### What each page asks
 
@@ -85,7 +107,7 @@ To send a release again, or to look before it goes to certification: **Actions >
 
   Heiward is free and open source (AGPL-3.0). The source is at github.com/Jcollier0120/Heiward.
   ```
-- **What's new in this version:** `The first release in the Microsoft Store.`
+- **What's new in this version:** empty for the first submission, as Microsoft asks. From then on, the workflow writes it from the changelog ([Releasing from CI](#releasing-from-ci)).
 - **Product features** (one per line in Partner Center):
   ```
   Finds duplicate photos and videos on every fixed drive, including copies in other formats and sizes

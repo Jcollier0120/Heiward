@@ -19,6 +19,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\HEI.Agent\HEI.Agent.csproj" />
+    <ProjectReference Include="..\HEI.StoreSubmit\HEI.StoreSubmit.csproj" />
+  </ItemGroup>
+
+  <!-- Partner Center's JSON, as its submission API answers, for StoreSubmitTests. -->
+  <ItemGroup>
+    <None Include="PartnerCenter\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
