@@ -16,19 +16,17 @@
 
 namespace HEI.Agent {
 	/// <summary>
-	/// The home page's Castellan card, while Manor (sold as Castellan) isn't installed on this PC: a few lines on what it adds, below
-	/// everything else on the page, with a link to its site and a "Not now" that hides it for good
-	/// (<see cref="AgentConfig.ManorCard"/>, which Settings can turn on again). It's static text in the page: nothing is
-	/// asked of the site, and nothing is sent anywhere, unless you open the link. With Manor installed there's no card:
-	/// the title bar's "Back to &lt;manor&gt;" already says where Heiward works (<see cref="Manor.Stamp"/>). Heiward is
-	/// complete without Manor either way, and nothing here reads or runs any of Manor's code. Shown since 1.9.24, when
+	/// About's Castellan card, while Manor (sold as Castellan) isn't installed on this PC: a few lines on what it adds,
+	/// with a link to its site. It was last on the home page until the owner moved it into About (2026-11-09), so it
+	/// needs no "Not now" any more: About is opened on purpose. It's static text in the page: nothing is asked of the
+	/// site, and nothing is sent anywhere, unless you open the link. With Manor installed there's no card: the title
+	/// bar's "Back to &lt;manor&gt;" already says where Heiward works (<see cref="Manor.Stamp"/>). Heiward is complete
+	/// without Manor either way, and nothing here reads or runs any of Manor's code. Shown since 1.9.24, when
 	/// <see cref="Launched"/> was turned on: Castellan is on sale.
 	/// </summary>
-	/// <param name="Show">The card shows on the home page: Heiward's own switch, on until "Not now".</param>
 	/// <param name="Url">Castellan's site, which "See Castellan" opens.</param>
-	sealed record ManorCard(bool Show, string Url) {
-		// The launch switch, on since 1.9.24. Off, there's no card and no switch for it in Settings: For is null, as with
-		// Manor installed.
+	sealed record ManorCard(string Url) {
+		// The launch switch, on since 1.9.24. Off, there's no card: For is null, as with Manor installed.
 		public const bool Launched = true;
 
 		/// <summary>
@@ -42,10 +40,9 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// The card for the page: null before launch (<see cref="Launched"/>) or with Manor installed
-		/// (<paramref name="manor"/>), so neither the card nor its switch in Settings shows; else whether it shows, by
-		/// <paramref name="cfg"/>.
+		/// (<paramref name="manor"/>), so About has none.
 		/// </summary>
-		public static ManorCard? For(AgentConfig cfg, Manor? manor) =>
-			!(Launched || ShowBeforeLaunch) || manor != null ? null : new ManorCard(cfg.ManorCard, ManorSiteUrl);
+		public static ManorCard? For(Manor? manor) =>
+			!(Launched || ShowBeforeLaunch) || manor != null ? null : new ManorCard(ManorSiteUrl);
 	}
 }

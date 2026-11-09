@@ -451,15 +451,62 @@ body > .titlebar { box-sizing: border-box; width: 100%; max-width: 1704px; margi
 .tab-count { margin-left: 6px; padding: 0 6px; border-radius: 9px; background: var(--line); color: var(--muted); font-size: 12px; font-weight: 600; }
 .tab-panel[hidden] { display: none; }
 .tab-panel > section > h2:first-child { margin-top: 18px; }
-/* A tab's two parts: side by side (5:7) from 1100 px, one above the other in a narrower window. */
+/* A tab's two parts: side by side from 1100 px, one above the other in a narrower window. Drives has the drive cards
+   on the left (7:5), in a grid of their own as the page before the tabs had them; the others their summary on the
+   left (5:7). */
 .pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 24px; align-items: start; }
 .pair .dev-card { max-width: none; }
 @media (min-width: 1100px) {
   .pair { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
-  .pair .drives { grid-template-columns: minmax(0, 1fr); }
+  .pair-drives { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+  .pair-drives .drives { grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); }
 }
-#manor-card-section, .home > footer { max-width: 1180px; }
-.home > footer { margin-top: 26px; }
+.home > footer { max-width: 1180px; margin-top: 26px; }
+
+/* A tab with nothing in it yet (no scan, no history): one panel across the tab, what's missing and what to do, and
+   beside it, when there's room, what the tab will show. */
+.tab-panel.is-empty:not([hidden]) { display: block; }
+.tab-panel.is-empty > section { display: none; }
+.empty-panel {
+  container-type: inline-size; margin-top: 18px; padding: 28px 32px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+}
+.empty-inner { display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px 40px; align-items: start; }
+.empty-mark {
+  width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--accent); margin-bottom: 14px;
+}
+.empty-mark svg { width: 26px; height: 26px; }
+.empty-title { font-size: 20px; margin: 0 0 8px; }
+.empty-text { margin: 0 0 18px; max-width: 64ch; color: var(--muted); line-height: 1.55; }
+.empty-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.empty-aside { border-top: 1px solid var(--line); padding-top: 18px; }
+.empty-points { list-style: none; margin: 10px 0 0; padding: 0; display: flex; flex-direction: column; gap: 14px; font-size: 13px; line-height: 1.5; }
+.empty-points li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; align-items: start; }
+.empty-points svg { width: 16px; height: 16px; margin-top: 2px; color: var(--accent); }
+@container (min-width: 760px) {
+  .empty-inner { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .empty-aside { border-top: 0; padding-top: 4px; border-left: 1px solid var(--line); padding-left: 32px; }
+}
+
+/* The preview's second layout (?one-page): no tabs, every part on the page, the drives on the left and the
+   duplicates and history on the right from 1100 px, At a glance and the duplicates first, as before the tabs. */
+.one-page .tabs { display: none; }
+.one-page .tab-panel:not([hidden]) { display: flex; flex-direction: column; align-items: stretch; }
+.one-page #panel-drives > section:last-child, .one-page #hotspots-section { order: -1; }
+.one-page .tab-panel > section > h2:first-child { margin-top: 26px; }
+.one-page .tab-panel { scroll-margin-top: 8px; }
+@media (min-width: 1100px) {
+  .one-page .home-cols { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 0 28px; align-items: start; }
+  .one-page .pair-drives .drives { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+}
+
+/* Settings and About: two columns from 1100 px, each card as wide as its column; one column below, in the same order. */
+.cols { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; align-items: start; }
+.cols .auto-card, .cols .dev-card, .cols .dev-intro { max-width: none; }
+@media (min-width: 1100px) {
+  .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 
 /* Drive cards, as in This PC */
 .drives { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
@@ -989,8 +1036,10 @@ button.dev-item.game-install { width: 100%; text-align: left; font: inherit; col
 /* On the History tab the bar sits right under its heading. */
 #done > .history-bar { padding-top: 0; }
 .history-bar .auto-text { flex: 1 1 260px; }
-.done-row { display: flex; gap: 10px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.done-when { flex: none; min-width: 9.5em; font-variant-numeric: tabular-nums; }
+/* A row: when, then what, which wraps beside the time rather than under it in a narrow column. */
+.done-row { padding: 6px 0 6px 124px; text-indent: -124px; border-bottom: 1px solid var(--line); }
+.done-row > * { text-indent: 0; margin-right: 8px; }
+.done-when { display: inline-block; width: 116px; font-variant-numeric: tabular-nums; }
 #done .more { margin-top: 8px; }
 .hotspots:has(> .empty-state) { border: 0; }
 .hotspots > .empty-state { margin-top: 0; }

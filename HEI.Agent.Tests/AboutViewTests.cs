@@ -67,10 +67,12 @@ public sealed class AboutViewTests {
 		Assert.DoesNotContain("licence", aboutCard);
 		Assert.DoesNotContain("toggleSwitch(", aboutCard);
 		Assert.Contains("saveSettings({ autoUpdate: on })", updatesCard);
-		Assert.Contains("saveSettings({ manorCard: on })", updatesCard);
+		// The Castellan card's switch went with its Not now, when the card moved into About (ManorCardTests).
+		Assert.DoesNotContain("manorCard", updatesCard);
 		Assert.Contains("renderUpdatesCard(s);", Function(script, "renderSettings"));
 		string renderAbout = Function(script, "renderAbout");
 		Assert.Contains("renderAboutCard(s);", renderAbout);
+		Assert.Contains("renderManorCard(s.manorCard);", renderAbout);
 		Assert.Contains("renderWhereCard(s);", renderAbout);
 		Assert.Contains("if (h === '#/about') return { view: 'about' };", script);
 	}

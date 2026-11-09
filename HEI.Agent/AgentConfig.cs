@@ -255,11 +255,6 @@ namespace HEI.Agent {
 		/// <summary>A Windows notification when a scan finds something new.</summary>
 		public bool Toast { get; set; } = true;
 		/// <summary>
-		/// The home page's Castellan card, while Manor isn't installed (<see cref="HEI.Agent.ManorCard"/>): what Manor adds,
-		/// with a link. Its "Not now" turns this off for good; the switch in Settings turns it on again.
-		/// </summary>
-		public bool ManorCard { get; set; } = true;
-		/// <summary>
 		/// Update by itself: once a day the copy installed from GitHub looks for a newer release there, and installs it while
 		/// no scan runs, keeping these settings (<see cref="SelfUpdate"/>). The Store version is updated by the Store, and one
 		/// Manor employs by Manor, whatever this says.

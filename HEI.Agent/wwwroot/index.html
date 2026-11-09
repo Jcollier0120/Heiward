@@ -8,6 +8,7 @@
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/app.css">
+  <script src="/trail.js" defer></script>
   <script src="/app.js" defer></script>
   <script src="/tour.js" defer></script>
 </head>
@@ -19,7 +20,7 @@
         <path class="bm-front" d="M8.2 16.2c-.4-4.9 2.6-8.2 7.6-8.4.3 5-2.9 8.2-7.6 8.4z"/>
         <path class="bm-vein" d="M8.2 16.2 13 11.4"/>
       </svg>
-      <span>Heiward</span>
+      <span>Home</span>
     </a>
     <div class="scanstate" data-tour="controls">
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
@@ -81,8 +82,9 @@
 
   <main id="home" class="view home">
     <!-- As every staff page is laid out (the owner's wide-screen design, 2026-10-31): the tiles first, each the answer
-         to one question and opening its tab; then the tabs, at every width, with two parts side by side (5:7) in each
-         from 1100 px, one above the other in a narrower window (app.js, renderHome and showTab). -->
+         to one question and opening its tab; then the tabs, at every width, with two parts side by side in each from
+         1100 px, one above the other in a narrower window (app.js, renderHome and showTab). A tab with nothing in it
+         yet (no scan, no history) says so once, across the tab (app.js, emptyTab). -->
     <!-- While a scan runs: which step it's on and how far (app.js, renderScanStatus). -->
     <section class="scan-status hidden" id="scan-status" role="status" aria-live="polite"></section>
 
@@ -96,123 +98,148 @@
       <button class="tab" role="tab" id="tab-history" data-tab="history" aria-controls="panel-history">History</button>
     </div>
 
-    <div class="tab-panel pair" id="panel-drives" role="tabpanel" aria-labelledby="tab-drives">
-      <section data-tour="drives">
-        <h2>Devices and drives</h2>
-        <div class="drives" id="drives"></div>
-      </section>
-      <section>
-        <h2>At a glance</h2>
-        <div class="glance hidden" id="glance"></div>
-      </section>
-    </div>
+    <!-- The preview's second layout, the page before the tabs (?one-page): no tabs, every part on the page in two
+         columns, the drives on the left, the duplicates and the history on the right (app.css, .one-page). -->
+    <div class="home-cols">
+      <div class="home-col">
+        <div class="tab-panel pair pair-drives" id="panel-drives" role="tabpanel" aria-labelledby="tab-drives">
+          <section data-tour="drives">
+            <h2>Devices and drives</h2>
+            <div class="drives" id="drives"></div>
+          </section>
+          <section>
+            <h2>At a glance</h2>
+            <div class="glance hidden" id="glance"></div>
+          </section>
+        </div>
 
-    <div class="tab-panel pair" id="panel-copies" role="tabpanel" aria-labelledby="tab-copies" hidden>
-      <section>
-        <h2>Photos and videos by type</h2>
-        <div class="glance" id="types"></div>
-      </section>
-      <section id="hotspots-section" data-tour="hotspots">
-        <h2>Where the duplicates are</h2>
-        <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
-        <div class="hotspots" id="hotspots"></div>
-      </section>
-    </div>
+        <div class="tab-panel pair" id="panel-dev" role="tabpanel" aria-labelledby="tab-dev" hidden>
+          <section id="dev-section" class="hidden" data-tour="dev">
+            <h2>Developer area</h2>
+            <div id="dev-card"></div>
+          </section>
+          <section>
+            <h2>What tools can recreate</h2>
+            <div class="glance" id="dev-kinds"></div>
+          </section>
+        </div>
 
-    <div class="tab-panel pair" id="panel-dev" role="tabpanel" aria-labelledby="tab-dev" hidden>
-      <section id="dev-section" class="hidden" data-tour="dev">
-        <h2>Developer area</h2>
-        <div id="dev-card"></div>
-      </section>
-      <section>
-        <h2>What tools can recreate</h2>
-        <div class="glance" id="dev-kinds"></div>
-      </section>
-    </div>
+        <!-- Game mode: the Games area's card (app.js, renderGamesCard). -->
+        <div class="tab-panel pair" id="panel-games" role="tabpanel" aria-labelledby="tab-games" hidden>
+          <section id="games-section" class="hidden" data-tour="games">
+            <h2>Games</h2>
+            <div id="games-card"></div>
+          </section>
+          <section>
+            <h2>What games leave behind</h2>
+            <div class="glance" id="game-kinds"></div>
+          </section>
+        </div>
+      </div>
 
-    <!-- Game mode: the Games area's card (app.js, renderGamesCard). -->
-    <div class="tab-panel pair" id="panel-games" role="tabpanel" aria-labelledby="tab-games" hidden>
-      <section id="games-section" class="hidden" data-tour="games">
-        <h2>Games</h2>
-        <div id="games-card"></div>
-      </section>
-      <section>
-        <h2>What games leave behind</h2>
-        <div class="glance" id="game-kinds"></div>
-      </section>
-    </div>
+      <div class="home-col">
+        <div class="tab-panel pair" id="panel-copies" role="tabpanel" aria-labelledby="tab-copies" data-tour="hotspots" hidden>
+          <div class="empty-panel hidden" id="copies-empty"></div>
+          <section>
+            <h2>Photos and videos by type</h2>
+            <div class="glance" id="types"></div>
+          </section>
+          <section id="hotspots-section">
+            <h2>Where the duplicates are</h2>
+            <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
+            <div class="hotspots" id="hotspots"></div>
+          </section>
+        </div>
 
-    <div class="tab-panel pair" id="panel-history" role="tabpanel" aria-labelledby="tab-history" hidden>
-      <section>
-        <h2>Freed</h2>
-        <div class="glance" id="freed"></div>
-      </section>
-      <section class="history" id="history" data-tour="history">
-        <h2>What was cleaned up or kept</h2>
-        <div id="done"></div>
-      </section>
+        <div class="tab-panel pair" id="panel-history" role="tabpanel" aria-labelledby="tab-history" data-tour="history" hidden>
+          <div class="empty-panel hidden" id="history-empty"></div>
+          <section>
+            <h2>Freed</h2>
+            <div class="glance" id="freed"></div>
+          </section>
+          <section class="history" id="history">
+            <h2>What was cleaned up or kept</h2>
+            <div id="done"></div>
+          </section>
+        </div>
+      </div>
     </div>
-
-    <!-- Without Manor: a few lines on what it adds, last on the page, until "Not now" (app.js, renderManorCard). -->
-    <section id="manor-card-section" class="hidden" aria-labelledby="manor-card-title">
-      <h2 id="manor-card-title">Castellan</h2>
-      <div id="manor-card"></div>
-    </section>
 
     <footer class="muted small" id="footer"></footer>
   </main>
 
+  <!-- Two columns from 1100 px: scanning and cleaning up on the left, the modes and the rest on the right; one column,
+       in the same order, in a narrower window. -->
   <main id="settingsview" class="view home settings hidden">
-    <section>
-      <h2>Scanning</h2>
-      <div id="scan-card"></div>
-    </section>
+    <div class="cols">
+      <div class="col">
+        <section>
+          <h2>Scanning</h2>
+          <div id="scan-card"></div>
+        </section>
 
-    <section>
-      <h2>Automatic cleanup</h2>
-      <div id="auto-card"></div>
-    </section>
+        <section>
+          <h2>Automatic cleanup</h2>
+          <div id="auto-card"></div>
+        </section>
 
-    <section>
-      <h2>History</h2>
-      <div id="history-card"></div>
-    </section>
+        <section>
+          <h2>History</h2>
+          <div id="history-card"></div>
+        </section>
+      </div>
 
-    <section>
-      <h2>Game mode</h2>
-      <div id="gamemode-card"></div>
-    </section>
+      <div class="col">
+        <section>
+          <h2>Game mode</h2>
+          <div id="gamemode-card"></div>
+        </section>
 
-    <!-- Hidden under Manor while its Developer options are off (app.js, renderDevModeCard). -->
-    <section id="devmode-section">
-      <h2>Developer mode</h2>
-      <div id="devmode-card"></div>
-    </section>
+        <!-- Hidden under Manor while its Developer options are off (app.js, renderDevModeCard). -->
+        <section id="devmode-section">
+          <h2>Developer mode</h2>
+          <div id="devmode-card"></div>
+        </section>
 
-    <section>
-      <h2>Everything else</h2>
-      <div id="more-card"></div>
-    </section>
+        <section>
+          <h2>Everything else</h2>
+          <div id="more-card"></div>
+        </section>
 
-    <!-- Updating by itself and the "In a manor" card; hidden when neither is there (app.js, renderUpdatesCard). -->
-    <section id="updates-section">
-      <h2>Updates</h2>
-      <div id="updates-card"></div>
-    </section>
+        <!-- Updating by itself, for the copy from GitHub; hidden when something else updates it (app.js, renderUpdatesCard). -->
+        <section id="updates-section">
+          <h2>Updates</h2>
+          <div id="updates-card"></div>
+        </section>
+      </div>
+    </div>
   </main>
 
-  <!-- What's read once, behind the About button beside Settings, as on Manor's and every kit agent's page (the Steward's kit 2.48.0). -->
+  <!-- What's read once, behind the About button beside Settings, as on Manor's and every kit agent's page (the Steward's kit 2.48.0).
+       Two columns from 1100 px, as Settings has. -->
   <main id="aboutview" class="view home settings hidden">
-    <section>
-      <h2>About Heiward</h2>
-      <div id="about-card"></div>
-    </section>
+    <div class="cols">
+      <div class="col">
+        <section>
+          <h2>About Heiward</h2>
+          <div id="about-card"></div>
+        </section>
 
-    <!-- Last, as on every kit agent's About view. -->
-    <section>
-      <h2>Where its work runs</h2>
-      <div id="where-card"></div>
-    </section>
+        <!-- Without Manor: a few lines on what Castellan adds, with its prices and its site (app.js, renderManorCard). -->
+        <section id="manor-card-section" class="hidden" aria-labelledby="manor-card-title">
+          <h2 id="manor-card-title">Castellan</h2>
+          <div id="manor-card"></div>
+        </section>
+      </div>
+
+      <!-- Last, as on every kit agent's About view. -->
+      <div class="col">
+        <section>
+          <h2>Where its work runs</h2>
+          <div id="where-card"></div>
+        </section>
+      </div>
+    </div>
   </main>
 
   <main id="devview" class="view split hidden">

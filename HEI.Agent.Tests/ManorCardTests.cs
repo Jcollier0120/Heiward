@@ -22,10 +22,11 @@ using System.Text.Json;
 namespace HEI.Agent.Tests;
 
 /// <summary>
-/// The home page's Castellan card: shown without Manor, until its Not now hides it for good (settings.json's
-/// manorCard, which Settings turns on again); never with Manor installed. Nothing here reads the real Manor's settings or
-/// Heiward's, and nothing asks Castellan's site. The card is launched (ManorCard.Launched): ShowBeforeLaunch is set
-/// anyway, so these tests keep running should it be held back again, apart from those that check the shipped default.
+/// About's Castellan card: shown without Manor, never with Manor installed. It was last on the home page, with a Not
+/// now that hid it for good (settings.json's manorCard), until the owner moved it into About (2026-11-09): About is
+/// opened on purpose, so it has no Not now and no setting. Nothing here reads the real Manor's settings or Heiward's,
+/// and nothing asks Castellan's site. The card is launched (ManorCard.Launched): ShowBeforeLaunch is set anyway, so
+/// these tests keep running should it be held back again, apart from those that check the shipped default.
 /// </summary>
 [Collection(AgentHomeCollection.Name)] // MANOR_HOME and HEIWARD_HOME are process-wide
 public sealed class ManorCardTests : IDisposable {
@@ -40,7 +41,7 @@ public sealed class ManorCardTests : IDisposable {
 		Directory.CreateDirectory(home);
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", home);
 		Environment.SetEnvironmentVariable("MANOR_HOME", manor); // nothing there until a test installs it: no Manor
-		ManorCard.ShowBeforeLaunch = true; // the card as it'll be at launch; "Before launch" tests the shipped default
+		ManorCard.ShowBeforeLaunch = true; // the card as it'll be at launch; "As shipped" tests the shipped default
 	}
 
 	public void Dispose() {
@@ -63,43 +64,59 @@ public sealed class ManorCardTests : IDisposable {
 	public void TheShippedDefault_ShowsTheCard_WithNoManorInstalled() {
 		ManorCard.ShowBeforeLaunch = false;
 		Assert.True(ManorCard.Launched);
-		Assert.Equal(new ManorCard(true, "https://castellan-software.com"), ManorCard.For(new AgentConfig(), null));
-		Assert.Null(ManorCard.For(new AgentConfig(), TheHall));
+		Assert.Equal(new ManorCard("https://castellan-software.com"), ManorCard.For(null));
+		Assert.Null(ManorCard.For(TheHall));
 	}
 
 	[Fact]
 	public async Task ThePage_ShowsTheCard_AsShipped() {
 		ManorCard.ShowBeforeLaunch = false;
 		await using Page page = await Page.StartAsync(new AgentConfig());
-		Assert.Equal((true, "https://castellan-software.com"), await page.CardAsync());
+		Assert.Equal("https://castellan-software.com", await page.CardAsync());
+	}
+
+	// ---- What it says
+
+	/// <summary>renderManorCard, from its first line to the next function.</summary>
+	static string Render() {
+		string script = Asset("app.js");
+		int start = script.IndexOf("function renderManorCard(", StringComparison.Ordinal);
+		Assert.True(start > 0);
+		return script[start..script.IndexOf("\nfunction ", start + 1, StringComparison.Ordinal)];
 	}
 
 	[Fact]
-	public void TheCard_NamesCastellan() {
-		string script = Asset("app.js");
-		int start = script.IndexOf("function renderManorCard(", StringComparison.Ordinal);
-		string render = script[start..script.IndexOf("\nfunction ", start + 1, StringComparison.Ordinal)];
+	public void TheCard_NamesCastellan_AndSaysStaff() {
+		string render = Render();
 		Assert.Contains("Castellan is the house they share", render);
 		Assert.Contains("See Castellan", render);
+		Assert.Contains("Try all the staff free for 7 days, with no card.", render);
+		Assert.Contains("Heiward stays free, and works the same without it.", render);
+		Assert.DoesNotContain("agent", render, StringComparison.OrdinalIgnoreCase);
 		Assert.DoesNotContain("Manor", render.Replace("renderManorCard", "").Replace("MANOR_STAFF", "").Replace("manor-card", ""));
 		Assert.Contains("<h2 id=\"manor-card-title\">Castellan</h2>", Asset("index.html"));
+	}
+
+	[Fact]
+	public void TheCard_GivesTheHouseholdPlansPrices_AndTheOfferOnlyUntilItEnds() {
+		string render = Render();
+		// castellan-software.com/pricing: the Household plan is $4 a month or $36 a year; 25% off ($3, $27) for whoever
+		// subscribes by December 11, 2026.
+		Assert.Contains("the Household plan is $4 a month, or $36 a year (3 months free).", render);
+		Assert.Contains("Until December 11, 2026, it\\'s 25% off: $3 a month, or $27 a year.", render);
+		Assert.Contains("Date.now() <= CASTELLAN_OFFER_ENDS.getTime()", render);
+		Assert.Contains("const CASTELLAN_OFFER_ENDS = new Date(2026, 11, 11, 23, 59, 59);", Asset("app.js"));
+		Assert.Contains("Stop paying and keep what you have", render);
 	}
 
 	// ---- Who sees it (as at launch)
 
 	[Fact]
 	public void WithoutManor_TheCardShows_WithTheSitesLink() =>
-		Assert.Equal(new ManorCard(true, ManorCard.ManorSiteUrl), ManorCard.For(new AgentConfig(), null));
+		Assert.Equal(new ManorCard(ManorCard.ManorSiteUrl), ManorCard.For(null));
 
 	[Fact]
-	public void WithManor_ThereIsNoCard_AndNoSwitch() {
-		Assert.Null(ManorCard.For(new AgentConfig(), TheHall));
-		Assert.Null(ManorCard.For(new AgentConfig { ManorCard = false }, TheHall));
-	}
-
-	[Fact]
-	public void AfterNotNow_TheCardStaysHidden_ButItsSwitchIsThere() =>
-		Assert.Equal(new ManorCard(false, ManorCard.ManorSiteUrl), ManorCard.For(new AgentConfig { ManorCard = false }, null));
+	public void WithManor_ThereIsNoCard() => Assert.Null(ManorCard.For(TheHall));
 
 	[Fact]
 	public void TheSite_IsOneHttpsAddress() {
@@ -110,13 +127,13 @@ public sealed class ManorCardTests : IDisposable {
 	// ---- settings.json
 
 	[Fact]
-	public void SettingsFromBefore_ShowTheCard() => Assert.True(AgentConfig.FromJson("{\"keepHistory\":true}").ManorCard);
-
-	[Fact]
-	public void NotNow_IsKeptInSettings() {
-		new AgentConfig { ManorCard = false }.Save();
-		Assert.Contains("\"manorCard\": false", File.ReadAllText(AgentPaths.Config));
-		Assert.False(AgentConfig.Load().ManorCard);
+	public void AnOldNotNow_IsLeftBehind_AndTheCardStillShows() {
+		// Settings from before, with the home page card's Not now in them: read as ever, the key gone on the next save.
+		AgentConfig cfg = AgentConfig.FromJson("{\"keepHistory\": false, \"manorCard\": false}");
+		Assert.False(cfg.KeepHistory);
+		cfg.Save();
+		Assert.DoesNotContain("manorCard", File.ReadAllText(AgentPaths.Config));
+		Assert.NotNull(ManorCard.For(null));
 	}
 
 	// ---- The page
@@ -127,23 +144,40 @@ public sealed class ManorCardTests : IDisposable {
 	}
 
 	[Fact]
-	public void TheCard_IsLastOnTheHomePage_BelowTheDrives() {
+	public void TheCard_IsInAbout_NotOnTheHomePage() {
 		string page = Asset("index.html");
 		int card = page.IndexOf("id=\"manor-card-section\"", StringComparison.Ordinal);
-		Assert.True(card > 0);
-		foreach (string before in new[] { "id=\"drives\"", "id=\"dev-section\"", "id=\"hotspots-section\"", "id=\"history\"" })
-			Assert.True(page.IndexOf(before, StringComparison.Ordinal) is int at && at > 0 && at < card, before + " comes first");
-		Assert.True(card < page.IndexOf("id=\"footer\"", StringComparison.Ordinal));
+		int about = page.IndexOf("<main id=\"aboutview\"", StringComparison.Ordinal);
+		Assert.True(about > 0 && card > about && card < page.IndexOf("</main>", about, StringComparison.Ordinal), "the card is in About");
+		// After About Heiward, before Where its work runs, which is last as on every kit agent's About.
+		Assert.True(page.IndexOf("id=\"about-card\"", StringComparison.Ordinal) < card);
+		Assert.True(card < page.IndexOf("id=\"where-card\"", StringComparison.Ordinal));
 		// Hidden until the page's poll says to show it, so it never shows with Manor installed.
 		Assert.Contains("<section id=\"manor-card-section\" class=\"hidden\"", page);
+		// About draws it; the home page no longer does.
+		string script = Asset("app.js");
+		int home = script.IndexOf("function renderHome(", StringComparison.Ordinal);
+		Assert.DoesNotContain("renderManorCard", script[home..script.IndexOf("\nfunction kindRows(", home, StringComparison.Ordinal)]);
+		int render = script.IndexOf("function renderAbout(", StringComparison.Ordinal);
+		Assert.Contains("renderManorCard(s.manorCard);", script[render..script.IndexOf("\nconst outLink", render, StringComparison.Ordinal)]);
+	}
+
+	[Fact]
+	public void TheCard_HasNoNotNow_AndSettingsNoSwitchForIt() {
+		string render = Render();
+		Assert.DoesNotContain("Not now", render);
+		Assert.DoesNotContain("manorCard", render);
+		string script = Asset("app.js");
+		int start = script.IndexOf("function renderUpdatesCard(", StringComparison.Ordinal);
+		string updates = script[start..script.IndexOf("\nfunction ", start + 1, StringComparison.Ordinal)];
+		Assert.DoesNotContain("Castellan", updates);
+		Assert.DoesNotContain("manorCard", updates);
 	}
 
 	[Fact]
 	public void TheCard_IsTextInThePage_WithNothingFetched() {
 		string script = Asset("app.js");
-		int start = script.IndexOf("function renderManorCard(", StringComparison.Ordinal);
-		Assert.True(start > 0);
-		string render = script[start..script.IndexOf("\nfunction ", start + 1, StringComparison.Ordinal)];
+		string render = Render();
 		Assert.DoesNotContain("fetch(", render);
 		Assert.DoesNotContain("<img", render);
 		// The site's address comes from the page's poll (ManorCard.ManorSiteUrl), never written into the page.
@@ -180,11 +214,11 @@ public sealed class ManorCardTests : IDisposable {
 			return answer.StatusCode;
 		}
 
-		/// <summary>The page's poll: its Castellan card, null when there's none.</summary>
-		public async Task<(bool Show, string Url)?> CardAsync() {
+		/// <summary>The page's poll: its Castellan card's link, null when there's no card.</summary>
+		public async Task<string?> CardAsync() {
 			using var state = JsonDocument.Parse(await http.GetStringAsync("/api/state"));
 			JsonElement card = state.RootElement.GetProperty("manorCard");
-			return card.ValueKind == JsonValueKind.Null ? null : (card.GetProperty("show").GetBoolean(), card.GetProperty("url").GetString()!);
+			return card.ValueKind == JsonValueKind.Null ? null : card.GetProperty("url").GetString();
 		}
 
 		public async ValueTask DisposeAsync() {
@@ -195,39 +229,21 @@ public sealed class ManorCardTests : IDisposable {
 	}
 
 	[Fact]
-	public async Task ThePage_ShowsTheCardWithoutManor_HidesItAfterNotNow_AndNeverWithManor() {
+	public async Task ThePage_ShowsTheCardWithoutManor_AndNeverWithManor() {
 		await using Page page = await Page.StartAsync(new AgentConfig());
-		Assert.Equal((true, ManorCard.ManorSiteUrl), await page.CardAsync());
+		Assert.Equal(ManorCard.ManorSiteUrl, await page.CardAsync());
 
-		// Not now: hidden, and kept in settings.json.
+		// An older page's Not now changes nothing now: there's no such setting.
 		Assert.Equal(HttpStatusCode.OK, await page.PostAsync("/api/settings", new { manorCard = false }));
-		Assert.False(AgentConfig.Load().ManorCard);
-		Assert.Equal((false, ManorCard.ManorSiteUrl), await page.CardAsync());
+		Assert.DoesNotContain("manorCard", File.ReadAllText(AgentPaths.Config));
+		Assert.Equal(ManorCard.ManorSiteUrl, await page.CardAsync());
 
-		// The page's other settings leave it as it is.
-		Assert.Equal(HttpStatusCode.OK, await page.PostAsync("/api/settings", new { keepHistory = false }));
-		Assert.False(AgentConfig.Load().ManorCard);
-
-		// Settings' switch brings it back.
-		Assert.Equal(HttpStatusCode.OK, await page.PostAsync("/api/settings", new { manorCard = true }));
-		Assert.True(AgentConfig.Load().ManorCard);
-		Assert.Equal((true, ManorCard.ManorSiteUrl), await page.CardAsync());
-
-		// With Manor installed: no card and no switch, whatever the setting, from the next poll.
+		// With Manor installed: no card, from the next poll.
 		InstallManor();
 		Assert.Null(await page.CardAsync());
-		Assert.True(AgentConfig.Load().ManorCard); // Manor never writes to Heiward's own
 
-		// Manor gone: the card again, as the setting says.
+		// Manor gone: the card again.
 		Directory.Delete(Path.Combine(manor, "app"), true);
-		Assert.Equal((true, ManorCard.ManorSiteUrl), await page.CardAsync());
-	}
-
-	[Fact]
-	public async Task ThePage_RemembersNotNow_FromOneStartToTheNext() {
-		await using (Page first = await Page.StartAsync(new AgentConfig()))
-			Assert.Equal(HttpStatusCode.OK, await first.PostAsync("/api/settings", new { manorCard = false }));
-		await using Page again = await Page.StartAsync(AgentConfig.Load());
-		Assert.Equal((false, ManorCard.ManorSiteUrl), await again.CardAsync());
+		Assert.Equal(ManorCard.ManorSiteUrl, await page.CardAsync());
 	}
 }
