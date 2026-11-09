@@ -145,7 +145,7 @@ public sealed class RunTimesTests : IDisposable {
 		// As Results.Json writes it: the web defaults.
 		using var doc = JsonDocument.Parse(JsonSerializer.Serialize(ReviewServer.Ping(cfg), new JsonSerializerOptions(JsonSerializerDefaults.Web)));
 		JsonElement root = doc.RootElement;
-		Assert.Equal(new[] { "app", "store", "exe", "running", "stoppedSince", "summary", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "uninstallPage", "pictures", "needsYou" },
+		Assert.Equal(new[] { "app", "store", "exe", "account", "running", "stoppedSince", "summary", "lastRunAt", "lastRunOk", "nextRunAt", "runningSince", "firstRound", "tour", "uninstallPage", "pictures", "needsYou" },
 			root.EnumerateObject().Select(p => p.Name));
 		// As hei status --json says them, so Manor needn't run it every round: on duty, never stopped (null, but there), and in a sentence.
 		Assert.True(root.GetProperty("running").GetBoolean());

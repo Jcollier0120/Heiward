@@ -391,19 +391,31 @@ namespace HEI.Agent {
 			return times.Count > 0 ? times.Max() : DateTime.MinValue;
 		}
 
-		/// <summary>The repository's git folder: .git itself, or where a worktree's .git file points.</summary>
+		/// <summary>
+		/// The repository's git folder: .git itself, or where a worktree's .git file points. Never one on another computer
+		/// (<see cref="OnAnotherComputer"/>): reading it would send Windows' sign-in there.
+		/// </summary>
 		internal static string? GitDirOf(string repo) {
 			string dotGit = Path.Combine(repo, ".git");
 			if (Directory.Exists(dotGit)) return dotGit;
 			try {
 				if (File.Exists(dotGit) && File.ReadAllText(dotGit).Trim() is { } text && text.StartsWith("gitdir:", StringComparison.Ordinal)) {
 					string target = text["gitdir:".Length..].Trim();
-					return Path.GetFullPath(Path.IsPathRooted(target) ? target : Path.Combine(repo, target));
+					if (OnAnotherComputer(target)) return null;
+					string full = Path.GetFullPath(Path.IsPathRooted(target) ? target : Path.Combine(repo, target));
+					return OnAnotherComputer(full) ? null : full;
 				}
 			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { }
 			return null;
 		}
+
+		/// <summary>
+		/// A path on another computer (\\server\share, //server/share), or a device path (\\?\, \\.\): what a repository's
+		/// records may name, and Heiward never goes to, as Windows would send your sign-in to that computer.
+		/// </summary>
+		internal static bool OnAnotherComputer(string path) => path.StartsWith(@"\\", StringComparison.Ordinal) || path.StartsWith("//", StringComparison.Ordinal)
+			|| path.StartsWith(@"\/", StringComparison.Ordinal) || path.StartsWith(@"/\", StringComparison.Ordinal);
 
 		// ------------------------------------------------------------------ worktrees
 
@@ -420,6 +432,7 @@ namespace HEI.Agent {
 				string branch = BranchOf(w) ?? "detached";
 				// In use first: it says what to close, where the others say why it stays for good.
 				string? blocked = File.Exists(Path.Combine(w, "locked")) ? "Locked in git"
+					: Git.Refusal(path) is { } refused ? refused // git isn't run there: nothing says what it holds
 					: use.Why(path) is { } busy ? busy
 					: ToolHome(path, resting) is { } tool ? $"Kept for the tool that made it ({tool})"
 					: AScheduledTaskUses(path, resting) ? "A scheduled task uses it"
@@ -631,12 +644,18 @@ namespace HEI.Agent {
 			catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception) { return ""; }
 		});
 
-		static string? WorktreePath(string worktreeMeta) {
+		/// <summary>
+		/// The folder a worktree record (.git\worktrees\&lt;id&gt;) names; null when it can't be read, or names one on another
+		/// computer (<see cref="OnAnotherComputer"/>): that record is ignored, as looking would send Windows' sign-in there.
+		/// </summary>
+		internal static string? WorktreePath(string worktreeMeta) {
 			try {
 				string gitdir = File.ReadAllText(Path.Combine(worktreeMeta, "gitdir")).Trim(); // <worktree>\.git
-				return Path.GetDirectoryName(Path.GetFullPath(gitdir));
+				if (OnAnotherComputer(gitdir)) return null;
+				string? folder = Path.GetDirectoryName(Path.GetFullPath(gitdir));
+				return folder == null || OnAnotherComputer(folder) ? null : folder;
 			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException) { return null; }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return null; }
 		}
 
 		internal static string? BranchOf(string gitDir) {
@@ -650,6 +669,7 @@ namespace HEI.Agent {
 		/// <summary>Why git shouldn't remove the worktree: uncommitted changes, or commits that exist nowhere else.</summary>
 		internal static string? WorktreeBlocker(string worktree) {
 			if (Git.Exe == null) return "git not found";
+			if (Git.Refusal(worktree) is { } refused) return refused;
 			var (code, status) = Git.Run(worktree, "status", "--porcelain");
 			if (code != 0) return "git couldn't read it";
 			if (status.Trim().Length > 0) return "Uncommitted changes";
@@ -716,6 +736,8 @@ namespace HEI.Agent {
 		/// (a site's data in bin\Debug). Null: it may go.
 		/// </summary>
 		internal static string? BuildOutputKeeps(string repo, string folder) {
+			// Without git's word it stays: git might keep files in it.
+			if (Git.Exe != null && Path.Exists(Path.Combine(repo, ".git")) && Git.Refusal(repo) is { } refused) return refused;
 			if (Git.Exe != null && Path.Exists(Path.Combine(repo, ".git")) && UntrackedOrIgnored(repo, new[] { folder }).Count == 0)
 				return "git keeps files in it";
 			if (Path.GetFileName(folder).ToLowerInvariant() is "node_modules" or ".venv" or "venv" or ".gradle" or ".next") return null;
@@ -1071,6 +1093,8 @@ namespace HEI.Agent {
 			if (Git.Exe == null) return null;
 			string name = System.IO.Path.GetFileName(repo.TrimEnd('\\'));
 			string id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes("branches|" + repo.ToLowerInvariant())))[..16].ToLowerInvariant();
+			// Listed with the reason, so the page says why nothing of it is checked.
+			if (Git.Refusal(repo) is { } refused) return new RepoBranches(id, name, repo, null, 0, new(), new(), refused);
 			var (rc, remotes) = Git.Run(repo, "remote");
 			var remoteList = remotes.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList();
 			if (rc != 0 || remoteList.Count == 0) return null; // no remote: nothing is "merged on the remote"
@@ -1092,6 +1116,7 @@ namespace HEI.Agent {
 		/// <param name="only">Only these of the merged branches (automatic cleanup's due ones); null for all.</param>
 		public static PruneResult Prune(string repo, IReadOnlyCollection<string>? only = null) {
 			if (Git.Exe == null) return new PruneResult(new(), new(), false, "git not found");
+			if (Git.Refusal(repo) is { } refused) return new PruneResult(new(), new(), false, refused);
 			var (_, remotes) = Git.Run(repo, "remote");
 			var remoteList = Lines(remotes);
 			if (remoteList.Count == 0) return new PruneResult(new(), new(), false, "The repository has no remote");
@@ -1217,14 +1242,33 @@ namespace HEI.Agent {
 			return File.Exists(pf) ? pf : null;
 		}
 
+		/// <summary>
+		/// What every git Heiward runs is told first, over anything a repository's own settings say (git's command line wins):
+		/// <list type="bullet">
+		/// <item>core.longpaths: Git for Windows stops at 260 characters otherwise ("Filename too long"), and a worktree's
+		/// node_modules goes deeper: removing it failed partway, after git had already let go of the worktree.</item>
+		/// <item>core.fsmonitor off: reading the index would run the program a repository names there.</item>
+		/// <item>core.hooksPath to a folder nothing makes: no hook runs (a fetch or a branch deleted runs reference-transaction).</item>
+		/// <item>the ext:: transport never: a fetch would run a command. A remote that's a folder on this PC stays fine; one on
+		/// another computer is never fetched (<see cref="Refusal"/>).</item>
+		/// </list>
+		/// </summary>
+		internal static IEnumerable<string> SafeArgs() => [
+			"-c", "core.longpaths=true", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=" + Path.Combine(AgentPaths.Home, "no-git-hooks"),
+			"-c", "protocol.ext.allow=never",
+		];
+
+		/// <summary>
+		/// Runs git in <paramref name="workingDir"/>, a repository's or a worktree's own folder, with <see cref="SafeArgs"/>; never
+		/// in one whose own settings could make git run a program or reach another computer (<see cref="Refusal"/>), which
+		/// answers -1 with the reason.
+		/// </summary>
 		public static (int Code, string Output) Run(string workingDir, params string[] args) {
 			if (Exe == null) return (-1, "");
+			if (Refusal(workingDir) is { } refused) return (-1, refused);
 			var psi = new ProcessStartInfo(Exe) { UseShellExecute = false, CreateNoWindow = HEI.Core.Utils.ChildConsole.OwnConsole, RedirectStandardOutput = true, RedirectStandardError = true };
 			psi.Environment["GIT_TERMINAL_PROMPT"] = "0"; // a fetch that needs a password fails instead of waiting forever
-			// Git for Windows stops at 260 characters otherwise ("Filename too long"), and a worktree's node_modules
-			// goes deeper: removing it failed partway, after git had already let go of the worktree.
-			psi.ArgumentList.Add("-c");
-			psi.ArgumentList.Add("core.longpaths=true");
+			foreach (string a in SafeArgs()) psi.ArgumentList.Add(a);
 			psi.ArgumentList.Add("-C");
 			psi.ArgumentList.Add(workingDir);
 			foreach (string a in args) psi.ArgumentList.Add(a);
@@ -1238,6 +1282,97 @@ namespace HEI.Agent {
 			catch (Exception e) when (e is IOException or System.ComponentModel.Win32Exception) {
 				return (-1, "");
 			}
+		}
+
+		/// <summary>
+		/// Why git isn't run in <paramref name="folder"/>, as the page says it; null when it may be. A repository's own git
+		/// settings, which come with the folder (a zip unzipped into Downloads with a .git in it), can name programs git runs
+		/// as soon as it reads the repository, and the clean filters git status runs; Heiward runs as you, so they'd run as you.
+		/// So git is run only in a folder with a .git of its own, and never where that repository's settings, or its worktree's
+		/// or a submodule's, set any of these: core.fsmonitor, core.sshCommand, core.hooksPath, core.askPass, core.gitProxy, a
+		/// filter, an include or includeIf, remote.*.uploadpack or receivepack, a credential helper, or a value on another
+		/// computer (\\server\share, where Windows would send your sign-in); nor where its .git, or its objects, are there.
+		/// </summary>
+		internal static string? Refusal(string folder) {
+			try {
+				if (!Path.Exists(Path.Combine(folder, ".git"))) return Skipped("it has no .git of its own");
+				if (DevScanner.GitDirOf(folder) is not { } gitDir) return Skipped("its .git points to another computer, or can't be read");
+				string common = gitDir;
+				string commonFile = Path.Combine(gitDir, "commondir"); // a worktree's: where its repository's own .git is
+				if (File.Exists(commonFile)) {
+					string named = File.ReadAllText(commonFile).Trim();
+					if (DevScanner.OnAnotherComputer(named)) return Skipped("its .git points to another computer");
+					common = Path.GetFullPath(Path.IsPathRooted(named) ? named : Path.Combine(gitDir, named));
+					if (DevScanner.OnAnotherComputer(common)) return Skipped("its .git points to another computer");
+				}
+				var configs = new[] { Path.Combine(common, "config"), Path.Combine(common, "config.worktree"), Path.Combine(gitDir, "config"), Path.Combine(gitDir, "config.worktree") }
+					.Concat(SubmoduleConfigs(common)).Distinct(StringComparer.OrdinalIgnoreCase);
+				foreach (string config in configs) {
+					var info = new FileInfo(config);
+					if (!info.Exists) continue;
+					if (info.Length > 1 << 20) return Skipped("its git settings are too large to read");
+					if (RiskySetting(File.ReadAllText(config)) is { } setting) return Skipped($"its git settings set {setting}, which can run a program or reach another computer");
+				}
+				string alternates = Path.Combine(common, "objects", "info", "alternates");
+				if (File.Exists(alternates) && File.ReadLines(alternates).Any(l => DevScanner.OnAnotherComputer(l.Trim())))
+					return Skipped("its objects are on another computer");
+				return null;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) {
+				return Skipped("its git settings can't be read");
+			}
+		}
+
+		static string Skipped(string why) => "Not checked with git: " + why;
+
+		/// <summary>
+		/// The settings files of a repository's submodules (.git\modules\&lt;name&gt;\config, and theirs): git status reads them
+		/// too. A name with a slash is a folder in a folder; the walk stops at a few hundred folders.
+		/// </summary>
+		static IEnumerable<string> SubmoduleConfigs(string gitDir) {
+			var queue = new Queue<(string Dir, int Depth)>();
+			queue.Enqueue((Path.Combine(gitDir, "modules"), 0));
+			for (int seen = 0; queue.Count > 0 && seen < 300; seen++) {
+				var (dir, depth) = queue.Dequeue();
+				if (depth > 8 || !Directory.Exists(dir)) continue;
+				foreach (string sub in Directory.EnumerateDirectories(dir)) {
+					if (File.Exists(Path.Combine(sub, "HEAD"))) {
+						yield return Path.Combine(sub, "config");
+						queue.Enqueue((Path.Combine(sub, "modules"), depth + 1));
+					}
+					else queue.Enqueue((sub, depth + 1));
+				}
+			}
+		}
+
+		/// <summary>Key names, whatever section they're in (a value continued on the next line can't hide one), that name a program git runs.</summary>
+		static readonly Regex RiskyKey = new(@"(?:^|\])[ \t]*(fsmonitor|sshcommand|hookspath|askpass|gitproxy|uploadpack|receivepack|helper)[ \t]*(?:=|;|#|$)",
+			RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+		/// <summary>Sections that run a program (a filter) or read settings from elsewhere (an include), however they're written: [filter "x"], [filter.x], [includeIf "…"].</summary>
+		static readonly Regex RiskySection = new(@"(?:^|\])[ \t]*\[[ \t]*(filter|includeif|include)\b", RegexOptions.Multiline | RegexOptions.CultureInvariant);
+
+		/// <summary>
+		/// A value, or a quoted section name ([url "…"] insteadOf rewrites every remote's address to it), that starts with \\, //
+		/// or file://server: a path on another computer, where Windows sends your sign-in.
+		/// </summary>
+		static readonly Regex AnotherComputer = new(@"(?:=[ \t]*""?|\[[^\]\n]*"")(?:[\\/]{2}|file://(?!/[a-z]:))", RegexOptions.CultureInvariant);
+
+		/// <summary>
+		/// The first setting in a git settings file (.git\config) that makes it unsafe to run git there (<see cref="Refusal"/>), as
+		/// git names it; null for none. Read loosely, so anything that might be one counts: a repository is left alone rather
+		/// than read wrong.
+		/// </summary>
+		internal static string? RiskySetting(string config) {
+			string text = config.Replace("\r", "").ToLowerInvariant();
+			if (RiskyKey.Match(text) is { Success: true } key) return key.Groups[1].Value switch {
+				"fsmonitor" => "core.fsmonitor", "sshcommand" => "core.sshCommand", "hookspath" => "core.hooksPath", "askpass" => "core.askPass",
+				"gitproxy" => "core.gitProxy", "helper" => "credential.helper", var other => "remote." + other,
+			};
+			if (RiskySection.Match(text) is { Success: true } section) return section.Groups[1].Value switch {
+				"filter" => "a filter", "includeif" => "includeIf", _ => "include",
+			};
+			return AnotherComputer.IsMatch(text) ? "a path on another computer" : null;
 		}
 	}
 

@@ -294,6 +294,14 @@ namespace HEI.Agent {
 		/// <summary>Repositories the user bundled into one project on the review page (each in at most one).</summary>
 		public List<DevProject> DevProjects { get; set; } = new();
 
+		/// <summary>
+		/// The servers the Developer area may sign in to with your Windows sign-in, by name ("tfs", "tfs.example.com:8080"): an
+		/// Azure DevOps Server (TFS) at work. Only these, never one a repository's remote names by itself; any other server gets
+		/// only the sign-in git keeps for it (<see cref="PullRequests"/>).
+		/// </summary>
+		public List<string> WindowsSignInHosts { get => signInHosts; set => signInHosts = value ?? new(); }
+		List<string> signInHosts = new();
+
 		/// <summary>What Heiward may clean up by itself. Off until the user turns it on (on the review page).</summary>
 		public AutoCleanConfig AutoClean { get => autoClean; set => autoClean = value ?? new(); }
 		AutoCleanConfig autoClean = new();

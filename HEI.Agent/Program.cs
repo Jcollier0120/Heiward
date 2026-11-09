@@ -567,8 +567,9 @@ static async Task<int> EnsurePageUpAsync(AgentConfig cfg, CancellationToken ct) 
 	// Castellan keeps the copy from GitHub (CastellanCopy): its page stays as it is, and the Store version's page, which
 	// says so, is on a port of its own. Should that page not answer, Castellan's copy's is the one to open.
 	if (CastellanCopy.StoreStandsAside) return await ReviewServer.EnsureAsideRunningAsync(ct) ?? cfg.Port;
-	// Both versions use the same port: a GitHub copy's page there would stand in for the Store version's own
-	// (and its setup), so the Store version stops it first.
+	// Both versions use the same port: this account's GitHub copy's page there would stand in for the Store version's own
+	// (and its setup), so the Store version stops it first. Another account's page is never this account's (PageAccount):
+	// this account's moves to a port of its own (EnsureRunningInBackground).
 	if (StorePackage.IsPackaged && await ReviewServer.IsUpAsync(cfg.Port) && !await ReviewServer.IsUpAsync(cfg.Port, fromStore: true)) {
 		Installer.StopGitHubCopy();
 		for (int i = 0; i < 20 && await ReviewServer.IsUpAsync(cfg.Port); i++) await Task.Delay(250, ct);

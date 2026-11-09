@@ -41,8 +41,16 @@ public sealed class GitExeTests {
 	[Fact]
 	public void Git_TheOneFound_Runs() {
 		if (Git.Exe == null) return; // no git on this PC
-		var (code, output) = Git.Run(AppContext.BaseDirectory, "--version");
-		Assert.Equal(0, code);
-		Assert.StartsWith("git version", output);
+		// In a repository of its own: Heiward runs git nowhere else (Git.Refusal).
+		string repo = RealTemp.Folder("hei-gitexe-");
+		Directory.CreateDirectory(Path.Combine(repo, ".git"));
+		File.WriteAllText(Path.Combine(repo, ".git", "HEAD"), "ref: refs/heads/main\n");
+		try {
+			var (code, output) = Git.Run(repo, "--version");
+			Assert.Equal(0, code);
+			Assert.StartsWith("git version", output);
+			Assert.StartsWith("Not checked with git", Git.Run(AppContext.BaseDirectory, "--version").Output);
+		}
+		finally { Directory.Delete(repo, true); }
 	}
 }

@@ -34,20 +34,20 @@ Files you choose to clean up go to the Recycle Bin, where you can still restore 
 
 ## The review page
 
-The review page runs in your browser, served by Heiward on your own PC at `127.0.0.1`. It isn't reachable from other devices on your network or from the internet, and it loads nothing from other websites. The same goes for what it tells other programs on your PC, such as the disk reading: other websites open in your browser can't read it.
+The review page runs in your browser, served by Heiward on your own PC at `127.0.0.1`. It isn't reachable from other devices on your network or from the internet, nor by the other Windows accounts on your PC (each has its own Heiward, and its own page), and it loads nothing from other websites. The same goes for what it tells other programs on your PC, such as the disk reading: other websites open in your browser can't read it.
 
 ## What Heiward downloads
 
 When it sets up, Heiward downloads the AI components it needs, and nothing else. Each one is checked against a fixed SHA-256 before use:
 - ONNX Runtime and DirectML, from Microsoft (GitHub and NuGet);
-- the NPU runtime for your chip: Qualcomm QNN, Intel OpenVINO or Windows ML, from NuGet;
+- the NPU runtime for your chip: Qualcomm QNN, Intel OpenVINO or Windows ML, from NuGet. With Windows ML (AMD's NPUs), Windows ML then downloads your chip's own NPU package itself, from Microsoft's catalog of them, and keeps it updated as Windows does: Microsoft's download, under Microsoft's privacy statement, not checked by Heiward's SHA-256s;
 - the image model (DINOv2 small), from GitHub or Hugging Face.
 
 The version from GitHub also downloads FFmpeg, from GitHub; the Store version comes with it.
 
 The version from GitHub also keeps itself up to date: once a day it asks GitHub for Heiward's newest release and, when there is one, downloads it from there and checks it against the release's SHA-256 sums. It doesn't when Castellan or the Microsoft Store updates it, or when you turn off **Update by itself** in Settings.
 
-These downloads are ordinary web requests. Like any, they show your IP address to the site that serves the file (GitHub, NuGet or Hugging Face), under that site's own privacy policy. Heiward sends nothing about you or your files with them.
+These downloads are ordinary web requests. Like any, they show your IP address to the site that serves the file (GitHub, NuGet, Hugging Face, or Microsoft for Windows ML's package), under that site's own privacy policy. Heiward sends nothing about you or your files with them.
 
 ## Pull requests, in developer mode
 
