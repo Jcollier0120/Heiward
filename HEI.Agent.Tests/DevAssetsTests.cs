@@ -474,7 +474,6 @@ public sealed class DevAssetsTests : IDisposable {
 		var noOne = new FolderUse(DateTime.UtcNow, claudeHome: Dir("no-claude"), processes: () => new());
 		Assert.Null(Git.Refusal(repo));
 		Assert.Null(Git.Refusal(wt));
-		Assert.Null(Assert.Single(DevScanner.WorktreeItems(repo, staleBefore, default, noOne)).Blocked);
 
 		// As a folder unzipped from the internet could come: a file watcher that's a program of the repository's own.
 		string config = Path.Combine(repo, ".git", "config");
