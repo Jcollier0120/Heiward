@@ -1381,7 +1381,7 @@ function renderWhereCard(s) {
     ['Files', 'Listing folders, reading files and hashing them is processor and disk work. A rescan reads only new and changed files. ' +
       'Files of the same size are hashed whole, once, to find exact copies; photos are decoded, and the sound of videos fingerprinted, on the processor.'],
     ['When it runs', when + ' ' + pace + ' While a game or anything full screen runs, scans make way.'],
-    ['Taking turns', 'On the NPU, the model takes its turn in the queue the manor\'s agents on this PC share: Heiward holds the NPU for at most 2 seconds, ' +
+    ['Taking turns', 'On the NPU, the model takes its turn in the queue the household staff on this PC share: Heiward holds the NPU for at most 2 seconds, ' +
       'then joins the back of the line, and work someone is waiting on goes first. On a graphics card it takes that card\'s turn the same way.'],
     ['Why the processor and graphics come and go', 'A scan comes in bursts: the folders, then decoding and comparing what\'s new, then hashing, and between ' +
       'scans Heiward does nothing. The graphics chip is busy only while it decodes videos or runs the model, the NPU in short turns. ' +
