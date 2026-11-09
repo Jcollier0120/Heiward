@@ -196,11 +196,11 @@ public static class Cli {
 		if (status == "CommitFailed") {
 			IReadOnlyList<string> problems = Submission.ProblemsOf(details);
 			string why = problems.Count > 0 ? ": " + string.Join("; ", problems) : "";
-			gh.Error($"Partner Center couldn't commit {release}'s submission{why}. The next scheduled run sends the newest release in its place.");
+			gh.Error($"Partner Center couldn't commit {release}'s submission{why}. {Rules.NextRunCapital} sends the newest release in its place.");
 			return 1;
 		}
 		if (status == "CommitStarted") {
-			gh.Warning($"{release}'s submission was still being committed after {CommitWait.TotalMinutes:0} minutes. Partner Center carries on with it; the next scheduled run looks at it again.");
+			gh.Warning($"{release}'s submission was still being committed after {CommitWait.TotalMinutes:0} minutes. Partner Center carries on with it; {Rules.NextRun} looks at it again.");
 			return 0;
 		}
 		gh.Notice($"{release} is with the Microsoft Store for certification ({status}). The Store publishes it once it passes, and Windows updates the installed copies.");
@@ -220,7 +220,7 @@ public static class Cli {
 			return 0;
 		}
 		await store.DeleteSubmission(id, ct);
-		gh.Warning($"This run's unfinished submission ({submission.Describe()}) was deleted from Partner Center, so it doesn't hold the next release back. The next scheduled run tries again.");
+		gh.Warning($"This run's unfinished submission ({submission.Describe()}) was deleted from Partner Center, so it doesn't hold the next release back. {Rules.NextRunCapital} tries again.");
 		return 0;
 	}
 

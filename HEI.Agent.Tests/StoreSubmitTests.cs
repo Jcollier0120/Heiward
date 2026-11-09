@@ -100,7 +100,7 @@ public sealed class StoreSubmitTests : IDisposable {
 		Assert.Equal(Verdict.Hold, d.Verdict);
 		Assert.False(d.Warn);
 		Assert.StartsWith("Heiward 1.9.137 waits: Heiward 1.9.135 is " + words + " in the Microsoft Store.", d.Message);
-		Assert.Contains("the next scheduled run sends the newest release", d.Message);
+		Assert.Contains("the next Friday run sends the newest release", d.Message);
 	}
 
 	[Fact]
@@ -569,10 +569,19 @@ public sealed class StoreSubmitTests : IDisposable {
 	// ---- The workflow ----
 
 	[Fact]
-	public void TheWorkflow_CatchesUpOnASchedule_OneRunAtATime_AndKeepsTheSecretsInTheEnvironment() {
+	public void TheWorkflow_SendsOnFridaysAt10NewYorkTime_OneRunAtATime_AndKeepsTheSecretsInTheEnvironment() {
 		string yml = File.ReadAllText(Path.Combine(Repo(), ".github", "workflows", "store.yml")).ReplaceLineEndings("\n");
-		Assert.Matches(new Regex(@"^  schedule:\n    - cron: ", RegexOptions.Multiline), yml);
-		Assert.Matches(new Regex(@"^concurrency:\n  group: store\n  cancel-in-progress: false$", RegexOptions.Multiline), yml);
+		// One schedule, kept at 10:00 in New York through daylight saving time by GitHub's timezone key (cron alone is UTC).
+		Assert.Matches(new Regex(@"^  schedule:\n    - cron: '0 10 \* \* 5'\n      timezone: 'America/New_York'\n  workflow_dispatch:", RegexOptions.Multiline), yml);
+		// Friday's run and runs by hand queue in one group; a release's run, which only builds, is kept out of it, so a
+		// release can't cancel Friday's run waiting there.
+		Assert.Matches(new Regex(@"^concurrency:\n  group: \$\{\{ github\.event_name == 'release' && format\('store-build-\{0\}', github\.run_id\) \|\| 'store' \}\}\n  cancel-in-progress: false$", RegexOptions.Multiline), yml);
+		// A release sends nothing: its run stops before Partner Center, and the submit job won't run for one anyway.
+		int release = yml.IndexOf("if [[ \"$EVENT\" == \"release\" ]]; then", StringComparison.Ordinal);
+		int ready = yml.IndexOf("echo \"ready=true\"", StringComparison.Ordinal);
+		Assert.InRange(release, 0, ready);
+		Assert.Contains("exit 0", yml[release..ready]);
+		Assert.Contains("  submit:\n    needs: [check, build]\n    if: github.event_name != 'release' && needs.check.outputs.submit == 'true'\n", yml);
 		// A secret reaches a step only through its env, never written into a script, where a log or a quote could show it.
 		var secretLine = new Regex(@"^\s+[A-Z_]+: \$\{\{ secrets\.PARTNER_CENTER_(TENANT_ID|CLIENT_ID|CLIENT_SECRET|SELLER_ID) \}\}$");
 		string[] uses = yml.Split('\n').Where(l => l.Contains("secrets.", StringComparison.Ordinal) && !l.Contains("secrets.GITHUB_TOKEN", StringComparison.Ordinal)).ToArray();

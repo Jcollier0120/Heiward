@@ -1,29 +1,32 @@
 name: Microsoft Store
 
-# Heiward's Store package, built by HEI.Agent/store.ps1 for every release of Heiward (a v1.x tag whose version is
-# VersionPrefix in HEI.Agent/HEI.Agent.csproj), and kept as the run's artifact. docs/STORE.md, "Releasing from CI".
+# Heiward's Store package, built by HEI.Agent/store.ps1. docs/STORE.md, "Releasing from CI".
 #
-# It also goes to the Microsoft Store by itself, once the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID,
-# PARTNER_CENTER_CLIENT_SECRET and PARTNER_CENTER_SELLER_ID hold the Microsoft Entra app Partner Center's API is
-# reached through, and the app has a published submission (the first one goes through Partner Center by hand). The
-# repository variable STORE_SUBMIT set to "false" switches the sending off. Without the secrets, the package is
-# built and kept, and nothing is sent.
+# Every release of Heiward (a v1.x tag whose version is VersionPrefix in HEI.Agent/HEI.Agent.csproj) builds it, as an
+# early check that it builds, and keeps it as the run's artifact. A release sends nothing to the Store.
 #
-# Partner Center keeps one submission in progress per app, and Heiward releases faster than the Store certifies.
-# So a release goes only when nothing is in progress, or what is in progress is a submission whose commit failed
-# (HEI.StoreSubmit, Rules): never in place of one in certification, nor of a draft. Otherwise it waits, with a
-# notice that says what holds it, and the run passes. The scheduled runs catch up: each sends the newest release
-# once the Store has an older one and nothing is in progress, so the last release of a busy day still gets there.
+# Once a week, on Fridays at 10:00 New York time, the newest release goes to the Microsoft Store when the Store has an
+# older one. That needs the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID, PARTNER_CENTER_CLIENT_SECRET and
+# PARTNER_CENTER_SELLER_ID, which hold the Microsoft Entra app that reaches Partner Center's API, and a published
+# submission (the first one goes through Partner Center by hand). The repository variable STORE_SUBMIT set to "false"
+# switches the sending off. Without the secrets, nothing is sent, and the run passes with a notice.
 #
-# Started by hand (Actions > Microsoft Store > Run workflow), it does the same for a given release's tag, and can
-# leave the submission as a draft in Partner Center instead of sending it to certification.
+# Partner Center keeps one submission in progress per app. So the release goes only when nothing is in progress, or
+# when what is in progress is a submission whose commit failed (HEI.StoreSubmit, Rules). It never replaces one in
+# certification, nor a draft. Otherwise it waits for the next Friday, with a notice that says what holds it, and the
+# run passes. Its What's new covers every release since the Store's last one.
+#
+# Started by hand (Actions > Microsoft Store > Run workflow), it does the same at once for a release's tag (empty: the
+# newest), and it can leave the submission as a draft in Partner Center instead of sending it to certification.
 
 on:
   release:
     types: [published]
-  # Four times a day. The check runs on Linux and builds nothing unless there's a release to send.
+  # Fridays at 10:00 in New York, the same hour through daylight saving time. The check runs on Linux and builds nothing
+  # unless there's a release to send.
   schedule:
-    - cron: '23 1,7,13,19 * * *'
+    - cron: '0 10 * * 5'
+      timezone: 'America/New_York'
   workflow_dispatch:
     inputs:
       tag:
@@ -34,10 +37,11 @@ on:
         type: boolean
         default: false
 
-# One run at a time, releases' and scheduled ones alike: Partner Center takes one submission in progress per app,
-# and every run asks it afresh.
+# One run at a time among those that ask Partner Center (Friday's and those started by hand): Partner Center takes one
+# submission in progress per app, and every run asks it afresh. A release's run only builds, so it stays out of that
+# group: a group keeps one run waiting and cancels any other, and a busy day of releases mustn't cancel Friday's run.
 concurrency:
-  group: store
+  group: ${{ github.event_name == 'release' && format('store-build-{0}', github.run_id) || 'store' }}
   cancel-in-progress: false
 
 permissions:
@@ -90,6 +94,7 @@ jobs:
         id: setup
         if: steps.heiward.outputs.skip != 'true'
         env:
+          EVENT: ${{ github.event_name }}
           VERSION: ${{ steps.which.outputs.version }}
           STORE_SUBMIT: ${{ vars.STORE_SUBMIT }}
           PARTNER_CENTER_TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
@@ -97,6 +102,11 @@ jobs:
           PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
           PARTNER_CENTER_SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
         run: |
+          # A release only builds: the Store gets the newest release once a week.
+          if [[ "$EVENT" == "release" ]]; then
+            echo "::notice title=Microsoft Store::Heiward $VERSION is built here as a check and kept as this run's artifact. Nothing goes to the Microsoft Store now: on Fridays at 10:00 New York time, the newest release goes there."
+            exit 0
+          fi
           if [[ "${STORE_SUBMIT,,}" == "false" ]]; then
             echo "::notice title=Microsoft Store::Heiward $VERSION wasn't sent: sending to the Microsoft Store is switched off (the repository variable STORE_SUBMIT is false)."
             exit 0
@@ -168,7 +178,7 @@ jobs:
 
   submit:
     needs: [check, build]
-    if: needs.check.outputs.submit == 'true'
+    if: github.event_name != 'release' && needs.check.outputs.submit == 'true'
     runs-on: windows-latest
     defaults:
       run:

@@ -97,9 +97,12 @@ public sealed record Decision(Verdict Verdict, string Message, bool Warn = false
 /// Whether a release goes to the Microsoft Store now. Partner Center keeps one submission in progress per app, and
 /// msstore publish deletes it to make its own; so a release never replaces one in certification, nor a draft
 /// (yours, made in Partner Center, or one left for you to send), only one whose commit failed. The release waits,
-/// and the next scheduled run sends the newest release once nothing is in progress.
+/// and the next Friday run sends the newest release once nothing is in progress.
 /// </summary>
 public static class Rules {
+	/// <summary>The run that tries again: store.yml's weekly one, Fridays at 10:00 New York time.</summary>
+	public const string NextRun = "the next Friday run", NextRunCapital = "The next Friday run";
+
 	/// <summary>Statuses of a submission on its way, after its commit.</summary>
 	static readonly Dictionary<string, string> Moving = new(StringComparer.Ordinal) {
 		["CommitStarted"] = "being committed",
@@ -122,7 +125,7 @@ public static class Rules {
 		string release = "Heiward " + Versions.Show(target);
 		if (store.Published == null)
 			return new(Verdict.NotPublished, $"{release} wasn't sent: Heiward has no published submission in the Microsoft Store yet. " +
-				"The first one goes through Partner Center by hand (docs/STORE.md, \"Releasing\"); once it's published, this workflow sends each release itself.");
+				"The first one goes through Partner Center by hand (docs/STORE.md, \"Releasing\"); once it's published, this workflow sends the newest release every Friday.");
 
 		Submission? pending = store.Pending is { Status: not "Published" } p && p.Id != store.Published.Id ? store.Pending : null;
 		string? replacing = null;
@@ -131,10 +134,10 @@ public static class Rules {
 			if (Moving.TryGetValue(status, out string? moving))
 				return pending.Version != null && pending.Version >= target
 					? new(Verdict.Current, $"{what} is {moving} in the Microsoft Store already: nothing to send.")
-					: new(Verdict.Hold, $"{release} waits: {what} is {moving} in the Microsoft Store. Once it's published, the next scheduled run sends the newest release.");
+					: new(Verdict.Hold, $"{release} waits: {what} is {moving} in the Microsoft Store. Once it's published, {NextRun} sends the newest release.");
 			if (Failed.TryGetValue(status, out string? failed))
 				return new(Verdict.Hold, $"{release} waits: {what} {failed} in the Microsoft Store{Because(pending)}. Partner Center's report says why. " +
-					"Delete that submission in Partner Center, or fix it and send it again, and the next scheduled run sends the newest release.", Warn: true);
+					$"Delete that submission in Partner Center, or fix it and send it again, and {NextRun} sends the newest release.", Warn: true);
 			if (status == "CommitFailed") replacing = $", in place of {what}, whose commit failed{Because(pending)}";
 			else {
 				string draft = status switch {
@@ -142,7 +145,7 @@ public static class Rules {
 					"Canceled" => $"{what} was canceled in Partner Center and is still there",
 					_ => $"{what} is in Partner Center ({status})",
 				};
-				return new(Verdict.Hold, $"{release} waits: {draft}. Send it or delete it there, and the next scheduled run sends the newest release.");
+				return new(Verdict.Hold, $"{release} waits: {draft}. Send it or delete it there, and {NextRun} sends the newest release.");
 			}
 		}
 
