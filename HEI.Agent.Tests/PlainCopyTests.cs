@@ -140,6 +140,11 @@ public sealed class PlainCopyTests : IDisposable {
 	}
 
 	[Fact]
+	public void AHardLink_IsNoCopy() =>
+		// One file under two paths: the scan leaves the pair out (and the Recycler won't count one as the other's copy).
+		Assert.True(AgentScanner.BuildSettings(new AgentConfig { ScanAllDrives = false }, new List<string>()).ExcludeHardLinks);
+
+	[Fact]
 	public void ACloseLook_IsKeptForTheNextScan_UntilAFileChanges() {
 		string a = Save("a.bmp", Scene()), b = Jpeg(a, "b.jpg", 600);
 		int looks = 0;

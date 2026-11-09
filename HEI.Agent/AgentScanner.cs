@@ -326,6 +326,9 @@ namespace HEI.Agent {
 				// so the database holds what's there to compare, not every file a scan ever saw.
 				ForgetUnlisted = true,
 				UseWindowsImageDecoder = true,
+				// A hard link, or a folder seen again through a drive letter mapped onto it, is the same file under two
+				// paths: no copy, and removing it frees nothing (or takes the other path with it).
+				ExcludeHardLinks = true,
 				MaxDegreeOfParallelism = cfg.ParallelismFor(fullSpeed),
 				CustomDatabaseFolder = AgentPaths.Database,
 			};

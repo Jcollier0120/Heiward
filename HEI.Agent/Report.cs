@@ -774,9 +774,12 @@ namespace HEI.Agent {
 				}
 			}
 
-			/// <summary>SHA-256 of the file; beyond 256 MB, of its size plus nine 4 MB samples across it.</summary>
+			/// <summary>Files up to this size are hashed whole; a bigger one by samples, so it's read through before it's removed (<see cref="Recycler"/>).</summary>
+			internal const long FullHashBytes = 256L << 20;
+
+			/// <summary>SHA-256 of the file; beyond <see cref="FullHashBytes"/>, of its size plus nine 4 MB samples across it.</summary>
 			static string? Compute(string path) {
-				const long Full = 256L << 20, Chunk = 4L << 20;
+				const long Full = FullHashBytes, Chunk = 4L << 20;
 				try {
 					using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20);
 					if (fs.Length <= Full)

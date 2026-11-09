@@ -74,10 +74,13 @@ namespace HEI.Core.Utils {
 			}
 		}
 
-		/// <summary>The first path below <paramref name="folder"/> longer than the Recycle Bin takes (259 characters), or null.</summary>
+		/// <summary>The longest path the Recycle Bin takes: the shell deletes a longer one for good.</summary>
+		public const int MaxPath = 259;
+
+		/// <summary>The first path below <paramref name="folder"/> longer than the Recycle Bin takes (<see cref="MaxPath"/>), or null.</summary>
 		public static string? TooLongInside(string folder) {
 			var all = new EnumerationOptions { IgnoreInaccessible = true, RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint };
-			try { return Directory.EnumerateFileSystemEntries(folder, "*", all).FirstOrDefault(e => e.Length > 259); }
+			try { return Directory.EnumerateFileSystemEntries(folder, "*", all).FirstOrDefault(e => e.Length > MaxPath); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return folder; }
 		}
 

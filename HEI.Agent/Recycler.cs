@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Buffers;
 using System.Runtime.InteropServices;
 using HEI.Core.Utils;
 
@@ -38,17 +39,24 @@ namespace HEI.Agent {
 				failed.Add(new(p, "not part of this group"));
 				chosen.Remove(p);
 			}
-			// At least one copy must survive, and it must still be on disk.
-			var survivors = group.Items.Where(i => !chosen.Contains(i.Path, StringComparer.OrdinalIgnoreCase) && File.Exists(i.Path)).ToList();
+			// At least one copy must survive: still on disk as the scan saw it (else it may not be the picture the user
+			// saw kept, and the file removed could be the only original left), and not the very file being removed under
+			// another path (a hard link, or the same folder under another drive letter).
+			var others = group.Items.Where(i => !chosen.Contains(i.Path, StringComparer.OrdinalIgnoreCase)).ToList();
+			var unchanged = others.Where(i => ChangedSinceScan(i) == null).ToList();
+			var survivors = unchanged.Where(i => !chosen.Any(p => HardLinkUtils.AreSameFile(i.Path, p))).ToList();
 			if (survivors.Count == 0) {
-				failed.AddRange(chosen.Select(p => new RecycleFailure(p, "that would remove every copy; keep at least one")));
+				string why = others.Count == 0 || others.All(i => !File.Exists(i.Path)) ? "that would remove every copy; keep at least one"
+					: unchanged.Count == 0 ? "the copy you'd keep changed since the scan; scan again first"
+					: "the copy you'd keep is this same file under another path (a hard link, or another drive letter for the folder); keep another copy";
+				failed.AddRange(chosen.Select(p => new RecycleFailure(p, why)));
 				return new(new(), failed, 0);
 			}
 
 			var ok = new List<string>();
 			var room = new BinRoom();
 			foreach (string p in chosen) {
-				string? why = RefuseReason(p, byPath[p], room);
+				string? why = RefuseReason(p, byPath[p], survivors, room);
 				if (why != null) failed.Add(new(p, why));
 				else ok.Add(p);
 			}
@@ -120,13 +128,66 @@ namespace HEI.Agent {
 		internal static string? TooLongInside(string folder) => RecycleBin.TooLongInside(folder);
 
 		/// <summary>Why <paramref name="path"/> must not go through the shell's delete, or null when it may.</summary>
-		static string? RefuseReason(string path, ReportItem item, BinRoom room) {
+		/// <param name="survivors">The copies that stay, unchanged since the scan.</param>
+		static string? RefuseReason(string path, ReportItem item, List<ReportItem> survivors, BinRoom room) {
+			if (ChangedSinceScan(item) is { } changed)
+				return changed;
 			var fi = new FileInfo(path);
+			// The shell deletes for good what it can't put in the bin, a path too long for it among them.
+			if (fi.FullName.Length > RecycleBin.MaxPath)
+				return $"its path is longer than the Recycle Bin takes ({RecycleBin.MaxPath} characters); delete it yourself if you're sure";
+			return NotTheSameBytes(item, survivors) ?? BinRefusal(fi.FullName, fi.Length, room);
+		}
+
+		/// <summary>Why the file isn't as the scan saw it (gone, or another size or last-modified time), or null.</summary>
+		static string? ChangedSinceScan(ReportItem item) {
+			var fi = new FileInfo(item.Path);
 			if (!fi.Exists)
 				return "already gone";
 			if (fi.Length != item.Size || Math.Abs((fi.LastWriteTimeUtc - item.ModifiedUtc).TotalSeconds) > 2)
 				return "changed since the scan; scan again first";
-			return BinRefusal(fi.FullName, fi.Length, room);
+			return null;
+		}
+
+		/// <summary>
+		/// An "identical" file over <see cref="ReportBuilder.ContentHashes.FullHashBytes"/> was matched by its size and samples
+		/// across it, not every byte: an unfinished or damaged copy can pass. Before it goes, it's read through beside a copy
+		/// that stays; the reason when they differ, or either can't be read.
+		/// </summary>
+		static string? NotTheSameBytes(ReportItem item, List<ReportItem> survivors) {
+			if (item.Relation != "identical" || item.Size <= ReportBuilder.ContentHashes.FullHashBytes)
+				return null;
+			ReportItem? kept = survivors.FirstOrDefault(s => s.Keep) ?? survivors.FirstOrDefault(s => s.Relation == "identical");
+			if (kept == null || SameBytes(item.Path, kept.Path))
+				return null;
+			return $"not the same bytes as {kept.Name} after all, read through to the end (it may be an unfinished or damaged copy); compare them yourself";
+		}
+
+		/// <summary>The two files hold the same bytes, each read once from start to end in 4 MB steps; false when either can't be read.</summary>
+		internal static bool SameBytes(string a, string b) {
+			const int Step = 4 << 20;
+			byte[] ba = ArrayPool<byte>.Shared.Rent(Step), bb = ArrayPool<byte>.Shared.Rent(Step);
+			try {
+				using var fa = new FileStream(a, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+				using var fb = new FileStream(b, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+				if (fa.Length != fb.Length)
+					return false;
+				while (true) {
+					int ra = fa.ReadAtLeast(ba.AsSpan(0, Step), Step, throwOnEndOfStream: false);
+					int rb = fb.ReadAtLeast(bb.AsSpan(0, Step), Step, throwOnEndOfStream: false);
+					if (ra != rb || !ba.AsSpan(0, ra).SequenceEqual(bb.AsSpan(0, rb)))
+						return false;
+					if (ra < Step)
+						return true;
+				}
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return false;
+			}
+			finally {
+				ArrayPool<byte>.Shared.Return(ba);
+				ArrayPool<byte>.Shared.Return(bb);
+			}
 		}
 
 		/// <summary>Why the Recycle Bin can't take it, so the shell would delete it for good (<see cref="RecycleBin.Refusal"/>); null when it can.</summary>
