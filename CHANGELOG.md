@@ -2,6 +2,43 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.10.0
+
+**Brings 3 changes: Heiward looks closer before it checks a photo for you, so some pictures it used to check are now yours to judge; Two pictures are copies only when their words match too: two screenshots of a chat one message apart are no longer offered as copies; Heiward's page answers only your own Windows account, and the Developer area no longer runs git where a repository's own settings could run a program.**
+
+### What's new
+
+- Heiward reads the words in photos that look like copies of each other, with a small text-reading model on your PC. Two screenshots of a chat one message apart, two receipts with different totals, or a photo whose caption says another year look the same pixel for pixel, but their words differ: they're now shown as **Looks the same, but its words differ**, for you to judge, and never checked for the Recycle Bin or cleaned up automatically.
+- Pictures in the same layout whose words differ throughout, like two pages of one form, aren't shown as a set at all.
+- A smaller, recompressed or HEIC copy of a screenshot is still a copy: a word read a little differently in a smaller picture, a space or a stray mark doesn't count. Another figure (a total, a date, a time, a page number) always does.
+- It reads on the NPU of a Snapdragon PC or of an Intel Core Ultra with the NPU 3720 when the AI runs there, otherwise gently on the processor in the background. Each photo is read once and remembered while it's unchanged, so later scans only read what changed.
+
+### What changed
+
+- A photo is checked for you only when it's the same picture up close, not just on the whole. A copy with a face or a number plate blurred, a signature, an annotation or a date stamp added, or one line of a chat screenshot changed used to pass for "Saved again (same picture)": it could be checked for you, or removed by automatic cleanup. It now shows as an edited version for you to judge. Resized, recompressed and resaved copies are still checked for you.
+- When a bigger picture matches a smaller one that has the camera's capture date, or is clearly older, the bigger one may be an enlarged export (an AI upscale, a print-size copy). The smaller one now shows as "Smaller, but may be the original: your call", and nothing checks or cleans it up for you.
+- Before anything goes to the Recycle Bin, the copy that stays must be as the scan saw it, and must really be another file. A hard link, or the same folder seen through another drive letter, no longer counts as a copy, and a scan no longer lists such a pair.
+- A file over 256 MB listed as identical is read through to the end beside the copy you keep before it's removed. If any byte differs (an unfinished or damaged copy), it stays, and Heiward tells you why.
+- A copy whose path is too long for the Recycle Bin is refused instead of being deleted for good.
+- A photo edited in place without changing its size (a BMP or TIFF saved again in Paint) is analysed again, instead of keeping the fingerprints of the picture it was.
+- On a PC where more than one person signs in, each Windows account's Heiward page now answers only that account. Before, another account on the same PC could open your Heiward page and see your photos' thumbnails and paths, or clean them up. Now every other account, and any program of theirs, is refused.
+- If another account's Heiward already uses the usual port (18484), your Heiward takes a free port of its own and remembers it, so both accounts have their own page. The Start menu, the Heiward shortcut and notifications open yours.
+- Developer mode: Heiward no longer runs git in a repository whose own git settings could make git run a program, or reach another computer, such as a folder unzipped from the internet with a `.git` inside. That repository shows **Not checked with git** and why, and nothing in it is offered for cleanup. Every git Heiward runs now has git's file-watcher program and hooks turned off.
+- Developer mode: a worktree record that points to a folder on another computer (a network share) is ignored.
+- Developer mode: your Windows sign-in goes only to the Azure DevOps Server (TFS) hosts you list in `windowsSignInHosts` in `settings.json`, never to a server a repository names by itself. Other servers use the sign-in git keeps for them.
+- The privacy policy now says that on AMD NPUs, Windows ML downloads the chip's NPU package from Microsoft itself.
+
+### Before you update
+
+- The first scan after updating takes a closer look at each pair of photos that may be plain copies: roughly a minute for every two thousand pairs. Later scans reuse what it saw. Nothing else is analysed again; from now on a photo is analysed again whenever its last-modified time changes.
+- Some sets that were checked for you now wait for you, and automatic cleanup leaves those alone. Copies on a drive that's scanned only when you ask are checked for you again after the next scan that reads that drive.
+- The update downloads the text-reading model (about 4 MB) with the AI components. Until it's there, pictures are judged by their look alone, as before.
+- The words read stay on your PC, in `texts.json` in Heiward's folder, and only for the photos in the latest report. The privacy policy says so.
+- Your first scan after updating sorts its sets again and reads the photos that look alike once, which takes a little longer than usual.
+- If more than one Windows account on your PC uses Heiward, the second account's page may move to a new port. If that account uses Castellan, Castellan's Heiward card in that account may show Heiward as not answering, because it looks on the usual port. Open Heiward from the Start menu instead.
+- Developer mode with an Azure DevOps Server (TFS) at work: to keep seeing its pull requests with your Windows sign-in, add the server's name to `windowsSignInHosts` in `%LOCALAPPDATA%\Heiward\settings.json`, for example `"windowsSignInHosts": ["tfs"]`. Or sign in to it once with git (Git Credential Manager).
+- Developer mode: repositories that set `core.hooksPath` (for example with husky), `core.fsmonitor`, a filter or a credential helper in their own git settings now show **Not checked with git**, and their worktrees and merged branches aren't offered for cleanup.
+
 ## 1.9.138
 
 **Heiward from the Microsoft Store gets a new version once a week, and its Store page says what's new in it.**
