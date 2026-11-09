@@ -962,8 +962,12 @@ namespace HEI.Core {
 		// re-decoding those wastes hours on big libraries — keep the cached analysis when the content
 		// fingerprint PROVES the bytes unchanged. Anything unverifiable (either hash missing, file
 		// unreadable, or a pre-OsHash entry not yet backfilled) re-analyzes exactly as before.
+		// A photo whose last-modified time moved is analyzed again whatever its hash: OsHash reads only its
+		// first and last 64 KB, so an uncompressed BMP or TIFF edited in Paint, same size, would keep the
+		// fingerprints of the picture it was and still match its original perfectly. A photo is quick to
+		// analyze again; a copy or a restore keeps the time, so only a re-dated one pays.
 		internal static void RefreshExistingEntry(FileEntry fEntry, FileEntry dbEntry) {
-			if (fEntry.FileSize != dbEntry.FileSize) {
+			if (fEntry.FileSize != dbEntry.FileSize || (fEntry.IsImage && fEntry.DateModified != dbEntry.DateModified)) {
 				DatabaseUtils.Database.Remove(dbEntry);
 				DatabaseUtils.Database.Add(fEntry);
 			}

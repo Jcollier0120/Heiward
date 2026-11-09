@@ -155,7 +155,7 @@ namespace HEI.Agent {
 			// An animated picture is compared by its first frame only: never a plain copy (Relation's MayBeAnimated).
 			string relation = x.Animated || y.Animated ? "variant"
 				: ReportBuilder.ByLook(gray, () => ai, smaller: other.FrameSize < keep.FrameSize, shorterCut: false,
-					fewerBytes: other.Bytes.Length < keep.Bytes.Length);
+					fewerBytes: other.Bytes.Length < keep.Bytes.Length, maxCell: GrayBytesUtils.MaxCellDifference(other.Gray, keep.Gray));
 			// As the page shows it (ReportBuilder.Alike): the AI's cosine for an edit or a variant, otherwise the grayscale match.
 			return (relation, relation is "edited" or "variant" && ai is float cosine ? cosine : gray);
 		}

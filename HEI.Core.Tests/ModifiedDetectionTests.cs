@@ -141,4 +141,41 @@ public class ModifiedDetectionTests : IDisposable {
 		Assert.Same(dbEntry, EntryInDb(fEntry));
 		Assert.NotEmpty(EntryInDb(fEntry).grayBytes);
 	}
+
+	/// <summary>A photo the size of the test file, its middle edited: the first and last 64 KB OsHash reads stay the same.</summary>
+	string EditedPhoto(out string? osHashBefore) {
+		string photo = Path.Combine(_dir, "scan.bmp");
+		File.Copy(_file, photo);
+		osHashBefore = OsHashUtils.TryCompute(photo);
+		using (var fs = new FileStream(photo, FileMode.Open)) {
+			fs.Position = 100_000;
+			fs.Write(new byte[] { 0, 0, 0, 0 });
+		}
+		Assert.Equal(osHashBefore, OsHashUtils.TryCompute(photo));
+		return photo;
+	}
+
+	[Fact]
+	public void APhotoEditedInPlace_SameSize_IsAnalyzedAgain() {
+		var fEntry = new FileEntry(EditedPhoto(out string? osHash));
+		Assert.True(fEntry.IsImage);
+		var dbEntry = MakeAnalyzedDbEntry(fEntry, osHash); // modified an hour before: the analysis is of the picture it was
+
+		ScanEngine.RefreshExistingEntry(fEntry, dbEntry);
+
+		Assert.Same(fEntry, EntryInDb(fEntry));
+		Assert.Empty(EntryInDb(fEntry).grayBytes);
+	}
+
+	[Fact]
+	public void APhotoCopiedBack_SameModifiedTime_KeepsItsAnalysis() {
+		var fEntry = new FileEntry(EditedPhoto(out string? osHash));
+		var dbEntry = MakeAnalyzedDbEntry(fEntry, osHash);
+		dbEntry.DateModified = fEntry.DateModified; // only the creation time moved, as a copy or a restore leaves it
+
+		ScanEngine.RefreshExistingEntry(fEntry, dbEntry);
+
+		Assert.Same(dbEntry, EntryInDb(fEntry));
+		Assert.NotEmpty(EntryInDb(fEntry).grayBytes);
+	}
 }

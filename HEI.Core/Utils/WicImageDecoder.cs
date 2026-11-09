@@ -236,6 +236,52 @@ namespace HEI.Core.Utils {
 			}
 		}
 
+		/// <summary>
+		/// The picture as a <paramref name="side"/>×<paramref name="side"/> 8-bit gray frame, squashed to square and turned
+		/// upright like <see cref="TryDecode(string, out byte[], out byte[], out int, out int)"/>: a closer look than the
+		/// 32×32 gray frame, which averages a blurred face or a small change away.
+		/// </summary>
+		internal static bool TryDecodeGray(string path, int side, out byte[]? gray) {
+			gray = null;
+			lastFailure = null;
+			if (!IsAvailable) return Fail("not Windows");
+			nint factory = GetFactory();
+			if (factory == 0) return Fail("no WIC factory");
+			nint decoder = 0, frame = 0, bitmap = 0;
+			try {
+				int hr;
+				fixed (char* p = path)
+					if ((hr = Call(factory, Factory_CreateDecoderFromFilename, (nint)p, 0, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder)) < 0)
+						return Fail("no codec (CreateDecoderFromFilename)", hr);
+				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint, nint*, int>)Slot(decoder, Decoder_GetFrame))(decoder, 0, &frame)) < 0)
+					return Fail("GetFrame", hr);
+				uint w, h;
+				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint*, uint*, int>)Slot(frame, Source_GetSize))(frame, &w, &h)) < 0 || w == 0 || h == 0)
+					return Fail("GetSize", hr);
+				Orientation orientation = IsHeif(decoder) ? Orientation.None : ReadOrientation(frame);
+				if (!TryReducedDecode(frame, w, h, out byte[] reduced, out uint rw, out uint rh, side))
+					return Fail("pixel decode");
+				fixed (byte* pr = reduced) {
+					Guid bgr = GUID_WICPixelFormat24bppBGR;
+					if (((delegate* unmanaged[Stdcall]<nint, uint, uint, Guid*, uint, uint, byte*, nint*, int>)Slot(factory, Factory_CreateBitmapFromMemory))(
+							factory, rw, rh, &bgr, rw * 3, (uint)reduced.Length, pr, &bitmap) < 0)
+						return Fail("CreateBitmapFromMemory");
+				}
+				byte[]? pixels = Resample(factory, bitmap, side, GUID_WICPixelFormat8bppGray, 1);
+				if (pixels == null) return Fail("resample");
+				gray = Orient(pixels, side, 1, orientation);
+				return true;
+			}
+			catch (Exception e) when (e is not OutOfMemoryException) {
+				return Fail($"{e.GetType().Name}: {e.Message}");
+			}
+			finally {
+				Release(bitmap);
+				Release(frame);
+				Release(decoder);
+			}
+		}
+
 		[DllImport("shlwapi.dll")] static extern nint SHCreateMemStream(byte* init, uint size);
 		const int Factory_CreateDecoderFromStream = 4, Decoder_GetFrameCount = 12;
 
@@ -319,8 +365,8 @@ namespace HEI.Core.Utils {
 		/// ≥ <see cref="RgbOut"/> on both sides (JPEG: 1/2, 1/4, 1/8 scaling inside the IDCT).
 		/// Codecs without IWICBitmapSourceTransform go through a Fant scaler on the full decode.
 		/// </summary>
-		static bool TryReducedDecode(nint frame, uint w, uint h, out byte[] buffer, out uint rw, out uint rh) {
-			double s = Math.Min(1.0, Math.Max(RgbOut / (double)w, RgbOut / (double)h) * 2); // 2× headroom for the area filter
+		static bool TryReducedDecode(nint frame, uint w, uint h, out byte[] buffer, out uint rw, out uint rh, int side = RgbOut) {
+			double s = Math.Min(1.0, Math.Max(side / (double)w, side / (double)h) * 2); // 2× headroom for the area filter
 			uint tw = Math.Max(1, (uint)Math.Ceiling(w * s)), th = Math.Max(1, (uint)Math.Ceiling(h * s));
 			nint transform = 0;
 			Guid iid = IID_IWICBitmapSourceTransform;
@@ -328,7 +374,7 @@ namespace HEI.Core.Utils {
 				try {
 					uint cw = tw, ch = th;
 					if (((delegate* unmanaged[Stdcall]<nint, uint*, uint*, int>)Slot(transform, Transform_GetClosestSize))(transform, &cw, &ch) >= 0) {
-						if (cw < RgbOut || ch < RgbOut) { cw = w; ch = h; } // never go below the output size
+						if (cw < side || ch < side) { cw = w; ch = h; } // never go below the output size
 						buffer = new byte[checked((int)(cw * 3 * ch))];
 						Guid fmt = GUID_WICPixelFormat24bppBGR;
 						fixed (byte* pb = buffer)

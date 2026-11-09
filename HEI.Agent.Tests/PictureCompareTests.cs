@@ -81,7 +81,7 @@ public sealed class PictureCompareTests : IDisposable {
 		return px;
 	}
 
-	static byte[] Bmp(byte[] rgb, int w, int h) {
+	internal static byte[] Bmp(byte[] rgb, int w, int h) {
 		int stride = (w * 3 + 3) & ~3;
 		var file = new byte[54 + stride * h];
 		file[0] = (byte)'B'; file[1] = (byte)'M';

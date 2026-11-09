@@ -29,7 +29,8 @@ namespace HEI.Agent {
 	/// How the file relates to the kept one: <c>keep</c>, <c>identical</c>, <c>smaller</c> (lower
 	/// resolution), <c>compressed</c> (same picture, fewer bytes), <c>resaved</c> (same picture saved
 	/// again), <c>edited</c> (the AI sees the same picture with changes: colour, filter),
-	/// <c>variant</c> (cropped, mirrored, or a different shot that looks alike).
+	/// <c>variant</c> (cropped, mirrored, or a different shot that looks alike), <c>original</c> (a smaller photo that may be
+	/// the original the kept one was enlarged from: the user's call).
 	/// </param>
 	/// <param name="Suggested">Pre-checked for the Recycle Bin: identical files and pixel-level copies only.</param>
 	/// <param name="Synced">In a cloud-synced folder: deleting it also deletes it from the cloud and other devices.</param>
@@ -98,6 +99,13 @@ namespace HEI.Agent {
 		/// offset where they match best; null when either has no sound to compare.
 		/// </summary>
 		float? AudioPercent(string a, string b);
+		/// <summary>The largest difference (0–255) of any one cell of the two files' gray frames, over common positions; null when unknown.</summary>
+		int? MaxCellDifference(string a, string b);
+		/// <summary>
+		/// Photos: the two look the same up close too (<see cref="CloseLook"/>, at most <see cref="ReportBuilder.CloseLookLimit"/>
+		/// apart); null when it can't be told: a file that can't be decoded, or one on a resting drive.
+		/// </summary>
+		bool? SameUpClose(string a, string b);
 	}
 
 	/// <summary>The fingerprints of the scan that just ran: its database's gray frames and its embedding cache.</summary>
@@ -146,6 +154,19 @@ namespace HEI.Agent {
 		public float? GrayPercent(string a, string b) => Average(a, b, e => e.grayBytes,
 			(x, y) => x.Length == y.Length ? 100f * (1f - GrayBytesUtils.PercentageDifference(x, y)) : null);
 
+		public int? MaxCellDifference(string a, string b) {
+			if (!entries.TryGetValue(a, out FileEntry? ea) || !entries.TryGetValue(b, out FileEntry? eb)) return null;
+			int? worst = null;
+			foreach (var (key, x) in ea.grayBytes)
+				if (x != null && eb.grayBytes.TryGetValue(key, out byte[]? y) && y != null && x.Length == y.Length)
+					worst = Math.Max(worst ?? 0, GrayBytesUtils.MaxCellDifference(x, y));
+			return worst;
+		}
+
+		public bool? SameUpClose(string a, string b) =>
+			MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false ? null
+			: CloseLook.Difference(a, b) is double d ? d <= ReportBuilder.CloseLookLimit : null;
+
 		public float? AiPercent(string a, string b) {
 			if (embeddings == null || !entries.TryGetValue(a, out FileEntry? ea) || !entries.TryGetValue(b, out FileEntry? eb)) return null;
 			var keys = ea.grayBytes.Keys.Intersect(eb.grayBytes.Keys).DefaultIfEmpty(0d);
@@ -183,6 +204,21 @@ namespace HEI.Agent {
 		/// that may be pre-checked. Calibrated on photos; videos should get their own value once measured.
 		/// </summary>
 		internal const float PlainCopyPercent = 99.5f;
+		/// <summary>
+		/// Photos: a plain copy also has no cell of its gray frame more than this (0–255) from the kept one's. The
+		/// average above hides a small local change: a signature, an annotation, a date stamp or another line in a chat
+		/// moves a few cells by 7 to 70 and leaves the average at 99.8%. Measured on 40 photos, resized down to a
+		/// quarter, recompressed or saved as PNG: no cell moved more than 6 (WIC against FFmpeg on one JPEG: 4).
+		/// </summary>
+		internal const int PlainCopyCellLimit = 8;
+		/// <summary>
+		/// Photos: a plain copy also looks the same up close (<see cref="CloseLook"/>): no block of the two decoded at up to
+		/// 512 pixels more than this (0–255) apart. A blurred face or number plate keeps each cell's average, so only a
+		/// closer look sees it. The same 40 photos' copies came to 3.6 at most. Of 296 small edits, all of which passed
+		/// the average, 133 passed the cells too and 65 the close look too: blurs over even areas that change almost
+		/// nothing (the benchmarks' CopyCellProbe).
+		/// </summary>
+		internal const double CloseLookLimit = 5;
 		/// <summary>
 		/// A file less alike than this to the kept one (the percentage the page shows) is a different
 		/// picture, not a look-alike: it leaves the set. VDF's groups chain (A is like B, B is like C), so
@@ -427,8 +463,11 @@ namespace HEI.Agent {
 			}
 			string kind = reportItems.All(i => i.Relation is "keep" or "identical") ? "identical"
 				: reportItems.Any(i => i.Suggested) ? "copies" : "similar";
+			const string EnlargedNote = "a smaller file looks like the original (it has the capture date, or it's older), so the larger one may be an enlarged copy";
 			if (kind == "identical")
 				reason = "identical files; kept the one with the original-looking name and folder";
+			else if (reportItems.Any(i => i.Relation == "original"))
+				reason = kind == "similar" ? $"your pick: {EnlargedNote}" : $"{reason}; but {EnlargedNote}: that one is your call";
 			else if (kind == "similar")
 				reason = "your pick: these are different shots or edits (suggested: " +
 					(reason.StartsWith("highest resolution", StringComparison.Ordinal) ? "the highest resolution" : "the first one taken") + ")";
@@ -480,24 +519,38 @@ namespace HEI.Agent {
 			// still taken from one, are not copies of each other.
 			if (MayBeAnimated(i.Path) || MayBeAnimated(keep.Path))
 				return "variant";
-			return ByLook(fingerprints.GrayPercent(i.Path, keep.Path), () => askAi ? fingerprints.AiPercent(i.Path, keep.Path) : null,
+			bool photos = i.IsImage && keep.IsImage;
+			string look = ByLook(fingerprints.GrayPercent(i.Path, keep.Path), () => askAi ? fingerprints.AiPercent(i.Path, keep.Path) : null,
 				smaller: i.FrameSizeInt > 0 && i.FrameSizeInt < keep.FrameSizeInt,
 				shorterCut: !i.IsImage && Math.Round(i.Duration.TotalSeconds) < Math.Round(keep.Duration.TotalSeconds),
-				fewerBytes: i.SizeLong < keep.SizeLong);
+				fewerBytes: i.SizeLong < keep.SizeLong,
+				maxCell: photos ? fingerprints.MaxCellDifference(i.Path, keep.Path) : null,
+				upClose: photos ? () => hashes.UpClose(i.Path, keep.Path, () => fingerprints.SameUpClose(i.Path, keep.Path)) : null);
+			// An enlarged export (an AI upscale, a print-size copy) matches its original pixel for pixel and is kept for its
+			// resolution. When the smaller photo has the capture date the kept one lacks, or is clearly older, it may be the
+			// original: that one is the user's call, never checked for them.
+			return look == "smaller" && photos && MayBeOriginal(i, keep) ? "original" : look;
 		}
+
+		/// <summary>The smaller photo has an EXIF capture date the kept one lacks, or is more than an hour older: it may be the original the kept one was enlarged from.</summary>
+		static bool MayBeOriginal(DuplicateItem smaller, DuplicateItem keep) =>
+			smaller.DateModified < keep.DateModified - TimeSpan.FromHours(1) || (HasDateTaken(smaller.Path) && !HasDateTaken(keep.Path));
 
 		/// <summary>
 		/// The last steps of <see cref="Relation"/>, by look alone, for two pictures that aren't the same bytes and
 		/// neither of which is animated: a grayscale match (<paramref name="gray"/>, percent) at or above
-		/// <see cref="PlainCopyPercent"/> is the same picture, pixel for pixel (<c>smaller</c>, <c>compressed</c> or
+		/// <see cref="PlainCopyPercent"/>, for photos with no cell past <see cref="PlainCopyCellLimit"/> and the same up close,
+		/// is the same picture, pixel for pixel (<c>smaller</c>, <c>compressed</c> or
 		/// <c>resaved</c>; a shorter cut of a video is a <c>variant</c>); below it, the AI's cosine (<paramref name="ai"/>,
 		/// percent, asked only then) says <c>edited</c> (≥ <see cref="SamePictureAiPercent"/>) or <c>variant</c>. Also how
 		/// Heiward compares two pictures taken out of documents for another agent (<see cref="PictureCompare"/>).
 		/// </summary>
 		/// <param name="smaller">The file has a lower resolution than the kept one.</param>
 		/// <param name="fewerBytes">The file is smaller on disk than the kept one.</param>
-		internal static string ByLook(float? gray, Func<float?> ai, bool smaller, bool shorterCut, bool fewerBytes) {
-			if (gray is float g && g >= PlainCopyPercent) {
+		/// <param name="maxCell">Photos: the largest single-cell difference of the gray frames; above <see cref="PlainCopyCellLimit"/> no plain copy.</param>
+		/// <param name="upClose">Photos: whether they look the same up close (<see cref="CloseLookLimit"/>), asked only when all else says plain copy; false (or unknown) is no plain copy.</param>
+		internal static string ByLook(float? gray, Func<float?> ai, bool smaller, bool shorterCut, bool fewerBytes, int? maxCell = null, Func<bool>? upClose = null) {
+			if (gray is float g && g >= PlainCopyPercent && !(maxCell > PlainCopyCellLimit) && upClose?.Invoke() != false) {
 				if (smaller)
 					return "smaller";
 				if (shorterCut)
@@ -616,28 +669,75 @@ namespace HEI.Agent {
 			/// <param name="ModifiedUtc">The file's last-modified time when it was hashed.</param>
 			internal sealed record Stored(long Size, DateTime ModifiedUtc, string Hash);
 
+			/// <summary>Two photos' close look (<see cref="UpClose"/>): each file's size and last-modified time when it was made, and the answer.</summary>
+			internal sealed record Look(long SizeA, DateTime ModifiedA, long SizeB, DateTime ModifiedB, bool Same);
+
 			readonly Dictionary<string, string?> cache = new(StringComparer.OrdinalIgnoreCase);
 			readonly Dictionary<string, Stored> earlier, now = new(StringComparer.OrdinalIgnoreCase);
+			readonly Dictionary<string, bool> looked = new(StringComparer.OrdinalIgnoreCase);
+			readonly Dictionary<string, Look> looksEarlier, looksNow = new(StringComparer.OrdinalIgnoreCase);
 
 			/// <summary>Hashes for this report alone, kept nowhere (tests).</summary>
-			public ContentHashes() : this(new Dictionary<string, Stored>(StringComparer.OrdinalIgnoreCase)) { }
+			public ContentHashes() : this(new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase)) { }
 
-			ContentHashes(Dictionary<string, Stored> earlier) => this.earlier = earlier;
+			ContentHashes(Dictionary<string, Stored> earlier, Dictionary<string, Look> looks) => (this.earlier, looksEarlier) = (earlier, looks);
 
 			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
+			public static string LooksPath => Path.Combine(AgentPaths.Home, "looks.json");
 
-			/// <summary>The hashes the last scan kept.</summary>
-			public static ContentHashes Load() {
+			/// <summary>The hashes and close looks the last scan kept.</summary>
+			public static ContentHashes Load() => new(Read<Stored>(FilePath), Read<Look>(LooksPath));
+
+			static Dictionary<string, T> Read<T>(string path) {
 				try {
-					if (File.Exists(FilePath) && JsonSerializer.Deserialize<Dictionary<string, Stored>>(File.ReadAllText(FilePath), AgentConfig.Json) is { } stored)
-						return new ContentHashes(new Dictionary<string, Stored>(stored, StringComparer.OrdinalIgnoreCase));
+					if (File.Exists(path) && JsonSerializer.Deserialize<Dictionary<string, T>>(File.ReadAllText(path), AgentConfig.Json) is { } stored)
+						return new Dictionary<string, T>(stored, StringComparer.OrdinalIgnoreCase);
 				}
 				catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
-				return new ContentHashes();
+				return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
 			}
 
-			/// <summary>Keeps this scan's hashes, and only those: a file no report needs any more drops out.</summary>
-			public void Save() => AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
+			/// <summary>Keeps this scan's hashes and close looks, and only those: a file no report needs any more drops out.</summary>
+			public void Save() {
+				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
+				AgentPaths.WriteAtomic(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
+			}
+
+			/// <summary>
+			/// The two photos look the same up close (<paramref name="look"/>, <see cref="IFingerprints.SameUpClose"/>), asked once
+			/// a pair and kept like the hashes: the next scan reuses the answer while both files are unchanged, and on a resting
+			/// drive takes it on trust. False when it can't be told: no plain copy is claimed that wasn't looked at.
+			/// </summary>
+			public bool UpClose(string a, string b, Func<bool?> look) {
+				if (string.Compare(a, b, StringComparison.OrdinalIgnoreCase) > 0) (a, b) = (b, a);
+				string key = a + "\n" + b;
+				if (!looked.TryGetValue(key, out bool same))
+					looked[key] = same = LookAt(key, a, b, look);
+				return same;
+			}
+
+			bool LookAt(string key, string a, string b, Func<bool?> look) {
+				if (!CanRead(a) || !CanRead(b)) {
+					if (!looksEarlier.TryGetValue(key, out Look? kept)) return false;
+					looksNow[key] = kept;
+					return kept.Same;
+				}
+				try {
+					FileInfo fa = new(a), fb = new(b);
+					if (!fa.Exists || !fb.Exists) return false;
+					if (looksEarlier.TryGetValue(key, out Look? s) && s.SizeA == fa.Length && s.ModifiedA == fa.LastWriteTimeUtc &&
+							s.SizeB == fb.Length && s.ModifiedB == fb.LastWriteTimeUtc) {
+						looksNow[key] = s;
+						return s.Same;
+					}
+					if (look() is not bool same) return false;
+					looksNow[key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, same);
+					return same;
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+					return false;
+				}
+			}
 
 			public bool Same(string a, string b) {
 				string? ha = Get(a), hb = Get(b);
@@ -674,9 +774,12 @@ namespace HEI.Agent {
 				}
 			}
 
-			/// <summary>SHA-256 of the file; beyond 256 MB, of its size plus nine 4 MB samples across it.</summary>
+			/// <summary>Files up to this size are hashed whole; a bigger one by samples, so it's read through before it's removed (<see cref="Recycler"/>).</summary>
+			internal const long FullHashBytes = 256L << 20;
+
+			/// <summary>SHA-256 of the file; beyond <see cref="FullHashBytes"/>, of its size plus nine 4 MB samples across it.</summary>
 			static string? Compute(string path) {
-				const long Full = 256L << 20, Chunk = 4L << 20;
+				const long Full = FullHashBytes, Chunk = 4L << 20;
 				try {
 					using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20);
 					if (fs.Length <= Full)
