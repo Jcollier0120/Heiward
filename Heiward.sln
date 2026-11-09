@@ -35,6 +35,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HEI.Agent.Tests", "HEI.Agen
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HEI.Launcher", "HEI.Launcher\HEI.Launcher.csproj", "{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "HEI.StoreSubmit", "HEI.StoreSubmit\HEI.StoreSubmit.csproj", "{E00D5E90-96A8-47F1-BA01-864610AFA564}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -237,6 +239,18 @@ Global
 		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x64.Build.0 = Release|Any CPU
 		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x86.ActiveCfg = Release|Any CPU
 		{872E4E2D-BF3F-40E8-829D-B5E46FF146FB}.Release|x86.Build.0 = Release|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Debug|x64.Build.0 = Debug|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Debug|x86.Build.0 = Debug|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Release|Any CPU.Build.0 = Release|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Release|x64.ActiveCfg = Release|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Release|x64.Build.0 = Release|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Release|x86.ActiveCfg = Release|Any CPU
+		{E00D5E90-96A8-47F1-BA01-864610AFA564}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The Microsoft Store workflow's (.github/workflows/store.yml) talk with Partner Center: whether a release may go to
+       the Store now, the submission's "What's new in this version" from CHANGELOG.md, and its commit. Run by CI only,
+       with dotnet run on GitHub's Linux and Windows runners; it ships in no copy of Heiward. docs/STORE.md, "Releasing
+       from CI". HEI.Agent.Tests tests it against the API's JSON, without Partner Center. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+</Project>

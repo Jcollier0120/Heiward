@@ -1,0 +1,13 @@
+{
+  "status": "CommitFailed",
+  "statusDetails": {
+    "errors": [
+      {
+        "code": "InvalidParameterValue",
+        "details": "The version of package Heiward-1.9.137.msixbundle must be higher than that of the published package."
+      }
+    ],
+    "warnings": [],
+    "certificationReports": []
+  }
+}

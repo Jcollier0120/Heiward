@@ -1,0 +1,97 @@
+{
+  "id": "1152921505690000002",
+  "applicationCategory": "UtilitiesAndTools",
+  "pricing": {
+    "trialPeriod": "NoFreeTrial",
+    "marketSpecificPricings": {},
+    "sales": [],
+    "priceId": "Free",
+    "isAdvancedPricingModel": true
+  },
+  "visibility": "Public",
+  "targetPublishMode": "Immediate",
+  "targetPublishDate": "1601-01-01T00:00:00Z",
+  "listings": {
+    "en-us": {
+      "baseListing": {
+        "copyrightAndTrademarkInfo": "© 2026 Jeremy Collier. Includes code from Video Duplicate Finder (© 0x90d and contributors), under the AGPL v3.",
+        "keywords": [ "duplicate photos", "duplicate videos", "duplicate finder", "disk cleanup", "photo cleanup", "NPU", "developer cleanup" ],
+        "licenseTerms": "Heiward is free software under the GNU Affero General Public License v3.",
+        "privacyPolicy": "https://github.com/Jcollier0120/Heiward/blob/master/docs/PRIVACY.md",
+        "supportContact": "https://github.com/Jcollier0120/Heiward/issues",
+        "websiteUrl": "https://castellan-software.com/heiward",
+        "description": "Heiward keeps your Windows PC tidy in the background.",
+        "features": [ "Finds duplicate photos and videos on every fixed drive" ],
+        "releaseNotes": "The first release in the Microsoft Store.",
+        "images": [
+          {
+            "fileName": "home.png",
+            "fileStatus": "Uploaded",
+            "id": "1152921505690100001",
+            "description": "A card per drive or folder with its sets of copies",
+            "imageType": "Screenshot"
+          }
+        ],
+        "recommendedHardware": [],
+        "title": "Heiward"
+      },
+      "platformOverrides": {}
+    }
+  },
+  "hardwarePreferences": [],
+  "automaticBackupEnabled": false,
+  "canInstallOnRemovableMedia": true,
+  "isGameDvrEnabled": false,
+  "gamingOptions": [],
+  "hasExternalInAppProducts": false,
+  "meetAccessibilityGuidelines": false,
+  "notesForCertification": "Heiward's window is a page in the default browser, served by Heiward on http://127.0.0.1:18484.",
+  "status": "PendingCommit",
+  "statusDetails": {
+    "errors": [],
+    "warnings": [],
+    "certificationReports": []
+  },
+  "fileUploadUrl": "https://productingestionbin1.blob.core.windows.net/ingestion/00000000-0000-0000-0000-000000000000?sv=2014-02-14&sr=b&sig=FAKE&se=2026-11-09T18%3A00%3A00Z&sp=rwl",
+  "applicationPackages": [
+    {
+      "fileName": "Heiward-1.9.130.msixbundle",
+      "fileStatus": "PendingDelete",
+      "id": "1152921505690200001",
+      "version": "1.9.130.0",
+      "architecture": "Neutral",
+      "languages": [ "en-US" ],
+      "capabilities": [ "runFullTrust" ],
+      "minimumDirectXVersion": "None",
+      "minimumSystemRam": "None",
+      "targetDeviceFamilies": [ "Windows.Desktop min version 10.0.26100.0" ]
+    },
+    {
+      "fileName": "Heiward-1.9.137.msixbundle",
+      "fileStatus": "PendingUpload",
+      "minimumDirectXVersion": "None",
+      "minimumSystemRam": "None"
+    }
+  ],
+  "packageDeliveryOptions": {
+    "packageRollout": {
+      "isPackageRollout": false,
+      "packageRolloutPercentage": 0.0,
+      "packageRolloutStatus": "PackageRolloutNotStarted",
+      "fallbackSubmissionId": "0"
+    },
+    "isMandatoryUpdate": false,
+    "mandatoryUpdateEffectiveDate": "1601-01-01T00:00:00.0000000Z"
+  },
+  "enterpriseLicensing": "Online",
+  "allowMicrosoftDecideAppAvailabilityToFutureDeviceFamilies": true,
+  "allowTargetFutureDeviceFamilies": {
+    "Desktop": true,
+    "Mobile": false,
+    "Holographic": false,
+    "Xbox": false,
+    "Team": false
+  },
+  "friendlyName": "Submission 2",
+  "trailers": []
+}

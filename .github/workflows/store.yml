@@ -1,21 +1,29 @@
 name: Microsoft Store
 
 # Heiward's Store package, built by HEI.Agent/store.ps1 for every release of Heiward (a v1.x tag whose version is
-# VersionPrefix in HEI.Agent/HEI.Agent.csproj), and kept as this run's artifact. docs/STORE.md, "Releasing from CI".
+# VersionPrefix in HEI.Agent/HEI.Agent.csproj), and kept as the run's artifact. docs/STORE.md, "Releasing from CI".
 #
-# It is also submitted to Partner Center, once the owner has set it up there:
-#   - the repository variable STORE_SUBMIT is "true" (only after the first, private-audience submission went
-#     through by hand: Partner Center won't take a package for an app that has never been published), and
-#   - the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID, PARTNER_CENTER_CLIENT_SECRET and
-#     PARTNER_CENTER_SELLER_ID hold the Microsoft Entra app Partner Center's API is reached through.
-# Without them the package is built and kept, and nothing is sent.
+# It also goes to the Microsoft Store by itself, once the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID,
+# PARTNER_CENTER_CLIENT_SECRET and PARTNER_CENTER_SELLER_ID hold the Microsoft Entra app Partner Center's API is
+# reached through, and the app has a published submission (the first one goes through Partner Center by hand). The
+# repository variable STORE_SUBMIT set to "false" switches the sending off. Without the secrets, the package is
+# built and kept, and nothing is sent.
 #
-# Started by hand (Actions > Microsoft Store > Run workflow), it builds a given release's tag, and can leave the
-# submission as a draft in Partner Center instead of sending it to certification.
+# Partner Center keeps one submission in progress per app, and Heiward releases faster than the Store certifies.
+# So a release goes only when nothing is in progress, or what is in progress is a submission whose commit failed
+# (HEI.StoreSubmit, Rules): never in place of one in certification, nor of a draft. Otherwise it waits, with a
+# notice that says what holds it, and the run passes. The scheduled runs catch up: each sends the newest release
+# once the Store has an older one and nothing is in progress, so the last release of a busy day still gets there.
+#
+# Started by hand (Actions > Microsoft Store > Run workflow), it does the same for a given release's tag, and can
+# leave the submission as a draft in Partner Center instead of sending it to certification.
 
 on:
   release:
     types: [published]
+  # Four times a day. The check runs on Linux and builds nothing unless there's a release to send.
+  schedule:
+    - cron: '23 1,7,13,19 * * *'
   workflow_dispatch:
     inputs:
       tag:
@@ -26,108 +34,193 @@ on:
         type: boolean
         default: false
 
-# One Store build at a time: Partner Center takes one pending submission per app.
+# One run at a time, releases' and scheduled ones alike: Partner Center takes one submission in progress per app,
+# and every run asks it afresh.
 concurrency:
   group: store
   cancel-in-progress: false
+
+permissions:
+  contents: read
 
 env:
   STORE_ID: 9NX5K0L4CW3D
   # The Steward's kit, which store.ps1 fills through tools\kit.ps1, from its public mirror on Manor-releases: the
   # Steward's own repository is private, so its kit releases answer 404 to CI. Checked against SHA256SUMS.txt as before.
   STEWARD_RELEASES: https://github.com/Jcollier0120/Manor-releases/releases/download
+  DOTNET_NOLOGO: 'true'
+  DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
 
 jobs:
-  build:
-    runs-on: windows-latest
+  # Which release, and whether it goes to the Store now.
+  check:
+    runs-on: ubuntu-latest
     outputs:
+      tag: ${{ steps.which.outputs.tag }}
       version: ${{ steps.which.outputs.version }}
-      skip: ${{ steps.heiward.outputs.skip }}
+      build: ${{ steps.plan.outputs.build }}
+      submit: ${{ steps.ask.outputs.submit || 'false' }}
     steps:
+      # The workflow's own commit: HEI.StoreSubmit, and the changelog.
+      - uses: actions/checkout@v5
       - name: Which release
         id: which
-        shell: bash
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
         run: |
+          # A scheduled run, or one by hand without a tag: the newest release.
           if [[ -z "$TAG" ]]; then TAG=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName); fi
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v5
-        with:
-          ref: ${{ steps.which.outputs.tag }}
       # Only Heiward's own releases: the tags VDF left (v4.1.1 and the like) are other apps, which aren't in the Store.
       - name: A release of Heiward
         id: heiward
-        shell: bash
         env:
+          TAG: ${{ steps.which.outputs.tag }}
           VERSION: ${{ steps.which.outputs.version }}
         run: |
-          PREFIX=$(sed -n 's:.*<VersionPrefix>\(.*\)</VersionPrefix>.*:\1:p' HEI.Agent/HEI.Agent.csproj | head -1)
+          git fetch --quiet --depth=1 --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          PREFIX=$(git show "refs/tags/$TAG:HEI.Agent/HEI.Agent.csproj" | sed -n 's:.*<VersionPrefix>\(.*\)</VersionPrefix>.*:\1:p' | head -1)
           if [[ "$PREFIX" != "$VERSION" ]]; then
-            echo "::notice::$VERSION isn't a release of Heiward (HEI.Agent.csproj says $PREFIX at that tag): no Store package."
+            echo "::notice title=Microsoft Store::$VERSION isn't a release of Heiward (HEI.Agent.csproj says $PREFIX at that tag): no Store package."
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Setup .NET
+      - name: Set up for the Store
+        id: setup
         if: steps.heiward.outputs.skip != 'true'
+        env:
+          VERSION: ${{ steps.which.outputs.version }}
+          STORE_SUBMIT: ${{ vars.STORE_SUBMIT }}
+          PARTNER_CENTER_TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          PARTNER_CENTER_CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+          PARTNER_CENTER_SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
+        run: |
+          if [[ "${STORE_SUBMIT,,}" == "false" ]]; then
+            echo "::notice title=Microsoft Store::Heiward $VERSION wasn't sent: sending to the Microsoft Store is switched off (the repository variable STORE_SUBMIT is false)."
+            exit 0
+          fi
+          missing=()
+          [[ -n "$PARTNER_CENTER_TENANT_ID" ]] || missing+=(PARTNER_CENTER_TENANT_ID)
+          [[ -n "$PARTNER_CENTER_CLIENT_ID" ]] || missing+=(PARTNER_CENTER_CLIENT_ID)
+          [[ -n "$PARTNER_CENTER_CLIENT_SECRET" ]] || missing+=(PARTNER_CENTER_CLIENT_SECRET)
+          [[ -n "$PARTNER_CENTER_SELLER_ID" ]] || missing+=(PARTNER_CENTER_SELLER_ID)
+          if (( ${#missing[@]} == 4 )); then
+            echo "::notice title=Microsoft Store::Heiward $VERSION wasn't sent: Partner Center isn't set up for this repository yet (docs/STORE.md, \"Releasing from CI\"). Its bundle is this run's artifact."
+          elif (( ${#missing[@]} )); then
+            echo "::warning title=Microsoft Store::Heiward $VERSION wasn't sent: these secrets aren't set: ${missing[*]} (docs/STORE.md, \"Releasing from CI\")."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup .NET
+        if: steps.setup.outputs.ready == 'true'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Ask Partner Center
+        id: ask
+        if: steps.setup.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.which.outputs.version }}
+          PARTNER_CENTER_TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+          PARTNER_CENTER_CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+          PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+        run: dotnet run --project HEI.StoreSubmit -c Release -- check --target "$VERSION"
+      # Even when Partner Center couldn't be asked (the job fails then, and says why): a release still gets its bundle.
+      - name: Build or not
+        id: plan
+        if: ${{ !cancelled() && steps.heiward.outcome == 'success' }}
+        env:
+          SKIP: ${{ steps.heiward.outputs.skip }}
+          SUBMIT: ${{ steps.ask.outputs.submit }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # A release, or a run by hand, keeps its bundle as the run's artifact; a scheduled run builds only what it sends.
+          if [[ "$SKIP" == "true" ]] || [[ "$EVENT" == "schedule" && "$SUBMIT" != "true" ]]; then
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    needs: check
+    if: ${{ !cancelled() && needs.check.outputs.build == 'true' }}
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.check.outputs.tag }}
+      - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
       # In Windows PowerShell, as on the PCs that build Heiward. It fills the Steward's kit from its public mirror (STEWARD_RELEASES).
       - name: Build the bundle
-        if: steps.heiward.outputs.skip != 'true'
         run: powershell -NoProfile -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
       - name: Keep it
-        if: steps.heiward.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Heiward-${{ steps.which.outputs.version }}-store
-          path: artifacts/store/Heiward-${{ steps.which.outputs.version }}.msixbundle
+          name: Heiward-${{ needs.check.outputs.version }}-store
+          path: artifacts/store/Heiward-${{ needs.check.outputs.version }}.msixbundle
           if-no-files-found: error
           retention-days: 30
 
   submit:
-    needs: build
-    if: needs.build.outputs.skip != 'true' && vars.STORE_SUBMIT == 'true'
+    needs: [check, build]
+    if: needs.check.outputs.submit == 'true'
     runs-on: windows-latest
-    steps:
-      - name: Partner Center's secrets
-        id: secrets
+    defaults:
+      run:
         shell: bash
-        env:
-          TENANT: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
-          CLIENT: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
-          SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
-          SELLER: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
-        run: |
-          missing=()
-          [[ -n "$TENANT" ]] || missing+=(PARTNER_CENTER_TENANT_ID)
-          [[ -n "$CLIENT" ]] || missing+=(PARTNER_CENTER_CLIENT_ID)
-          [[ -n "$SECRET" ]] || missing+=(PARTNER_CENTER_CLIENT_SECRET)
-          [[ -n "$SELLER" ]] || missing+=(PARTNER_CENTER_SELLER_ID)
-          if (( ${#missing[@]} )); then
-            echo "::error::STORE_SUBMIT is true, but these secrets aren't set: ${missing[*]} (docs/STORE.md, \"Releasing from CI\")."
-            exit 1
-          fi
-      - uses: actions/download-artifact@v4
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      PARTNER_CENTER_TENANT_ID: ${{ secrets.PARTNER_CENTER_TENANT_ID }}
+      PARTNER_CENTER_CLIENT_ID: ${{ secrets.PARTNER_CENTER_CLIENT_ID }}
+      PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
+      PARTNER_CENTER_SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
+    steps:
+      # The workflow's own commit again: HEI.StoreSubmit, and the changelog What's new is written from.
+      - uses: actions/checkout@v5
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
         with:
-          name: Heiward-${{ needs.build.outputs.version }}-store
+          dotnet-version: '10.0.x'
+      # Once more, just before sending: the build took a while, and a draft may have been made in Partner Center since.
+      - name: Ask Partner Center again
+        id: again
+        run: dotnet run --project HEI.StoreSubmit -c Release -- check --target "$VERSION"
+      - uses: actions/download-artifact@v4
+        if: steps.again.outputs.submit == 'true'
+        with:
+          name: Heiward-${{ needs.check.outputs.version }}-store
           path: store
       - uses: microsoft/setup-msstore-cli@v1
+        if: steps.again.outputs.submit == 'true'
       - name: Sign in to Partner Center
-        shell: bash
+        if: steps.again.outputs.submit == 'true'
         run: >
           msstore reconfigure
-          --tenantId "${{ secrets.PARTNER_CENTER_TENANT_ID }}"
-          --clientId "${{ secrets.PARTNER_CENTER_CLIENT_ID }}"
-          --clientSecret "${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}"
-          --sellerId "${{ secrets.PARTNER_CENTER_SELLER_ID }}"
-      # A new submission copies the last one's listing, pricing and audience, with this package in place of the old.
-      # Without --noCommit it goes to certification at once; the Store publishes it when it passes.
-      - name: Submit
-        shell: bash
-        run: |
-          args=(publish --inputFile "store/Heiward-${{ needs.build.outputs.version }}.msixbundle" --appId "$STORE_ID")
-          if [[ "${{ inputs.draft }}" == "true" ]]; then args+=(--noCommit); fi
-          msstore "${args[@]}"
+          --tenantId "$PARTNER_CENTER_TENANT_ID"
+          --clientId "$PARTNER_CENTER_CLIENT_ID"
+          --clientSecret "$PARTNER_CENTER_CLIENT_SECRET"
+          --sellerId "$PARTNER_CENTER_SELLER_ID"
+      # A new submission, copied from the published one (listing, pricing, audience), with this bundle in place of the
+      # old one, uploaded and left uncommitted for the next step.
+      - name: Upload the bundle
+        if: steps.again.outputs.submit == 'true'
+        run: msstore publish "store/Heiward-$VERSION.msixbundle" --appId "$STORE_ID" --noCommit
+      # What's new in this version, from CHANGELOG.md, then the commit: the Store publishes it once it passes
+      # certification, and Windows updates the installed copies.
+      - name: What's new, and send it
+        if: steps.again.outputs.submit == 'true'
+        env:
+          BEFORE: ${{ steps.again.outputs.pending }}
+          DRAFT: ${{ inputs.draft }}
+        run: dotnet run --project HEI.StoreSubmit -c Release --no-build -- finish --target "$VERSION" --changelog CHANGELOG.md --before "$BEFORE" --draft "${DRAFT:-false}"
+      # A run that failed halfway deletes the draft it made, so that draft doesn't hold every later release back.
+      - name: Tidy up after a failure
+        if: failure() && steps.again.outputs.submit == 'true'
+        env:
+          BEFORE: ${{ steps.again.outputs.pending }}
+        run: dotnet run --project HEI.StoreSubmit -c Release --no-build -- abandon --before "$BEFORE"
