@@ -39,6 +39,17 @@ public sealed class ReportBuilderTests : IDisposable {
 		public float? AiPercent(string a, string b) => ToKeeper.TryGetValue(a, out var v) ? v.Ai : null;
 		public float? AudioPercent(string a, string b) =>
 			AudioToKeeper.TryGetValue(a, out float x) ? x : AudioToKeeper.TryGetValue(b, out float y) ? y : null;
+		/// <summary>A photo's largest single-cell difference to the kept one (unset: 0, no cell moved).</summary>
+		public readonly Dictionary<string, int> CellToKeeper = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>A photo's close look against the kept one (unset: the same up close).</summary>
+		public readonly Dictionary<string, bool?> UpCloseToKeeper = new(StringComparer.OrdinalIgnoreCase);
+		public int CloseLooks;
+		public int? MaxCellDifference(string a, string b) =>
+			CellToKeeper.TryGetValue(a, out int c) ? c : CellToKeeper.TryGetValue(b, out int d) ? d : ToKeeper.ContainsKey(a) || ToKeeper.ContainsKey(b) ? 0 : null;
+		public bool? SameUpClose(string a, string b) {
+			CloseLooks++;
+			return UpCloseToKeeper.TryGetValue(a, out bool? x) ? x : UpCloseToKeeper.TryGetValue(b, out bool? y) ? y : true;
+		}
 	}
 
 	public ReportBuilderTests() => Directory.CreateDirectory(dir);
@@ -138,9 +149,67 @@ public sealed class ReportBuilderTests : IDisposable {
 		Assert.DoesNotContain(g.Items, i => i.Suggested);
 	}
 
+	[Theory]
+	[InlineData(40, null, "variant")]   // a signature or a changed chat line: one cell far off, the average 99.8%
+	[InlineData(40, 99.2f, "edited")]   // the AI sees the same picture, changed
+	[InlineData(9, 99.2f, "edited")]    // just past the cell limit
+	public void ASmallLocalEdit_IsNotAPlainCopy(int cell, float? ai, string relation) {
+		var signed = Photo("p.signed.jpg", 4032, 3024, Bytes(7000, 2), gray: 99.8f, ai: ai);
+		fingerprints.CellToKeeper[signed.Path] = cell;
+		var g = Single(Photo("p.jpg", 4032, 3024, Bytes(8000, 1)), signed);
+		ReportItem edit = Named(g, "p.signed.jpg");
+		Assert.Equal(relation, edit.Relation);
+		Assert.False(edit.Suggested);
+		Assert.Empty(AutoCleaner.Targets(g).Targets);
+	}
+
+	[Fact]
+	public void ABlurredFace_SeenUpClose_IsNotAPlainCopy() {
+		// A blur keeps every cell's average: only the closer look sees it.
+		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1));
+		var blurred = Photo("p.blurred.jpg", 4032, 3024, Bytes(7000, 2), gray: 99.98f, ai: 99.4f);
+		fingerprints.CellToKeeper[blurred.Path] = 3;
+		fingerprints.UpCloseToKeeper[blurred.Path] = false;
+		ReportItem edit = Named(Single(original, blurred), "p.blurred.jpg");
+		Assert.Equal("edited", edit.Relation);
+		Assert.False(edit.Suggested);
+	}
+
+	[Fact]
+	public void APhotoThatCantBeLookedAtUpClose_IsNotAPlainCopy() {
+		var copy = Photo("p.resaved.jpg", 4032, 3024, Bytes(7000, 2), gray: 99.9f);
+		fingerprints.UpCloseToKeeper[copy.Path] = null; // can't be decoded
+		ReportItem item = Named(Single(Photo("p.jpg", 4032, 3024, Bytes(8000, 1)), copy), "p.resaved.jpg");
+		Assert.Equal("variant", item.Relation);
+		Assert.False(item.Suggested);
+	}
+
+	[Fact]
+	public void EachPairIsLookedAtUpCloseOnce() {
+		Single(Photo("p.jpg", 4032, 3024, Bytes(8000, 1)), Photo("p.small.jpg", 1280, 960, Bytes(2000, 2), gray: 99.9f,
+			modified: new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc)));
+		Assert.Equal(1, fingerprints.CloseLooks);
+	}
+
+	[Fact]
+	public void AnEnlargedExport_DoesNotGetItsOriginalChecked() {
+		// An AI upscale of a camera photo matches it pixel for pixel and wins on resolution; the older original is the user's call.
+		var original = Photo(@"Camera\IMG_0042.jpg", 1600, 1200, Bytes(3000, 1), modified: new DateTime(2019, 6, 1, 0, 0, 0, DateTimeKind.Utc));
+		var upscaled = Photo(@"Exports\IMG_0042 upscaled.png", 6400, 4800, Bytes(30000, 2), gray: 99.9f, modified: new DateTime(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc));
+		ReportGroup g = Single(original, upscaled);
+		Assert.Equal(upscaled.Path, g.KeepPath);
+		ReportItem item = Named(g, "IMG_0042.jpg");
+		Assert.Equal("original", item.Relation);
+		Assert.False(item.Suggested);
+		Assert.Equal("similar", g.Kind);
+		Assert.Contains("original", g.KeepReason);
+		Assert.Empty(AutoCleaner.Targets(g).Targets);
+	}
+
 	[Fact]
 	public void HigherResolution_WinsOverEverythingElse() {
-		var small = Photo("big-file-small-picture.png", 1280, 960, Bytes(20000, 1), modified: new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+		// The smaller picture is the newer file: an older one may be the original the larger was enlarged from (below).
+		var small = Photo("big-file-small-picture.png", 1280, 960, Bytes(20000, 1), modified: new DateTime(2026, 2, 1, 0, 0, 0, DateTimeKind.Utc));
 		var large = Photo("small-file-big-picture.jpg", 4032, 3024, Bytes(9000, 2));
 		var g = Single(small, large);
 		Assert.EndsWith("small-file-big-picture.jpg", g.KeepPath);
@@ -168,7 +237,7 @@ public sealed class ReportBuilderTests : IDisposable {
 		var neighbour = Photo(@"iCloud\IMG_3727.heic", 4032, 3024, Bytes(8100, 2), gray: 96.2f, ai: 95f);
 		var original = Photo(@"iCloud\IMG_3730.heic", 4032, 3024, heic, modified: new DateTime(2026, 2, 11, 0, 0, 0, DateTimeKind.Utc));
 		var copy = Photo(@"Test\IMG_3730.heic", 4032, 3024, heic, modified: new DateTime(2026, 9, 27, 0, 0, 0, DateTimeKind.Utc));
-		var export = Photo(@"Test\IMG_3730 (exported).jpg", 2016, 1512, Bytes(3000, 3), gray: 99.82f);
+		var export = Photo(@"Test\IMG_3730 (exported).jpg", 2016, 1512, Bytes(3000, 3), gray: 99.82f, modified: new DateTime(2026, 9, 27, 0, 0, 0, DateTimeKind.Utc));
 		neighbour.GroupId = original.GroupId = Guid.NewGuid();
 
 		var g = Single(neighbour, original, copy, export); // the neighbour, left alone, is no group
@@ -381,7 +450,9 @@ public sealed class ReportBuilderTests : IDisposable {
 
 		ReportGroup g = Assert.Single(ReportBuilder.Build(new[] { keep, archived }, fingerprints, mayRead: Readable, known: new[] { keep.Path, archived.Path }));
 		Assert.Equal(keep.Path, g.KeepPath);
-		Assert.Equal("resaved", g.Items.Single(i => i.Path == archived.Path).Relation); // not "identical": its bytes weren't read
+		// Not "identical": its bytes weren't read. Nor a plain copy: it wasn't looked at up close, and no earlier scan did.
+		Assert.Equal("variant", g.Items.Single(i => i.Path == archived.Path).Relation);
+		Assert.Equal(0, fingerprints.CloseLooks);
 		Assert.Empty(ReportBuilder.Build(new[] { keep, archived }, fingerprints)); // read as usual, the missing copy leaves
 	}
 
