@@ -33,6 +33,10 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-gray")
 			return GrayParityProbe.Run(args);
 
+		// A photo's copies against its small local edits, cell by cell (see CopyCellProbe).
+		if (args.Length > 0 && args[0] == "--probe-copies")
+			return CopyCellProbe.Run(args);
+
 		// WIC photo decoding per file type, MTA vs STA (see WicDecodeProbe).
 		if (args.Length > 0 && args[0] == "--probe-wic")
 			return WicDecodeProbe.Run(args);

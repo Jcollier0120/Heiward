@@ -234,6 +234,61 @@ namespace HEI.Core.Utils {
 			return (float)diff / img1.Length / brightnessScalePerPixel;
 		}
 
+		/// <summary>
+		/// The largest difference (0–255) between the two frames' cells. <see cref="PercentageDifference"/> averages a
+		/// small local edit away: a signature or a changed line of text moves a few cells and leaves the average at 99.8%.
+		/// </summary>
+		public static int MaxCellDifference(byte[] img1, byte[] img2) {
+			ThrowIfLengthMismatch(img1, img2);
+			int max = 0;
+			for (int i = 0; i < img1.Length; i++) {
+				int d = Math.Abs(img1[i] - img2[i]);
+				if (d > max) max = d;
+			}
+			return max;
+		}
+
+		/// <summary>
+		/// Two <paramref name="side"/>×<paramref name="side"/> gray frames (side a multiple of 32), each softened by a
+		/// 3×3 box against resampling noise, cut into a 32×32 grid of blocks: the largest block's mean per-pixel
+		/// difference (0–255). Up close a blurred face or a changed line shows, where the 32×32 frame keeps only each
+		/// block's average.
+		/// </summary>
+		public static double BlockDifference(byte[] img1, byte[] img2, int side) {
+			ThrowIfLengthMismatch(img1, img2);
+			if (img1.Length != side * side || side % Side != 0)
+				throw new ArgumentException($"Expected {side}×{side} frames, a multiple of {Side} on a side.", nameof(side));
+			int[] a = Box3(img1, side), b = Box3(img2, side);
+			int block = side / Side;
+			var sums = new long[Side * Side];
+			for (int y = 0; y < side; y++) {
+				int row = y / block * Side;
+				for (int x = 0; x < side; x++)
+					sums[row + x / block] += Math.Abs(a[y * side + x] - b[y * side + x]);
+			}
+			// Box3 keeps nine times the mean, so the block's sum is over 9 × block² values.
+			long worst = 0;
+			foreach (long s in sums) worst = Math.Max(worst, s);
+			return worst / (9.0 * block * block);
+
+			// Each pixel's 3×3 sum (the edges repeat): separable, rows then columns.
+			static int[] Box3(byte[] g, int n) {
+				var rows = new int[g.Length];
+				for (int y = 0; y < n; y++)
+					for (int x = 0; x < n; x++) {
+						int i = y * n + x;
+						rows[i] = g[i] + g[x > 0 ? i - 1 : i] + g[x < n - 1 ? i + 1 : i];
+					}
+				var box = new int[g.Length];
+				for (int y = 0; y < n; y++)
+					for (int x = 0; x < n; x++) {
+						int i = y * n + x;
+						box[i] = rows[i] + rows[y > 0 ? i - n : i] + rows[y < n - 1 ? i + n : i];
+					}
+				return box;
+			}
+		}
+
 		static readonly byte[] shuffle16 =
 		{
 			15,14,13,12,11,10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0
