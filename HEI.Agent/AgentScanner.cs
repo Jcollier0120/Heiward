@@ -22,7 +22,7 @@ using HEI.Core.FFTools;
 using HEI.Core.Utils;
 
 namespace HEI.Agent {
-	/// <summary>Live progress for the review page, rewritten about once a second while a scan runs.</summary>
+	/// <summary>Live progress for the review page while a scan runs (scan-status.json), written when <see cref="StatusPace"/> says.</summary>
 	/// <param name="Roots">The drives and folders this scan reads, whose cards show its progress: not those scanned only when asked, nor those where nothing changed.</param>
 	/// <param name="Phase"><see cref="ScanPhase"/>: what the scan is doing now.</param>
 	/// <param name="Listed">Of <paramref name="Roots"/>, those whose files are listed (while <paramref name="Phase"/> is "listing").</param>
@@ -162,22 +162,22 @@ namespace HEI.Agent {
 			string finishing = "Finishing";
 			int finishedFiles = 0, finishingFiles = 0;
 			void Finish(string stage, int done = 0, int total = 0) { finishing = stage; finishedFiles = done; finishingFiles = total; }
-			// Once a second, whether or not a file finished: the listing reports nothing, and a drive's
-			// last files can take minutes.
-			void Write() {
+			// Looked at once a second, whether or not a file finished (the listing reports nothing, and a drive's last
+			// files can take minutes), and written when it's due (StatusPace).
+			ScanStatus Now() {
 				ScanProgressSnapshot? e = latest;
 				bool finishingNow = phase == ScanPhase.Finishing;
 				string stage = !string.IsNullOrEmpty(e?.CurrentStage) ? e.CurrentStage : phase switch {
 					ScanPhase.Listing => "Finding files", ScanPhase.Checking => "Checking files", ScanPhase.Comparing => "Comparing", _ => finishing,
 				};
 				var ai = engine.AiLastRun;
-				WriteStatus(new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? (finishingNow ? finishedFiles : 0),
+				return new ScanStatus(Environment.ProcessId, started, stage, e?.CurrentPosition ?? (finishingNow ? finishedFiles : 0),
 					e?.MaxPosition ?? (finishingNow ? finishingFiles : 0), fullSpeed, reading,
 					phase, phase == ScanPhase.Listing ? engine.ListingTimes.Keys.ToList() : null,
 					driveCounts?.Select(x => new DriveCheck(x.Root, x.DoneFiles, x.TotalFiles, x.DoneBytes, x.TotalBytes)).ToList(),
-					ai?.Device, ai?.Utc));
+					ai?.Device, ai?.Utc);
 			}
-			await using var status = new StatusFile(Write);
+			await using var status = new StatusFile(Now, ScanPace.PageOpen);
 			Report? previous;
 			string device;
 			List<ReportGroup> groups;
@@ -448,7 +448,7 @@ namespace HEI.Agent {
 			engine.ScanAborted -= CompareAborted;
 		}
 
-		static FileStream? TryLock() {
+		internal static FileStream? TryLock() {
 			try {
 				return new FileStream(AgentPaths.ScanLock, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
 			}
@@ -482,35 +482,104 @@ namespace HEI.Agent {
 			}
 			catch { return null; }
 		}
+	}
 
-		static void WriteStatus(ScanStatus status) {
-			try { AgentPaths.WriteAtomic(AgentPaths.ScanStatus, JsonSerializer.Serialize(status, AgentConfig.Json)); }
+	/// <summary>
+	/// scan-status.json while a scan runs: written now, then looked at once a second on one thread, and written again
+	/// when <see cref="StatusPace"/> says so, until disposed, which writes what hasn't landed yet and deletes it.
+	/// </summary>
+	sealed class StatusFile : IAsyncDisposable {
+		readonly CancellationTokenSource stop = new();
+		readonly Task loop;
+		readonly Func<ScanStatus> now;
+		readonly Action<string> write;
+		readonly Action delete;
+		readonly StatusPace pace;
+
+		/// <param name="now">The scan's status as it is now.</param>
+		/// <param name="watched">The review page is open and showing (<see cref="ScanPace.PageOpen"/>).</param>
+		/// <param name="write">Writes the status's JSON; scan-status.json unless a test says otherwise.</param>
+		/// <param name="delete">Deletes it once the scan is done; scan-status.json unless a test says otherwise.</param>
+		/// <param name="time">The clock and the second's tick: the system's, unless a test moves them itself.</param>
+		public StatusFile(Func<ScanStatus> now, Func<bool> watched, Action<string>? write = null, Action? delete = null, TimeProvider? time = null) {
+			time ??= TimeProvider.System;
+			this.now = now;
+			this.write = write ?? (json => AgentPaths.WriteAtomic(AgentPaths.ScanStatus, json));
+			this.delete = delete ?? (() => File.Delete(AgentPaths.ScanStatus));
+			pace = new StatusPace(watched, time);
+			Look();
+			// The second's tick starts now, not when the thread gets going.
+			var tick = new PeriodicTimer(TimeSpan.FromSeconds(1), time);
+			loop = Task.Run(async () => {
+				using (tick) {
+					try {
+						while (await tick.WaitForNextTickAsync(stop.Token))
+							Look();
+					}
+					catch (OperationCanceledException) { }
+				}
+			});
+		}
+
+		/// <summary>The status now, written if it's due (or, <paramref name="last"/>, if it hasn't landed).</summary>
+		void Look(bool last = false) {
+			try {
+				ScanStatus status = now();
+				if (pace.Due(status, last) is not { } json) return;
+				write(json);
+				pace.Wrote(status, json);
+			}
 			catch { /* progress is cosmetic */ }
 		}
 
-		/// <summary>scan-status.json, written now and once a second on one thread until disposed, which deletes it.</summary>
-		sealed class StatusFile : IAsyncDisposable {
-			readonly CancellationTokenSource stop = new();
-			readonly Task loop;
+		public async ValueTask DisposeAsync() {
+			if (stop.IsCancellationRequested) return;
+			stop.Cancel();
+			await loop;
+			// The last state lands, whatever the pace held back.
+			Look(last: true);
+			try { delete(); } catch { }
+		}
+	}
 
-			public StatusFile(Action write) {
-				write();
-				loop = Task.Run(async () => {
-					using var tick = new PeriodicTimer(TimeSpan.FromSeconds(1));
-					try {
-						while (await tick.WaitForNextTickAsync(stop.Token))
-							try { write(); } catch { /* progress is cosmetic */ }
-					}
-					catch (OperationCanceledException) { }
-				});
-			}
+	/// <summary>
+	/// When scan-status.json is written again. Only the review page reads it, every 1.5 s while it's showing (app.js,
+	/// PROGRESS_EVERY), and it reads nothing while it's hidden or closed. So a new step (<see cref="ScanStatus.Phase"/>),
+	/// a new stage of comparing or finishing, or a change of pace is written at once; the counts moving alone, at most
+	/// every <see cref="Watched"/> while the page is showing, and every <see cref="Alone"/> while it isn't: a page opened
+	/// then marks itself seen with its first look, and the next second's look writes. A status the same as the last
+	/// written isn't written at all. Once a second it had been, a temporary file and a replace each time, for as long as
+	/// a scan ran.
+	/// </summary>
+	sealed class StatusPace(Func<bool> watched, TimeProvider time) {
+		/// <summary>
+		/// While the page shows: every second of its looks sees counts that moved, and the AI's last run is never older than
+		/// the page's "Running on the NPU" allows (AI_RUNNING_MS, 10 s).
+		/// </summary>
+		internal static readonly TimeSpan Watched = TimeSpan.FromSeconds(3);
+		/// <summary>While nobody looks: the page's first look after it opens is at most this far behind, and the next one isn't.</summary>
+		internal static readonly TimeSpan Alone = TimeSpan.FromSeconds(30);
 
-			public async ValueTask DisposeAsync() {
-				if (stop.IsCancellationRequested) return;
-				stop.Cancel();
-				await loop;
-				try { File.Delete(AgentPaths.ScanStatus); } catch { }
-			}
+		ScanStatus? last;
+		string? written;
+		long writtenAt;
+
+		/// <summary>The status's JSON when it's due to be written now, else null. <paramref name="final"/>: whenever it hasn't landed.</summary>
+		public string? Due(ScanStatus status, bool final = false) {
+			string json = JsonSerializer.Serialize(status, AgentConfig.Json);
+			if (json == written) return null;
+			if (final || last == null || status.Phase != last.Phase || status.FullSpeed != last.FullSpeed ||
+				status.Stage != last.Stage && status.Phase != ScanPhase.Checking) // checking names each file's step: the page shows the counts
+				return json;
+			TimeSpan since = time.GetElapsedTime(writtenAt);
+			return since >= Alone || since >= Watched && watched() ? json : null;
+		}
+
+		/// <summary>It's written.</summary>
+		public void Wrote(ScanStatus status, string json) {
+			last = status;
+			written = json;
+			writtenAt = time.GetTimestamp();
 		}
 	}
 

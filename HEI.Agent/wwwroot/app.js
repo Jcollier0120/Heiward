@@ -5305,7 +5305,7 @@ function schedule(next, ms) {
   timer = document.visibilityState === 'hidden' ? null : setTimeout(next, ms);
 }
 
-/** The scan's status file is rewritten every second: a poll that caught it mid-write keeps the last one rather than flicker. */
+/** The scan's status file is replaced while the scan runs: a poll that caught it mid-write keeps the last one rather than flicker. */
 function keepStatus(next, prev) {
   if (prev && next.running && prev.running && !next.starting && !next.status && prev.status) next.status = prev.status;
   return next;

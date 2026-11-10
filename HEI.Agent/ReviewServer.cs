@@ -532,6 +532,8 @@ namespace HEI.Agent {
 			// The Store version's tasks of an older Heiward's names move to this account's folder, once.
 			_ = Task.Run(() => Installer.MoveStoreTasks(cfg, ScanBusy()));
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
+			// A clean stop folds the listings' journals in, so a build from before them reads every drive's listing as it is.
+			app.Lifetime.ApplicationStopping.Register(() => StoredListing.FoldAll(AgentPaths.AppendLog));
 			ScanIfDue(cfg);
 			if (openBrowser) OpenBrowser(port);
 			if (StoreSetup.FirstRun) _ = StopWhenAbandonedAsync(app.Lifetime);
