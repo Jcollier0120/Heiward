@@ -1,12 +1,12 @@
 name: Windows 64-bit
 
-# Every pull request, on an x64 PC (Heiward is developed on an ARM64 one): build hei.exe the
-# way release.ps1 does, for both architectures it ships, and run the suites that cover it.
+# Every pull request, on an x64 PC: build hei.exe the way release.ps1 does, for both
+# architectures it ships, and run the suites that cover it.
 # The GUI, CLI and Web apps from VDF aren't built or tested here: Heiward doesn't ship them.
 on: [pull_request]
 
-# The Steward's kit comes from its public mirror on Manor-releases: the Steward's own repository is private, so its
-# kit releases answer 404 to CI. tools\kit.ps1 downloads from here instead, checked against SHA256SUMS.txt as before.
+# The kit comes from its public releases on Manor-releases, which any build downloads with no sign-in.
+# tools\kit.ps1 downloads from here, checked against SHA256SUMS.txt.
 env:
   STEWARD_RELEASES: https://github.com/Jcollier0120/Manor-releases/releases/download
 
@@ -21,9 +21,9 @@ jobs:
       uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '10.0.x'
-    # The Steward's kit at the version kit.json pins, from its public mirror (STEWARD_RELEASES; HEI.Agent/README.md, "The kit"):
+    # The kit at the version kit.json pins, from its public releases (STEWARD_RELEASES; HEI.Agent/README.md, "The kit"):
     # the tests run the NPU queue's shared cases from it. In Windows PowerShell, as on the PCs that build Heiward.
-    - name: Fill the Steward's kit
+    - name: Fill the kit
       run: powershell -NoProfile -ExecutionPolicy Bypass -File tools\kit.ps1
     - name: Build Heiward (x64)
       run: dotnet publish HEI.Agent/HEI.Agent.csproj -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -nologo -v q

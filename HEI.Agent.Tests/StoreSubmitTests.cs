@@ -276,6 +276,29 @@ public sealed class StoreSubmitTests : IDisposable {
 	}
 
 	[Fact]
+	public void WhatsNew_AVersionOfOnlySmallFixes_IsLeftOut() {
+		const string changelog = """
+			## 1.9.140
+
+			### What changed
+
+			- Small fixes and improvements.
+
+			### Before you update
+
+			- Nothing: it updates itself as usual.
+
+			## 1.9.139
+
+			### What changed
+
+			- Scans are faster.
+			""";
+		Assert.Equal("1.9.139\n• Scans are faster.", ReleaseNotes.For(changelog, null, Versions.Parse("1.9.140")!));
+		Assert.Equal(ReleaseNotes.Fallback, ReleaseNotes.For(changelog, Versions.Parse("1.9.139"), Versions.Parse("1.9.140")!));
+	}
+
+	[Fact]
 	public void WhatsNew_NothingPublishedBefore_TakesEveryVersionUpToIt() {
 		string notes = ReleaseNotes.For(Changelog, null, V137);
 		Assert.StartsWith("1.9.137: ", notes);
@@ -315,7 +338,7 @@ public sealed class StoreSubmitTests : IDisposable {
 		string notes = ReleaseNotes.For(changelog, Versions.Parse("1.9.100"), V137);
 		Assert.InRange(ReleaseNotes.Cost(notes), 200, ReleaseNotes.Limit);
 		Assert.StartsWith("1.9.137: Heiward from the Microsoft Store leaves the Heiward that Castellan keeps alone.\n• ", notes);
-		foreach (string markup in new[] { "**", "`", "](", "###", "Kit 2.", "Steward's kit", "Before you update", "updates itself as usual" })
+		foreach (string markup in new[] { "**", "`", "](", "###", "Kit 2.", "Steward's kit", "Before you update", "updates itself as usual", ReleaseNotes.Fallback })
 			Assert.DoesNotContain(markup, notes);
 	}
 

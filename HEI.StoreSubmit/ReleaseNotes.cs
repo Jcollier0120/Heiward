@@ -118,7 +118,8 @@ public static partial class ReleaseNotes {
 	public static string For(string changelog, Version? after, Version upTo, int limit = Limit) {
 		var lines = new List<string>();
 		foreach (Entry e in Parse(changelog).Where(e => (after == null || e.Version > after) && e.Version <= upTo).OrderByDescending(e => e.Version)) {
-			if (e.Items.Count == 0) continue;
+			// Nothing but the kit's lines, or the changelog's own words for a version that brought only those.
+			if (e.Items.All(i => i.Text == Fallback)) continue;
 			if (lines.Count > 0) lines.Add("");
 			string version = Versions.Show(e.Version);
 			lines.Add(e.Headline != null ? version + ": " + e.Headline : version);

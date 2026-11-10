@@ -1,6 +1,6 @@
 # Heiward's changelog
 
-Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
+Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
 ## 1.10.4
 
@@ -16,7 +16,6 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - Naming a project when you group repositories is asked in the same dialog, with the suggested name selected and ready to type over.
 - Each dialog's button says what it does, such as "Delete branches" or "Clear history". Where the answer can't be undone (deleted for good, deleted from the cloud too, or forgotten), that button is red and Cancel has the focus, so pressing Enter doesn't delete anything.
 - Esc is Cancel, Tab stays within the dialog, and the page under it waits until you answer. If you go to another page, the question is cancelled.
-- Kit 2.152.11: A graphics card whose driver stopped responding twice in a day is taken off model work, and the work goes to the NPU or the processor, until its driver changes or the PC restarts without a crash.
 
 ### Before you update
 
@@ -50,7 +49,6 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - The review page pre-checks the plain copies of a photo for the Recycle Bin: the same picture made smaller, more compressed or saved again. Heiward compared pictures in gray, so a black-and-white or warmer version of a colour photo looked the same as the photo and could be pre-checked as a copy of it. If you accepted the pre-checks, you'd have removed a picture that isn't a copy. Now Heiward compares the colours too. Such a version is shown as an **Edited version**, like other edits, and you decide whether to keep it. Automatic cleanup leaves it for you as well.
 - On a test set of 369 photos, 92 black-and-white versions and 117 warm ones were pre-checked as copies. Now one is: its photo was already black and white, so the two are the same. Every copy of the same colours that was pre-checked before still is. What's no longer pre-checked is a colour copy in a set where the picture kept is a black-and-white or warm version (10 on the test set): it isn't a copy of that one.
 - Which photos are grouped together, and which one is kept, is unchanged.
-- Kit 2.152.10: The kit's logs roll over: a model server's at its start, serve.log while a page stays up, an outside run's line by line, each past its cap kept as one old log.
 
 ### Before you update
 
@@ -79,11 +77,8 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - The page's footer no longer shows an empty "Settings:" line.
 - **Delete Highlighted** (Ctrl+Delete) takes the highlighted files off the list in one go. It used to take them off one at a time, searching the whole list for each one and updating the window's counts after each: 10,000 highlighted out of 50,000 froze the window for almost a second, and 20,000 out of 100,000 for about three seconds. It now takes about a third of a second for either, nearly all of it spent redrawing the list once. The files that stay keep their order, and **Undo Selection Change** (Ctrl+Z) works as before. As before, the files are only taken off the list, not deleted from disk.
 - **Export Checked Items Cleanup Dry Run Report** sorts the list into its sets once, instead of searching the whole list for each set. A report covering 8,000 sets out of 50,000 files took over three seconds and one covering 16,000 sets out of 100,000 over twenty. Both now take under a tenth of a second. The report is the same file as before, with the same files in the same order.
-- Kit 2.152.6: Local AI's setup downloads three files at once, and a big file in four byte ranges side by side: its 2.8 GB on an RTX card comes in a few minutes, not over twenty.
-- Kit 2.152.8: A big download comes in 8 MiB blocks on four connections, written in order, so each byte goes to disk once: kit 2.152.6's four ranges side by side had Windows write a big file 1.68 times over.
 - Heiward saves its list of scanned files and its AI cache as it scans: every five minutes during a long scan, and at the end of each scan that found something. Each save used to write the whole list and cache again, even for one new photo: about 92 MB for a library of 50,000 photos and 183 MB for 100,000. So a day of hourly scans that each found one new photo wrote about 2.2 GB, or 4.4 GB for 100,000 photos. A save now adds only what changed, under 2 KB for each new photo, and that day writes about 50 KB. Once the changes add up to a fifth of the list, Heiward writes the list whole once and starts adding again: on average about 7 KB more for each photo that changed. A scan that finds nothing new still writes nothing to them.
 - If Heiward is stopped in the middle of a save (the PC loses power, or the process is ended), the list and the cache stay as the last finished save left them, and the next scan carries on from there.
-- Kit 2.152.9: On the Snapdragon X2 the NPU's chat server loads its picture projector with the first picture and frees it after a quiet minute, so it holds 936 MiB less of the NPU while no pictures come; a request down a connection a model server closed while idle is sent again; the NPU's embedding server lets the processor's threads sleep.
 
 ### Before you update
 
@@ -156,87 +151,73 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.9.136
 
-**It carries kit 2.152.4: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.152.4: Model servers answer only this account's staff: llama-server and OpenVINO Model Server start with a key, GenieX and FastFlowLM keep web pages from reading them, and nothing is run from the PC's shared folder.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.135
 
-**It carries kit 2.152.3: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.152.3: The NPU benchmark and the NPU check look past a block of ports Windows keeps, instead of giving up 100 ports above a route's.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.134
 
-**It carries kit 2.152.2: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.152.2: A Snapdragon X2's NPU chats and reads pictures on llama-server on the Hexagon, which carries the model's add-ons, and a request can name its job to have its add-on applied there.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.133
 
-**It carries kit 2.152.1: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.152.1: A lock's holder and a starting model server are judged by the time the PC was awake, so a sleep no longer evicts a live holder or fails a server's start.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.132
 
-**It carries kit 2.152.0: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.152.0: A release carries no source: the server's code is V8 bytecode, built for the Node.js the staff run on, on Arm64 and x64.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.131
 
-**It carries kit 2.151.0: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.151.0: An installed copy's license check can't be switched off or fooled from outside: no environment variable turns it off or adds a key, and a device.json copied from another PC is that PC's.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.130
 
-**It carries kit 2.150.4: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.150.4: A round's time limit, and a PowerShell script's, count only the time the PC was awake: a round a sleep caught goes on after the wake instead of being let go.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.129
 
@@ -246,7 +227,6 @@ Nothing: it updates itself as usual.
 
 - The page, its tour and help say "check": the copies it checks for you, **Check the files to remove**, and "Nothing is removed until you check it". The tag compare, in the desktop and web apps, says **Uncheck "Only show differences"**.
 - Where the page meant its daily look, it says so: "Not looked at yet", "looked at 5 min ago", "right after the daily developer look".
-- Kit 2.150.3: A staff member's About and page say "check" for a checkbox, not "tick".
 
 ### Before you update
 
@@ -254,12 +234,9 @@ Nothing: it updates itself as usual.
 
 ## 1.9.128
 
-**It carries kit 2.150.2: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.150.1: A staff member's Settings sends you to Manor's Settings, Employees for the settings kept there: Manor folded its Staff settings tab into Employees.
-- Kit 2.150.2: "Where its work runs" calls the NPU the NPU, the word the ads and Task Manager use, and says the staff where it said agents.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -288,25 +265,19 @@ Nothing: it updates itself as usual.
 
 ## 1.9.126
 
-**It carries kit 2.150.0: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.150.0: A list setting can carry a few words for each item, drawn under it: the Warrener's destinations, each with what belongs there, in one list.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.125
 
-**It carries kit 2.149.1: the parts all the staff share.**
-
 ### What changed
 
-- Kit 2.148.5: Settings read more easily: a long help can be laid out as points, and in a narrow window a repository's or record's line keeps its padding when it wraps.
-- Kit 2.149.0: A note's label says only who wrote it, for developers too: "summary from the Herald", without ", written on the NPU".
-- Kit 2.149.1: "Where its work runs" draws where the model work goes: a card for each accelerator, with an arrow to the next, in the order a request tries them, in place of a long paragraph.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -314,73 +285,53 @@ Nothing: it updates itself as usual.
 
 ## 1.9.124
 
-**It carries the Steward's kit 2.148.4: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.148.4: A release's notes say "kit" where they said "the Steward's kit". The spec says how a kit entry reaches the staff's notes from Steward 0.36.291 on (the owner, 2026-11-01).
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing to do. A test that spells out a release's first line finds "…, with kit X." now.
+- Nothing: it updates itself as usual.
 
 ## 1.9.123
 
-**It carries the Steward's kit 2.148.3: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.148.3: Connect your AI splits what the staff member connects by itself from the rest, under a heading each (the owner, 2026-11-01).
+- Small fixes and improvements.
 
 ### Before you update
 
-- **A test that spells out the Connect card's markup** between its action and its setup tabs now finds the two headings there. Nothing else changes.
+- Nothing: it updates itself as usual.
 
 ## 1.9.122
 
-**It carries the Steward's kit 2.148.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.148.2: "Where its work runs" names the staff's own text reader, the kit's model on the NPU where it runs there, else on the processor, where the Clerk's and the Warrener's lines still said Windows' own OCR, on the processor (the owner, 2026-11-01).
+- Small fixes and improvements.
 
 ### Before you update
 
-- **A test that spells out the old line fails**: "Windows' own OCR" or "only to packaged apps" in the Clerk's or the Warrener's section. Nothing else changes.
+- Nothing: it updates itself as usual.
 
 ## 1.9.121
 
-**Brings 2 changes: It carries the Steward's kit 2.148.0: the parts every agent of the manor shares; It carries the Steward's kit 2.148.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.148.0: While the Watchman rolls back a graphics card's driver, or a new driver is being installed on it, no model work goes to that card until it's done. The other cards and the processor go on.
-- The Steward's kit 2.147.5: A refused sign-in on gitlab.com no longer takes the whole GitLab sign-in with it. The kit forgets a sign-in only where Git Credential Manager keeps its refresh token as `refresh_token.<host>`, shown stale or not.
-- The Steward's kit 2.148.1: A note's label names the staff member who wrote it, in its own word for its notes or for what it did: "summary from the Herald", "explained by the Surveyor", where it said "note from the local AI, unverified" (the owner, 2026-10-31).
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for an agent that routes through the kit (`Npu`) and keeps its servers with the kit's keeper (the Smith, Reeve): the change comes with the kit.
-- An agent that shows its accelerators' state can show `driver` (`say.driverWaiting`) where it shows a failure. Manor's accelerator card does, in a release of its own.
-- Not covered: a program that runs its model on a card in its own process (Heiward's DirectML). The guard's own 20-second wait, and its stopping the manor's servers on the card, still apply to a server an older kit started.
-- Nothing to do. A sign-in shown stale with no `refresh_token.<host>` beside it, or off Windows, is no longer forgotten. The refusal stands until the person signs git in again, and nothing in the kit says so beyond git's own message.
-- **A test that spells out the old label fails**, plain ("note from the local AI, unverified") or a developer's ("note from the NVIDIA GeForce RTX 4090, unverified", `/unverified/`). A test that compares with `noteLabel(from)` itself passes. A note kept with its label (`label: 'note from the NPU, unverified'` in a fixture) is data, and still passes. The staff tests kit 2.148.1's trial found spelling out the old words (2026-11-01, all 27 staff tried):
-  - **Porter**, `test/notes-view.test.ts:241`: a developer's label matches `/unverified/`. It fails until Porter's test is brought up.
-  - **Bridgeward**, `test/reports.test.ts:195`: `'note from the local AI, unverified'`. The Steward's kit bump brings it up itself, to `'summary from the Bridgeward'`.
-- A staff member whose notes aren't summaries passes its own word or action, in its own release: the Clerk's captions (`'caption'`), the Surveyor's and the Watchman's explanations (`'explanation'`, or `{ did: 'explained' }`), the Bridgeward's reports (`'report'`).
-- A label drawn by the agent's own code, not through `noteLabel`, says what it said: bring it to `noteLabel(from, developer, what)`.
+- Nothing: it updates itself as usual.
 
 ## 1.9.120
 
-**It carries the Steward's kit 2.147.4: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.147.4: A fetch or push to Codeberg, or another host Git Credential Manager signs in to by OAuth, works again once its sign-in is an hour old. GCM handed back its expired access token, the host refused it, and since 2.146.6 nothing told GCM to make a new one.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing to do. An agent whose runner can't start `cmdkey` (it isn't on PATH) gets nothing from it, and the refusal stands as before.
+- Nothing: it updates itself as usual.
 
 ## 1.9.119
 
@@ -418,73 +369,59 @@ Nothing: it updates itself as usual.
 
 ## 1.9.118
 
-**It carries the Steward's kit 2.146.3: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.146.3: assistants.ts, tried with the real assistants: Copilot CLI is the eleventh, each assistant says the names it connects by, Claude Desktop from the Store and Cline 4 are connected where they read their settings now, claude runs in the home it was given, and CODEX_HOME and GEMINI_CLI_HOME are followed.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing to do. `copilot-cli` is a new `AssistantId`: code that names every id (a `switch` over them, a list of its own) has one more to name.
+- Nothing: it updates itself as usual.
 
 ## 1.9.117
 
-**It carries the Steward's kit 2.146.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.146.2: The Repositories spec says where a repository's own build and release steps are: its `.steward.json`.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: no code changed.
+- Nothing: it updates itself as usual.
 
 ## 1.9.116
 
-**It carries the Steward's kit 2.146.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.146.1: git-auth.ts says what a runner does with `env`: it lays it over the command's own environment, never runs a command with it alone. The sign-in's git settings are numbered after the ones that environment already has.
-- The Steward's kit 2.146.0: A repository may be on any host, or on none: GitHub, GitHub Enterprise, GitLab (subgroups and self-hosted too), Bitbucket, Azure DevOps, Gitea, Forgejo and Codeberg, any other git server, or a folder on this PC. And an agent that is an MCP server can connect itself to ten AI assistants, adding only its own entry to each one's settings.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for a runner that spawns with `{ ...process.env, ...opts.env }`, as the Steward's and Reeve's do. A runner whose commands get an environment of their own (a session's) passes that environment whole in `env` to the runner `signedIn` wraps, its GIT_CONFIG_COUNT included, and lays the `env` `signedIn` hands back over that same environment.
-- Nothing for an agent on GitHub: its projects, staff.json and results read exactly as before, and a project has no `host` key unless its entry gives one. An agent that builds GitHub URLs from a project's `repo` should use `projectOrigin(p).webUrl` instead, or check that the repo is owner/name first, because it may now be host/path. A page that copies the kit's CSS by hand copies the `.ui-assistant` rules too.
+- Nothing: it updates itself as usual.
 
 ## 1.9.115
 
-**It carries the Steward's kit 2.145.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.145.0: Every block of output has a copy button at its top-right: `Output` carries one, and `CopyButton` puts one in a page's own `<pre>`. One click copies the whole block, the lines scrolled out of sight too.
+- Small fixes and improvements.
 
 ### Before you update
 
-- A page with its own `<pre>` of output (a log, a command's lines, a report to be sent) puts `<CopyButton text={…} label="…" />` first in it, or uses `Output`. A page that copies the kit's CSS by hand (Manor's app.css) copies the `button.ui-copy` rules too.
+- Nothing: it updates itself as usual.
 
 ## 1.9.114
 
-**It carries the Steward's kit 2.144.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.144.2: An update's probation watcher outlives the install that started it again: it starts apart from the install's jobs, so the last agents of Manor's update round finish their probation and clear app.prev, rather than being ended with Manor's install.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. An agent whose last update left probation.json and app.prev behind clears them at its next update.
+- Nothing: it updates itself as usual.
 
 ## 1.9.113
 
-**It carries the Steward's kit 2.144.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.144.1: Ready for the Workshop Pro plan: every agent accepts a Workshop Pro license (tier `workshop-pro`) and runs under it as it does under Workshop, and a PC holding one has what Developer Pro brought, now named Workshop Pro: the Wright's and the Bailiff's work with the rest of the staff, and the Seneschal. Until now a license of a tier the kit didn't know was refused as no license at all, so this kit reaches every agent before the Exchequer signs one.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -528,69 +465,53 @@ Nothing: it updates itself as usual.
 
 ## 1.9.110
 
-**It carries the Steward's kit 2.144.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.144.0: While a button's action runs, the whole page waits: the button pressed spins, and every control on the page is disabled until the action is done, has failed or has timed out, then focus is back where it was. A page's own button whose handler awaits `post()` gets it too.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for a page whose actions are `PostButton`s, kit `Button`s whose `onPress` returns its promise, `BusyButton`s, or handlers that `post()`: from this kit on, the whole page waits on them. A page whose own code sends an action with `fetch` gets none of it: send it with `post()`, or hold the page with `holdPage()` until its request answers (a streamed answer, say). A dialog of the page's own making that an action opens while it runs waits with the page: make it a `ModalCard`. A handler that asks with the browser's `confirm()` still works; `confirmDialog` is the page's own.
+- Nothing: it updates itself as usual.
 
 ## 1.9.109
 
-**It carries the Steward's kit 2.143.3: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.143.3: A page left open while its agent updated, or restarted, saves again: its server starts with a new token each time, so the tab's POSTs were refused, and Save said only "forbidden" until the tab was reloaded.
-- The Steward's kit 2.143.2: The keeper's looks no longer set a lock folder's time against the clock: on Windows a folder's time often runs a millisecond or two ahead of `Date.now()`, so a slot taken just before a look could make the next look count the shared folder's next change, an agent's work turn say, as this accelerator's let-go.
-- The Steward's kit 2.143.1: A call Envoy captions on the NPU comes first: the staff's background model work waits for the call's end, and when the call doesn't translate, the NPU's servers stop once unused for two minutes. Beside the NPU's chat model answering, Envoy's speech slowed (Whisper small's decoder steps tripled on a Ryzen AI 7 350), and on AMD the NPU itself timed out.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for a page that POSTs with `post` (its Settings form and its PostButtons do): a tab opened from this kit on recovers by itself; one opened before needs a reload once. A page whose own code POSTs with `pageToken()` and its own fetch gets none of this until it uses `post`, or `freshToken` on a 403 `forbidden`.
 - Nothing: it updates itself as usual.
-- Nothing for most agents: it updates itself as usual. Background work on the NPU now waits while Envoy captions a call, so a round during a call defers its model work to a later round. Envoy writes `npu-call.json` from its next release on this kit; until then, nothing changes. Reeve's own routing reads the file from its own release.
 
 ## 1.9.108
 
-**It carries the Steward's kit 2.143.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.143.0: Every agent's About page opens with What's new: its own changelog's entries for the versions its latest updates brought, newest first, so a person sees what changed after an update that moved through several versions, not just the last one's notes.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. The section appears from the agent's first release on this kit, which is the first to carry its changelog; until its next update it shows that version's entry, or the versions since the one in `app.prev`. An agent with its own route named `/api/whats-new` must rename it (none has one). Reeve's and Manor's own release scripts don't carry the changelog yet, so their About shows no What's new until they do.
+- Nothing: it updates itself as usual.
 
 ## 1.9.107
 
-**It carries the Steward's kit 2.142.3: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.142.3: The shared video switch is called "Keep GPS and camera details in video copies". Its old name, "Keep a video's place and camera details", read as where the videos are kept, and sent the owner to Manor's Staff settings looking for a folder setting that isn't there.
-- The Steward's kit 2.142.2: spec/RELEASE-NOTES.md says how every agent rides the build pipeline: its work writes its changelog entry in changes/, and the Steward's build sets the version.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing, unless the agent passes its own `help` that speaks of "a video's place" (the Miller's does): say "where it was filmed" there instead.
-- Nothing: it updates itself as usual. Once Steward 0.36.248 is installed, its next build puts each agent on the build pipeline, in a pull request it opens and merges itself; from then on, write each piece of work's entry in `changes/<branch>.md` and leave the version files and `CHANGELOG.md` alone.
+- Nothing: it updates itself as usual.
 
 ## 1.9.106
 
-**It carries the Steward's kit 2.142.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.142.1: A page in demo mode no longer shows "This PC holds no license for it", so Manor's hero pictures show each page as it is on a licensed PC.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing.
+- Nothing: it updates itself as usual.
 
 ## 1.9.105
 
@@ -608,35 +529,13 @@ Nothing: it updates itself as usual.
 
 ## 1.9.104
 
-**It carries the Steward's kit 2.142.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.142.0: A link to a part of the page in a tab not shown opens that tab, a time still to come reads "in 6 hours", and an empty number setting says what empty means.
-- The Steward's kit 2.141.0: Settings and tabbed pages take less room: no box inside the Settings panel, no headings over an empty table, tabs that stay put, and a tab's title said once.
-- The Steward's kit 2.140.0: The settings the staff share are set once, on Manor's Settings (Staff settings), and an agent's own Settings leaves them out; a list of short words is drawn in columns.
-- The Steward's kit 2.139.0: The kit's page talks like the manor: newcomers wait their turn at the door, the off-duty put their feet up by the fire, and an agent short of settings is awaiting orders.
-- The Steward's kit 2.138.0: The whole staff employed at once: rounds placed apart on each PC by Manor's rota, staggered after a start or a wake, a model loaded only under the manor's memory ceiling, and at most 2 or 4 agents' text readers at once.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing breaks.
-- **A test that renders a future time and expects "just now"** finds "in …" instead.
-- Nothing breaks.
-- **A Settings form of 8 or 9 ordinary settings, in two or more groups or named tabs,** is in tabs now. Look at it once.
-- **A `Section` titled as its page tab** no longer repeats its title. Take out any agent-side workaround.
-- **A test that matches an empty records or map field's `<table>` or its headings** finds none.
-- Nothing breaks: a field built by hand has no `inManor` and stays on the agent's page.
-- **To move a shared setting to Manor:**
-  - Build it with its factory.
-  - Read it with its read function. Clerk and Chamberlain read `semanticRerank` by hand; Miller and Chronicler read `preset` and `keepVideoTags` by hand.
-  - Take the agent's own default from DEFAULT_SETTINGS.
-- **A test that counts an agent's settings fields under node --test** sees them all, as before: no Manor is read there.
-- A test that pins any of these lines needs the new words: `Awaiting orders`, `waits their turn at the door`, `is learning the lay of the land in their first round`, `Castellan to teach it the new skills of`, and `, feet up by the fire` after the off-duty time.
-- Nothing else: the page's structure, classes and every value Manor reads are as they were.
-- A test that moves the clock past a scheduled round's time with mock timers (`setTime`) before ticking it now sees the round wait its place in the start window first. Tick to the round's time, or make it `light`.
-- A test that compares a whole round.json record on the clock needs `phaseFrom`.
-- Nothing else: an agent's own `phaseMs` and `firstDelayMs` keep their meaning, and a background request that finds no room to load its model is deferred as a busy NPU's is, which agents already handle.
+- Nothing: it updates itself as usual.
 
 ## 1.9.103
 
@@ -645,7 +544,7 @@ Nothing: it updates itself as usual.
 ### What changed
 
 - While Heiward's first scan waits for the other agents' first rounds, the page says: "Heiward is new to the manor and waits their turn at the door: newcomers do their first rounds one at a time, so this PC is never swamped. They start as soon as the one before them has finished."
-- While it runs: "Heiward is learning the lay of the land in their first scan: scanning every drive for the first time…". These are the words the Steward's kit 2.139.0 gives every agent's page.
+- While it runs: "Heiward is learning the lay of the land in their first scan: scanning every drive for the first time…".
 
 ### Before you update
 
@@ -657,7 +556,7 @@ Nothing: it updates itself as usual.
 
 ### What changed
 
-- Files ending in `.ts` that are TypeScript source code, not video recordings, are recognized from their first bytes. Before, every scan opened each of them with FFmpeg's ffprobe, one program start per file (122 on one developer's PC), and counted them among your photos and videos. Now they're left alone, and not counted.
+- Files ending in `.ts` that are TypeScript source code, not video recordings, are recognized from their first bytes. Before, every scan opened each of them with FFmpeg's ffprobe, one program start per file, and counted them among your photos and videos. Now they're left alone, and not counted.
 - A file ffprobe found no video in isn't checked again until it changes. Files that failed in earlier versions get one more look on the first scan, then are remembered.
 - The list of scanned files now holds only the files in the folders Heiward scans. It used to keep every file it had ever seen, including ones since deleted and ones in folders scans now leave out, such as developer repositories: on one PC 307,700 files, of which 5,245 were still scanned. A drive Heiward scans only when you ask, and a drive that isn't plugged in, keep their files.
 - The list is saved only when a scan changed something, instead of written in full twice per scan. The AI's stored image fingerprints of files no longer in the list are dropped with them.
@@ -671,17 +570,13 @@ Nothing: it updates itself as usual.
 
 ## 1.9.101
 
-**It carries the Steward's kit 2.137.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.137.2: Three fixes from the launch checks: a video the kit makes no longer carries where it was filmed, the known folders come back right whatever script a user or folder name is in, and "Back to Castellan" goes to Castellan's own address.
+- Small fixes and improvements.
 
 ### Before you update
 
-- A test that pins `manorLink().url`, or anything built from it, as `http://manor.localhost:…` needs `castellan.localhost`, or a check that holds for both.
-- A test that pins `grindArgs`' `-map_metadata 0` needs `tagArgs`' options, or `tags: tagArgs(info, true)` for every tag.
-- Nothing else: the exports and their results are the same.
+- Nothing: it updates itself as usual.
 
 ## 1.9.100
 
@@ -699,20 +594,13 @@ Nothing: it updates itself as usual.
 
 ## 1.9.99
 
-**It carries the Steward's kit 2.137.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.137.1: The text reader's helper is prebuilt and signed again: `kit/node/prebuilt/ocr-npu-87e019a2736d.exe`, for `ocr-npu.cs` as it is since 2.137.0.
-- The Steward's kit 2.137.0: AMD's XDNA 2 NPU (Ryzen AI 300 and later) reads with the text reader's model by default, with a copy of model 2 made for it (`ocr-model-v2-amd`). Measured on a Ryzen AI 7 350, a picture costs 27% less energy there than on its processor (3,492 mJ against 4,757), and it reads 1,221 of the check's 1,253 lines, against the processor's 1,224 and Windows OCR's 736. The three lines are the owner's call.
-- The Steward's kit 2.136.6: Three fixes before launch. Install and uninstall refuse an empty, relative or someone else's data folder. FFmpeg prefers the manor's signed build, and borrows Heiward's only while it can't be fetched. Model setup weighs the NVIDIA driver and the PC's memory, and by default sets up only the cards with memory of their own.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing to do. An agent that pins this kit uses the signed helper (`signedHelper`), even on a PC where it compiled its own before.
-- Nothing to do. On a Ryzen AI 300 or later, after the update the PC fetches AMD's copy (1.6 MB) and Windows ML (52 MB fetched, 1 MB kept) once, in the background, compiles the copy's graphs, and reads on the processor until they're in place. The program's self-check still compares the NPU's read with the processor's before it reads there.
-- A new model needs a new AMD copy, made and measured again, before it ships, or `VITISAI_GENERATIONS` emptied, since the copy's release is named after `MODEL_VERSION`.
-- Nothing: it updates itself as usual. An agent's own tests that compare a `leftToNpu` entry whole will find its `variant` too.
+- Nothing: it updates itself as usual.
 
 ## 1.9.98
 
@@ -770,15 +658,13 @@ Nothing: it updates itself as usual.
 
 ## 1.9.95
 
-**It carries the Steward's kit 2.136.5: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.136.5: GenieX's QAIRT clock keeper is off: GENIEX_CLOCK_KEEPER_THREADS 0 goes in the environment of every GenieX the kit starts, so AI Hub's 4B no longer keeps a processor core spinning through every answer (qualcomm/GenieX#1330). Speed, memory and answers are unchanged. A PC set up before gets it from npu-refresh, after its test. The 4B's X2 pins are AI Hub's v0.65.0 build, with the earlier build kept.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. The first time the manor's keeper (the Smith, else Reeve) runs this kit with the NPU idle, it restarts GenieX once to test the new entry.
+- Nothing: it updates itself as usual.
 
 ## 1.9.93
 
@@ -842,102 +728,83 @@ Nothing: it updates itself as usual.
 
 ## 1.9.89
 
-**It carries the Steward's kit 2.136.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.136.1: Urgent fix: the PowerShell worker starts in a signed release. Since kit 2.123.0 signed ps-worker.ps1, it was too long for a command line: no agent released since could start its worker (spawn ENAMETOOLONG), and every `powershell()` call failed.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing in an agent's code: take the kit and release. An agent released on kit 2.123.0 or later needs this kit for its PowerShell to work.
+- Nothing: it updates itself as usual.
 
 ## 1.9.88
 
-**It carries the Steward's kit 2.135.4: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.135.4: A 16 GB Snapdragon X2 reranks on its NPU, beside chat and embeddings, as a bigger PC does. Measured there with a 16 GB PC's memory: nothing failed, chat wasn't slowed, and the NPU held 4.7 GB against its 6.2 GB share.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. Reeve's sharper search, set up again on a 16 GB X2, moves its reranker to the NPU.
+- Nothing: it updates itself as usual.
 
 ## 1.9.87
 
-**It carries the Steward's kit 2.135.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.135.0: The text reader on the processor runs in Windows' efficiency mode at a gentle pace: the same lines read, for about half the energy a picture.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. The signed helpers are unchanged, so nothing is compiled anew.
+- Nothing: it updates itself as usual.
 
 ## 1.9.85
 
-**It carries the Steward's kit 2.114.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.114.0: The text reader reads with our own model on the NPU: on a Snapdragon it reads 1,211 of the check's 1,253 lines exactly, where Windows OCR read 733.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: take the kit as usual. On a Snapdragon, the first read after an agent takes it starts the 226 MB fetch in the background. Windows OCR reads until the fetch is done, and the first start then compiles the NPU's graphs (about 17 s). Every agent on the PC shares the one folder, so it's fetched once.
+- Nothing: it updates itself as usual.
 
 ## 1.9.84
 
-**It carries the Steward's kit 2.113.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.113.2: Intel's pictures stay on the NPU, and the guide says why.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: take the kit as usual. Only the guides change.
+- Nothing: it updates itself as usual.
 
 ## 1.9.83
 
-**It carries the Steward's kit 2.111.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.111.0: AMD's NPU server is FastFlowLM 1.0.10. A generation can say which device each work spends least on, and on AMD's Ryzen AI 300 pictures go to the Radeon.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for most agents: take the kit as usual. Every new field is optional, so an older kit (the Smith pins 2.99.1) reads the catalog and config.json as before. A `candidates` caller without `workOrder` gets the order it got before. A program in the NPU's line that doesn't write a ticket's `work` (npu-embed, Heiward's) is read as before; its requests count as no pictures.
-- A staff member that sends several pictures at once may say how many (`AskOptions.batch`), so a folder's worth starts the Radeon's server on AMD at the first picture.
-- An AMD PC gets 1.0.10, and its order, the next time setup runs: the keeper's look finds 1.0.10 missing and leaves it for setup. A PC on any other NPU gets no `workOrder`.
-- Reeve's own routing (`src/routing.ts`) doesn't read `workOrder` yet. On AMD his embeddings go to the Radeon first by the auto order anyway.
+- Nothing: it updates itself as usual.
 
 ## 1.9.81
 
-**It carries the Steward's kit 2.106.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.106.0: A generation of an NPU can say the biggest model size a manager has tested on it; the Smith offers no bigger.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.77
 
-**It carries the Steward's kit 2.99.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.99.1: No model server is started while the manor is stopped from Manor's Settings.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for an agent: take the kit as usual. It needs a Manor with **Stop the manor**; with an older Manor nothing changes.
+- Nothing: it updates itself as usual.
 
 ## 1.9.76
 
@@ -958,40 +825,33 @@ Nothing: it updates itself as usual.
 
 ## 1.9.75
 
-**It carries the Steward's kit 2.96.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.96.2: An update's copy of the version before goes once the new one has held up, a swap cut short is put back, and uninstall takes the kept copies with it.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: take the kit and release as usual. An update runs the new release's own kit, so an agent behaves this way from the update after the one that brings it this kit.
+- Nothing: it updates itself as usual.
 
 ## 1.9.74
 
-**It carries the Steward's kit 2.96.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.96.1: A strict page sends a browser that isn't signed in to Castellan, which opens that same page signed in.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: pages aren't strict unless `KIT_STRICT_PAGES=1`, and an agent with a guard takes the let-go steps into its own install-guard.ps1.
+- Nothing: it updates itself as usual.
 
 ## 1.9.73
 
-**It carries the Steward's kit 2.95.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.95.0: Ready for Castellan's "Everyone on this PC" install: each Windows account's tasks in a Task Scheduler folder of its own, and the model files once per PC.
+- Small fixes and improvements.
 
 ### Before you update
 
-- An agent that names its task in its own code (`\<Name>\Home page`, or `schtasks /Run` by hand) should use `TASK_NAME`, or `runOwnTask([TASK_NAME, OLD_TASK_NAME], taskDeps())`. One that only shows `TASK_NAME` in its usage text needs nothing.
-- Nothing else: the old tasks move at each agent's next update, with nothing for the person to do.
+- Nothing: it updates itself as usual.
 
 ## 1.9.72
 
@@ -1007,27 +867,19 @@ Nothing: it updates itself as usual.
 
 - Nothing: it updates itself as usual.
 
-**It carries the Steward's kit 2.94.0: the parts every agent of the manor shares.**
-
-### What changed
-
-- The Steward's kit 2.94.0: The guard's administrator prompt names Castellan, not Windows PowerShell, where Manor can show it.
-
 ### Before you update
 
-- Nothing in an agent's code: the Watchman and the Lamplighter have this in their own guard already, and no agent takes it from the kit yet. An agent that turns its guard on or off through `guardCommand` or `runElevated` gets the Castellan prompt once its Manor is 0.17.7 or later, with no change of its own.
+- Nothing: it updates itself as usual.
 
 ## 1.9.70
 
-**It carries the Steward's kit 2.93.3: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.93.3: A test file that never ends no longer holds a whole check run, and the PC's turn, until its time limit.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing in an agent's code. A test file that took longer than ten minutes at the pace now fails: none of the manor's comes near (their whole suites take a few). A file that keeps its process alive after its tests is still a bug to fix in the agent (stop what it started, even when a test fails before its `finally`), but it no longer stalls the run.
+- Nothing: it updates itself as usual.
 
 ## 1.9.69
 
@@ -1057,16 +909,13 @@ Nothing: it updates itself as usual.
 
 ## 1.9.67
 
-**It carries the Steward's kit 2.91.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.91.0: The kit's own helper programs are signed, and a start that Smart App Control blocked gets one more try.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing in an agent's code. The prebuilt helpers come with the kit's node part, about 70 KB in `src\kit\prebuilt\`.
-- A helper already compiled on a PC stays in its folder, unused once the signed one is there.
+- Nothing: it updates itself as usual.
 
 ## 1.9.65
 
@@ -1100,28 +949,23 @@ Nothing: it updates itself as usual. An update scans as before: only a new insta
 
 ## 1.9.63
 
-**It carries the Steward's kit 2.88.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.88.2: The helper that keeps the PC awake for the staff's work no longer opens a terminal. Before, the wake task before each of the Steward's builds put a terminal window on the desktop for up to 65 minutes. Where kit 2.88.1 wasn't released before it, this release brings it too.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing in an agent's code. Each agent builds the new helper (a few seconds, once per PC) the first time it holds the PC awake, and the Steward re-registers its wake task. A terminal the old helper already opened closes when its hold ends, or you can close it: closing it ends nothing but that hold.
-- The old `awake-*.exe` stays in `%USERPROFILE%\.npu-agent\kit` (a few KB). Nothing uses it once the wake task has moved.
+- Nothing: it updates itself as usual.
 
 ## 1.9.62
 
-**It carries the Steward's kit 2.88.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.88.0: FFmpeg and making a video smaller are now in the kit: finding FFmpeg, fetching the manor's build once for every agent, choosing the video encoder, and re-encoding one video with its checks. The Miller and the Chronicler each carried their own copy of this, pinned to different builds. Nothing changes for either until it takes the kit's up.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.61
 
@@ -1130,7 +974,7 @@ Nothing: it updates itself as usual.
 ### What changed
 
 - A folder written in settings.json as a drive letter alone, such as `"folders": ["D:"]`, is now scanned as that whole drive, the same as `"D:\\"`. Windows reads "D:" as the folder Heiward's process is working in on that drive, which on the drive it was started from is rarely the root. A scan could then look at one folder of the drive instead of all of it. Heiward's own page always saves a drive with its backslash, so only a hand-edited settings.json was affected.
-- The same applies wherever Heiward checks which drive a folder is really on, for a drive mounted in a folder or a junction. No part of Heiward asks that about a bare drive letter today, but a test that did failed on a PC where C:\Projects is a drive mounted in a folder.
+- The same applies wherever Heiward checks which drive a folder is really on, for a drive mounted in a folder or a junction. No part of Heiward asks that about a bare drive letter today, but a test that did failed on a PC with a drive mounted in a folder.
 
 ### Before you update
 
@@ -1162,7 +1006,7 @@ Nothing: it updates itself as usual.
 - Placing an hour's changes takes half the time it did: most of the folders they happened in are a build's or an installer's, made and deleted within the hour, and Heiward no longer asks Windows where a folder the journal saw deleted is.
 - A folder deleted elsewhere on the drive while a scan placed its changes no longer makes that scan walk the whole drive.
 - The log now tells an overwritten journal from one Windows wouldn't read ("the journal couldn't be read (Windows error 87)"). Before, both read "the journal no longer reaches back to the last scan".
-- A walk lists each folder once, and gets its photos and videos, its subfolders, and whether it's a code repository from that one listing. It used to list each folder twice and ask every subfolder about a dozen repository markers, one at a time: 84,728 lookups for the 7,057 folders of C:\Projects. Walking C:\Projects with its package caches went from a median of 1.8 to 2.0 s down to 0.2 to 0.4 s.
+- A walk lists each folder once, and gets its photos and videos, its subfolders, and whether it's a code repository from that one listing. It used to list each folder twice and ask every subfolder about a dozen repository markers, one at a time: about 85,000 lookups for a folder of some 7,000 folders. Walking that folder, package caches and all, went from a median of 1.8 to 2.0 s down to 0.2 to 0.4 s.
 - The review page's process uses less of the processor while it waits. It took about 3.4 s an hour while idle, three-quarters of that measuring the tool caches' sizes every hour (71,000 files in 13,400 folders). It now measures them once a day, and gives each drive's free space as Windows reports it when a program asks.
 - The review page's ping now says whether Heiward is on duty, since when it has been paused, and its one-line status, as `hei status --json` does. Manor used to run `hei status` every two minutes to learn them, starting Heiward and Task Scheduler each time: about 20 to 30 s of processor time an hour. With them in the ping, Manor doesn't need to.
 - The page now asks Task Scheduler for the next scan every half hour, or once that scan's time has come, instead of every minute. It counts the sets waiting for review again only when the report, your decisions, automatic cleanup or your settings change, or every half hour.
@@ -1186,48 +1030,39 @@ Nothing: it updates itself as usual.
 
 ## 1.9.57
 
-**It carries the Steward's kit 2.84.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.84.0: An agent can now tell when a vendor's screen saver keeps putting the PC to sleep, and say which setting stops it. spec/ROUND.md no longer takes Windows' SleepButton / SC_MONITORPOWER for a sleep the person chose.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. Showing the line is up to each agent; nothing calls `saverSleeps()` by itself.
+- Nothing: it updates itself as usual.
 
 ## 1.9.56
 
-**It carries the Steward's kit 2.83.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.83.2: A file an agent only reads is now parsed once while it is unchanged, not on every read. The Steward reads Manor's staff list (64 KB) and its own settings every two seconds, and now parses them only when they change.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. If your agent calls `readJsonShared`, don't change what it returns: it is frozen.
+- Nothing: it updates itself as usual.
 
 ## 1.9.55
 
-**It carries the Steward's kit 2.83.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.83.0: Graphics that share the PC's memory, and the processor, now chat and see with one Qwen3-VL-2B server in place of Qwen3-4B and Qwen3-VL-4B: about twice as fast, about 2 GB less memory than Qwen3-VL-4B alone, and the same scores. Cards with memory of their own keep the 4B models. On the Adreno, setup takes llama.cpp b11715 or later.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing in an agent's code. A PC set up before keeps its models until its local AI is set up again (Manor's Set up local AI). That run downloads the 2B (1.55 GB with its projector) and, on the Adreno, a build from b11715 on. The keeper's look never downloads, so it doesn't make this change by itself.
-- Code that read `ModelFile.kind` from `findModels` or `planSetup`'s `models` reads `model`.
+- Nothing: it updates itself as usual.
 
 ## 1.9.54
 
-**It carries the Steward's kit 2.82.4: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.82.4: Each agent's PowerShell worker stays 4 minutes with nothing to run, not 2, so agents start PowerShell less often.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1235,51 +1070,43 @@ Nothing: it updates itself as usual.
 
 ## 1.9.53
 
-**It carries the Steward's kit 2.81.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.81.0: On the Snapdragon X2, the keeper puts Castellan's build of GenieX 0.8.0's llama.cpp plugin in place of GenieX's own, which holds about 2 GB less with Qwen3-VL-2B loaded: its working set after a chat 1.77 GB instead of 4.0, cold load 2.4 s instead of 5.0. It goes in only over GenieX 0.8.0's own file, in the NPU's turn, and stays only once a picture and a chat answer through it; anything else, and GenieX's own stays or goes back.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for an agent. Only the keeper (the Smith, else Reeve) changes the file. Every agent's kit carries the build (295 KB) in `src\kit\geniex\`.
+- Nothing: it updates itself as usual.
 
 ## 1.9.52
 
-**It carries the Steward's kit 2.78.22: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.78.22: seneschal.ts knows the Seneschal's other PCs (Seneschal 0.2.0): a task running on another PC isn't timed out, results name the PC they ran on and say flaky or confirmed, a failure's try on another PC can be waited for, `seneschalWork` is the worker's side, and a whole suite can be cut into shards.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing for an agent to do: `seneschalTurn` answers as before where no other PC runs its tasks. An agent that switches on its answer should handle `{ failed }`.
+- Nothing: it updates itself as usual.
 
 ## 1.9.51
 
-**It carries the Steward's kit 2.78.12: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.78.12: npu-reports.ts counts a report against the model its generation runs (`routeFor`), so an X2's reports on its 2B count, and its reports on the route's 4B are stale. tools/kit.ts warns when a pin is a kit that has no release. Also brings 2.78.10, which wasn't released on its own.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.50
 
-**It carries the Steward's kit 2.77.6: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.77.6: Each accelerator's servers stop when that accelerator has been idle, whatever the others do. Before, a let-go of any accelerator's lock counted as use of all of them, so Reeve indexing on a graphics card kept the NPU's servers loaded, and the NPU kept a card's.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. The keeper of a PC that runs on more than one accelerator now stops each one's servers on its own idle time.
+- Nothing: it updates itself as usual.
 
 ## 1.9.49
 
@@ -1300,13 +1127,13 @@ Nothing: it updates itself as usual. The first notification after the update mak
 ### What changed
 
 - When SimplySign Desktop is running but its key provider isn't there ("The specified CSP could not be found"), building a release now stops at once and says to disconnect and connect SimplySign Desktop again, instead of showing signtool's own message. The failure isn't retried.
-- This release also brings 1.9.47, which wasn't released on its own: the Steward's kit 2.74.5.
+- This release also brings 1.9.47, which wasn't released on its own.
 
 ### Before you update
 
 Nothing: it updates itself as usual.
 
-## Unreleased (its version needs claiming on the main laptop)
+## Unreleased
 
 **An NPU whose plugin can't set the AI model up no longer ends Heiward's scan: the NPU is checked in a process of its own first, and a scan leaves an NPU that failed its check. An AMD Ryzen AI NPU runs the model. AI matching on the processor works again on PCs where Windows has its own ONNX Runtime.**
 
@@ -1328,15 +1155,13 @@ Nothing: it updates itself as usual. The first scan after updating checks the NP
 
 ## 1.9.47
 
-**It carries the Steward's kit 2.74.5: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.74.5: The NPU: a PC set up by an older kit gets this kit's command, Intel's NPU 3720 writes about 13% faster and holds less, AMD's runs on a 16 GB Ryzen AI (XDNA 2 verified), a known maker's NPU of a generation setup doesn't know is tried instead of refused, and the benchmark times prompts the server hasn't seen.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.46
 
@@ -1354,15 +1179,13 @@ Nothing: it updates itself as usual. The first scan on the NPU after updating co
 
 ## 1.9.45
 
-**It carries the Steward's kit 2.73.2: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.73.2: One process for every git, not two: a page keeps a windowless console its git and gh can share, and a test's commits start no upkeep.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.44
 
@@ -1371,122 +1194,104 @@ Nothing: it updates itself as usual.
 ### What changed
 
 - A worktree in use is never offered for cleanup when it's reached through a folder link (C:\worktrees pointing to another drive, say): a Claude Code session that worked in it, or a program working in it, keeps it, whichever path they used.
-- Worktrees the Steward keeps in its own folder, and folders a scheduled task uses, are recognized by where they really are, so they aren't offered either.
-- A folder reached two ways, such as C:\Projects where a Dev Drive is mounted and the drive's own letter, is scanned once, so a photo is never listed twice as two copies of itself. A drive mounted only in a folder, with no letter, is scanned too when every drive is.
+- Worktrees a tool keeps in its own folder, and folders a scheduled task uses, are recognized by where they really are, so they aren't offered either.
+- A folder reached two ways, such as a folder where a Dev Drive is mounted and the drive's own letter, is scanned once, so a photo is never listed twice as two copies of itself. A drive mounted only in a folder, with no letter, is scanned too when every drive is.
 - Changes since the last scan are read from the drive a folder is really on. A Dev Drive keeps no change journal, so its folders are walked instead of being read from the wrong drive's journal.
 - Folders you list, leave out or keep for scanning on request are matched by where they really are, so a path through a link or a mounted drive counts the same as the drive's own.
 
 ### Before you update
 
-- The first scan after updating may walk folders on a drive mounted in a folder, or listed through a link, once more in full: they're now listed by where they really are (C:\Projects as D:\, say). Scans after it are as quick as before.
+- The first scan after updating may walk folders on a drive mounted in a folder, or listed through a link, once more in full: they're now listed by where they really are (a folder by the drive mounted there, say). Scans after it are as quick as before.
 
 ## 1.9.43
 
-**It carries the Steward's kit 2.69.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.69.1: An update is no longer rolled back because the network went down while it was installing.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.42
 
-**It carries the Steward's kit 2.68.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.68.0: Intel NPUs nobody has measured yet (Meteor Lake, Arrow Lake, Panther Lake, Wildcat Lake) are set up safely: setup measures each PC's NPU, checks that its answers make sense, and falls back quietly when it can't use it.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.41
 
-**It carries the Steward's kit 2.67.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.67.0: Intel's NPU: three times the text a request may carry, and embeddings on the NPU, so a PC with default settings can search its code.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.40
 
-**It carries the Steward's kit 2.66.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.66.0: The NPU benchmark: a fixed suite that measures how fast and how well a chip does Castellan's work, for the website's boards; and a count of the tokens agents send, to weigh it.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.39
 
-**It carries the Steward's kit 2.65.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.65.0: Intel's NPU route, run on a real Lunar Lake: a model that works on the NPU, the runtime it needs brought by setup, and a test request that checks the answer.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.38
 
-**It carries the Steward's kit 2.64.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.64.0: Fewer programs started for each git command: git's own git.exe, and `ls-remote` over https asked in the agent's process.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.36
 
-**It carries the Steward's kit 2.61.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.61.0: A handler can stream its reply: a live recording sent to another PC as it is made.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.35
 
-**It carries the Steward's kit 2.60.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.60.0: The NPU check: one command that tries a maker's NPU route on real hardware and measures it.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.34
 
-**It carries the Steward's kit 2.59.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.59.0: An urgent fix reaches customers at once, not on the Exchequer's next release day.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.33
 
@@ -1502,27 +1307,23 @@ Nothing: it updates itself as usual.
 
 ## 1.9.32
 
-**It carries the Steward's kit 2.58.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.58.0: Two pieces for agents that talk to git remotes a lot: git's sign-in asked once per host, and the branch heads another agent has just read.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.31
 
-**It carries the Steward's kit 2.57.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.57.0: An agent of Manor's staff no longer starts from a hidden sign-in task: Castellan, in Windows' Startup apps, starts Manor, and Manor starts its staff.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.30
 
@@ -1638,63 +1439,53 @@ Nothing: it updates itself as usual.
 
 ## 1.9.23
 
-**It carries the Steward's kit 2.56.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.56.0: A few agents' rounds at a time, fewer while the PC is busy.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.22
 
-**It carries the Steward's kit 2.55.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.55.0: The Settings form for a long list: records on one line that says what each does, tabs by name, less said.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.21
 
-**It carries the Steward's kit 2.53.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.53.0: Demo mode: an agent's page with made-up data, for Manor's pictures of each employee.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.20
 
-**It carries the Steward's kit 2.52.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.52.0: An update's install no longer holds Manor's update pass for its whole probation.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.19
 
-**It carries the Steward's kit 2.51.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.51.0: The Steward's safe install for every agent, and sign-in tasks that wait and try again.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.18
 
@@ -1750,23 +1541,19 @@ Nothing: it updates itself as usual.
 
 ## 1.9.15
 
-**It carries the Steward's kit 2.49.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.49.0: Developer Pro: the Wright's and the Bailiff's work with the rest of the staff, shown only where it's sold.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.14
 
-**It carries the Steward's kit 2.48.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.48.0: About, beside Settings: what's read once, out of the way of what's used every day.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1787,11 +1574,9 @@ Nothing: it updates itself as usual.
 
 ## 1.9.12
 
-**It carries the Steward's kit 2.47.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.47.0: A long page, and long Settings, in tabs; a short one stays a single column.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1803,7 +1588,7 @@ Nothing: it updates itself as usual.
 
 ### What changed
 
-- Each release of Heiward now also builds its Microsoft Store package. Once the owner has connected Partner Center, each one is submitted to the Store by itself, and Store installs update through Windows as before.
+- Each release of Heiward now also builds its Microsoft Store package. Each one is submitted to the Store by itself, and Store installs update through Windows as before.
 
 ### Before you update
 
@@ -1829,11 +1614,9 @@ Nothing: it updates itself as usual.
 
 ## 1.9.9
 
-**It carries the Steward's kit 2.46.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.46.0: Every agent's Settings can be in tabs.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1855,23 +1638,19 @@ Nothing: it updates itself as usual.
 
 ## 1.9.7
 
-**It carries the Steward's kit 2.45.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.45.0: Each agent Castellan sells checks the trial's end itself, from the license Manor holds.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. Manor's own copy of the keys and the license check (its license-keys.ts and license.ts) can move to this kit's license.ts in a later Manor change.
+- Nothing: it updates itself as usual.
 
 ## 1.9.6
 
-**It carries the Steward's kit 2.44.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.44.0: A release's notes bring every version merged since the release before; entries can wait in changes/.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1879,11 +1658,9 @@ Nothing: it updates itself as usual.
 
 ## 1.9.5
 
-**It carries the Steward's kit 2.43.5: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.43.5: A queue ticket can say what the request is for, and an agent can say it is setting up.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1891,15 +1668,13 @@ Nothing: it updates itself as usual.
 
 ## 1.9.4
 
-**It carries the Steward's kit 2.43.4: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.43.4: The kit's MIT license comes with the kit, as `src/kit/LICENSE`.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.9.3
 
@@ -1917,11 +1692,9 @@ Nothing: it updates itself as usual.
 
 ## 1.9.2
 
-**It carries the Steward's kit 2.41.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.41.0: A reranker the keeper sets up and keeps: a fourth serve kind, `rerank`.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1929,11 +1702,9 @@ Nothing: it updates itself as usual.
 
 ## 1.9.1
 
-**It carries the Steward's kit 2.40.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.40.0: Settings obey the Developer options switch from the schema alone, and the kit's own parts leak nothing more with it off.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -1981,59 +1752,49 @@ Nothing: it updates itself as usual.
 
 ## 1.7.47
 
-**It carries the Steward's kit 2.39.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.39.0: Every agent gets Manor's Developer options switch, and the kit's own parts of every page obey it.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. On a PC where Manor's Developer options are off, or with no Manor, each agent's Settings page stops showing the settings file's path and the technical lines in Where its work runs. Turn Developer options on in Manor to see them again.
+- Nothing: it updates itself as usual.
 
 ## 1.7.46
 
-**It carries the Steward's kit 2.36.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.36.1: GenieX 0.8.0 is the NPU's server on a Snapdragon.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. This kit comes after 2.36.0; 2.33.0 (Steward 0.19.4) is still to be released and doesn't depend on it.
+- Nothing: it updates itself as usual.
 
 ## 1.7.45
 
-**It carries the Steward's kit 2.35.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.35.0: A release of an agent Castellan sells goes to the Exchequer, and no longer to the public releases repository.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. Agents for sale stop appearing in the public releases repository once the Exchequer 0.6.0 is deployed with its migration applied. Until then, releases go there as before.
+- Nothing: it updates itself as usual.
 
 ## 1.7.44
 
-**It carries the Steward's kit 2.34.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.34.0: An agent's rounds never stop silently.
+- Small fixes and improvements.
 
 ### Before you update
 
-- Nothing: it updates itself as usual. This kit comes after 2.33.0 (Steward 0.19.4); if 2.33.0 isn't released yet, release it first.
+- Nothing: it updates itself as usual.
 
 ## 1.7.43
 
-**It carries the Steward's kit 2.32.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.32.1: The kit names the app the person bought: Castellan.
+- Small fixes and improvements.
 
 ### Before you update
 
@@ -2041,52 +1802,43 @@ Nothing: it updates itself as usual.
 
 ## 1.7.42
 
-**It carries the Steward's kit 2.32.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.32.0: A release goes to the agent's own repository, and to a releases repository only where one is named.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.41
 
-**It carries the Steward's kit 2.31.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.31.0: Local AI on every Copilot+ NPU, installed by setup: Qualcomm Snapdragon, Intel Core Ultra and AMD Ryzen AI.
+- Small fixes and improvements.
 
 ### Before you update
 
-- The accelerators move from Reeve's `config.json` to `%USERPROFILE%\.manor\accelerators\config.json` the first time the Smith (or Reeve's keeper) reads them after updating: a copy, word for word, and Reeve's file is left as it was. Nothing to do.
-- On a PC whose NPU isn't set up yet, the Smith's or Manor's Set up now offers its maker's server and models (several GB) and asks first.
+- Nothing: it updates itself as usual.
 
 ## 1.7.40
 
-**It carries the Steward's kit 2.29.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.29.0: Every agent's page fits a phone: the title bar's action and wide tables no longer push the page sideways.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.39
 
-**It carries the Steward's kit 2.28.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.28.1: Security fix: a value with curly quotes in it could break out of a PowerShell string.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.38
 
@@ -2142,15 +1894,13 @@ Nothing: it updates itself as usual.
 
 ## 1.7.34
 
-**It carries the Steward's kit 2.28.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.28.0: Required settings: an agent that can't work without something from you waits for it, and onboarding asks for it.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.33
 
@@ -2167,95 +1917,78 @@ Nothing: it updates itself as usual.
 
 ## 1.7.32
 
-**It carries the Steward's kit 2.27.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.27.0: An accelerator's name is what the PC calls it, never a setting.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.31
 
-**It carries the Steward's kit 2.26.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.26.0: The kit names no one's GitHub account, private repository or folder.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.30
 
-**It carries the Steward's kit 2.24.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.24.0: What every agent asked Manor, its owner or GitHub for by hand, from the kit.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.29
 
-**It carries the Steward's kit 2.23.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.23.0: Settings in React, and short; and a new hire's tour of its page.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.28
 
-**It carries the Steward's kit 2.22.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.22.0: The react part's components are GamerNexus's UI kit, in the manor's look.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.27
 
-**It carries the Steward's kit 2.21.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.21.0: A page drawn in the browser, with React: the kit's react part.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.26
 
-**It carries the Steward's kit 2.19.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.19.0: Every release says what it brings: its notes are the agent's CHANGELOG.md entry for the version.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.25
 
-**It carries the Steward's kit 2.18.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.18.0: Non-employee projects: repositories that ride along with the manor.
 - A release's notes now come from its entry in this changelog, after a first line naming the version, the commit it was built from and the kit it carries.
 
 ### Before you update
@@ -2264,108 +1997,90 @@ Nothing: it updates itself as usual.
 
 ## 1.7.24
 
-**It carries the Steward's kit 2.17.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.17.0: A release is built, never the readable source, and published in the public Jcollier0120/Manor-releases.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.23
 
-**It carries the Steward's kit 2.16.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.16.0: Every agent's page uses the width of the window.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.22
 
-**It carries the Steward's kit 2.15.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.15.0: Offline is waited out, never a failure.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.21
 
-**It carries the Steward's kit 2.14.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.14.0: The title bar stays at the top as the page scrolls.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.20
 
-**It carries the Steward's kit 2.13.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.13.0: The NPU first.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.19
 
-**It carries the Steward's kit 2.12.1: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.12.1: A release zip's name has no spaces.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.18
 
-**It carries the Steward's kit 2.12.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.12.0: A release announces its agent to every Manor, when the checkout has manor-agent.json.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.17
 
-**It carries the Steward's kit 2.11.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.11.0: Keeping the model servers moves into the kit, for the Smith.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.
 
 ## 1.7.16
 
-**It carries the Steward's kit 2.10.0: the parts every agent of the manor shares.**
-
 ### What changed
 
-- The Steward's kit 2.10.0: Manor can keep the graphics card out of model work on a PC with an NPU.
+- Small fixes and improvements.
 
 ### Before you update
 
-Nothing: it updates itself as usual.
+- Nothing: it updates itself as usual.

@@ -380,9 +380,9 @@ public sealed class DevAssetsTests : IDisposable {
 	}
 
 	[Theory]
-	[InlineData(@"~\.npu-agent\checkouts\gamernexus", ".npu-agent")] // a tool's jobs read this one
+	[InlineData(@"~\.npu-agent\checkouts\my-app", ".npu-agent")] // a tool's jobs read this one
 	[InlineData(@"%L\SomeTool\wt\main", "app data")]
-	[InlineData(@"C:\Projects\GamerNexus\.claude\worktrees\great-goodall", null)] // an AI session's: the user's
+	[InlineData(@"C:\Projects\MyApp\.claude\worktrees\great-goodall", null)] // an AI session's: the user's
 	[InlineData(@"~\source\repos\app-wt", null)]
 	[InlineData(@"C:\g57", null)]
 	public void Worktrees_InsideAToolsHome_AreKeptForTheTool(string path, string? tool) {

@@ -54,8 +54,8 @@ permissions:
 
 env:
   STORE_ID: 9NX5K0L4CW3D
-  # The Steward's kit, which store.ps1 fills through tools\kit.ps1, from its public mirror on Manor-releases: the
-  # Steward's own repository is private, so its kit releases answer 404 to CI. Checked against SHA256SUMS.txt as before.
+  # The kit, which store.ps1 fills through tools\kit.ps1, from its public releases on Manor-releases, which any
+  # build downloads with no sign-in. Checked against SHA256SUMS.txt.
   STEWARD_RELEASES: https://github.com/Jcollier0120/Manor-releases/releases/download
   DOTNET_NOLOGO: 'true'
   DOTNET_CLI_TELEMETRY_OPTOUT: 'true'
@@ -189,7 +189,7 @@ jobs:
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
-      # In Windows PowerShell, as on the PCs that build Heiward. It fills the Steward's kit from its public mirror (STEWARD_RELEASES).
+      # In Windows PowerShell, as on the PCs that build Heiward. It fills the kit from its public releases (STEWARD_RELEASES).
       - name: Build the bundle
         run: powershell -NoProfile -ExecutionPolicy Bypass -File HEI.Agent\store.ps1
       - name: Keep it

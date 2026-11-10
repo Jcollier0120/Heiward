@@ -1,18 +1,18 @@
-# Fills kit\ with the Steward's kit (https://github.com/Jcollier0120/Steward), at the version and with the
+# Fills kit\ with the kit Castellan's agents share, at the version and with the
 # parts kit.json pins: {"kit": "1.0.0", "parts": ["spec"]}. Each part lands in kit\<part>\ (the spec part in
 # kit\spec\), with kit\VERSION and kit\PARTS beside them. kit\ is git-ignored: never edit it here.
 #
 #   powershell -NoProfile -File tools\kit.ps1                the pinned kit; nothing to do when kit\ already holds it
-#   powershell -NoProfile -File tools\kit.ps1 -From <dir>    a kit tree on this PC (a Steward checkout's kit\),
+#   powershell -NoProfile -File tools\kit.ps1 -From <dir>    a kit tree on this PC,
 #                                                            copied every time; or set STEWARD_KIT to one
 #
 # Without -From, the pinned version comes from the first of: a sibling checkout ..\Steward\kit at that version;
-# %USERPROFILE%\.steward\kits\<version>, the cache every agent on this PC shares; the Steward's kit release
+# %USERPROFILE%\.steward\kits\<version>, the cache every agent on this PC shares; the kit release
 # kit-v<version> over HTTPS (no sign-in), or through gh if that fails, checked against its SHA256SUMS.txt and kept
 # in that cache. A fill from a kit tree is for development: it leaves kit\FROM, the build warns when its version
 # isn't the pinned one, and -ForRelease (release.ps1, store.ps1) refuses it.
 #
-# Heiward's counterpart of the Steward's tools/kit.ts, which every Node agent has: the same sources, in the same
+# Heiward's counterpart of tools/kit.ts, which every Node agent has: the same sources, in the same
 # order. Windows PowerShell 5.1 or later, no dependencies. STEWARD_KITS moves the cache and STEWARD_RELEASES the
 # downloads (for tests), as for tools/kit.ts.
 param(
