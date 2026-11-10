@@ -4,7 +4,7 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.10.4
 
-**Heiward's review no longer lists another shot of the same view as a look-alike of your photo.**
+**Brings 2 changes: Heiward's review no longer lists another shot of the same view as a look-alike of your photo; Heiward's page asks its questions in its own dialog, not in the browser's pop-up windows.**
 
 ### What changed
 
@@ -12,6 +12,11 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - On a test set of 6,273 photos, other shots listed as look-alikes went from 80 to none, and every crop, filter, turn and resized copy found before is still found.
 - Copies, and edits the AI is sure of, are listed as before, without this check.
 - The first review that meets such pairs takes a little longer, about 20 seconds for 1,400 pairs on a 24-core PC. The answers are kept, so later reviews don't look again.
+- Every question the page asks before it acts (moving files to the Recycle Bin, deleting developer leftovers or merged branches, clearing the history, skipping look-alike sets, turning on automatic cleanup, removing a scan rule) now opens in the page's own dialog, in your theme's colours, light or dark. Before, the browser opened its own grey window.
+- Naming a project when you group repositories is asked in the same dialog, with the suggested name selected and ready to type over.
+- Each dialog's button says what it does, such as "Delete branches" or "Clear history". Where the answer can't be undone (deleted for good, deleted from the cloud too, or forgotten), that button is red and Cancel has the focus, so pressing Enter doesn't delete anything.
+- Esc is Cancel, Tab stays within the dialog, and the page under it waits until you answer. If you go to another page, the question is cancelled.
+- Kit 2.152.11: A graphics card whose driver stopped responding twice in a day is taken off model work, and the work goes to the NPU or the processor, until its driver changes or the PC restarts without a crash.
 
 ### Before you update
 
