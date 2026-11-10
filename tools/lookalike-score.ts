@@ -1,7 +1,9 @@
 // Scores the look-alike probe's result against the set's truth (docs/LOOKALIKE-BAR.md).
 // usage: node tools/lookalike-score.ts <truth.json> <result.json> [--split tune|held-out|all] [--pairs]
 //   prints, per setting the probe ran: different-shot pairs marked duplicates (the review's sets, then the engine's
-//   groups), and edits found per kind. --pairs also lists the different-shot pairs the review put in one set.
+//   groups), edits found per kind, and per kind the edits the review pre-checks in a set that keeps another file of
+//   the same shot (a copy of its picture; whether it should be depends on the kind, and on the kept file's).
+//   --pairs also lists the different-shot pairs the review put in one set.
 import { readFileSync } from 'node:fs';
 
 type Truth = { file: string; series: string; shot: number; split: string; kind: string };
@@ -21,6 +23,8 @@ const edits = truth.filter((t) => t.kind !== 'original' && inSplit(t));
 type Marked = { sameScene: number; other: number; originals: number; preChecked: number; list: string[] };
 function score(groups: { files: string[]; keep?: string; suggested?: Set<string> }[]) {
   const marked: Marked = { sameScene: 0, other: 0, originals: 0, preChecked: 0, list: [] };
+  // Per kind: pre-checked while the kept file is the original, or while it's another edit of the same shot.
+  const sameShot: Record<string, [number, number]> = {};
   const together = new Set<string>();
   for (const g of groups) {
     const files = g.files.filter((f) => byFile.has(f));
@@ -39,6 +43,7 @@ function score(groups: { files: string[]; keep?: string; suggested?: Set<string>
       for (const f of g.suggested) {
         const k = byFile.get(g.keep), t = byFile.get(f);
         if (k && t && shotOf(k) !== shotOf(t) && inSplit(k) && inSplit(t)) marked.preChecked++;
+        if (k && t && shotOf(k) === shotOf(t) && inSplit(t)) (sameShot[t.kind] ??= [0, 0])[k.kind === 'original' ? 0 : 1]++;
       }
   }
   const found: Record<string, [number, number]> = {};
@@ -48,7 +53,7 @@ function score(groups: { files: string[]; keep?: string; suggested?: Set<string>
     f[1]++;
     if (together.has(e.file + '|' + o)) f[0]++;
   }
-  return { marked, found };
+  return { marked, found, sameShot };
 }
 
 const pct = (a: number, b: number) => (b ? `${a}/${b} (${((100 * a) / b).toFixed(0)}%)` : '-');
@@ -65,7 +70,10 @@ for (const run of result.runs) {
     const all = Object.values(s.found).reduce((a, f) => [a[0] + f[0], a[1] + f[1]], [0, 0]);
     console.log(`${name}: different shots marked ${m.sameScene + m.other} (same scene ${m.sameScene}, other ${m.other}; originals both ${m.originals}${name === 'review' ? `; pre-checked ${m.preChecked}` : ''}), edits found ${pct(all[0], all[1])}`);
   }
-  console.log('| kind | review | engine |\n|---|---|---|');
-  for (const k of kinds) console.log(`| ${k} | ${pct(...(review.found[k] ?? [0, 0]))} | ${pct(...(engine.found[k] ?? [0, 0]))} |`);
+  console.log('| kind | review | engine | review pre-checks (original kept + another edit kept) |\n|---|---|---|---|');
+  for (const k of kinds) {
+    const [o, e] = review.sameShot[k] ?? [0, 0];
+    console.log(`| ${k} | ${pct(...(review.found[k] ?? [0, 0]))} | ${pct(...(engine.found[k] ?? [0, 0]))} | ${o} + ${e} |`);
+  }
   if (listPairs) for (const p of review.marked.list) console.log('  ' + p);
 }

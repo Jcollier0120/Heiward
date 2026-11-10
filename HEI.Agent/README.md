@@ -85,9 +85,9 @@ Code decides everything shown on the page. No model output is trusted to delete 
 | On the page | Meaning | Checked for the Recycle Bin? |
 |---|---|---|
 | Identical copy | Byte-for-byte the same file (SHA-256) | yes |
-| Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed, with the same words in it | yes |
+| Smaller copy / More compressed copy / Saved again | The same picture pixel for pixel (grayscale match ≥ 99.5%), at a lower resolution or more compressed, in the same colours and with the same words in it | yes |
 | Looks the same, but its words differ | The same picture by look, but its words read differently: a chat screenshot one message on, a receipt with another total, a caption with another year | no |
-| Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`) | no |
+| Edited version | The AI sees the same picture with colours, a filter or a flip changed (≥ 97%), or the names say so (`IMG_1.jpg` and `IMG_1_Original.jpg`, `IMG_1-edited.jpg`). Also a black-and-white or warmer copy: the same picture in gray, in other colours | no |
 | Edited, cropped, flipped, or a similar shot | Crops, flips, and different shots that look alike. Also animated pictures (GIF, WebP), which are compared by their first frame only, and a video without sound next to the same video with it (the one with sound is kept) | no |
 
 **The words count too.** Two screenshots of a chat one message apart, or two receipts with other totals, match pixel for pixel: the new message or the other figures are a few cells of the picture. So two photos that look like copies, edits or look-alikes are also read, with a small text-reading model (PaddleOCR's PP-OCR, about 4 MB, downloaded with the AI components):
