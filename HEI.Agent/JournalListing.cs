@@ -633,25 +633,91 @@ namespace HEI.Agent {
 	/// The photos and videos the last scan listed in one scanned folder, with each file's size and
 	/// last-modified time: a folder listed again is compared with it, and an unchanged one's files are
 	/// handed to the engine from it.
+	/// <para>
+	/// On disk (listing\&lt;id&gt;.tsv) a file is a line: its size, its last-modified time in ticks and its path,
+	/// tab-separated, as every build has written them. A save that finds the listing changed appends only what changed,
+	/// as a journal after the listing: a line <see cref="JournalMark"/>, then a batch a save, each a file's line for one
+	/// added or changed, <c>-&lt;tab&gt;path</c> for one gone, and <c>=&lt;tab&gt;count&lt;tab&gt;check</c> to close it
+	/// (the check is the first 16 hex digits of the batch's SHA-256). A batch cut short, or that doesn't check, is left
+	/// out, and cut off before the next append: the listing is then as the save before left it, which is what
+	/// listing\index.json, written after it, still says. The listing is written whole again, the journal folded in, once
+	/// the journal would be as big as the listing, and at Heiward's clean stop (<see cref="FoldAll"/>): a build from
+	/// before the journal reads a listing with one as missing, so it walks that drive once, and lists nothing wrongly.
+	/// </para>
 	/// </summary>
 	sealed class StoredListing {
 		public static string Folder => Path.Combine(AgentPaths.Home, "listing");
 
+		/// <summary>Where the journal starts: a line no build before it reads as a file's, so they read the listing as missing.</summary>
+		internal const string JournalMark = "HEIJRNL1";
+
 		readonly Dictionary<string, List<(string Path, long Size, DateTime ModifiedUtc)>> byFolder = new(StringComparer.OrdinalIgnoreCase);
+		/// <summary>Each file listed, by its path exactly as listed: a save compares the new listing with it.</summary>
+		readonly Dictionary<string, (long Size, DateTime ModifiedUtc)> files = new(StringComparer.Ordinal);
+		/// <summary>The listing's bytes before the journal, the journal's that count, and where they end (a torn batch's bytes after).</summary>
+		long listingBytes, journalBytes, validBytes;
+		bool hasJournal;
 
 		public static string NewFile() => Guid.NewGuid().ToString("N")[..12] + ".tsv";
 
-		public static StoredListing? Load(string file) {
-			string path = Path.Combine(Folder, file);
+		public static StoredListing? Load(string file) => Read(Path.Combine(Folder, file));
+
+		/// <summary>The listing in <paramref name="path"/>, its journal applied; null when it's missing or isn't a listing.</summary>
+		static StoredListing? Read(string path) {
 			try {
 				if (!File.Exists(path)) return null;
+				byte[] bytes = File.ReadAllBytes(path);
 				var listing = new StoredListing();
-				foreach (string line in File.ReadLines(path)) {
-					string[] parts = line.Split('\t', 3);
-					if (parts.Length != 3 || !long.TryParse(parts[0], out long size) || !long.TryParse(parts[1], out long ticks)) return null;
-					string folder = System.IO.Path.GetDirectoryName(parts[2]) ?? "";
-					if (!listing.byFolder.TryGetValue(folder, out var files)) listing.byFolder[folder] = files = new();
-					files.Add((parts[2], size, new DateTime(ticks, DateTimeKind.Utc)));
+				int at = bytes.AsSpan().StartsWith((ReadOnlySpan<byte>)[0xEF, 0xBB, 0xBF]) ? 3 : 0;
+				// The listing: every line a file's, as every build has read it, to the journal's mark or the end.
+				int listingEnd = at;
+				while (at < bytes.Length) {
+					int end = Array.IndexOf(bytes, (byte)'\n', at);
+					// A last line cut short is the mark's, torn as it was first appended: no save ever leaves one.
+					if (end < 0) break;
+					string line = Line(bytes, at, end);
+					at = end + 1;
+					if (line == JournalMark) {
+						listing.hasJournal = true;
+						break;
+					}
+					if (ParseFile(line) is not { } f) return null;
+					listing.files.TryAdd(f.Path, (f.Size, f.ModifiedUtc));
+					listingEnd = at;
+				}
+				listing.listingBytes = listingEnd;
+				listing.validBytes = listing.hasJournal ? at : listingEnd;
+				if (listing.hasJournal) {
+					// The journal: batches applied in order, up to the first cut short or that doesn't check.
+					var batch = new List<(string Path, long Size, DateTime ModifiedUtc, bool Gone)>();
+					int batchStart = at;
+					while (at < bytes.Length) {
+						int end = Array.IndexOf(bytes, (byte)'\n', at);
+						if (end < 0) break;
+						string line = Line(bytes, at, end);
+						if (line.StartsWith("=\t", StringComparison.Ordinal)) {
+							string[] parts = line.Split('\t');
+							if (parts.Length != 3 || !int.TryParse(parts[1], out int count) || count != batch.Count ||
+								parts[2] != Check(bytes.AsSpan(batchStart, at - batchStart))) break;
+							foreach (var (p, size, modified, gone) in batch)
+								if (gone) listing.files.Remove(p);
+								else listing.files[p] = (size, modified);
+							batch.Clear();
+							batchStart = at = end + 1;
+							listing.validBytes = at;
+							continue;
+						}
+						if (line.StartsWith("-\t", StringComparison.Ordinal)) batch.Add((line[2..], 0, default, true));
+						else if (ParseFile(line) is { } f) batch.Add((f.Path, f.Size, f.ModifiedUtc, false));
+						else break;
+						at = end + 1;
+					}
+					listing.journalBytes = listing.validBytes - listing.listingBytes;
+				}
+				foreach ((string p, var f) in listing.files) {
+					string folder = System.IO.Path.GetDirectoryName(p) ?? "";
+					if (!listing.byFolder.TryGetValue(folder, out var inFolder)) listing.byFolder[folder] = inFolder = new();
+					inFolder.Add((p, f.Size, f.ModifiedUtc));
 				}
 				return listing;
 			}
@@ -660,12 +726,104 @@ namespace HEI.Agent {
 			}
 		}
 
+		/// <summary>One line's text, without its end ("\r\n" as well as "\n", as File.ReadLines read them).</summary>
+		static string Line(byte[] bytes, int start, int end) =>
+			Encoding.UTF8.GetString(bytes, start, (end > start && bytes[end - 1] == '\r' ? end - 1 : end) - start);
+
+		/// <summary>A file's line: size, last-modified ticks, path.</summary>
+		static (string Path, long Size, DateTime ModifiedUtc)? ParseFile(string line) {
+			string[] parts = line.Split('\t', 3);
+			if (parts.Length != 3 || !long.TryParse(parts[0], out long size) || !long.TryParse(parts[1], out long ticks) ||
+				ticks < DateTime.MinValue.Ticks || ticks > DateTime.MaxValue.Ticks) return null;
+			return (parts[2], size, new DateTime(ticks, DateTimeKind.Utc));
+		}
+
+		static void AppendFile(StringBuilder text, string path, long size, DateTime modified) =>
+			text.Append(size).Append('\t').Append(modified.Ticks).Append('\t').Append(path).Append('\n');
+
+		/// <summary>A batch's check: the first 16 hex digits of its SHA-256.</summary>
+		static string Check(ReadOnlySpan<byte> batch) => Convert.ToHexString(SHA256.HashData(batch))[..16];
+
+		/// <summary>
+		/// This scan's listing of a folder: appended as what changed since the last (nothing, when nothing did), or written
+		/// whole when there's none to compare with, or the journal would grow as big as the listing.
+		/// </summary>
 		public static void Save(string file, IEnumerable<(string Path, long Size, DateTime ModifiedUtc)> files) {
 			Directory.CreateDirectory(Folder);
+			string path = Path.Combine(Folder, file);
+			var now = files as IReadOnlyCollection<(string Path, long Size, DateTime ModifiedUtc)> ?? files.ToList();
+			if (Read(path) is not { } last) {
+				WriteWhole(path, now);
+				return;
+			}
 			var text = new StringBuilder();
-			foreach (var (path, size, modified) in files)
-				text.Append(size).Append('\t').Append(modified.Ticks).Append('\t').Append(path).Append('\n');
-			AgentPaths.WriteAtomic(Path.Combine(Folder, file), text.ToString());
+			int count = 0;
+			var listed = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var (p, size, modified) in now) {
+				if (!listed.Add(p) || last.files.TryGetValue(p, out var was) && was.Size == size && was.ModifiedUtc == modified) continue;
+				AppendFile(text, p, size, modified);
+				count++;
+			}
+			foreach (string p in last.files.Keys)
+				if (!listed.Contains(p)) {
+					text.Append("-\t").Append(p).Append('\n');
+					count++;
+				}
+			if (count == 0) return; // the same files: nothing to write
+			byte[] batch = Encoding.UTF8.GetBytes(text.ToString());
+			byte[] close = Encoding.UTF8.GetBytes($"=\t{count}\t{Check(batch)}\n");
+			byte[] mark = last.hasJournal ? [] : Encoding.UTF8.GetBytes(JournalMark + "\n");
+			if (last.journalBytes + mark.Length + batch.Length + close.Length > last.listingBytes) {
+				WriteWhole(path, now);
+				return;
+			}
+			// One write, unbuffered: a process ended mid-save leaves the batch whole or not there at all.
+			using var stream = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read, bufferSize: 0);
+			// A batch cut short goes first: nothing after it would be read.
+			if (stream.Length != last.validBytes) stream.SetLength(last.validBytes);
+			stream.Seek(last.validBytes, SeekOrigin.Begin);
+			stream.Write([.. mark, .. batch, .. close]);
+		}
+
+		/// <summary>The listing written whole, in the format every build reads (no journal), unless the file says exactly that already.</summary>
+		static void WriteWhole(string path, IEnumerable<(string Path, long Size, DateTime ModifiedUtc)> files) {
+			var text = new StringBuilder();
+			var listed = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var (p, size, modified) in files)
+				if (listed.Add(p)) AppendFile(text, p, size, modified);
+			AgentPaths.WriteAtomic(path, text.ToString());
+		}
+
+		/// <summary>
+		/// At Heiward's clean stop (the review page's process closing: asked to by another copy's installer or the uninstall,
+		/// Ctrl+C, Windows ending the session): every listing with a journal is written whole, the journal folded in, so a
+		/// build from before the journal reads it as it is. Not while a scan runs, which holds scan.lock: its own save comes
+		/// after. Installing another build stops Heiward by ending its processes, which is no clean stop: a build from before
+		/// the journal then walks each drive whose listing has one, once, as after a change of settings. Returns how many it folded.
+		/// </summary>
+		public static int FoldAll(Action<string>? log = null) {
+			try {
+				if (!Directory.Exists(Folder)) return 0;
+				var journaled = Directory.EnumerateFiles(Folder, "*.tsv").Where(f => Read(f) is { hasJournal: true }).ToList();
+				if (journaled.Count == 0) return 0;
+				using FileStream? scanLock = AgentScanner.TryLock();
+				if (scanLock == null) {
+					log?.Invoke($"listing: {journaled.Count} journal(s) not folded in: a scan is running, and saves after it");
+					return 0;
+				}
+				int folded = 0;
+				foreach (string path in journaled)
+					if (Read(path) is { hasJournal: true } listing) {
+						WriteWhole(path, listing.files.Select(f => (f.Key, f.Value.Size, f.Value.ModifiedUtc)));
+						folded++;
+					}
+				log?.Invoke($"listing: {folded} journal(s) folded in at the stop");
+				return folded;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				log?.Invoke("listing: the journals weren't folded in at the stop: " + e.Message);
+				return 0;
+			}
 		}
 
 		/// <summary>The folder holds the same photos and videos as last time: names, sizes and last-modified times.</summary>
