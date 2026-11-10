@@ -141,9 +141,9 @@ $commit = git -C $PSScriptRoot rev-parse HEAD
 if (git -C $PSScriptRoot status --porcelain) { Write-Warning 'The working tree has uncommitted changes, and the build includes them.' }
 Write-Host "Heiward $version from commit $($commit.Substring(0, 7)), with the Steward's kit $kit"
 
-# What the release brings: CHANGELOG.md's entry for the version, under "## <version>" (the Steward's kit,
-# spec\RELEASE-NOTES.md: What's new, What changed, and Before you update, always there). A version with no
-# entry lists its commits since the release before instead, and says so; a release never says nothing.
+# What the release brings: CHANGELOG.md's entry for the version, under "## <version>" (What's new, What changed,
+# and Before you update, always there). A version with no entry lists its commits since the release before
+# instead, and says so; a release never says nothing.
 function Get-ChangelogEntry([string]$Text, [string]$Version) {
 	$lines = ($Text -replace "`r`n", "`n") -split "`n"
 	$heading = '^## +\[?v?' + [regex]::Escape($Version) + '\]?(\s|$|[^\w.])'
@@ -156,6 +156,83 @@ function Get-ChangelogEntry([string]$Text, [string]$Version) {
 	$body = ($lines[($at + 1)..($end - 1)] -join "`n").Trim()
 	if ($body) { return $body }
 	return $null
+}
+# The entry as the release's page shows it, read the way the Store's notes read it (HEI.StoreSubmit\ReleaseNotes.cs):
+# the kit's lines ("Kit 2.152.4: ...") and a bold line that only says which kit a version carries are about the parts
+# Heiward shares with other tools, not about Heiward, and stay out, each with its sub-bullets. Before you update
+# keeps what's left of it, or says "Nothing: it updates itself as usual."; a version that brought nothing else says
+# "Small fixes and improvements.", the Store's own words. Other sections are kept as they are.
+function Get-PublicEntry([string]$Entry) {
+	$kitLine = '^(The Steward''s kit|Kit) \d+\.\d+'
+	$kitHead = '^It carries (the Steward''s )?kit \d'
+	$nothing = '- Nothing: it updates itself as usual.'
+	$head = New-Object System.Collections.Generic.List[string]
+	$sections = New-Object System.Collections.Generic.List[object]
+	foreach ($line in (($Entry -replace "`r`n", "`n") -split "`n")) {
+		if ($line -match '^### +(.+?)\s*$') { $sections.Add([pscustomobject]@{ Title = $Matches[1]; Lines = New-Object System.Collections.Generic.List[string]; Items = $null }) }
+		elseif ($sections.Count) { $sections[$sections.Count - 1].Lines.Add($line) }
+		else { $head.Add($line) }
+	}
+	# The bold line goes when it only names the kit; a merged version's ("Brings 3 changes: a; b; c") keeps its other parts.
+	$bold = @(foreach ($l in $head) {
+		$t = $l.Trim()
+		if (-not $t) { continue }
+		if ($t -match '^\*\*Brings \d+ changes?: (.*)\*\*$') {
+			$parts = @($Matches[1] -split '; ' | Where-Object { $_ -notmatch $kitHead })
+			if ($parts.Count -gt 1) { "**Brings $($parts.Count) changes: $($parts -join '; ')**" }
+			elseif ($parts.Count -eq 1) { '**' + $parts[0].TrimEnd('.') + '.**' }
+		}
+		elseif (($t -replace '[*_`]', '').Trim() -notmatch $kitHead) { $t }
+	})
+	# Each section's top-level items (a bullet, or a paragraph after a blank line), each with its sub-bullets and
+	# continuation lines, and whether a blank line came before it.
+	foreach ($s in $sections) {
+		$items = New-Object System.Collections.Generic.List[object]
+		$blank = $true
+		foreach ($l in $s.Lines) {
+			if (-not $l.Trim()) { $blank = $true; continue }
+			$top = if ($l -match '^(\s*)[-*+]\s+') { ($Matches[1] -replace "`t", '    ').Length -lt 2 } else { $blank -and $l -notmatch '^\s' }
+			if ($top -or $items.Count -eq 0) { $items.Add([pscustomobject]@{ Lines = New-Object System.Collections.Generic.List[string]; Gap = $blank -and $items.Count -gt 0 }) }
+			$items[$items.Count - 1].Lines.Add($l)
+			$blank = $false
+		}
+		# A dropped item's blank line goes to the next one kept, so a list still starts apart from the paragraph before it.
+		$kept = New-Object System.Collections.Generic.List[object]
+		$gap = $false
+		foreach ($it in $items) {
+			$text = (($it.Lines[0] -replace '^\s*[-*+]\s+', '') -replace '[*_`]', '').Trim()
+			if ($text -match $kitLine -or $text -match $kitHead) { $gap = $gap -or $it.Gap; continue }
+			if ($gap -and $kept.Count) { $it.Gap = $true }
+			$gap = $false
+			$kept.Add($it)
+		}
+		$s.Items = $kept.ToArray()
+	}
+	$user = @($sections | Where-Object { $_.Title.Replace([char]0x2019, "'") -match '^(What''s new|What changed)$' })
+	if (-not ($user | Where-Object { $_.Items.Count })) {
+		$fallback = [pscustomobject]@{ Lines = @('- Small fixes and improvements.'); Gap = $false }
+		$changed = $user | Where-Object { $_.Title -eq 'What changed' } | Select-Object -First 1
+		if (-not $changed) { $changed = $user | Select-Object -First 1 }
+		if ($changed) { $changed.Items = @($fallback) }
+		else { $sections.Insert(0, [pscustomobject]@{ Title = 'What changed'; Lines = $null; Items = @($fallback) }) }
+	}
+	foreach ($s in $sections) {
+		if ($s.Title -match '^Before you update$' -and -not $s.Items.Count) { $s.Items = @([pscustomobject]@{ Lines = @($nothing); Gap = $false }) }
+	}
+	$out = New-Object System.Collections.Generic.List[string]
+	if ($bold.Count) { $out.AddRange([string[]]$bold); $out.Add('') }
+	foreach ($s in $sections) {
+		if (-not $s.Items.Count) { continue }
+		$out.Add("### $($s.Title)"); $out.Add('')
+		$first = $true
+		foreach ($it in $s.Items) {
+			if ($it.Gap -and -not $first) { $out.Add('') }
+			$out.AddRange([string[]]$it.Lines)
+			$first = $false
+		}
+		$out.Add('')
+	}
+	return ($out -join "`n").Trim()
 }
 # The tag of the newest release before $Version in this commit's history (v1.9.99), or null.
 function Get-ReleaseBefore([string]$Version) {
@@ -194,6 +271,7 @@ else {
 	$entry = "### What changed`n`nNo changelog entry was written for this version."
 	if ($commits.Lines.Count) { $entry += " These are ${said}:`n`n" + (($commits.Lines | ForEach-Object { "- $_" }) -join "`n") }
 }
+$entry = Get-PublicEntry $entry
 if ($Publish) {
 	# gh reports "release not found" on stderr, which Windows PowerShell would turn into a stopping error.
 	$ErrorActionPreference = 'Continue'
@@ -331,7 +409,7 @@ if (-not $Notes) {
 		"Both files are code-signed by $signer, the publisher Windows names when you run them. Right after a release, until enough people have run it, Windows may still say ""Windows protected your PC"": click **More info**, check the publisher is $signer, then **Run anyway**."
 	}
 	$Notes = @"
-Heiward $version, built from $($commit.Substring(0, 7)), with the Steward's kit $kit.
+Heiward $version, built from $($commit.Substring(0, 7)).
 
 $entry
 
