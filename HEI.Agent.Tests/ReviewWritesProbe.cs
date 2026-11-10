@@ -50,6 +50,7 @@ public class ReviewWritesProbe {
 		public float? AudioPercent(string a, string b) => null;
 		public int? MaxCellDifference(string a, string b) => 0;
 		public bool? SameUpClose(string a, string b) => true;
+		public bool? SameColors(string a, string b) => true;
 	}
 
 	[Fact]

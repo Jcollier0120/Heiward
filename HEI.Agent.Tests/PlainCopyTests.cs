@@ -139,6 +139,122 @@ public sealed class PlainCopyTests : IDisposable {
 		Assert.False(PlainCopy(j), j.ToString());
 	}
 
+	/// <summary>The picture's colours changed: to its gray (<paramref name="bw"/>), or warmer, red up 8% and blue down 12%.</summary>
+	static byte[] Recolored(byte[] rgb, bool bw) {
+		var px = new byte[rgb.Length];
+		for (int o = 0; o < rgb.Length; o += 3) {
+			int r = rgb[o], g = rgb[o + 1], b = rgb[o + 2];
+			if (bw)
+				px[o] = px[o + 1] = px[o + 2] = (byte)Math.Round(0.299 * r + 0.587 * g + 0.114 * b);
+			else
+				(px[o], px[o + 1], px[o + 2]) = ((byte)Math.Min(255, Math.Round(r * 1.08)), (byte)g, (byte)Math.Round(b * 0.88));
+		}
+		return px;
+	}
+
+	[Fact]
+	public void AResizeOrARecompression_HasTheSameColours() {
+		string original = Save("original.bmp", Scene());
+		foreach (int side in new[] { 1200, 600, 300 }) {
+			double? d = ColorLook.Difference(original, Jpeg(original, $"copy-{side}.jpg", side));
+			Assert.True(d <= ReportBuilder.SameColorsLimit, $"{side}: {d}");
+		}
+	}
+
+	[Fact]
+	public void ABlackAndWhiteCopy_PassesTheGrayFramesButNotTheColours() {
+		// Its gray is the original's, weighed as the gray frames weigh it. (The close look decodes to gray with Windows' own
+		// weights, so on this saturated scene it sees a little; on the look-alike set's photos 92 passed it all.)
+		string original = Save("original.bmp", Scene());
+		string copy = Jpeg(Save("bw.bmp", Recolored(Scene(), bw: true)), "bw.jpg", W);
+		var j = Judge(original, copy);
+		Assert.True(j.Percent >= ReportBuilder.PlainCopyPercent && j.Cell <= ReportBuilder.PlainCopyCellLimit, $"the gray frames can't see it: {j}");
+		double? d = ColorLook.Difference(original, copy);
+		Assert.True(d > 4 * ReportBuilder.SameColorsLimit, $"{d}");
+	}
+
+	[Fact]
+	public void AWarmerCopy_HasOtherColours() {
+		string original = Save("original.bmp", Scene());
+		double? d = ColorLook.Difference(original, Jpeg(Save("warm.bmp", Recolored(Scene(), bw: false)), "warm.jpg", W));
+		Assert.True(d > 2 * ReportBuilder.SameColorsLimit, $"{d}");
+	}
+
+	[Fact]
+	public void BrightnessAlone_MovesNoColour() {
+		// Each pixel's gray goes up by as much as its red, green and blue: blue and red minus gray stay put.
+		var a = new byte[64 * 64 * 3];
+		for (int i = 0; i < a.Length; i++) a[i] = (byte)(40 + i * 7 % 150);
+		byte[] brighter = a.Select(v => (byte)(v + 30)).ToArray();
+		Assert.Equal(0.0, ColorLook.Difference(a, a, 64));
+		Assert.True(ColorLook.Difference(a, brighter, 64) < 0.01);
+	}
+
+	[Fact]
+	public void OnePartRecoloured_ShowsInItsCell() {
+		// A red jumper made blue, an eighth of the picture each way: the picture's average hardly moves, its cell does.
+		var a = new byte[64 * 64 * 3];
+		for (int i = 0; i < a.Length; i += 3) (a[i], a[i + 1], a[i + 2]) = (60, 70, 180); // BGR: reddish
+		byte[] b = (byte[])a.Clone();
+		for (int y = 0; y < 8; y++)
+			for (int x = 0; x < 8; x++) {
+				int i = (y * 64 + x) * 3;
+				(b[i], b[i + 1], b[i + 2]) = (180, 70, 60); // bluish
+			}
+		Assert.True(ColorLook.Difference(a, b, 64) > 100);
+		Assert.Throws<ArgumentException>(() => ColorLook.Difference(a, b.AsSpan(3).ToArray(), 64));
+	}
+
+	[Fact]
+	public void ColoursAreKeptWithTheCloseLook_UntilAFileChanges() {
+		string a = Save("a.bmp", Scene()), b = Jpeg(a, "b.jpg", 600);
+		int colors = 0;
+		bool? Colors() { colors++; return false; }
+
+		var first = ReportBuilder.ContentHashes.Load();
+		Assert.False(first.SameColors(a, b, Colors)); // not looked at up close: no plain copy, and nothing compared
+		Assert.Equal(0, colors);
+		Assert.True(first.UpClose(a, b, () => true));
+		Assert.False(first.SameColors(b, a, Colors));
+		Assert.False(first.SameColors(a, b, Colors));
+		first.Save();
+		Assert.Equal(1, colors);
+
+		var second = ReportBuilder.ContentHashes.Load();
+		Assert.True(second.UpClose(a, b, () => throw new InvalidOperationException("looked at again")));
+		Assert.False(second.SameColors(a, b, Colors));
+		Assert.Equal(1, colors);
+
+		File.SetLastWriteTimeUtc(b, File.GetLastWriteTimeUtc(b).AddMinutes(5));
+		var third = ReportBuilder.ContentHashes.Load();
+		Assert.True(third.UpClose(a, b, () => true));
+		Assert.False(third.SameColors(a, b, Colors));
+		Assert.Equal(2, colors);
+	}
+
+	[Fact]
+	public void ACloseLookKeptBeforeColoursWereCompared_HasThemComparedOnce() {
+		// looks.json from before this check: the close look is kept, the colours are compared on the next scan.
+		string a = Save("a.bmp", Scene()), b = Jpeg(a, "b.jpg", 600);
+		var (first, second) = string.Compare(a, b, StringComparison.OrdinalIgnoreCase) < 0 ? (a, b) : (b, a);
+		Directory.CreateDirectory(Path.GetDirectoryName(ReportBuilder.ContentHashes.LooksPath)!);
+		File.WriteAllText(ReportBuilder.ContentHashes.LooksPath, System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> {
+			[first + "\n" + second] = new {
+				sizeA = new FileInfo(first).Length, modifiedA = File.GetLastWriteTimeUtc(first),
+				sizeB = new FileInfo(second).Length, modifiedB = File.GetLastWriteTimeUtc(second), same = true,
+			},
+		}));
+		int colors = 0;
+		var hashes = ReportBuilder.ContentHashes.Load();
+		Assert.True(hashes.UpClose(a, b, () => throw new InvalidOperationException("looked at again")));
+		Assert.True(hashes.SameColors(a, b, () => { colors++; return true; }));
+		hashes.Save();
+		var again = ReportBuilder.ContentHashes.Load();
+		Assert.True(again.UpClose(a, b, () => false));
+		Assert.True(again.SameColors(a, b, () => { colors++; return false; }));
+		Assert.Equal(1, colors);
+	}
+
 	[Fact]
 	public void AHardLink_IsNoCopy() =>
 		// One file under two paths: the scan leaves the pair out (and the Recycler won't count one as the other's copy).

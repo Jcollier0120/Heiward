@@ -241,8 +241,18 @@ namespace HEI.Core.Utils {
 		/// upright like <see cref="TryDecode(string, out byte[], out byte[], out int, out int)"/>: a closer look than the
 		/// 32×32 gray frame, which averages a blurred face or a small change away.
 		/// </summary>
-		internal static bool TryDecodeGray(string path, int side, out byte[]? gray) {
-			gray = null;
+		internal static bool TryDecodeGray(string path, int side, out byte[]? gray) =>
+			TryDecodeSquare(path, side, GUID_WICPixelFormat8bppGray, 1, out gray);
+
+		/// <summary>
+		/// The picture as a <paramref name="side"/>×<paramref name="side"/> frame of 24-bit BGR, squashed and turned upright
+		/// like <see cref="TryDecodeGray"/>: its colours, which every gray frame leaves out (<see cref="ColorLook"/>).
+		/// </summary>
+		internal static bool TryDecodeColor(string path, int side, out byte[]? bgr) =>
+			TryDecodeSquare(path, side, GUID_WICPixelFormat24bppBGR, 3, out bgr);
+
+		static bool TryDecodeSquare(string path, int side, Guid format, int bytesPerPixel, out byte[]? square) {
+			square = null;
 			lastFailure = null;
 			if (!IsAvailable) return Fail("not Windows");
 			nint factory = GetFactory();
@@ -267,9 +277,9 @@ namespace HEI.Core.Utils {
 							factory, rw, rh, &bgr, rw * 3, (uint)reduced.Length, pr, &bitmap) < 0)
 						return Fail("CreateBitmapFromMemory");
 				}
-				byte[]? pixels = Resample(factory, bitmap, side, GUID_WICPixelFormat8bppGray, 1);
+				byte[]? pixels = Resample(factory, bitmap, side, format, bytesPerPixel);
 				if (pixels == null) return Fail("resample");
-				gray = Orient(pixels, side, 1, orientation);
+				square = Orient(pixels, side, bytesPerPixel, orientation);
 				return true;
 			}
 			catch (Exception e) when (e is not OutOfMemoryException) {

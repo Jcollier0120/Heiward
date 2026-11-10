@@ -50,6 +50,13 @@ public sealed class ReportBuilderTests : IDisposable {
 			CloseLooks++;
 			return UpCloseToKeeper.TryGetValue(a, out bool? x) ? x : UpCloseToKeeper.TryGetValue(b, out bool? y) ? y : true;
 		}
+		/// <summary>A photo's colours against the kept one's (unset: the same colours).</summary>
+		public readonly Dictionary<string, bool?> ColorsToKeeper = new(StringComparer.OrdinalIgnoreCase);
+		public int ColorLooks;
+		public bool? SameColors(string a, string b) {
+			ColorLooks++;
+			return ColorsToKeeper.TryGetValue(a, out bool? x) ? x : ColorsToKeeper.TryGetValue(b, out bool? y) ? y : true;
+		}
 		/// <summary>A photo's words as the text reader reads them, a word a space apart (unset: no text reader, judged by look alone).</summary>
 		public readonly Dictionary<string, string> Words = new(StringComparer.OrdinalIgnoreCase);
 		public int Reads;
@@ -181,6 +188,55 @@ public sealed class ReportBuilderTests : IDisposable {
 		ReportItem edit = Named(Single(original, blurred), "p.blurred.jpg");
 		Assert.Equal("edited", edit.Relation);
 		Assert.False(edit.Suggested);
+	}
+
+	[Theory]
+	[InlineData(false)] // a black-and-white or warmer copy: the same in gray, other colours
+	[InlineData(null)]  // colours that can't be compared
+	public void ACopyInOtherColours_StaysInTheSetAsAnEdit_NotPreChecked(bool? sameColors) {
+		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1));
+		var bw = Photo("p bw.jpg", 4032, 3024, Bytes(7000, 2), gray: 99.9f, ai: 98.6f);
+		fingerprints.ColorsToKeeper[bw.Path] = sameColors;
+		ReportGroup g = Single(original, bw);
+		ReportItem item = Named(g, "p bw.jpg");
+		Assert.Equal("edited", item.Relation);
+		Assert.False(item.Suggested);
+		Assert.Equal(98.6f, item.Similarity); // as an edit: the AI's match
+		Assert.Equal("similar", g.Kind);
+		Assert.Equal(0, g.ReclaimBytes);
+		Assert.Empty(AutoCleaner.Targets(g).Targets);
+	}
+
+	[Fact]
+	public void ACopyInOtherColours_LeavesTheOtherCopiesPreChecked() {
+		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1));
+		var resaved = Photo("p resaved.jpg", 4032, 3024, Bytes(5000, 2), gray: 99.9f);
+		var small = Photo("p small.jpg", 1280, 960, Bytes(2000, 3), gray: 99.95f);
+		var warm = Photo("p warm.jpg", 4032, 3024, Bytes(7000, 4), gray: 99.8f, ai: 98.9f);
+		fingerprints.ColorsToKeeper[warm.Path] = false;
+		ReportGroup g = Single(original, resaved, small, warm);
+		Assert.Equal(4, g.Items.Count); // the set is the same; only what's checked changed
+		Assert.EndsWith("p.jpg", g.KeepPath);
+		Assert.Equal("copies", g.Kind);
+		Assert.True(Named(g, "p resaved.jpg").Suggested);
+		Assert.True(Named(g, "p small.jpg").Suggested);
+		Assert.Equal("edited", Named(g, "p warm.jpg").Relation);
+		Assert.False(Named(g, "p warm.jpg").Suggested);
+		Assert.Equal(7000, g.ReclaimBytes);
+	}
+
+	[Fact]
+	public void ColoursAreComparedForPlainCopiesOfPhotosAlone() {
+		// An identical file is the same bytes; a crop or an edit isn't a plain copy anyway; a video has no colour look.
+		byte[] same = Bytes(8000, 1);
+		Single(Photo("p.jpg", 4032, 3024, same), Photo(@"backup\p.jpg", 4032, 3024, same));
+		ReportBuilder.Build(new[] {
+			Photo("q.jpg", 4032, 3024, Bytes(8000, 3)), Photo("q crop.jpg", 4032, 3024, Bytes(7000, 4), gray: 97.4f) }, fingerprints);
+		ReportBuilder.Build(new[] { Video("v.mp4", Bytes(9000, 5)), Video("v small.mp4", Bytes(4000, 6), gray: 99.9f) }, fingerprints);
+		Assert.Equal(0, fingerprints.ColorLooks);
+
+		Single(Photo("r.jpg", 4032, 3024, Bytes(8000, 7)), Photo("r small.jpg", 1280, 960, Bytes(2000, 8), gray: 99.9f));
+		Assert.Equal(1, fingerprints.ColorLooks);
 	}
 
 	[Fact]
