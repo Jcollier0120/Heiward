@@ -146,6 +146,12 @@ namespace HEI.Agent {
 		/// apart); null when it can't be told, as for <see cref="SameUpClose"/>.
 		/// </summary>
 		bool? SameColors(string a, string b);
+		/// <summary>
+		/// Photos: one picture lines up with the other cropped, scaled or turned a little, with its colours changed at most
+		/// (<see cref="AlignedLook.SamePicture"/>); null when it can't be told: a file that can't be decoded, a picture too
+		/// even to place, or one on a resting drive.
+		/// </summary>
+		bool? LinesUp(string keep, string other) => null;
 		/// <summary>Photos: the picture's size as the text reader decodes it (turned as it's shown); null when its words can't be read.</summary>
 		(int W, int H)? PictureSize(string path) => null;
 		/// <summary>
@@ -231,6 +237,35 @@ namespace HEI.Agent {
 			colorsUsed = 1 - colorsUsed;
 			colors[colorsUsed] = (path, ColorLook.Frame(path));
 			return colors[colorsUsed].Frame;
+		}
+
+		// The pictures last used for the aligned look, the last used at the end: a kept file's, asked about each of its set's
+		// other files (several at once, so one being decoded is waited for, not decoded twice), and those files again when
+		// what's left of the set is judged around a kept file of its own (up to about 440 KB a picture).
+		readonly List<(string Path, Lazy<AlignedLook.Picture?> Picture)> placed = new(PlacedKept);
+		const int PlacedKept = 64;
+
+		public bool? LinesUp(string keep, string other) {
+			if (MayRead?.Invoke(keep) == false || MayRead?.Invoke(other) == false) return null;
+			ct.ThrowIfCancellationRequested();
+			return Placed(keep) is { } a && Placed(other) is { } b ? AlignedLook.SamePicture(a, b) : null;
+		}
+
+		AlignedLook.Picture? Placed(string path) {
+			Lazy<AlignedLook.Picture?> picture;
+			lock (placed) {
+				int at = placed.FindIndex(p => string.Equals(p.Path, path, StringComparison.OrdinalIgnoreCase));
+				if (at >= 0) {
+					picture = placed[at].Picture;
+					placed.RemoveAt(at);
+				}
+				else {
+					picture = new(() => AlignedLook.Picture.Load(path));
+					if (placed.Count == PlacedKept) placed.RemoveAt(0);
+				}
+				placed.Add((path, picture));
+			}
+			return picture.Value;
 		}
 
 		public float? AiPercent(string a, string b) {
@@ -429,13 +464,27 @@ namespace HEI.Agent {
 			GatherSplitCopies(members, hashes, fingerprints, ct);
 			int total = members.Sum(items => items.Count), done = 0;
 			var groups = new List<ReportGroup>();
-			foreach (List<DuplicateItem> items in members) {
-				progress?.Invoke(done, total);
-				foreach (List<DuplicateItem> picture in SplitByPicture(items, hashes, fingerprints, bursts, ct))
-					foreach (List<DuplicateItem> set in LeaveOutUnrelated(picture, hashes, fingerprints, bursts, ct))
-						if (set.Count >= 2)
-							groups.Add(BuildGroup(set, hashes, fingerprints, bursts));
-				done += items.Count;
+			// A batch of groups at a time: the aligned looks their sets ask for first (each picture's kept file and its
+			// look-alikes in the close band) are made together, several at once, before the sets are built. A set's few
+			// look-alikes alone can't keep the processor busy.
+			for (int start = 0; start < members.Count; start += LineUpBatch) {
+				var batch = new List<List<List<DuplicateItem>>>();
+				var lineUps = new List<(string Keep, string Other)>();
+				foreach (List<DuplicateItem> items in members.Skip(start).Take(LineUpBatch)) {
+					progress?.Invoke(done, total);
+					var pictures = SplitByPicture(items, hashes, fingerprints, bursts, ct).ToList();
+					foreach (List<DuplicateItem> picture in pictures)
+						lineUps.AddRange(FirstLineUps(picture, hashes, fingerprints, bursts));
+					batch.Add(pictures);
+					done += items.Count;
+				}
+				ct.ThrowIfCancellationRequested();
+				hashes.LineUpAhead(lineUps, fingerprints.LinesUp);
+				foreach (List<List<DuplicateItem>> pictures in batch)
+					foreach (List<DuplicateItem> picture in pictures)
+						foreach (List<DuplicateItem> set in LeaveOutUnrelated(picture, hashes, fingerprints, bursts, ct))
+							if (set.Count >= 2)
+								groups.Add(BuildGroup(set, hashes, fingerprints, bursts));
 			}
 			progress?.Invoke(done, total);
 			return groups
@@ -537,6 +586,11 @@ namespace HEI.Agent {
 					.Select(c => (c.Item, c.Relation, Alike(c.Item, keep, c.Relation, fingerprints).Percent))
 					.OrderByDescending(c => c.Relation == "identical").ThenByDescending(c => IsPlainCopy(c.Relation)).ThenByDescending(c => c.Percent)
 					.ToList();
+				// The close-band pairs the loop below may ask to line up, looked at ahead and several at once. The first kept
+				// file's were looked at with the rest of its batch (FirstLineUps): these are a later kept file's.
+				hashes.LineUpAhead(candidates
+					.Where(c => AsksToLineUp(c.Item, keep, c.Relation, c.Percent) && !shown.Contains(keep) && !shown.Contains(c.Item))
+					.Select(c => (keep.Path, c.Item.Path)).ToList(), fingerprints.LinesUp);
 				foreach (var (i, relation, percent) in candidates) {
 					if (relation == "identical") {
 						set.Add(i);
@@ -548,6 +602,10 @@ namespace HEI.Agent {
 					}
 					// Clearly another document (other words throughout): judged again around its own kept file, like a picture less alike.
 					if (relation == "different" || percent < MinAlikePercent || (!IsPlainCopy(relation) && (shown.Contains(keep) || shown.Contains(i))))
+						continue;
+					// A look-alike photo that doesn't line up with the kept one is another shot, however alike it scores: judged
+					// again around its own kept file, like a picture less alike.
+					if (AsksToLineUp(i, keep, relation, percent) && !hashes.LinesUp(keep.Path, i.Path, () => fingerprints.LinesUp(keep.Path, i.Path)))
 						continue;
 					set.Add(i);
 				}
@@ -567,6 +625,37 @@ namespace HEI.Agent {
 			if (ReferenceEquals(i, keep)) return (100f, false);
 			float? ai = relation is "edited" or "variant" or "wording" ? fingerprints.AiPercent(i.Path, keep.Path) : null;
 			return ai != null ? (ai.Value, true) : (fingerprints.GrayPercent(i.Path, keep.Path) ?? i.Similarity, false);
+		}
+
+		/// <summary>
+		/// The close band: two photos the AI sees as alike but not as the same picture edited (<c>variant</c>, below
+		/// <see cref="SamePictureAiPercent"/>), or alike with other words. Edits (crops, turns, filters) and other shots of
+		/// one scene both score here, 94–97%; the aligned look (<see cref="IFingerprints.LinesUp"/>) tells them apart. Not
+		/// animated pictures: they're compared by their first frame only.
+		/// </summary>
+		static bool InCloseBand(DuplicateItem i, DuplicateItem keep, string relation) =>
+			i.IsImage && keep.IsImage && relation is "variant" or "wording" && !MayBeAnimated(i.Path) && !MayBeAnimated(keep.Path);
+
+		/// <summary>A look-alike in the close band, alike enough to stay but for the aligned look: <see cref="LeaveOutUnrelated"/> asks it to line up.</summary>
+		static bool AsksToLineUp(DuplicateItem i, DuplicateItem keep, string relation, float percent) =>
+			percent >= MinAlikePercent && InCloseBand(i, keep, relation);
+
+		/// <summary>How many groups have their first aligned looks made together (<see cref="FirstLineUps"/>).</summary>
+		const int LineUpBatch = 64;
+
+		/// <summary>
+		/// The pairs <see cref="LeaveOutUnrelated"/> asks to line up first: the picture's kept file and each of its look-alikes in
+		/// the close band. Asked ahead with other groups', several at once.
+		/// </summary>
+		static IEnumerable<(string Keep, string Other)> FirstLineUps(List<DuplicateItem> items, ContentHashes hashes, IFingerprints fingerprints, BurstSeries bursts) {
+			if (items.Count < 2) yield break;
+			DuplicateItem keep = PickKeeper(items).Item1;
+			foreach (DuplicateItem i in items) {
+				if (ReferenceEquals(i, keep)) continue;
+				string relation = Relation(i, keep, hashes, fingerprints, bursts);
+				if (AsksToLineUp(i, keep, relation, Alike(i, keep, relation, fingerprints).Percent))
+					yield return (keep.Path, i.Path);
+			}
 		}
 
 		/// <summary>
@@ -935,26 +1024,84 @@ namespace HEI.Agent {
 				return same;
 			}
 
-			bool LookAt(string key, string a, string b, Func<bool?> look) {
+			/// <summary>
+			/// The two photos line up (<paramref name="look"/>, <see cref="IFingerprints.LinesUp"/>), asked once a pair and kept
+			/// in looks.json beside the close looks (under its own key, which names how it was looked at), like them. True when it
+			/// can't be told: the set stays as it was without the aligned look.
+			/// </summary>
+			public bool LinesUp(string a, string b, Func<bool?> look) {
+				if (string.Compare(a, b, StringComparison.OrdinalIgnoreCase) > 0) (a, b) = (b, a);
+				string key = AlignedLook.Version + "\n" + a + "\n" + b;
+				if (!looked.TryGetValue(key, out bool same))
+					looked[key] = same = LookAt(key, a, b, look, unknown: true);
+				return same;
+			}
+
+			/// <summary>
+			/// <see cref="LinesUp"/> for each pair (a kept file and one of its set's photos), asked ahead and several at once: it
+			/// takes about a tenth of a second a pair, and a report of look-alikes asks it of thousands. Each answer is kept as
+			/// LinesUp keeps it, so LinesUp finds it; the pairs it already knows, or can't look at, are left to it.
+			/// </summary>
+			public void LineUpAhead(IReadOnlyList<(string Keep, string Other)> pairs, Func<string, string, bool?> look) {
+				var fresh = new List<(string Key, string Keep, string Other, FileInfo A, FileInfo B)>();
+				var asked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				foreach (var (keep, other) in pairs) {
+					(string a, string b) = string.Compare(keep, other, StringComparison.OrdinalIgnoreCase) > 0 ? (other, keep) : (keep, other);
+					string key = AlignedLook.Version + "\n" + a + "\n" + b;
+					if (looked.ContainsKey(key) || !asked.Add(key) || !CanRead(a) || !CanRead(b)) continue;
+					try {
+						FileInfo fa = new(a), fb = new(b);
+						if (!fa.Exists || !fb.Exists) continue;
+						if (looksEarlier.TryGetValue(key, out Look? s) && s.SizeA == fa.Length && s.ModifiedA == fa.LastWriteTimeUtc &&
+								s.SizeB == fb.Length && s.ModifiedB == fb.LastWriteTimeUtc)
+							continue;
+						fresh.Add((key, keep, other, fa, fb));
+					}
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+				}
+				if (fresh.Count < 2) return;
+				var answers = new bool?[fresh.Count];
+				Exception? stopped = null;
+				// On half the processor's threads, in order: a kept file's pairs come together, so its picture is decoded once.
+				Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, fresh.Count, 1),
+					new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) }, (range, loop) => {
+						for (int k = range.Item1; k < range.Item2; k++) {
+							try { answers[k] = look(fresh[k].Keep, fresh[k].Other); }
+							catch (OperationCanceledException e) { stopped = e; loop.Stop(); }
+							catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+						}
+					});
+				if (stopped != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(stopped);
+				for (int k = 0; k < fresh.Count; k++) {
+					var (key, _, _, fa, fb) = fresh[k];
+					if (answers[k] is bool same) {
+						looksNow[key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, same);
+						looked[key] = same;
+					}
+					else looked[key] = true; // can't be told: as LinesUp answers it
+				}
+			}
+
+			bool LookAt(string key, string a, string b, Func<bool?> look, bool unknown = false) {
 				if (!CanRead(a) || !CanRead(b)) {
-					if (!looksEarlier.TryGetValue(key, out Look? kept)) return false;
+					if (!looksEarlier.TryGetValue(key, out Look? kept)) return unknown;
 					looksNow[key] = kept;
 					return kept.Same;
 				}
 				try {
 					FileInfo fa = new(a), fb = new(b);
-					if (!fa.Exists || !fb.Exists) return false;
+					if (!fa.Exists || !fb.Exists) return unknown;
 					if (looksEarlier.TryGetValue(key, out Look? s) && s.SizeA == fa.Length && s.ModifiedA == fa.LastWriteTimeUtc &&
 							s.SizeB == fb.Length && s.ModifiedB == fb.LastWriteTimeUtc) {
 						looksNow[key] = s;
 						return s.Same;
 					}
-					if (look() is not bool same) return false;
+					if (look() is not bool same) return unknown;
 					looksNow[key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, same);
 					return same;
 				}
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
-					return false;
+					return unknown;
 				}
 			}
 

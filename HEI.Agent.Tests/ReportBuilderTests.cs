@@ -57,6 +57,13 @@ public sealed class ReportBuilderTests : IDisposable {
 			ColorLooks++;
 			return ColorsToKeeper.TryGetValue(a, out bool? x) ? x : ColorsToKeeper.TryGetValue(b, out bool? y) ? y : true;
 		}
+		/// <summary>A photo lined up against the kept one (unset: can't be told).</summary>
+		public readonly Dictionary<string, bool?> LinesUpWithKeeper = new(StringComparer.OrdinalIgnoreCase);
+		public int Alignments;
+		public bool? LinesUp(string keep, string other) {
+			Interlocked.Increment(ref Alignments); // a set's look-alikes are lined up several at once
+			return LinesUpWithKeeper.TryGetValue(other, out bool? x) ? x : LinesUpWithKeeper.TryGetValue(keep, out bool? y) ? y : null;
+		}
 		/// <summary>A photo's words as the text reader reads them, a word a space apart (unset: no text reader, judged by look alone).</summary>
 		public readonly Dictionary<string, string> Words = new(StringComparer.OrdinalIgnoreCase);
 		public int Reads;
@@ -237,6 +244,54 @@ public sealed class ReportBuilderTests : IDisposable {
 
 		Single(Photo("r.jpg", 4032, 3024, Bytes(8000, 7)), Photo("r small.jpg", 1280, 960, Bytes(2000, 8), gray: 99.9f));
 		Assert.Equal(1, fingerprints.ColorLooks);
+	}
+
+	[Fact]
+	public void AnotherShotOfTheScene_ThatDoesntLineUp_LeavesTheSet() {
+		// Two shots of one bridge from two places score 95% by the AI, like a crop of one of them: only lining them up tells.
+		var original = Photo("bridge.jpg", 4032, 3024, Bytes(8000, 1));
+		var crop = Photo("bridge, cropped.jpg", 3500, 2625, Bytes(6000, 2), gray: 87f, ai: 95.9f);
+		var other = Photo("bridge from the bank.jpg", 3500, 2625, Bytes(7000, 3), gray: 86f, ai: 95.4f);
+		fingerprints.LinesUpWithKeeper[crop.Path] = true;
+		fingerprints.LinesUpWithKeeper[other.Path] = false;
+		ReportGroup g = Single(original, crop, other);
+		Assert.Equal(new[] { "bridge, cropped.jpg", "bridge.jpg" }, g.Items.Select(i => i.Name).Order(StringComparer.Ordinal));
+		Assert.Equal("variant", Named(g, "bridge, cropped.jpg").Relation);
+	}
+
+	[Fact]
+	public void ASetsLookAlikes_AreEachLinedUpOnce() {
+		// Lined up ahead, several at once: each once, and the one that doesn't line up still leaves.
+		var original = Photo("lake.jpg", 4032, 3024, Bytes(8000, 1));
+		var crops = new[] { "cropped", "square", "wide", "tight", "left" }
+			.Select((name, k) => Photo($"lake, {name}.jpg", 3500, 2625, Bytes(6000 + k, (byte)(10 + k)), gray: 87f, ai: 96f - k * 0.1f)).ToList();
+		var other = Photo("lake from the shore.jpg", 3500, 2625, Bytes(7000, 3), gray: 86f, ai: 95.4f);
+		foreach (var crop in crops) fingerprints.LinesUpWithKeeper[crop.Path] = true;
+		fingerprints.LinesUpWithKeeper[other.Path] = false;
+		ReportGroup g = Single(crops.Prepend(other).Prepend(original).ToArray());
+		Assert.Equal(6, g.Items.Count);
+		Assert.DoesNotContain(g.Items, i => i.Name == "lake from the shore.jpg");
+		Assert.Equal(6, fingerprints.Alignments);
+	}
+
+	[Fact]
+	public void APhotoThatCantBeLinedUp_StaysAsBefore() {
+		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1));
+		var crop = Photo("p.crop.jpg", 3500, 2625, Bytes(6000, 2), gray: 87f, ai: 95.9f); // LinesUp unset: null, can't be told
+		Assert.Equal(2, Single(original, crop).Items.Count);
+		Assert.Equal(1, fingerprints.Alignments);
+	}
+
+	[Fact]
+	public void PlainCopiesAndClearEdits_AreNotLinedUp() {
+		// The aligned look is for the close band alone: a resized copy or an edit the AI is sure of isn't decoded again.
+		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1));
+		var resized = Photo("p.small.jpg", 2016, 1512, Bytes(2000, 2), gray: 99.95f);
+		var warm = Photo("p.warm.jpg", 4032, 3024, Bytes(7000, 3), gray: 98f, ai: 98.5f);
+		fingerprints.LinesUpWithKeeper[resized.Path] = false;
+		fingerprints.LinesUpWithKeeper[warm.Path] = false;
+		Assert.Equal(3, Single(original, resized, warm).Items.Count);
+		Assert.Equal(0, fingerprints.Alignments);
 	}
 
 	[Fact]

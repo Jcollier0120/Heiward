@@ -242,17 +242,30 @@ namespace HEI.Core.Utils {
 		/// 32×32 gray frame, which averages a blurred face or a small change away.
 		/// </summary>
 		internal static bool TryDecodeGray(string path, int side, out byte[]? gray) =>
-			TryDecodeSquare(path, side, GUID_WICPixelFormat8bppGray, 1, out gray);
+			TryDecodeFrame(path, side, GUID_WICPixelFormat8bppGray, 1, luma: false, out gray, out _, out _);
 
 		/// <summary>
 		/// The picture as a <paramref name="side"/>×<paramref name="side"/> frame of 24-bit BGR, squashed and turned upright
 		/// like <see cref="TryDecodeGray"/>: its colours, which every gray frame leaves out (<see cref="ColorLook"/>).
 		/// </summary>
 		internal static bool TryDecodeColor(string path, int side, out byte[]? bgr) =>
-			TryDecodeSquare(path, side, GUID_WICPixelFormat24bppBGR, 3, out bgr);
+			TryDecodeFrame(path, side, GUID_WICPixelFormat24bppBGR, 3, luma: false, out bgr, out _, out _);
 
-		static bool TryDecodeSquare(string path, int side, Guid format, int bytesPerPixel, out byte[]? square) {
-			square = null;
+		/// <summary>
+		/// The picture as a luma frame (299 R + 587 G + 114 B, as the gray frames are made, <see cref="GrayBytesUtils.FromRgb224"/>:
+		/// a black-and-white copy then has the same values as its colour original) of its own shape, turned upright, at most
+		/// <paramref name="side"/> pixels on its long side: <paramref name="width"/>×<paramref name="height"/> (<see cref="AlignedLook"/>).
+		/// </summary>
+		internal static bool TryDecodeLuma(string path, int side, out byte[]? gray, out int width, out int height) =>
+			TryDecodeFrame(path, side, GUID_WICPixelFormat24bppBGR, 3, luma: true, out gray, out width, out height);
+
+		/// <summary>
+		/// A square frame of <paramref name="format"/> (<paramref name="bytesPerPixel"/> a pixel); or, with <paramref name="luma"/>,
+		/// the luma frame of the picture's own shape made from 24-bit BGR, <paramref name="width"/>×<paramref name="height"/> (0 for a square one).
+		/// </summary>
+		static bool TryDecodeFrame(string path, int side, Guid format, int bytesPerPixel, bool luma, out byte[]? decoded, out int width, out int height) {
+			decoded = null;
+			width = height = 0;
 			lastFailure = null;
 			if (!IsAvailable) return Fail("not Windows");
 			nint factory = GetFactory();
@@ -269,7 +282,14 @@ namespace HEI.Core.Utils {
 				if ((hr = ((delegate* unmanaged[Stdcall]<nint, uint*, uint*, int>)Slot(frame, Source_GetSize))(frame, &w, &h)) < 0 || w == 0 || h == 0)
 					return Fail("GetSize", hr);
 				Orientation orientation = IsHeif(decoder) ? Orientation.None : ReadOrientation(frame);
-				if (!TryReducedDecode(frame, w, h, out byte[] reduced, out uint rw, out uint rh, side))
+				// Luma keeps the picture's shape, its long side at most side, decoded with the same headroom for the area filter as
+				// the square frames: a decode just at the output size (a JPEG's 1/8 scaling) blurs it, and decodes no faster.
+				uint ow = (uint)side, oh = (uint)side;
+				if (luma) {
+					uint along = Math.Min((uint)side, Math.Max(w, h));
+					(ow, oh) = w >= h ? (along, Math.Max(1, (uint)Math.Round((double)along * h / w))) : (Math.Max(1, (uint)Math.Round((double)along * w / h)), along);
+				}
+				if (!TryReducedDecode(frame, w, h, out byte[] reduced, out uint rw, out uint rh, luma ? (int)Math.Min(ow, oh) : side))
 					return Fail("pixel decode");
 				fixed (byte* pr = reduced) {
 					Guid bgr = GUID_WICPixelFormat24bppBGR;
@@ -277,9 +297,16 @@ namespace HEI.Core.Utils {
 							factory, rw, rh, &bgr, rw * 3, (uint)reduced.Length, pr, &bitmap) < 0)
 						return Fail("CreateBitmapFromMemory");
 				}
-				byte[]? pixels = Resample(factory, bitmap, side, format, bytesPerPixel);
+				byte[]? pixels = luma ? ScaleSource(factory, bitmap, ow, oh, format, bytesPerPixel) : Resample(factory, bitmap, side, format, bytesPerPixel);
 				if (pixels == null) return Fail("resample");
-				square = Orient(pixels, side, bytesPerPixel, orientation);
+				if (!luma) {
+					decoded = Orient(pixels, side, bytesPerPixel, orientation);
+					return true;
+				}
+				var y = new byte[ow * oh];
+				for (int k = 0, p = 0; k < y.Length; k++, p += 3)
+					y[k] = (byte)((114 * pixels[p] + 587 * pixels[p + 1] + 299 * pixels[p + 2] + 500) / 1000);
+				decoded = OrientShaped(y, (int)ow, (int)oh, orientation, out width, out height);
 				return true;
 			}
 			catch (Exception e) when (e is not OutOfMemoryException) {
@@ -579,6 +606,29 @@ namespace HEI.Core.Utils {
 						_ => (x, y)
 					};
 					Buffer.BlockCopy(src, (sy * side + sx) * bpp, dst, (y * side + x) * bpp, bpp);
+				}
+			return dst;
+		}
+
+		/// <summary><see cref="Orient"/> for a one-byte frame of any shape: turned a quarter, its width and height swap.</summary>
+		static byte[] OrientShaped(byte[] src, int w, int h, Orientation o, out int width, out int height) {
+			bool turned = o is Orientation.Transpose or Orientation.Rotate90 or Orientation.Transverse or Orientation.Rotate270;
+			(width, height) = turned ? (h, w) : (w, h);
+			if (o == Orientation.None) return src;
+			var dst = new byte[src.Length];
+			for (int y = 0; y < height; y++)
+				for (int x = 0; x < width; x++) {
+					(int sx, int sy) = o switch {
+						Orientation.FlipH => (w - 1 - x, y),
+						Orientation.Rotate180 => (w - 1 - x, h - 1 - y),
+						Orientation.FlipV => (x, h - 1 - y),
+						Orientation.Transpose => (y, x),
+						Orientation.Rotate90 => (y, h - 1 - x),
+						Orientation.Transverse => (w - 1 - y, h - 1 - x),
+						Orientation.Rotate270 => (w - 1 - y, x),
+						_ => (x, y)
+					};
+					dst[y * width + x] = src[sy * w + sx];
 				}
 			return dst;
 		}
