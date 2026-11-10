@@ -81,6 +81,8 @@ public sealed class AgentControlTests : IDisposable {
 		using var doc = System.Text.Json.JsonDocument.Parse(System.Text.Json.JsonSerializer.Serialize(item));
 		Assert.Equal("first-scan", doc.RootElement.GetProperty("id").GetString());
 		Assert.Equal("Heiward's first scan waits for you", doc.RootElement.GetProperty("title").GetString());
+		// Manor lists it under "When you have time", not "This needs you".
+		Assert.True(doc.RootElement.GetProperty("fyi").GetBoolean());
 	}
 
 	[Fact]
