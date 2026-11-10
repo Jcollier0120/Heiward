@@ -42,7 +42,18 @@ namespace HEI.Core.AI {
 		}
 
 		/// <summary>Cosine similarity (≈ −1..1) of two int8-quantized unit vectors.</summary>
-		internal static float CosineSimilarity(byte[] a, byte[] b) {
+		internal static float CosineSimilarity(byte[] a, byte[] b) =>
+			// Clamp: rounding pushes the quantized norm above 127 for many unit vectors
+			// (self-dot > 127², systematically for near-identical pairs), so the raw
+			// quotient exceeds 1. Unclamped this made `1 - similarity` negative — the
+			// GUI showed >100% and the default 0–100 similarity filter hid the pair.
+			Math.Clamp(Dot(a, b) / (QuantScale * QuantScale), -1f, 1f);
+
+		/// <summary>
+		/// The 127²-scaled dot product of two quantized vectors (over the shorter length): the
+		/// whole number <see cref="CosineSimilarity"/> divides by 127². Exact on every path.
+		/// </summary>
+		internal static int Dot(byte[] a, byte[] b) {
 			ReadOnlySpan<sbyte> sa = MemoryMarshal.Cast<byte, sbyte>(a);
 			ReadOnlySpan<sbyte> sb = MemoryMarshal.Cast<byte, sbyte>(b);
 			int len = Math.Min(sa.Length, sb.Length);
@@ -72,11 +83,7 @@ namespace HEI.Core.AI {
 			}
 			for (; i < len; i++)
 				dot += sa[i] * sb[i];
-			// Clamp: rounding pushes the quantized norm above 127 for many unit vectors
-			// (self-dot > 127², systematically for near-identical pairs), so the raw
-			// quotient exceeds 1. Unclamped this made `1 - similarity` negative — the
-			// GUI showed >100% and the default 0–100 similarity filter hid the pair.
-			return Math.Clamp(dot / (QuantScale * QuantScale), -1f, 1f);
+			return dot;
 		}
 
 		/// <summary>Scalar reference implementation; the SIMD path is verified against it in tests.</summary>

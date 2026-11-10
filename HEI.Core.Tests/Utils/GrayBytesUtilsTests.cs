@@ -86,6 +86,52 @@ public class GrayBytesUtilsTests {
 		Assert.Equal(expected, GrayBytesUtils.PercentageDifferenceWithoutSpecificPixels(a, b, true, true), 5);
 	}
 
+	// The ignore-pixel compare in plain scalar: the pixels both frames count, their difference and count.
+	static float ReferenceWithoutSpecificPixels(byte[] a, byte[] b, bool ignoreBlack, bool ignoreWhite) {
+		long diff = 0, count = 0;
+		for (int i = 0; i < a.Length; i++) {
+			if (ignoreBlack && (a[i] <= 0x20 || b[i] <= 0x20)) continue;
+			if (ignoreWhite && (a[i] >= 0xF0 || b[i] >= 0xF0)) continue;
+			diff += Math.Abs(a[i] - b[i]);
+			count++;
+		}
+		return (float)diff / count / 256;
+	}
+
+	public static TheoryData<string, int> IgnorePixelFrames => new() {
+		{ "random", 1024 }, { "near the limits", 1024 }, { "all black", 1024 }, { "all white", 1024 },
+		{ "one side black", 1024 }, { "random", 1040 }, { "near the limits", 1040 }, { "random", 4096 },
+	};
+
+	[Theory]
+	[MemberData(nameof(IgnorePixelFrames))]
+	public void PercentageDifferenceWithoutSpecificPixels_EveryPathMatchesTheScalarLoopExactly(string frames, int length) {
+		// The SIMD paths (AVX2 on x86, NEON on ARM64) must give the scalar loop's float to the bit:
+		// the compare's verdicts depend on it. 1040 bytes leave a tail the vector loop doesn't cover;
+		// all black or all white leaves no pixel to count (NaN, which never matches).
+		var rng = new Random(length * 31 + frames.Length);
+		byte[] nearLimits = { 0, 1, 31, 32, 33, 34, 128, 238, 239, 240, 241, 254, 255 };
+		for (int round = 0; round < 50; round++) {
+			var a = new byte[length];
+			var b = new byte[length];
+			for (int i = 0; i < length; i++) {
+				(a[i], b[i]) = frames switch {
+					"random" => ((byte)rng.Next(256), (byte)rng.Next(256)),
+					"near the limits" => (nearLimits[rng.Next(nearLimits.Length)], nearLimits[rng.Next(nearLimits.Length)]),
+					"all black" => ((byte)rng.Next(33), (byte)rng.Next(33)),
+					"all white" => ((byte)rng.Next(240, 256), (byte)rng.Next(240, 256)),
+					_ => ((byte)rng.Next(33), (byte)rng.Next(256)),
+				};
+			}
+			foreach (var (black, white) in new[] { (true, false), (false, true), (true, true) }) {
+				float expected = ReferenceWithoutSpecificPixels(a, b, black, white);
+				float actual = GrayBytesUtils.PercentageDifferenceWithoutSpecificPixels(a, b, black, white);
+				Assert.True(BitConverter.SingleToInt32Bits(expected) == BitConverter.SingleToInt32Bits(actual),
+					$"{frames}, {length} bytes, ignore black={black}, white={white}: expected {expected:R}, got {actual:R}");
+			}
+		}
+	}
+
 	[Fact]
 	public void VerifyGrayScaleValues_AllBlack_ReturnsFalse() {
 		// All pixels <= 0x20 (BlackPixelLimit) means 100% dark > 80% threshold

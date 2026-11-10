@@ -162,21 +162,53 @@ namespace HEI.Core.Utils {
 				}
 				counter /= 255; // PSADBW(mask, 0) accumulated 255 per surviving byte.
 			}
-			else {
-				for (int i = 0; i < img1.Length; i++) {
-					bool isValid = true;
+			else if (AdvSimd.IsSupported) {
+				// ARM64 (NEON), 16 pixels at a time: the same valid mask from unsigned compares (CMHI),
+				// then |a − b| under the mask and the mask's 1s, folded into 32-bit lanes by pairwise
+				// widening adds (at most 1,020 per lane and step, so no length overflows them). The
+				// same whole-number sums as the scalar loop, so the same float. Without this branch
+				// ARM64 ran the scalar loop for every pair with an ignore setting on, about 3 µs a pair.
+				var blackLimit = Vector128.Create(BlackPixelLimit);
+				var whiteLimit = Vector128.Create(WhitePixelLimit);
+				var one = Vector128.Create((byte)1);
+				Vector128<uint> diffAcc = Vector128<uint>.Zero, countAcc = Vector128<uint>.Zero;
+				ref byte r1 = ref MemoryMarshal.GetArrayDataReference(img1);
+				ref byte r2 = ref MemoryMarshal.GetArrayDataReference(img2);
+				int i = 0;
+				for (; i <= img1.Length - 16; i += 16) {
+					Vector128<byte> v1 = Vector128.LoadUnsafe(ref r1, (nuint)i), v2 = Vector128.LoadUnsafe(ref r2, (nuint)i);
+					Vector128<byte> valid = Vector128<byte>.AllBitsSet;
 					if (ignoreBlackPixels)
-						isValid = img1[i] > BlackPixelLimit && img2[i] > BlackPixelLimit;
-					if (!isValid) continue;
+						valid &= AdvSimd.CompareGreaterThan(v1, blackLimit) & AdvSimd.CompareGreaterThan(v2, blackLimit);
 					if (ignoreWhitePixels)
-						isValid = img1[i] < WhitePixelLimit && img2[i] < WhitePixelLimit;
-					if (!isValid) continue;
-					diff += Math.Abs(img1[i] - img2[i]);
-					counter++;
+						valid &= AdvSimd.CompareLessThan(v1, whiteLimit) & AdvSimd.CompareLessThan(v2, whiteLimit);
+					diffAcc = AdvSimd.AddPairwiseWideningAndAdd(diffAcc, AdvSimd.AddPairwiseWidening(AdvSimd.AbsoluteDifference(v1, v2) & valid));
+					countAcc = AdvSimd.AddPairwiseWideningAndAdd(countAcc, AdvSimd.AddPairwiseWidening(valid & one));
 				}
+				diff = Vector128.Sum(diffAcc);
+				counter = Vector128.Sum(countAcc);
+				SumValidPixels(img1, img2, i, ignoreBlackPixels, ignoreWhitePixels, ref diff, ref counter);
 			}
+			else
+				SumValidPixels(img1, img2, 0, ignoreBlackPixels, ignoreWhitePixels, ref diff, ref counter);
 
 			return (float)diff / counter / brightnessScalePerPixel;
+		}
+
+		// The scalar ignore-pixel compare, from pixel `start` on: adds each pixel both frames count
+		// to the difference and the count.
+		static void SumValidPixels(byte[] img1, byte[] img2, int start, bool ignoreBlackPixels, bool ignoreWhitePixels, ref long diff, ref long counter) {
+			for (int i = start; i < img1.Length; i++) {
+				bool isValid = true;
+				if (ignoreBlackPixels)
+					isValid = img1[i] > BlackPixelLimit && img2[i] > BlackPixelLimit;
+				if (!isValid) continue;
+				if (ignoreWhitePixels)
+					isValid = img1[i] < WhitePixelLimit && img2[i] < WhitePixelLimit;
+				if (!isValid) continue;
+				diff += Math.Abs(img1[i] - img2[i]);
+				counter++;
+			}
 		}
 		[MethodImpl(MethodImplOptions.AggressiveInlining)]
 		public static unsafe float PercentageDifference(byte[] img1, byte[] img2) {
@@ -233,6 +265,58 @@ namespace HEI.Core.Utils {
 			}
 			return (float)diff / img1.Length / brightnessScalePerPixel;
 		}
+
+		/// <summary>
+		/// The sum of absolute differences of two equal-length frames: the whole number
+		/// <see cref="PercentageDifference"/> divides by the length and 256. It is a true metric (L1),
+		/// which is what lets the compare index bound pairs by the triangle inequality.
+		/// </summary>
+		internal static int SumAbsoluteDifference(ReadOnlySpan<byte> img1, ReadOnlySpan<byte> img2) {
+			if (img1.Length != img2.Length)
+				throw new ArgumentException($"Gray frame length mismatch: {img1.Length} vs {img2.Length} bytes.");
+			long diff = 0;
+			int i = 0;
+			if (Avx2.IsSupported) {
+				Vector256<long> acc = Vector256<long>.Zero;
+				for (; i <= img1.Length - 32; i += 32)
+					acc = Avx2.Add(acc, Avx2.SumAbsoluteDifferences(Vector256.Create(img1.Slice(i, 32)), Vector256.Create(img2.Slice(i, 32))).AsInt64());
+				diff = Vector256.Sum(acc);
+			}
+			else if (AdvSimd.IsSupported) {
+				Vector128<uint> acc = Vector128<uint>.Zero;
+				for (; i <= img1.Length - 16; i += 16) {
+					Vector128<byte> d = AdvSimd.AbsoluteDifference(Vector128.Create(img1.Slice(i, 16)), Vector128.Create(img2.Slice(i, 16)));
+					acc = AdvSimd.AddPairwiseWideningAndAdd(acc, AdvSimd.AddPairwiseWidening(d));
+				}
+				diff = Vector128.Sum(acc);
+			}
+			for (; i < img1.Length; i++)
+				diff += Math.Abs(img1[i] - img2[i]);
+			return checked((int)diff);
+		}
+
+		/// <summary>
+		/// The frame the ignore-black/white compare can be bounded on: black pixels raised to the
+		/// black limit, white ones lowered to the white limit. Where both frames' pixels count, the
+		/// clamped frames differ exactly as much; where either is ignored they differ by at most
+		/// <see cref="IgnoredPixelSpan"/>. Returns how many of the frame's pixels are ignored.
+		/// </summary>
+		internal static int ClampIgnoredPixels(ReadOnlySpan<byte> src, Span<byte> dst, bool ignoreBlackPixels, bool ignoreWhitePixels) {
+			byte low = ignoreBlackPixels ? BlackPixelLimit : (byte)0;
+			byte high = ignoreWhitePixels ? WhitePixelLimit : (byte)255;
+			int ignored = 0;
+			for (int i = 0; i < src.Length; i++) {
+				byte v = src[i];
+				if ((ignoreBlackPixels && v <= BlackPixelLimit) || (ignoreWhitePixels && v >= WhitePixelLimit))
+					ignored++;
+				dst[i] = v < low ? low : v > high ? high : v;
+			}
+			return ignored;
+		}
+
+		/// <summary>The most two clamped pixels can differ (see <see cref="ClampIgnoredPixels"/>).</summary>
+		internal static int IgnoredPixelSpan(bool ignoreBlackPixels, bool ignoreWhitePixels) =>
+			(ignoreWhitePixels ? WhitePixelLimit : 255) - (ignoreBlackPixels ? BlackPixelLimit : 0);
 
 		/// <summary>
 		/// The largest difference (0–255) between the two frames' cells. <see cref="PercentageDifference"/> averages a
