@@ -2,6 +2,21 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.10.2
+
+**Brings 2 changes: At a manor, Heiward's first scan waiting for you is listed under When you have time, not This needs you; Heiward is gentler on your disk: a check that finds nothing new no longer rewrites what it already saved.**
+
+### What changed
+
+- A new install of Heiward scans nothing until you say. Castellan's page used to show that in red under **This needs you**. It's now under **When you have time**, with the same words and link, and it's never a notification: nothing is lost while it waits.
+- When a check finds the same duplicates as last time, Heiward no longer saves the whole list of them again, or the fingerprints of your files that it keeps. It notes only when the check ran. On a library of 50,000 photos, on a drive Heiward has to list again every 6 hours, that's about 17.5 MB written per check down to a few hundred bytes, up to 70 MB a day.
+- Heiward's settings and status files are saved only when something in them changes.
+- Which photos are found as duplicates and look-alikes is unchanged.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.1
 
 **Brings 4 changes: Big photo libraries now compare in seconds instead of minutes, with exactly the same results; Heiward's page uses a wide window better, and Back now goes back to the page you were on; Delete Highlighted and the cleanup dry run report are quick on big results; Heiward writes far less to your disk as it scans: a save writes only the photos that changed.**
