@@ -18,6 +18,8 @@ using HEI.Core.AI;
 
 namespace HEI.Core.Tests.AI;
 
+// The store tests set the stores' path overrides, which are static: one class at a time.
+[Collection("EmbeddingStorePath")]
 public class UnionEmbeddingStoreTests : IDisposable {
 	readonly string tempDir;
 

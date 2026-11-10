@@ -22,7 +22,7 @@ using System.Text.Json;
 using MemoryPack;
 
 namespace HEI.Core.Utils {
-	static class DatabaseUtils {
+	static partial class DatabaseUtils {
 		static DatabaseUtils() => MemoryPackRegistration.Register();
 
 		// Database on-disk formats, newest first:
@@ -56,16 +56,6 @@ namespace HEI.Core.Utils {
 		static string CurrentDatabasePath => FileUtils.SafePathCombine(DatabaseFolder, "ScannedFiles.db");
 		static string TempDatabasePath => FileUtils.SafePathCombine(DatabaseFolder, "ScannedFiles_new.db");
 
-		/// <summary>
-		/// The database file as this process last read or wrote it, with the SHA-256 of its bytes; null when it has done
-		/// neither, or read an older format. <see cref="SaveDatabase"/> leaves the file alone when it is still that file and
-		/// the save would write these same bytes.
-		/// </summary>
-		static (string Path, long Length, DateTime WrittenUtc, byte[] Hash)? onDisk;
-		static (string, long, DateTime, byte[]) Stamp(string path, byte[] hash) {
-			var info = new FileInfo(path);
-			return (info.FullName, info.Length, info.LastWriteTimeUtc, hash);
-		}
 		static readonly object saveLock = new();
 
 		internal static bool LoadDatabase() {
@@ -88,17 +78,17 @@ namespace HEI.Core.Utils {
 			Logger.Instance.Info("Found previously scanned files, importing...");
 			var st = Stopwatch.StartNew();
 			try {
-				using var file = new FileStream(databaseFile.FullName, FileMode.Open, FileAccess.Read);
+				using var file = new FileStream(databaseFile.FullName, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
 				Span<byte> header = stackalloc byte[8];
 				int headerRead = file.Read(header);
 				if (headerRead == FormatMagicStreaming.Length && header.SequenceEqual(FormatMagicStreaming)) {
-					// Hashed as it's read: a save that would write these same bytes again writes nothing.
-					using var hashing = new HashingStream(file);
-					hashing.Append(header);
-					DbWrapper = DeserializeDatabaseStreaming(hashing);
-					// A save left halfway is read instead of the database (as above), and is only made the database by a save.
+					// Each entry hashed as it's read: a save then writes only the entries that changed.
+					var hashes = NewEntryHashes();
+					DbWrapper = DeserializeDatabaseStreaming(file, hashes);
+					// A save left halfway is read instead of the database (as above), and is only made the database by a
+					// save. It's the whole database as that save had it, so the database's journal, older, isn't read over it.
 					if (databaseFile.FullName == new FileInfo(CurrentDatabasePath).FullName)
-						onDisk = Stamp(databaseFile.FullName, hashing.Hash());
+						onDisk = ReadJournal(file, databaseFile.FullName, DbWrapper, hashes);
 				}
 				else if (headerRead == FormatMagic.Length && header.SequenceEqual(FormatMagic)) {
 					// A non-empty file that deserializes to null is corrupt, not empty —
@@ -263,36 +253,42 @@ namespace HEI.Core.Utils {
 				$"Database cleanup has finished in: {st.Elapsed}, {oldCount - Database.Count} entries have been removed");
 			SaveDatabase();
 		}
+		/// <summary>
+		/// Saves what changed since the file was read or written: the entries that changed (or went) are appended to
+		/// its journal (<see cref="TryAppend"/>), and a scan that changed nothing writes nothing. The database is
+		/// written whole instead (folded) when the journal would reach <see cref="FoldShare"/> of it, and whenever the
+		/// file isn't the one this process read or wrote last: none yet, an older format, after the database folder
+		/// changed, or once another program wrote it.
+		/// </summary>
 		internal static void SaveDatabase() {
 			lock (saveLock) {
-				// What this save would write, hashed without writing it: a scan that changed nothing (most hourly scans)
-				// writes nothing, where it wrote the whole database twice.
-				// Only while the file is the one read or written last: not after the database folder changed, nor once
-				// another program wrote it.
-				if (onDisk is { } known && new FileInfo(CurrentDatabasePath) is { Exists: true } now &&
-					now.FullName == known.Path && now.Length == known.Length && now.LastWriteTimeUtc == known.WrittenUtc) {
-					using var unchanged = new HashingStream(null);
-					SerializeDatabaseStreaming(unchanged, DbWrapper);
-					if (unchanged.Hash().AsSpan().SequenceEqual(known.Hash)) {
-						Logger.Instance.Info($"Scanned files unchanged on disk ({Database.Count:N0} files), nothing to save.");
-						WritePendingMarkers();
-						return;
+				if (onDisk is { } known && IsStill(known)) {
+					try {
+						if (TryAppend(known)) {
+							WritePendingMarkers();
+							return;
+						}
+					}
+					catch (Exception e) {
+						// Whatever the file holds now, the whole database replaces it below.
+						Logger.Instance.Warn($"Appending to the scanned files' journal failed, so they're written whole: {e.Message}");
 					}
 				}
-				Logger.Instance.Info($"Save scanned files to disk ({Database.Count:N0} files).");
-
-				onDisk = null;
-				byte[] hash;
-				using (FileStream file = new(TempDatabasePath, FileMode.Create))
-				using (var stream = new HashingStream(file)) {
-					SerializeDatabaseStreaming(stream, DbWrapper);
-					hash = stream.Hash();
-				}
-				//Reason: https://github.com/0x90d/videoduplicatefinder/issues/247
-				File.Move(TempDatabasePath, CurrentDatabasePath, true);
-				onDisk = Stamp(CurrentDatabasePath, hash);
+				WriteWhole();
 				WritePendingMarkers();
 			}
+		}
+
+		/// <summary>The database written whole (its journal folded in, none after it), through the temp file.</summary>
+		static void WriteWhole() {
+			Logger.Instance.Info($"Save scanned files to disk ({Database.Count:N0} files).");
+			onDisk = null;
+			var hashes = NewEntryHashes();
+			using (FileStream file = new(TempDatabasePath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
+				SerializeDatabaseStreaming(file, DbWrapper, hashes);
+			//Reason: https://github.com/0x90d/videoduplicatefinder/issues/247
+			File.Move(TempDatabasePath, CurrentDatabasePath, true);
+			onDisk = Written(CurrentDatabasePath, DbWrapper, hashes);
 		}
 
 		static void WritePendingMarkers() {
@@ -323,7 +319,8 @@ namespace HEI.Core.Utils {
 		///         repeated [ entryLength (int32 LE >= 0) | MemoryPack(FileEntry) ] |
 		///         terminator (int32 LE == -1).
 		/// </summary>
-		static void SerializeDatabaseStreaming(Stream stream, DatabaseWrapper wrapper) {
+		/// <param name="hashes">Filled with each written entry's <see cref="HashOf"/>.</param>
+		static void SerializeDatabaseStreaming(Stream stream, DatabaseWrapper wrapper, Dictionary<string, UInt128> hashes) {
 			stream.Write(FormatMagicStreaming);
 			Span<byte> intBuf = stackalloc byte[sizeof(int)];
 			BinaryPrimitives.WriteInt32LittleEndian(intBuf, wrapper.Version);
@@ -352,6 +349,7 @@ namespace HEI.Core.Utils {
 				BinaryPrimitives.WriteInt32LittleEndian(intBuf, buffer.WrittenCount);
 				stream.Write(intBuf);
 				stream.Write(buffer.WrittenSpan);
+				hashes[entry.Path] = HashOf(buffer.WrittenSpan);
 			}
 			BinaryPrimitives.WriteInt32LittleEndian(intBuf, -1);
 			stream.Write(intBuf);
@@ -364,9 +362,11 @@ namespace HEI.Core.Utils {
 		/// Reads the streaming format written by <see cref="SerializeDatabaseStreaming"/>.
 		/// A truncated file (e.g. a crash mid-save) runs out of bytes before the terminator
 		/// and throws, which the caller treats as a load failure — so a half-written temp
-		/// file never masquerades as an empty database.
+		/// file never masquerades as an empty database. Leaves <paramref name="stream"/> just past the terminator,
+		/// where the journal begins.
 		/// </summary>
-		static DatabaseWrapper DeserializeDatabaseStreaming(Stream stream) {
+		/// <param name="hashes">Filled with each entry's <see cref="HashOf"/>, as read.</param>
+		static DatabaseWrapper DeserializeDatabaseStreaming(Stream stream, Dictionary<string, UInt128> hashes) {
 			var wrapper = new DatabaseWrapper { Entries = new() };
 			Span<byte> intBuf = stackalloc byte[sizeof(int)];
 			stream.ReadExactly(intBuf);
@@ -387,7 +387,8 @@ namespace HEI.Core.Utils {
 				stream.ReadExactly(buffer.AsSpan(0, length));
 				FileEntry entry = MemoryPackSerializer.Deserialize<FileEntry>(buffer.AsSpan(0, length))
 					?? throw new InvalidDataException("Corrupt database: an entry deserialized to null.");
-				wrapper.Entries.Add(entry);
+				if (wrapper.Entries.Add(entry))
+					hashes[entry.Path] = HashOf(buffer.AsSpan(0, length));
 			}
 			return wrapper;
 		}

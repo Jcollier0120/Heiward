@@ -44,10 +44,12 @@ namespace HEI.Core.AI {
 		static ReadOnlySpan<byte> Magic => "VDFAI002"u8;
 		const int MaxSanePositionCount = 10_000;
 
-		readonly ConcurrentDictionary<string, FileRecord> records = new(
-			CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+		static readonly StringComparer PathComparer = CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+		readonly ConcurrentDictionary<string, FileRecord> records = new(PathComparer);
 		readonly object saveLock = new();
-		volatile bool dirty;
+		/// <summary>Files whose record changed since the last save: the records a save appends.</summary>
+		readonly ConcurrentDictionary<string, byte> dirty = new(PathComparer);
+		readonly StoreFile onDisk = new(PathComparer);
 		string path = StorePath;
 
 		internal static string StorePath => PathFor(null);
@@ -84,7 +86,7 @@ namespace HEI.Core.AI {
 					? existing
 					: new FileRecord(size, mtime)); // file changed since the record was written — start fresh
 			record.Positions[positionKey] = embedding;
-			dirty = true;
+			dirty[entry.Path] = 0;
 		}
 
 		FileRecord? TryGetCurrent(FileEntry entry) =>
@@ -104,76 +106,131 @@ namespace HEI.Core.AI {
 				Span<byte> magic = stackalloc byte[Magic.Length];
 				if (reader.Read(magic) != Magic.Length || !magic.SequenceEqual(Magic))
 					throw new IOException("bad magic");
+				store.onDisk.Started(stream.Position);
 				while (stream.Position < stream.Length) {
-					string file = reader.ReadString();
-					long size = reader.ReadInt64();
-					long mtime = reader.ReadInt64();
-					int positionCount = reader.ReadInt32();
-					if (positionCount < 0 || positionCount > MaxSanePositionCount)
-						throw new IOException("implausible record header");
-					var record = new FileRecord(size, mtime);
-					for (int i = 0; i < positionCount; i++) {
-						double key = reader.ReadDouble();
-						byte[] embedding = reader.ReadBytes(EmbeddingMath.Dimensions);
-						// ReadBytes returns a SHORT array at EOF instead of throwing — a file
-						// truncated inside an embedding must count as corruption, or the
-						// poisoned record would be served forever (size/mtime still match).
-						if (embedding.Length != EmbeddingMath.Dimensions)
-							throw new IOException("truncated record");
-						record.Positions[key] = embedding;
+					long start = stream.Position;
+					string file;
+					FileRecord record;
+					try {
+						file = reader.ReadString();
+						long size = reader.ReadInt64();
+						long mtime = reader.ReadInt64();
+						int positionCount = reader.ReadInt32();
+						if (positionCount < 0 || positionCount > MaxSanePositionCount)
+							throw new IOException("implausible record header");
+						record = new FileRecord(size, mtime);
+						for (int i = 0; i < positionCount; i++) {
+							double key = reader.ReadDouble();
+							byte[] embedding = reader.ReadBytes(EmbeddingMath.Dimensions);
+							// ReadBytes returns a SHORT array at EOF instead of throwing — a file
+							// truncated inside an embedding must count as corruption, or the
+							// poisoned record would be served forever (size/mtime still match).
+							if (embedding.Length != EmbeddingMath.Dimensions)
+								throw new IOException("truncated record");
+							record.Positions[key] = embedding;
+						}
 					}
+					catch (Exception e) {
+						// A save cut short while appending: the records before it are whole, and the next save
+						// cuts this one off.
+						Logger.Instance.Warn($"AI embedding cache read up to a record cut short ({e.Message}); {store.records.Count:N0} record(s) kept: {path}");
+						break;
+					}
+					// A later record of a file replaces the earlier one: saves append the records that changed.
 					store.records[file] = record;
+					store.onDisk.Record(file, start, stream.Position);
 				}
+				store.onDisk.Read(path);
 			}
 			catch (Exception e) {
 				// The cache is recomputable — a torn or corrupt file must never block a scan.
 				Logger.Instance.Warn($"AI embedding cache unreadable, rebuilding ({e.Message}): {path}");
 				store.records.Clear();
+				store.onDisk.Lost();
 			}
 			return store;
 		}
 
+		static void WriteRecord(BinaryWriter writer, string file, FileRecord record) {
+			// Snapshot the positions: the count must match what gets written.
+			var positions = record.Positions.ToArray();
+			writer.Write(file);
+			writer.Write(record.FileSize);
+			writer.Write(record.MTimeUtcTicks);
+			writer.Write(positions.Length);
+			foreach ((double key, byte[] embedding) in positions) {
+				if (embedding.Length != EmbeddingMath.Dimensions)
+					throw new InvalidOperationException($"Unexpected embedding length {embedding.Length}");
+				writer.Write(key);
+				writer.Write(embedding);
+			}
+		}
+
 		/// <summary>
-		/// Persists the cache atomically. <paramref name="keepOnly"/> should be every path
+		/// Persists what changed: the records added or changed since the last save are appended to the file
+		/// (<see cref="StoreFile"/>), and it's written whole, atomically, only once replaced and pruned records would
+		/// make up a fifth of it. <paramref name="keepOnly"/> should be every path
 		/// known to the scan database — records are pruned only when their file left the
 		/// database entirely, so alternating scans between different libraries (or scans
 		/// with an offline drive) never throw cached embeddings away. Best-effort: failure
 		/// only costs recompute time. No-op when nothing was added since load and nothing is pruned.
 		/// </summary>
 		internal void Save(IReadOnlySet<string>? keepOnly) {
-			// Pruned even with nothing new: the database forgetting files (Settings.ForgetUnlisted) shrinks the cache too.
+			// Pruned even with nothing new: the database forgetting files (Settings.ForgetUnlisted) shrinks the cache
+			// too, on disk once their records are a fifth of it.
 			List<string> stale = keepOnly == null ? new() : records.Keys.Where(k => !keepOnly.Contains(k)).ToList();
-			if (!dirty && stale.Count == 0)
+			if (dirty.IsEmpty && stale.Count == 0)
 				return;
 			string tempPath = path + ".tmp";
+			List<string> taken = new();
 			try {
 				lock (saveLock) {
-					foreach (string file in stale)
+					foreach (string file in stale) {
 						records.TryRemove(file, out _);
+						dirty.TryRemove(file, out _);
+						onDisk.Forget(file);
+					}
+					taken = dirty.Keys.ToList();
+					foreach (string file in taken)
+						dirty.TryRemove(file, out _);
+
+					var appended = new List<(string File, long Bytes)>();
+					using var changed = new MemoryStream();
+					using (var writer = new BinaryWriter(changed, Encoding.UTF8, leaveOpen: true))
+						foreach (string file in taken)
+							if (records.TryGetValue(file, out FileRecord? record)) {
+								long start = changed.Position;
+								WriteRecord(writer, file, record);
+								appended.Add((file, changed.Position - start));
+							}
+					if (onDisk.CanAppend(path, appended, changed.Length)) {
+						if (changed.Length > 0)
+							onDisk.Append(path, changed.GetBuffer().AsSpan(0, (int)changed.Length), appended);
+						return;
+					}
+
+					var written = new List<(string File, long Bytes)>(records.Count);
+					long magicEnd;
 					using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
 					using (var writer = new BinaryWriter(stream, Encoding.UTF8)) {
 						writer.Write(Magic);
+						magicEnd = stream.Position;
 						foreach ((string file, FileRecord record) in records) {
-							// Snapshot the positions: the count must match what gets written.
-							var positions = record.Positions.ToArray();
-							writer.Write(file);
-							writer.Write(record.FileSize);
-							writer.Write(record.MTimeUtcTicks);
-							writer.Write(positions.Length);
-							foreach ((double key, byte[] embedding) in positions) {
-								if (embedding.Length != EmbeddingMath.Dimensions)
-									throw new InvalidOperationException($"Unexpected embedding length {embedding.Length}");
-								writer.Write(key);
-								writer.Write(embedding);
-							}
+							long start = stream.Position;
+							WriteRecord(writer, file, record);
+							written.Add((file, stream.Position - start));
 						}
 					}
 					File.Move(tempPath, path, overwrite: true);
-					dirty = false;
+					onDisk.WroteWhole(path, magicEnd, written);
 				}
 			}
 			catch (Exception e) {
 				Logger.Instance.Warn($"Failed to save the AI embedding cache (will recompute next time): {e.Message}");
+				// The file's end is unknown now: the next save writes it whole, these records with it.
+				onDisk.Lost();
+				foreach (string file in taken)
+					dirty.TryAdd(file, 0);
 				try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
 			}
 		}

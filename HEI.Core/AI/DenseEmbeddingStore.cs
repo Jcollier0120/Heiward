@@ -50,9 +50,12 @@ namespace HEI.Core.AI {
 
 		// Concurrent: the sampling phase's Parallel.For has workers probing (TryGet) while
 		// others insert freshly computed records (Put) — a plain Dictionary would race.
-		readonly ConcurrentDictionary<string, DenseRecord> records = new(
-			CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+		static readonly StringComparer PathComparer = CoreUtils.IsWindows ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+		readonly ConcurrentDictionary<string, DenseRecord> records = new(PathComparer);
 		readonly object saveLock = new();
+		/// <summary>Files whose record changed since the last save: the records a save appends.</summary>
+		readonly ConcurrentDictionary<string, byte> dirty = new(PathComparer);
+		readonly StoreFile onDisk = new(PathComparer);
 		string path = StorePath;
 
 		internal static string StorePath => PathFor(null);
@@ -79,38 +82,55 @@ namespace HEI.Core.AI {
 				Span<byte> magic = stackalloc byte[Magic.Length];
 				if (reader.Read(magic) != Magic.Length || !magic.SequenceEqual(Magic))
 					throw new IOException("bad magic");
+				store.onDisk.Started(stream.Position);
 				while (stream.Position < stream.Length) {
-					string file = reader.ReadString();
-					long size = reader.ReadInt64();
-					long mtime = reader.ReadInt64();
-					float interval = reader.ReadSingle();
-					int frameCount = reader.ReadInt32();
-					if (interval <= 0 || frameCount < 0 || frameCount > MaxSaneFrameCount)
-						throw new IOException("implausible record header");
-					var frames = new byte[frameCount][];
-					for (int i = 0; i < frameCount; i++) {
-						byte validity = reader.ReadByte();
-						if (validity == 0) {
-							frames[i] = Array.Empty<byte>();
-							continue;
+					long start = stream.Position;
+					string file;
+					DenseRecord record;
+					try {
+						file = reader.ReadString();
+						long size = reader.ReadInt64();
+						long mtime = reader.ReadInt64();
+						float interval = reader.ReadSingle();
+						int frameCount = reader.ReadInt32();
+						if (interval <= 0 || frameCount < 0 || frameCount > MaxSaneFrameCount)
+							throw new IOException("implausible record header");
+						var frames = new byte[frameCount][];
+						for (int i = 0; i < frameCount; i++) {
+							byte validity = reader.ReadByte();
+							if (validity == 0) {
+								frames[i] = Array.Empty<byte>();
+								continue;
+							}
+							if (validity != 1)
+								throw new IOException("bad frame validity flag");
+							frames[i] = reader.ReadBytes(EmbeddingMath.Dimensions);
+							// ReadBytes returns a SHORT array at EOF instead of throwing — a file
+							// truncated inside a frame must count as corruption, or the poisoned
+							// record would be served forever (size/mtime still match) and every
+							// later Save would fail on its length check.
+							if (frames[i].Length != EmbeddingMath.Dimensions)
+								throw new IOException("truncated record");
 						}
-						if (validity != 1)
-							throw new IOException("bad frame validity flag");
-						frames[i] = reader.ReadBytes(EmbeddingMath.Dimensions);
-						// ReadBytes returns a SHORT array at EOF instead of throwing — a file
-						// truncated inside a frame must count as corruption, or the poisoned
-						// record would be served forever (size/mtime still match) and every
-						// later Save would fail on its length check.
-						if (frames[i].Length != EmbeddingMath.Dimensions)
-							throw new IOException("truncated record");
+						record = new DenseRecord(size, mtime, interval, frames);
 					}
-					store.records[file] = new DenseRecord(size, mtime, interval, frames);
+					catch (Exception e) {
+						// A save cut short while appending: the records before it are whole, and the next save
+						// cuts this one off.
+						Logger.Instance.Warn($"Dense embedding cache read up to a record cut short ({e.Message}); {store.records.Count:N0} record(s) kept: {path}");
+						break;
+					}
+					// A later record of a file replaces the earlier one: saves append the records that changed.
+					store.records[file] = record;
+					store.onDisk.Record(file, start, stream.Position);
 				}
+				store.onDisk.Read(path);
 			}
 			catch (Exception e) {
 				// The cache is recomputable — a torn or corrupt file must never block a scan.
 				Logger.Instance.Warn($"Dense embedding cache unreadable, rebuilding ({e.Message}): {path}");
 				store.records.Clear();
+				store.onDisk.Lost();
 			}
 			return store;
 		}
@@ -125,49 +145,93 @@ namespace HEI.Core.AI {
 			return false;
 		}
 
-		internal void Put(string file, DenseRecord record) =>
+		internal void Put(string file, DenseRecord record) {
 			records[file] = record;
+			dirty[file] = 0;
+		}
+
+		static void WriteRecord(BinaryWriter writer, string file, DenseRecord record) {
+			writer.Write(file);
+			writer.Write(record.FileSize);
+			writer.Write(record.MTimeUtcTicks);
+			writer.Write(record.IntervalSeconds);
+			writer.Write(record.Frames.Length);
+			foreach (byte[] frame in record.Frames) {
+				if (frame.Length == 0) {
+					writer.Write((byte)0); // invalid slot (dark/duplicate frame)
+					continue;
+				}
+				if (frame.Length != EmbeddingMath.Dimensions)
+					throw new InvalidOperationException($"Unexpected embedding length {frame.Length}");
+				writer.Write((byte)1);
+				writer.Write(frame);
+			}
+		}
 
 		/// <summary>
-		/// Persists the cache atomically. <paramref name="keepOnly"/> should be every path
+		/// Persists what changed: the records added since the last save are appended to the file
+		/// (<see cref="StoreFile"/>), and it's written whole, atomically, only once replaced and pruned records would
+		/// make up a fifth of it. A save with nothing new and nothing to prune writes nothing (every scan wrote the
+		/// whole cache, and each checkpoint again). <paramref name="keepOnly"/> should be every path
 		/// known to the scan database — records are pruned only when their file left the
 		/// database entirely, so alternating scans between different libraries (or scans
 		/// with an offline drive) never throw cached embeddings away. Best-effort: failure
 		/// only costs recompute time.
 		/// </summary>
 		internal void Save(IReadOnlySet<string>? keepOnly) {
+			List<string> stale = keepOnly == null ? new() : records.Keys.Where(k => !keepOnly.Contains(k)).ToList();
+			if (dirty.IsEmpty && stale.Count == 0)
+				return;
 			string tempPath = path + ".tmp";
+			List<string> taken = new();
 			try {
 				lock (saveLock) {
-					if (keepOnly != null)
-						foreach (string stale in records.Keys.Where(k => !keepOnly.Contains(k)).ToList())
-							records.TryRemove(stale, out _);
+					foreach (string file in stale) {
+						records.TryRemove(file, out _);
+						dirty.TryRemove(file, out _);
+						onDisk.Forget(file);
+					}
+					taken = dirty.Keys.ToList();
+					foreach (string file in taken)
+						dirty.TryRemove(file, out _);
+
+					var appended = new List<(string File, long Bytes)>();
+					using var changed = new MemoryStream();
+					using (var writer = new BinaryWriter(changed, Encoding.UTF8, leaveOpen: true))
+						foreach (string file in taken)
+							if (records.TryGetValue(file, out DenseRecord? record)) {
+								long start = changed.Position;
+								WriteRecord(writer, file, record);
+								appended.Add((file, changed.Position - start));
+							}
+					if (onDisk.CanAppend(path, appended, changed.Length)) {
+						if (changed.Length > 0)
+							onDisk.Append(path, changed.GetBuffer().AsSpan(0, (int)changed.Length), appended);
+						return;
+					}
+
+					var written = new List<(string File, long Bytes)>(records.Count);
+					long magicEnd;
 					using (var stream = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 1 << 16))
 					using (var writer = new BinaryWriter(stream, Encoding.UTF8)) {
 						writer.Write(Magic);
+						magicEnd = stream.Position;
 						foreach ((string file, DenseRecord record) in records) {
-							writer.Write(file);
-							writer.Write(record.FileSize);
-							writer.Write(record.MTimeUtcTicks);
-							writer.Write(record.IntervalSeconds);
-							writer.Write(record.Frames.Length);
-							foreach (byte[] frame in record.Frames) {
-								if (frame.Length == 0) {
-									writer.Write((byte)0); // invalid slot (dark/duplicate frame)
-									continue;
-								}
-								if (frame.Length != EmbeddingMath.Dimensions)
-									throw new InvalidOperationException($"Unexpected embedding length {frame.Length}");
-								writer.Write((byte)1);
-								writer.Write(frame);
-							}
+							long start = stream.Position;
+							WriteRecord(writer, file, record);
+							written.Add((file, stream.Position - start));
 						}
 					}
 					File.Move(tempPath, path, overwrite: true);
+					onDisk.WroteWhole(path, magicEnd, written);
 				}
 			}
 			catch (Exception e) {
 				Logger.Instance.Warn($"Failed to save the dense embedding cache (will recompute next time): {e.Message}");
+				// The file's end is unknown now: the next save writes it whole, these records with it.
+				onDisk.Lost();
+				foreach (string file in taken)
+					dirty.TryAdd(file, 0);
 				try { if (File.Exists(tempPath)) File.Delete(tempPath); } catch { }
 			}
 		}
