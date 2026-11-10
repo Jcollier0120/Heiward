@@ -90,12 +90,17 @@ namespace HEI.Agent {
 			return count == 0 ? [] : [Item(count, ReviewServer.PageUrl(port))];
 		}
 
+		/// <summary>
+		/// The waiting first scan, for Manor's "When you have time" (<c>fyi</c>: only for the person's information, never a
+		/// notification) rather than "This needs you": nothing is lost while it waits.
+		/// </summary>
 		internal static object FirstScanItem(string url) => new {
 			id = "first-scan",
 			kind = "first-scan",
 			title = "Heiward's first scan waits for you",
 			detail = new[] { "It scans nothing until you say. Open its page: press Scan now, or let it scan by itself on its schedule." },
 			url,
+			fyi = true,
 		};
 
 		internal static object Item(int count, string url) => new {
