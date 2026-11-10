@@ -681,14 +681,7 @@ const HOME_TABS = ['drives', 'copies', 'dev', 'games', 'history'];
 const HOME_TAB_KEY = 'heiward.tab';
 let homeTab = (() => { try { return localStorage.getItem(HOME_TAB_KEY) || 'drives'; } catch { return 'drives'; } })();
 
-/**
- * The preview's second layout (?one-page in the address), for the owner to choose between: the page as it was before
- * the tabs, every part on it in two columns, the tiles scrolling to their part. Whichever isn't chosen goes.
- */
-const ONE_PAGE = new URLSearchParams(location.search).has('one-page');
-if (ONE_PAGE) $('home').classList.add('one-page');
-
-/** Shows a home tab; one that isn't there (Developer mode off, say) shows Drives instead. On one page, every part that's there. */
+/** Shows a home tab; one that isn't there (Developer mode off, say) shows Drives instead. */
 function showTab(name) {
   if (!HOME_TABS.includes(name) || $('tab-' + name).classList.contains('hidden')) name = 'drives';
   homeTab = name;
@@ -696,14 +689,13 @@ function showTab(name) {
     const on = t === name;
     $('tab-' + t).setAttribute('aria-selected', String(on));
     $('tab-' + t).tabIndex = on ? 0 : -1;
-    $('panel-' + t).hidden = ONE_PAGE ? $('tab-' + t).classList.contains('hidden') : !on;
+    $('panel-' + t).hidden = !on;
   }
 }
 
 function pickTab(name) {
   showTab(name);
   try { localStorage.setItem(HOME_TAB_KEY, homeTab); } catch { /* kept for this visit only */ }
-  if (ONE_PAGE) $('panel-' + homeTab).scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 /** The tab a part of the home page is in, for the tour: false when that tab isn't there; else it's shown. */

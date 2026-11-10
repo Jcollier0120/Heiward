@@ -98,71 +98,63 @@
       <button class="tab" role="tab" id="tab-history" data-tab="history" aria-controls="panel-history">History</button>
     </div>
 
-    <!-- The preview's second layout, the page before the tabs (?one-page): no tabs, every part on the page in two
-         columns, the drives on the left, the duplicates and the history on the right (app.css, .one-page). -->
-    <div class="home-cols">
-      <div class="home-col">
-        <div class="tab-panel pair pair-drives" id="panel-drives" role="tabpanel" aria-labelledby="tab-drives">
-          <section data-tour="drives">
-            <h2>Devices and drives</h2>
-            <div class="drives" id="drives"></div>
-          </section>
-          <section>
-            <h2>At a glance</h2>
-            <div class="glance hidden" id="glance"></div>
-          </section>
-        </div>
+    <div class="tab-panel pair pair-drives" id="panel-drives" role="tabpanel" aria-labelledby="tab-drives">
+      <section data-tour="drives">
+        <h2>Devices and drives</h2>
+        <div class="drives" id="drives"></div>
+      </section>
+      <section>
+        <h2>At a glance</h2>
+        <div class="glance hidden" id="glance"></div>
+      </section>
+    </div>
 
-        <div class="tab-panel pair" id="panel-dev" role="tabpanel" aria-labelledby="tab-dev" hidden>
-          <section id="dev-section" class="hidden" data-tour="dev">
-            <h2>Developer area</h2>
-            <div id="dev-card"></div>
-          </section>
-          <section>
-            <h2>What tools can recreate</h2>
-            <div class="glance" id="dev-kinds"></div>
-          </section>
-        </div>
+    <div class="tab-panel pair" id="panel-copies" role="tabpanel" aria-labelledby="tab-copies" data-tour="hotspots" hidden>
+      <div class="empty-panel hidden" id="copies-empty"></div>
+      <section>
+        <h2>Photos and videos by type</h2>
+        <div class="glance" id="types"></div>
+      </section>
+      <section id="hotspots-section">
+        <h2>Where the duplicates are</h2>
+        <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
+        <div class="hotspots" id="hotspots"></div>
+      </section>
+    </div>
 
-        <!-- Game mode: the Games area's card (app.js, renderGamesCard). -->
-        <div class="tab-panel pair" id="panel-games" role="tabpanel" aria-labelledby="tab-games" hidden>
-          <section id="games-section" class="hidden" data-tour="games">
-            <h2>Games</h2>
-            <div id="games-card"></div>
-          </section>
-          <section>
-            <h2>What games leave behind</h2>
-            <div class="glance" id="game-kinds"></div>
-          </section>
-        </div>
-      </div>
+    <div class="tab-panel pair" id="panel-dev" role="tabpanel" aria-labelledby="tab-dev" hidden>
+      <section id="dev-section" class="hidden" data-tour="dev">
+        <h2>Developer area</h2>
+        <div id="dev-card"></div>
+      </section>
+      <section>
+        <h2>What tools can recreate</h2>
+        <div class="glance" id="dev-kinds"></div>
+      </section>
+    </div>
 
-      <div class="home-col">
-        <div class="tab-panel pair" id="panel-copies" role="tabpanel" aria-labelledby="tab-copies" data-tour="hotspots" hidden>
-          <div class="empty-panel hidden" id="copies-empty"></div>
-          <section>
-            <h2>Photos and videos by type</h2>
-            <div class="glance" id="types"></div>
-          </section>
-          <section id="hotspots-section">
-            <h2>Where the duplicates are</h2>
-            <p class="muted small">The folders where cleaning up frees the most. Open one to see its copies.</p>
-            <div class="hotspots" id="hotspots"></div>
-          </section>
-        </div>
+    <!-- Game mode: the Games area's card (app.js, renderGamesCard). -->
+    <div class="tab-panel pair" id="panel-games" role="tabpanel" aria-labelledby="tab-games" hidden>
+      <section id="games-section" class="hidden" data-tour="games">
+        <h2>Games</h2>
+        <div id="games-card"></div>
+      </section>
+      <section>
+        <h2>What games leave behind</h2>
+        <div class="glance" id="game-kinds"></div>
+      </section>
+    </div>
 
-        <div class="tab-panel pair" id="panel-history" role="tabpanel" aria-labelledby="tab-history" data-tour="history" hidden>
-          <div class="empty-panel hidden" id="history-empty"></div>
-          <section>
-            <h2>Freed</h2>
-            <div class="glance" id="freed"></div>
-          </section>
-          <section class="history" id="history">
-            <h2>What was cleaned up or kept</h2>
-            <div id="done"></div>
-          </section>
-        </div>
-      </div>
+    <div class="tab-panel pair" id="panel-history" role="tabpanel" aria-labelledby="tab-history" data-tour="history" hidden>
+      <div class="empty-panel hidden" id="history-empty"></div>
+      <section>
+        <h2>Freed</h2>
+        <div class="glance" id="freed"></div>
+      </section>
+      <section class="history" id="history">
+        <h2>What was cleaned up or kept</h2>
+        <div id="done"></div>
+      </section>
     </div>
 
     <footer class="muted small" id="footer"></footer>
