@@ -2,6 +2,21 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.10.3
+
+**Heiward writes less to your disk while it scans: only the files that changed go into its list of each drive, and a scan's progress is saved every few seconds instead of every second.**
+
+### What changed
+
+- To see what changed since the last scan, Heiward keeps a list of the files on each drive. It used to save that whole list again after every scan. It now adds only the files that changed, and saves the list whole again only once those additions are as big as the list. On a library of 50,000 photos with 1% of them changed, that's 4.2 MB down to about 40 KB a scan.
+- While a scan runs, its progress for Heiward's page is saved every 3 seconds while the page is open and every 30 seconds while it isn't, instead of every second. Each new step of a scan still shows on the page at once.
+- Which photos are found as duplicates and look-alikes is unchanged.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+- If you go back to an earlier version later, its first scan lists each drive again from the start, once. On a large drive that can take a minute or two, and nothing is missed.
+
 ## 1.10.2
 
 **Brings 3 changes: At a manor, Heiward's first scan waiting for you is listed under When you have time, not This needs you; Heiward is gentler on your disk: a check that finds nothing new no longer rewrites what it already saved; On the review page, a black-and-white or warm-filtered version of a colour photo is no longer pre-checked as a copy.**
