@@ -775,28 +775,52 @@ namespace HEI.Agent {
 			ContentHashes(Dictionary<string, Stored> earlier, Dictionary<string, Look> looks, Dictionary<string, Words> words) =>
 				(this.earlier, looksEarlier, wordsEarlier) = (earlier, looks, words);
 
+			/// <summary>Each file as <see cref="Load"/> read it (a hash of its text): <see cref="Save"/> leaves a file that would be written the same alone.</summary>
+			readonly Dictionary<string, byte[]> read = new(StringComparer.OrdinalIgnoreCase);
+
 			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
 			public static string LooksPath => Path.Combine(AgentPaths.Home, "looks.json");
 			/// <summary>The words read in the report's photos: they stay on this PC, in this file, and nowhere else.</summary>
 			public static string TextsPath => Path.Combine(AgentPaths.Home, "texts.json");
 
 			/// <summary>The hashes, close looks and words the last scan kept.</summary>
-			public static ContentHashes Load() => new(Read<Stored>(FilePath), Read<Look>(LooksPath), Read<Words>(TextsPath));
+			public static ContentHashes Load() {
+				var texts = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+				var hashes = new ContentHashes(Read<Stored>(FilePath, texts), Read<Look>(LooksPath, texts), Read<Words>(TextsPath, texts));
+				foreach (var (path, hash) in texts) hashes.read[path] = hash;
+				return hashes;
+			}
 
-			static Dictionary<string, T> Read<T>(string path) {
+			static Dictionary<string, T> Read<T>(string path, Dictionary<string, byte[]> texts) {
 				try {
-					if (File.Exists(path) && JsonSerializer.Deserialize<Dictionary<string, T>>(File.ReadAllText(path), AgentConfig.Json) is { } stored)
-						return new Dictionary<string, T>(stored, StringComparer.OrdinalIgnoreCase);
+					if (File.Exists(path)) {
+						string text = File.ReadAllText(path);
+						texts[path] = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+						if (JsonSerializer.Deserialize<Dictionary<string, T>>(text, AgentConfig.Json) is { } stored)
+							return new Dictionary<string, T>(stored, StringComparer.OrdinalIgnoreCase);
+					}
 				}
 				catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
 				return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
 			}
 
-			/// <summary>Keeps this scan's hashes, close looks and words, and only those: a file no report needs any more drops out.</summary>
+			/// <summary>
+			/// Keeps this scan's hashes, close looks and words, and only those: a file no report needs any more drops out.
+			/// A file this scan would write as it read it isn't written again: a scan that finds the same files (a drive
+			/// with no journal is listed again every 6 hours) rewrote megabytes of the same hashes each time.
+			/// </summary>
 			public void Save() {
-				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
-				AgentPaths.WriteAtomic(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
-				AgentPaths.WriteAtomic(TextsPath, JsonSerializer.Serialize(wordsNow, AgentConfig.Json));
+				Write(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
+				Write(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
+				Write(TextsPath, JsonSerializer.Serialize(wordsNow, AgentConfig.Json));
+			}
+
+			void Write(string path, string json) {
+				byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
+				if (read.TryGetValue(path, out byte[]? was) && was.AsSpan().SequenceEqual(hash) && File.Exists(path))
+					return;
+				AgentPaths.WriteAtomic(path, json);
+				read[path] = hash;
 			}
 
 			/// <summary>

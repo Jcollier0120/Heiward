@@ -163,4 +163,24 @@ public sealed class PlainCopyTests : IDisposable {
 		Assert.True(ReportBuilder.ContentHashes.Load().UpClose(a, b, Look));
 		Assert.Equal(2, looks);
 	}
+
+	[Fact]
+	public void ASaveThatChangesNothing_WritesNothing() {
+		// A scan that finds the same files leaves hashes.json, looks.json and texts.json as they were; one that changes them writes.
+		string a = Save("a.bmp", Scene()), b = Jpeg(a, "b.jpg", 600);
+		var first = ReportBuilder.ContentHashes.Load();
+		Assert.True(first.UpClose(a, b, () => true));
+		first.Save();
+		string[] files = { ReportBuilder.ContentHashes.FilePath, ReportBuilder.ContentHashes.LooksPath, ReportBuilder.ContentHashes.TextsPath };
+		DateTime old = DateTime.UtcNow.AddDays(-1);
+		foreach (string f in files) File.SetLastWriteTimeUtc(f, old);
+
+		var second = ReportBuilder.ContentHashes.Load();
+		Assert.True(second.UpClose(a, b, () => true));
+		second.Save();
+		Assert.All(files, f => Assert.Equal(old, File.GetLastWriteTimeUtc(f)));
+
+		ReportBuilder.ContentHashes.Load().Save(); // no pair to look at this time: the look drops out, and looks.json is written
+		Assert.NotEqual(old, File.GetLastWriteTimeUtc(ReportBuilder.ContentHashes.LooksPath));
+	}
 }
