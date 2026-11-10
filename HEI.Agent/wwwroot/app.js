@@ -278,6 +278,124 @@ async function scanNow() {
   try { await post(running ? '/api/scan/stop' : '/api/scan'); refresh(true); } catch (e) { showError(e.message); }
 }
 
+// ---------------------------------------------------------------- the page's own questions
+
+// The page asks in its own dialog, never in the browser's windows: askDialog(text, { title, ok, cancel, danger }) for a
+// question, answered true for its OK button and false for Cancel, and askTextDialog(text, value, { title, ok, cancel })
+// for one with a line to type in, answered with what's typed there, or null for Cancel. Each is the card of a game's
+// Uninstall dialog over the page, held the same way: the page under it inert, focus moved in and kept there (Tab goes
+// round its line and buttons), Esc answering Cancel, and focus back where it was afterwards. A danger question (what can't
+// be got back: deleted for good, from the cloud too, forgotten) has its OK in the alert colour, and Cancel has the focus.
+// Questions asked together wait their turn, oldest first, and going to another page answers Cancel to them all: a
+// question belongs to the page it was asked on.
+const questions = [];     // asked and not yet answered, the one showing first: { text, o, value, done }
+let questionShown = null; // the one showing: { box, keydown, held, back, input, q }
+let questionIds = 0;      // each dialog's own ids, for its title and text
+
+function askDialog(text, o) {
+  return askQuestion(text, o, null);
+}
+
+function askTextDialog(text, value, o) {
+  return askQuestion(text, o, value === undefined || value === null ? '' : String(value));
+}
+
+function askQuestion(text, o, value) {
+  return new Promise((done) => {
+    questions.push({ text: text || '', o: o || {}, value, done });
+    if (!questionShown) showQuestion();
+  });
+}
+
+function showQuestion() {
+  const q = questions[0];
+  if (!q) return;
+  const n = ++questionIds;
+  const box = el('div', 'modal ask');
+  box.setAttribute('role', 'alertdialog');
+  box.setAttribute('aria-modal', 'true');
+  const card = el('div', 'tour-card');
+  if (q.o.title) {
+    const title = el('h2', null, q.o.title);
+    title.id = 'ask-title-' + n;
+    box.setAttribute('aria-labelledby', title.id);
+    card.append(title);
+  } else box.setAttribute('aria-label', 'Question');
+  let text = null;
+  if (q.text) {
+    text = el('p', 'ask-text', q.text);
+    text.id = 'ask-text-' + n;
+    box.setAttribute('aria-describedby', text.id);
+    card.append(text);
+  }
+  let input = null;
+  if (q.value !== null) {
+    input = el('input', 'ask-input');
+    input.type = 'text';
+    input.value = q.value;
+    input.spellcheck = false;
+    if (text) input.setAttribute('aria-labelledby', text.id);
+    else input.setAttribute('aria-label', q.o.title || 'Answer');
+    card.append(input);
+  }
+  const buttons = el('div', 'tour-buttons');
+  const cancel = el('button', 'btn secondary', q.o.cancel || 'Cancel');
+  cancel.type = 'button';
+  cancel.addEventListener('click', () => answerQuestion(false));
+  const ok = el('button', 'btn' + (q.o.danger ? ' danger' : ''), q.o.ok || 'OK');
+  ok.type = 'button';
+  ok.addEventListener('click', () => answerQuestion(true));
+  buttons.append(cancel, ok);
+  card.append(buttons);
+  box.append(card);
+  const stops = input ? [input, cancel, ok] : [cancel, ok];
+  const keydown = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      answerQuestion(false);
+    } else if (e.key === 'Enter' && input && e.target === input && !e.isComposing) {
+      e.preventDefault();
+      answerQuestion(true);
+    } else if (e.key === 'Tab') {
+      const at = stops.indexOf(document.activeElement);
+      if (e.shiftKey ? at <= 0 : at < 0 || at === stops.length - 1) {
+        e.preventDefault();
+        stops[e.shiftKey ? stops.length - 1 : 0].focus();
+      }
+    }
+  };
+  document.addEventListener('keydown', keydown, true);
+  const back = document.activeElement;
+  const held = [...document.body.children].filter((c) => !c.inert);
+  for (const c of held) c.inert = true;
+  document.body.append(box);
+  questionShown = { box, keydown, held, back, input, q };
+  if (input) {
+    input.focus();
+    input.select();
+  } else (q.o.danger ? cancel : ok).focus();
+}
+
+/** Closes the question showing with its answer (true for OK), and shows the next one waiting. */
+function answerQuestion(yes) {
+  const shown = questionShown;
+  if (!shown) return;
+  questionShown = null;
+  questions.shift();
+  document.removeEventListener('keydown', shown.keydown, true);
+  for (const c of shown.held) c.inert = false;
+  shown.box.remove();
+  if (shown.back && shown.back.isConnected && shown.back.focus) shown.back.focus();
+  shown.q.done(shown.input ? (yes ? shown.input.value : null) : yes);
+  showQuestion();
+}
+
+/** Going to another page: Cancel to the question showing and to every one waiting. */
+function dropQuestions() {
+  while (questionShown) answerQuestion(false);
+}
+
 // ---------------------------------------------------------------- the agent: pause, resume, start
 
 // Whether Heiward scans on its own. Paused (scheduled scans skip themselves for a while), its scan task
@@ -463,6 +581,7 @@ const trail = makeTrail(window);
 window.addEventListener('hashchange', () => {
   trail.sync();
   closeUninstallDialog(); // a game's dialog belongs to its page
+  dropQuestions(); // and a question to the page it was asked on
   route = parseRoute();
   groupsShown = PAGE;
   if (route.view === 'folder') expanded.add(key(route.path)); // opening a folder opens it in the tree too
@@ -2177,9 +2296,9 @@ async function autoHold(target, hold) {
 }
 
 async function autoAllow(pair) {
-  if (!confirm('Let automatic cleanup take the copies in these two folders?\n\n' +
-      'It held them back because many sets have copies in both, which is what a backup looks like. ' +
-      'Allow it only if the second copies aren\'t something you keep on purpose.')) return;
+  if (!(await askDialog('It held them back because many sets have copies in both, which is what a backup looks like. ' +
+      'Allow it only if the second copies aren\'t something you keep on purpose.',
+      { title: 'Let automatic cleanup take the copies in these two folders?', ok: 'Allow it' }))) return;
   try { await post('/api/auto/allow', { pair, allow: true }); } catch (e) { showError(e.message); }
   refresh(true);
 }
@@ -2241,11 +2360,12 @@ function renderAutoCard(s) {
   card.append(row(set.duplicates, 'Duplicate photos and videos',
     'Plain copies go to the Recycle Bin by themselves, ' + waitText + '. Edits and look-alikes, copies in cloud-synced folders, and what looks like a backup of a whole folder always wait for you.',
     async (on, box) => {
-      if (on && !confirm('Clean up duplicates automatically?\n\n' +
-          'After each scan, Heiward moves plain copies of photos, and byte-for-byte identical videos, to the Recycle Bin ' + waitText +
+      // The switch shows on while it asks: Cancel puts it back.
+      if (on && !(await askDialog('After each scan, Heiward moves plain copies of photos, and byte-for-byte identical videos, to the Recycle Bin ' + waitText +
           ', keeping the best copy of each. You can restore them from the Recycle Bin.\n\n' +
           'Edits, look-alikes, copies in cloud-synced folders and what looks like a backup of a whole folder always wait for you. ' +
-          'Each set shows when it will go, with a "Leave it" button.')) { box.checked = false; return; }
+          'Each set shows when it will go, with a "Leave it" button.',
+          { title: 'Clean up duplicates automatically?', ok: 'Turn it on' }))) { box.checked = false; return; }
       await saveAuto({ ...set, duplicates: on });
     }, [dupStatus]));
 
@@ -2278,11 +2398,11 @@ function renderAutoCard(s) {
       'The kinds you check below are deleted by themselves right after the daily developer look, ' + waitText +
       '. They\'re deleted permanently, not to the Recycle Bin: tools recreate them. Package caches and emulators always wait for you.',
       async (on, box) => {
-        if (on && !confirm('Clean up developer leftovers automatically?\n\n' +
-            'Right after the daily developer check, Heiward deletes what this page checks for you (of the kinds you pick) ' + waitText + '. ' +
+        if (on && !(await askDialog('Right after the daily developer check, Heiward deletes what this page checks for you (of the kinds you pick) ' + waitText + '. ' +
             'They\'re deleted permanently, not to the Recycle Bin: tools rebuild or download them again, so the next build takes longer. ' +
             'Merged branches go only when every commit is in the remote\'s main branch; worktrees only when everything is committed and pushed.\n\n' +
-            'Package caches and emulators always wait for you.')) { box.checked = false; return; }
+            'Package caches and emulators always wait for you.',
+            { title: 'Clean up developer leftovers automatically?', ok: 'Turn it on', danger: true }))) { box.checked = false; return; }
         await saveAuto({ ...set, developer: on });
       }, [kinds, reeveNote, devStatus]));
   }
@@ -2314,10 +2434,10 @@ function renderAutoCard(s) {
       'The kinds you check below go to the Recycle Bin by themselves right after the daily look at your games, ' + waitText +
       '. Paused downloads, and shader caches of games you have, always wait for you.',
       async (on, box) => {
-        if (on && !confirm('Clean up what games leave behind automatically?\n\n' +
-            'Right after the daily look at your games, Heiward moves what the Games area checks for you (of the kinds you pick) to the Recycle Bin ' + waitText + '. ' +
+        if (on && !(await askDialog('Right after the daily look at your games, Heiward moves what the Games area checks for you (of the kinds you pick) to the Recycle Bin ' + waitText + '. ' +
             'You can restore it from there.\n\n' +
-            'Installed games\' own files and saved games are never touched, and nothing of a launcher or game that\'s running.')) { box.checked = false; return; }
+            'Installed games\' own files and saved games are never touched, and nothing of a launcher or game that\'s running.',
+            { title: 'Clean up what games leave behind automatically?', ok: 'Turn it on' }))) { box.checked = false; return; }
         await saveAuto({ ...set, games: on });
       }, [kinds, gameStatus]));
   }
@@ -2943,7 +3063,8 @@ async function groupPicked() {
   const groups = devGroups();
   const pickedRepos = groups.flatMap((g) => g.repos).filter((r) => groupPick.has(r.key));
   const fromProject = groups.find((g) => g.project && g.repos.some((r) => groupPick.has(r.key)));
-  const name = (prompt('Name for the project (' + pickedRepos.map((r) => r.name).join(', ') + '):', fromProject ? fromProject.name : pickedRepos[0].name) || '').trim();
+  const name = ((await askTextDialog('Name for the project (' + pickedRepos.map((r) => r.name).join(', ') + '):', fromProject ? fromProject.name : pickedRepos[0].name,
+    { title: 'Group as one project', ok: 'Group them' })) || '').trim();
   if (!name) return;
   // Picked repositories leave the projects they were in; the new project takes them all.
   const next = devProjects
@@ -3365,8 +3486,9 @@ function pruneTip(r, btn) {
 
 async function pruneRepo(r) {
   // The branches are on the page beside the button: the count is enough here.
-  if (!confirm('Delete ' + count(r.merged.length, 'local branch', 'local branches') + ' in ' + r.name + ', merged into ' + r.default + '?\n\n' +
-      'It fetches first, so the count can change. The commits stay in ' + r.default + '; branches on the remote are not touched.')) return;
+  if (!(await askDialog('It fetches first, so the count can change. The commits stay in ' + r.default + '; branches on the remote are not touched.',
+      { title: 'Delete ' + count(r.merged.length, 'local branch', 'local branches') + ' in ' + r.name + ', merged into ' + r.default + '?',
+        ok: r.merged.length === 1 ? 'Delete the branch' : 'Delete branches', danger: true }))) return;
   devBusy = true;
   devProgress = 'Merged branches in ' + r.name;
   renderDev();
@@ -3427,7 +3549,9 @@ async function cleanDev(picked) {
   if (picked.some((i) => i.kind === 'avd')) lines.push('Deleting an emulator deletes the apps and data inside it.');
   const orphans = picked.filter((i) => i.kind === 'orphans').length;
   if (orphans) lines.push(count(orphans, 'folder has', 'folders have') + ' bin and obj with no project beside them: be sure nothing in them is yours to keep.');
-  if (!confirm(lines.join('\n\n'))) return;
+  // The first line is the question, the rest what it means; its button says what the question does.
+  const ok = !kept.length ? 'Delete permanently' : others ? 'Clean them' : kept.length === 1 ? 'Remove the worktree' : 'Remove the worktrees';
+  if (!(await askDialog(lines.slice(1).join('\n\n'), { title: lines[0], ok, danger: true }))) return;
   devBusy = true;
   devResult = null;
   renderDev();
@@ -4096,7 +4220,7 @@ async function removeGames(picked) {
   const stutter = picked.filter((i) => (i.kind === 'shader' && i.game) || i.kind === 'gpu-shader').length;
   if (stutter) lines.push(count(stutter, 'shader cache is', 'shader caches are') + ' of games you have: they rebuild, but the first launch of those games may stutter for a while.');
   if (picked.some((i) => i.kind === 'paused')) lines.push('A paused download starts again from the beginning.');
-  if (!confirm(lines.join('\n\n'))) return;
+  if (!(await askDialog(lines.slice(1).join('\n\n'), { title: lines[0], ok: 'Move to the Recycle Bin' }))) return;
   gameBusy = true;
   gameResult = null;
   renderGames();
@@ -4386,7 +4510,8 @@ function historyBar(s, withSwitch) {
   const clear = el('button', 'btn secondary', 'Clear history');
   clear.disabled = !s.done.length;
   clear.addEventListener('click', async () => {
-    if (!confirm('Clear the history?\n\nThe list empties and the file names in it are forgotten. Nothing on disk changes: sets you kept stay hidden, and "freed so far" stays.')) return;
+    if (!(await askDialog('The list empties and the file names in it are forgotten. Nothing on disk changes: sets you kept stay hidden, and "freed so far" stays.',
+      { title: 'Clear the history?', ok: 'Clear history', danger: true }))) return;
     try {
       await post('/api/history/clear');
       showNotice('History cleared.');
@@ -4824,7 +4949,8 @@ async function overrideFolder(path, include, removeRule) {
   } catch (e) {
     const rule = e.data && e.data.rule;
     if (rule && !removeRule) {
-      if (confirm(e.message + '\n\nRemove the rule "' + rule + '" from the settings? Everything it leaves out is scanned again.'))
+      if (await askDialog(e.message + '\n\nEverything it leaves out is scanned again.',
+        { title: 'Remove the rule "' + rule + '" from the settings?', ok: 'Remove the rule' }))
         await overrideFolder(path, include, rule);
       return;
     }
@@ -5052,8 +5178,9 @@ function skipBar(path, groups) {
   bar.append(text);
   const btn = el('button', 'btn secondary', 'Skip all ' + groups.length);
   btn.addEventListener('click', async () => {
-    if (!confirm('Skip all ' + count(groups.length, 'look-alike set', 'look-alike sets') + ' in ' + nameOf(path) + '?\n\nNothing is deleted: they leave the list' +
-        (state.config.keepHistory ? ', and History can bring them back.' : '. History is off, so they won\'t be listed there.'))) return;
+    if (!(await askDialog('Nothing is deleted: they leave the list' +
+        (state.config.keepHistory ? ', and History can bring them back.' : '. History is off, so they won\'t be listed there.'),
+        { title: 'Skip all ' + count(groups.length, 'look-alike set', 'look-alike sets') + ' in ' + nameOf(path) + '?', ok: 'Skip them all' }))) return;
     btn.disabled = true;
     try {
       const r = await post('/api/groups/skip', { keys: groups.map((g) => g.key), batch: batchId(), folder: trimSep(path) });
@@ -5094,11 +5221,12 @@ function cleanupBar(path, groups) {
   const btn = el('button', 'btn', files ? 'Move ' + count(files, 'file', 'files') + ' to Recycle Bin' : 'Move to Recycle Bin');
   btn.disabled = !files;
   btn.addEventListener('click', async () => {
-    let msg = 'Move ' + count(files, 'checked file', 'checked files') + ' (' + bytes(size) + ') from ' + count(plan.length, 'set', 'sets') + ' to the Recycle Bin?';
-    if (synced) msg += '\n\n' + count(synced, 'of them is', 'of them are') +
+    const title = 'Move ' + count(files, 'checked file', 'checked files') + ' (' + bytes(size) + ') from ' + count(plan.length, 'set', 'sets') + ' to the Recycle Bin?';
+    const msg = synced ? count(synced, 'of them is', 'of them are') +
       ' in a cloud-synced folder (iCloud Photos, OneDrive…): the Recycle Bin move also deletes ' + (synced === 1 ? 'it' : 'them') +
-      ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days).';
-    if (!confirm(msg)) return;
+      ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days).' : '';
+    // A cloud-synced file goes from the cloud and the other devices too: then its OK is in the alert colour.
+    if (!(await askDialog(msg, { title, ok: 'Move to the Recycle Bin', danger: !!synced }))) return;
     btn.disabled = true;
     let moved = 0, freed = 0;
     const failed = [];
@@ -5194,9 +5322,10 @@ function groupCard(g, folder) {
   const result = el('div', 'result small');
   recycle.addEventListener('click', async () => {
     const synced = g.items.filter((i) => set.has(i.path) && i.synced).length;
-    if (synced && !confirm(synced + ' of these files ' + (synced === 1 ? 'is' : 'are') + ' in a cloud-synced folder (iCloud Photos, OneDrive…). ' +
+    if (synced && !(await askDialog(synced + ' of these files ' + (synced === 1 ? 'is' : 'are') + ' in a cloud-synced folder (iCloud Photos, OneDrive…). ' +
         'Moving ' + (synced === 1 ? 'it' : 'them') + ' to the Recycle Bin also deletes ' + (synced === 1 ? 'it' : 'them') +
-        ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days). Continue?')) return;
+        ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days). Continue?',
+        { ok: 'Move to the Recycle Bin', danger: true }))) return;
     recycle.disabled = keep.disabled = true;
     try {
       const r = await post('/api/groups/' + encodeURIComponent(g.key) + '/recycle', { paths: [...set] });

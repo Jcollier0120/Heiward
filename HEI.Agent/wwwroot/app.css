@@ -1227,6 +1227,17 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
 .modal-facts { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 14px; margin: 4px 0 12px; }
 .modal-facts dt { color: var(--muted); }
 .modal-facts dd { margin: 0; overflow-wrap: anywhere; }
+/* The page's own questions (app.js's askDialog and askTextDialog), never the browser's windows: the same card, a little
+   narrower, over the tour too. Its text keeps the question's paragraphs; a danger question's OK is in the alert colour. */
+.modal.ask { z-index: 90; }
+.modal.ask > .tour-card { width: min(460px, 100%); }
+.ask-text { line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
+.ask-input {
+  display: block; box-sizing: border-box; width: 100%; margin: 4px 0 2px; padding: 6px 8px;
+  font: inherit; color: var(--fg); background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+}
+.ask-input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.btn.danger { background: var(--alert); color: var(--surface); }
 /* Walking the page's parts: the card in the corner, the page only lightly dimmed so the part it names shows. */
 .tour.docked { align-items: flex-end; justify-content: flex-end; background: rgba(0, 0, 0, 0.12); }
 .tour.docked > .tour-card { width: min(420px, 100%); }
