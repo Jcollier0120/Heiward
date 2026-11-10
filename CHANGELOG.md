@@ -2,6 +2,34 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.10.1
+
+**Brings 3 changes: Big photo libraries now compare in seconds instead of minutes, with exactly the same results; Heiward's page uses a wide window better, and Back now goes back to the page you were on; Delete Highlighted and the cleanup dry run report are quick on big results.**
+
+### What's new
+
+- On a wide window, Settings and About sit in two columns, and so does each part of the home page: the drives beside At a glance, and the duplicates and the history beside their totals.
+- Before the first scan, Duplicates and History say what they'll show and what to do next, with a **Scan now** button, in place of small empty boxes.
+- About now has a few lines on Castellan, the household staff Heiward is part of, with the Household plan's prices: 7 days free with no card, then $4 a month or $36 a year, and 25% off until December 11, 2026. Heiward stays free, and works the same without it. It's never shown when Castellan is installed.
+
+### What changed
+
+- Finding duplicates used to check every file against every other file, so the work grew with the square of the library: 50,000 photos meant 1.25 billion comparisons. Heiward now first finds, for each file, the few files that could possibly match it, and compares only those, in the same order and by the same rules as before. The groups, differences and flags it finds are exactly the same.
+- Measured on a test library on the same PC: 50,000 photos now compare in 1.2 seconds (before: 17.6 seconds), 100,000 photos in 2.3 seconds (before: 91 seconds). With AI matching on: 2.5 seconds for 50,000 (before: 21) and 6.8 seconds for 100,000 (before: 108). Video libraries, mirrored-image matching and pHash matching get faster too.
+- With "ignore black pixels" or "ignore white pixels" on, each comparison is now about 9 times faster on PCs with ARM processors (such as Snapdragon), which had been using a slow way to compare: 10,000 photos with "ignore black pixels" now take 0.9 seconds (before: 6.8 seconds). Dark or bright pictures are compared on only a few of their pixels, so they can match far more files, and Heiward still has to check more of those pairs: 50,000 photos with "ignore black pixels" take about 11 seconds.
+- The log now says how many comparisons the compare phase made, out of how many, and how long it took.
+- **Back** goes to the page you were on before, without stepping back through every folder you opened. **Forward** does the same the other way, and takes you to the last folder you had open. **Up** still goes one folder up, and from a drive's root back to This PC. Your browser's own Back button still goes one step at a time.
+- The Developer and Games areas work the same way: Back leaves the area, and Up climbs from one of its parts to the area's first page.
+- The title bar shows Heiward's icon and **Home**, which takes you to This PC from anywhere.
+- The Castellan card is no longer on the home page, and its **Not now** and the switch for it in Settings are gone.
+- The page's footer no longer shows an empty "Settings:" line.
+- **Delete Highlighted** (Ctrl+Delete) takes the highlighted files off the list in one go. It used to take them off one at a time, searching the whole list for each one and updating the window's counts after each: 10,000 highlighted out of 50,000 froze the window for almost a second, and 20,000 out of 100,000 for about three seconds. It now takes about a third of a second for either, nearly all of it spent redrawing the list once. The files that stay keep their order, and **Undo Selection Change** (Ctrl+Z) works as before. As before, the files are only taken off the list, not deleted from disk.
+- **Export Checked Items Cleanup Dry Run Report** sorts the list into its sets once, instead of searching the whole list for each set. A report covering 8,000 sets out of 50,000 files took over three seconds and one covering 16,000 sets out of 100,000 over twenty. Both now take under a tenth of a second. The report is the same file as before, with the same files in the same order.
+
+### Before you update
+
+- Nothing: it updates itself as usual. If you had hidden the Castellan card with **Not now**, that choice is no longer kept: the card is only in About now, which you open yourself.
+
 ## 1.10.0
 
 **Brings 3 changes: Heiward looks closer before it checks a photo for you, so some pictures it used to check are now yours to judge; Two pictures are copies only when their words match too: two screenshots of a chat one message apart are no longer offered as copies; Heiward's page answers only your own Windows account, and the Developer area no longer runs git where a repository's own settings could run a program.**
