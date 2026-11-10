@@ -13,6 +13,7 @@ Each version of Heiward, newest first: what's new, what changed, and what to do 
 - Another program on this PC can ask Heiward whether two documents hold the same pictures, for instance to find duplicate documents. Heiward compared those pictures in gray, so a black-and-white picture was the same as its colour one, and two documents with the same words and the same picture, one in colour and the other in black and white, were the same document. Now a black-and-white version is an edit of the picture, not the same picture.
 - On test Word and PDF documents with 24 pictures, all 48 colour and black-and-white pairs were called the same. Now none are. Every true copy is still the same (192 of 192): a picture saved again, exported smaller, or stored without loss. A warmer version of a picture can still be called the same there: the small pictures compared can't tell its tint from a copy's.
 - A release's notes on GitHub, and the changelog, used to list the changes to the shared parts Heiward is built with, which aren't about Heiward. They're left out now, as the Microsoft Store's notes already left them out. A version that only brought those says "Small fixes and improvements."
+- Kit 2.152.12: The staff's background work leaves the NPU to Windows' own AI models while they're using it, as it does to a call.
 
 ### Before you update
 
