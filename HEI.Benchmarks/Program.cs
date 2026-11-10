@@ -49,6 +49,10 @@ internal static class Program {
 		if (args.Length > 0 && args[0] == "--probe-video-decode")
 			return VideoDecodeProbe.Run(args);
 
+		// The compare phase at library scale, every pair against the compare index (see CompareScaleProbe).
+		if (args.Length > 0 && args[0] == "--probe-compare-scale")
+			return CompareScaleProbe.Run(args);
+
 		// Synthetic compare-phase probe (ScanForDuplicates + HighlightBestMatches).
 		if (args.Length > 0 && args[0] == "--probe-compare")
 			return ComparePhaseProbe.Run(args);

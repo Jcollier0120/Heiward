@@ -58,6 +58,8 @@ namespace HEI.Core {
 		// many videos (avoids bucket overhead on small libraries). Internal so tests can
 		// drive the bucketed path deliberately.
 		internal const int BucketActivationThreshold = 5000;
+		// Duration buckets are keyed by whole seconds to keep percent-based tolerance intact.
+		const int BucketSizeSeconds = 1;
 		// Live only while a scan's hashing phase runs (see StartSearch): receives decoded
 		// 224x224 RGB frames and writes int8 embeddings into the union embedding sidecar.
 		AI.EmbeddingPipeline? aiEmbeddingPipeline;
@@ -2043,12 +2045,13 @@ namespace HEI.Core {
 
 			InitProgress(ScanList.Count, T("Scan.Stage.ComparingDuplicates"));
 
-			// Duration buckets are keyed by whole seconds to keep percent-based tolerance intact.
-			const int bucketSizeSeconds = 1;
 			var imageEntries = new List<FileEntry>();
 			var videoEntries = new List<FileEntry>();
 			var videoBuckets = new Dictionary<int, List<FileEntry>>();
 			const int largeBucketThreshold = 400;
+			// Built below once the lists are known; null keeps the every-pair loop.
+			CompareIndex? imageIndex = null, videoIndex = null;
+			long pairsJudged = 0, pairsMatched = 0;
 
 			for (int i = 0; i < ScanList.Count; i++) {
 				var entry = ScanList[i];
@@ -2058,7 +2061,7 @@ namespace HEI.Core {
 				}
 				videoEntries.Add(entry);
 				// Bucket by duration seconds for candidate reduction in the large-data path.
-				int bucketKey = (int)Math.Floor(entry.mediaInfo!.Duration.TotalSeconds / bucketSizeSeconds);
+				int bucketKey = CompareIndex.BucketKey(entry.mediaInfo!.Duration.TotalSeconds);
 				if (!videoBuckets.TryGetValue(bucketKey, out var bucket)) {
 					bucket = new List<FileEntry>();
 					videoBuckets.Add(bucketKey, bucket);
@@ -2193,7 +2196,7 @@ namespace HEI.Core {
 			}
 
 			// Compare one entry against candidate buckets (bucketed path).
-			List<FoundPair>? CompareEntry(FileEntry entry, int entryIndex, IEnumerable<int> candidateBucketKeys) {
+			List<FoundPair>? CompareEntry(FileEntry entry, int entryIndex, int listIndex, IEnumerable<int> candidateBucketKeys) {
 				List<FoundPair>? found = null;
 				byte[]?[]? flippedGrayBytes = null;
 				ulong[]? flippedPHashes = null;
@@ -2206,6 +2209,10 @@ namespace HEI.Core {
 						flippedPHashes = ComputePHashesFromGray(flippedGrayBytes);
 				}
 
+				// The index orders its candidates like this loop: by bucket, then by list order.
+				if (CompareCandidates(videoIndex, videoEntries, listIndex, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds, ref found))
+					return found;
+				long judged = 0;
 				foreach (int bucketKey in candidateBucketKeys) {
 					if (!videoBuckets.TryGetValue(bucketKey, out var bucketEntries))
 						continue;
@@ -2214,10 +2221,26 @@ namespace HEI.Core {
 						if (compIndex <= entryIndex)
 							continue;
 
+						judged++;
 						ComparePair(entry, compItem, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds, ref found);
 					}
 				}
+				Interlocked.Add(ref pairsJudged, judged);
 				return found;
+			}
+
+			// The compare index's candidates for list entry i, judged in the order the old loop
+			// visits them; false when the index has no bound for these settings (old loop).
+			bool CompareCandidates(CompareIndex? index, List<FileEntry> list, int i, byte[]?[]? flippedGrayBytes, ulong[]? flippedPHashes,
+				double entryDurationSeconds, double entryToleranceSeconds, ref List<FoundPair>? found) {
+				if (index == null) return false;
+				List<int> candidates = compareCandidates ??= new List<int>();
+				if (!index.Candidates(i, flippedGrayBytes, flippedPHashes, candidates)) return false;
+				FileEntry entry = list[i];
+				foreach (int n in candidates)
+					ComparePair(entry, list[n], flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds, ref found);
+				Interlocked.Add(ref pairsJudged, candidates.Count);
+				return true;
 			}
 
 			// Images are always compared linearly; bucketing is only applied to videos.
@@ -2227,6 +2250,9 @@ namespace HEI.Core {
 				byte[]?[]? flippedGrayBytes = null;
 				if (Settings.CompareHorizontallyFlipped)
 					flippedGrayBytes = CreateFlippedGrayBytes(entry);
+				if (CompareCandidates(imageIndex, imageEntries, i, flippedGrayBytes, null, 0d, 0d, ref found))
+					return found;
+				Interlocked.Add(ref pairsJudged, imageEntries.Count - i - 1);
 				for (int n = i + 1; n < imageEntries.Count; n++) {
 					var compItem = imageEntries[n];
 
@@ -2251,6 +2277,9 @@ namespace HEI.Core {
 						flippedPHashes = ComputePHashesFromGray(flippedGrayBytes);
 				}
 
+				if (CompareCandidates(videoIndex, videoEntries, i, flippedGrayBytes, flippedPHashes, entryDurationSeconds, entryToleranceSeconds, ref found))
+					return found;
+				Interlocked.Add(ref pairsJudged, videoEntries.Count - i - 1);
 				for (int n = i + 1; n < videoEntries.Count; n++) {
 					var compItem = videoEntries[n];
 
@@ -2266,37 +2295,77 @@ namespace HEI.Core {
 				double maxDiffSeconds = GetDurationToleranceSeconds(durationSeconds);
 				double minDuration = Math.Max(0d, durationSeconds - maxDiffSeconds);
 				double maxDuration = durationSeconds + maxDiffSeconds;
-				int minKey = (int)Math.Floor(minDuration / bucketSizeSeconds);
-				int maxKey = (int)Math.Floor(maxDuration / bucketSizeSeconds);
-				return CompareEntry(entry, entry.compareIndex, Enumerable.Range(minKey, maxKey - minKey + 1));
+				int minKey = (int)Math.Floor(minDuration / BucketSizeSeconds);
+				int maxKey = (int)Math.Floor(maxDuration / BucketSizeSeconds);
+				return CompareEntry(entry, entry.compareIndex, i, Enumerable.Range(minKey, maxKey - minKey + 1));
 			}
 
 			// Each entry's matches are found in parallel (from largeBucketThreshold entries up) and
 			// merged here, entry by entry in ScanList order, so the groups are the same in every run.
 			void CompareAndMerge(List<FileEntry> entries, Func<int, List<FoundPair>?> compare) {
 				int parallelism = entries.Count >= largeBucketThreshold ? matchingParallelism : 1;
+				// Rows go to the workers in runs: with the compare index a row is a few candidate pairs,
+				// and handing rows out one by one (two locks and a wake-up of every waiting thread each)
+				// cost more than the rows. The rows of a run are merged in order, as before.
+				int run = parallelism == 1 ? 1 : Math.Clamp(entries.Count / (parallelism * 64), 1, 64);
+				int runs = (entries.Count + run - 1) / run;
 				try {
-					OrderedParallel.For(entries.Count, parallelism, window: parallelism * 4,
-						i => {
-							if (!pauseTokenSource.TryWaitWhilePaused(cancelationTokenSource.Token))
-								return null; // canceled while paused — the loop's token ends the remaining rows
-							List<FoundPair>? found = compare(i);
-							IncrementProgress(entries[i].Path);
-							return found;
+					OrderedParallel.For(runs, parallelism, window: parallelism * 4,
+						r => {
+							var rows = new List<FoundPair>?[Math.Min(run, entries.Count - r * run)];
+							for (int k = 0; k < rows.Length; k++) {
+								int i = r * run + k;
+								if (!pauseTokenSource.TryWaitWhilePaused(cancelationTokenSource.Token))
+									break; // canceled while paused — the loop's token ends the remaining rows
+								rows[k] = compare(i);
+								IncrementProgress(entries[i].Path);
+							}
+							return rows;
 						},
-						(i, found) => {
-							if (found == null) return;
-							foreach (FoundPair pair in found)
-								MergeDuplicate(entries[i], pair.Comp, pair.Difference, pair.Flags);
+						(r, rows) => {
+							for (int k = 0; k < rows.Length; k++) {
+								if (rows[k] is not List<FoundPair> found) continue;
+								FileEntry entry = entries[r * run + k];
+								pairsMatched += found.Count;
+								foreach (FoundPair pair in found)
+									MergeDuplicate(entry, pair.Comp, pair.Difference, pair.Flags);
+							}
 						},
 						cancelationTokenSource.Token);
 				}
 				catch (OperationCanceledException) { }
 			}
 
+			bool bucketedVideos = videoEntries.Count >= BucketActivationThreshold;
+			LastCompareIndexBytes = 0;
+			if (UseCompareIndex) {
+				var indexTimer = Stopwatch.StartNew();
+				try {
+					if (imageEntries.Count > 1)
+						imageIndex = new CompareIndex(this, imageEntries, videos: false, bucketOrder: false, usePHashing, matchingParallelism, cancelationTokenSource.Token);
+					if (videoEntries.Count > 1)
+						videoIndex = new CompareIndex(this, videoEntries, videos: true, bucketOrder: bucketedVideos, usePHashing, matchingParallelism, cancelationTokenSource.Token);
+				}
+				catch (OperationCanceledException) { }
+				catch (Exception ex) {
+					// The index only saves time: without it the loop judges every pair, as it always did.
+					imageIndex = videoIndex = null;
+					Logger.Instance.Warn($"Compare index: not built ({ex.GetType().Name}: {ex.Message}); comparing every pair");
+				}
+				LastCompareIndexBytes = (imageIndex?.Bytes ?? 0) + (videoIndex?.Bytes ?? 0);
+				string Describe(CompareIndex? index, int files, string what) =>
+					index == null ? "" : $" {files:N0} {what}{(index.Unbounded ? " (no bound for these settings: every pair" + (what == "videos" ? " in the duration window)" : ")") : "")};";
+				Logger.Instance.Info($"Compare index:{Describe(imageIndex, imageEntries.Count, "photos")}{Describe(videoIndex, videoEntries.Count, "videos")} {LastCompareIndexBytes / 1024d:N0} KB, built in {indexTimer.ElapsedMilliseconds:N0} ms");
+			}
+
+			var compareTimer = Stopwatch.StartNew();
 			CompareAndMerge(imageEntries, CompareImage);
 			// Small dataset: the simpler linear path; large: duration buckets.
-			CompareAndMerge(videoEntries, videoEntries.Count < BucketActivationThreshold ? CompareVideoLinear : CompareVideoBucketed);
+			CompareAndMerge(videoEntries, bucketedVideos ? CompareVideoBucketed : CompareVideoLinear);
+			LastComparePairsJudged = Interlocked.Read(ref pairsJudged);
+			LastComparePairsMatched = pairsMatched;
+			long everyPair = (long)imageEntries.Count * (imageEntries.Count - 1) / 2 + (long)videoEntries.Count * (videoEntries.Count - 1) / 2;
+			Logger.Instance.Info($"Compared {LastComparePairsJudged:N0} of {everyPair:N0} pairs in {compareTimer.ElapsedMilliseconds:N0} ms: {pairsMatched:N0} matched");
 			if (mergesBlocked > 0)
 				Logger.Instance.Info($"Group merge validation: blocked {mergesBlocked} merge(s) where group representatives were not similar");
 			if (missingPHashFiles.Count > 0)

@@ -235,6 +235,58 @@ namespace HEI.Core.Utils {
 		}
 
 		/// <summary>
+		/// The sum of absolute differences of two equal-length frames: the whole number
+		/// <see cref="PercentageDifference"/> divides by the length and 256. It is a true metric (L1),
+		/// which is what lets the compare index bound pairs by the triangle inequality.
+		/// </summary>
+		internal static int SumAbsoluteDifference(ReadOnlySpan<byte> img1, ReadOnlySpan<byte> img2) {
+			if (img1.Length != img2.Length)
+				throw new ArgumentException($"Gray frame length mismatch: {img1.Length} vs {img2.Length} bytes.");
+			long diff = 0;
+			int i = 0;
+			if (Avx2.IsSupported) {
+				Vector256<long> acc = Vector256<long>.Zero;
+				for (; i <= img1.Length - 32; i += 32)
+					acc = Avx2.Add(acc, Avx2.SumAbsoluteDifferences(Vector256.Create(img1.Slice(i, 32)), Vector256.Create(img2.Slice(i, 32))).AsInt64());
+				diff = Vector256.Sum(acc);
+			}
+			else if (AdvSimd.IsSupported) {
+				Vector128<uint> acc = Vector128<uint>.Zero;
+				for (; i <= img1.Length - 16; i += 16) {
+					Vector128<byte> d = AdvSimd.AbsoluteDifference(Vector128.Create(img1.Slice(i, 16)), Vector128.Create(img2.Slice(i, 16)));
+					acc = AdvSimd.AddPairwiseWideningAndAdd(acc, AdvSimd.AddPairwiseWidening(d));
+				}
+				diff = Vector128.Sum(acc);
+			}
+			for (; i < img1.Length; i++)
+				diff += Math.Abs(img1[i] - img2[i]);
+			return checked((int)diff);
+		}
+
+		/// <summary>
+		/// The frame the ignore-black/white compare can be bounded on: black pixels raised to the
+		/// black limit, white ones lowered to the white limit. Where both frames' pixels count, the
+		/// clamped frames differ exactly as much; where either is ignored they differ by at most
+		/// <see cref="IgnoredPixelSpan"/>. Returns how many of the frame's pixels are ignored.
+		/// </summary>
+		internal static int ClampIgnoredPixels(ReadOnlySpan<byte> src, Span<byte> dst, bool ignoreBlackPixels, bool ignoreWhitePixels) {
+			byte low = ignoreBlackPixels ? BlackPixelLimit : (byte)0;
+			byte high = ignoreWhitePixels ? WhitePixelLimit : (byte)255;
+			int ignored = 0;
+			for (int i = 0; i < src.Length; i++) {
+				byte v = src[i];
+				if ((ignoreBlackPixels && v <= BlackPixelLimit) || (ignoreWhitePixels && v >= WhitePixelLimit))
+					ignored++;
+				dst[i] = v < low ? low : v > high ? high : v;
+			}
+			return ignored;
+		}
+
+		/// <summary>The most two clamped pixels can differ (see <see cref="ClampIgnoredPixels"/>).</summary>
+		internal static int IgnoredPixelSpan(bool ignoreBlackPixels, bool ignoreWhitePixels) =>
+			(ignoreWhitePixels ? WhitePixelLimit : 255) - (ignoreBlackPixels ? BlackPixelLimit : 0);
+
+		/// <summary>
 		/// The largest difference (0–255) between the two frames' cells. <see cref="PercentageDifference"/> averages a
 		/// small local edit away: a signature or a changed line of text moves a few cells and leaves the average at 99.8%.
 		/// </summary>
