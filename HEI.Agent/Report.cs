@@ -76,9 +76,12 @@ namespace HEI.Agent {
 		/// <summary>The report, whichever build made it: only for telling which sets are new.</summary>
 		public static Report? LoadAny() {
 			try {
-				return File.Exists(AgentPaths.Report)
-					? JsonSerializer.Deserialize<Report>(File.ReadAllText(AgentPaths.Report), AgentConfig.Json)
-					: null;
+				if (!File.Exists(AgentPaths.Report) || JsonSerializer.Deserialize<Report>(File.ReadAllText(AgentPaths.Report), AgentConfig.Json) is not { } report)
+					return null;
+				// A later scan that found the same sets wrote only its own facts.
+				return ScanFacts.Load() is { } facts && facts.About(new FileInfo(AgentPaths.Report)) && facts.ScannedAtUtc >= report.ScannedAtUtc
+					? report with { ScannedAtUtc = facts.ScannedAtUtc, DurationSec = facts.DurationSec, FilesScanned = facts.FilesScanned }
+					: report;
 			}
 			catch (Exception e) {
 				AgentPaths.AppendLog($"report.json unreadable: {e.Message}");
@@ -86,7 +89,38 @@ namespace HEI.Agent {
 			}
 		}
 
-		public void Save() => AgentPaths.WriteAtomic(AgentPaths.Report, JsonSerializer.Serialize(this, AgentConfig.Json));
+		/// <summary>
+		/// Saves the report, its sets only when they changed: a scan that finds the same sets (a drive with no journal is
+		/// listed again every 6 hours) rewrote megabytes of the same report each time. When it ran, how long it took and
+		/// how many files it saw go to <see cref="ScanFacts"/>, a few hundred bytes, which <see cref="LoadAny"/> lays over it.
+		/// </summary>
+		public void Save() {
+			string sets = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+				JsonSerializer.Serialize(this with { ScannedAtUtc = default, DurationSec = 0, FilesScanned = 0 }, AgentConfig.Json))));
+			var file = new FileInfo(AgentPaths.Report);
+			if (!(ScanFacts.Load() is { } last && last.Sets == sets && last.About(file))) {
+				AgentPaths.WriteAtomic(AgentPaths.Report, JsonSerializer.Serialize(this, AgentConfig.Json));
+				file.Refresh();
+			}
+			AgentPaths.WriteAtomic(ScanFacts.FilePath, JsonSerializer.Serialize(
+				new ScanFacts(ScannedAtUtc, DurationSec, FilesScanned, sets, file.Length, file.LastWriteTimeUtc), AgentConfig.Json));
+		}
+	}
+
+	/// <summary>
+	/// The last scan's own facts, beside report.json (<see cref="Report.Save"/>). <paramref name="Sets"/> is a hash of the
+	/// report without them; <paramref name="Length"/> and <paramref name="WrittenUtc"/> tell the report.json they go with,
+	/// so a report another build wrote since isn't given them.
+	/// </summary>
+	sealed record ScanFacts(DateTime ScannedAtUtc, double DurationSec, int FilesScanned, string Sets, long Length, DateTime WrittenUtc) {
+		public static string FilePath => Path.Combine(AgentPaths.Home, "report-scan.json");
+
+		public static ScanFacts? Load() {
+			try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<ScanFacts>(File.ReadAllText(FilePath), AgentConfig.Json) : null; }
+			catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { return null; }
+		}
+
+		public bool About(FileInfo report) => report.Exists && report.Length == Length && report.LastWriteTimeUtc == WrittenUtc;
 	}
 
 	/// <summary>How alike two scanned files are, from their stored fingerprints; null when unknown.</summary>
@@ -775,52 +809,28 @@ namespace HEI.Agent {
 			ContentHashes(Dictionary<string, Stored> earlier, Dictionary<string, Look> looks, Dictionary<string, Words> words) =>
 				(this.earlier, looksEarlier, wordsEarlier) = (earlier, looks, words);
 
-			/// <summary>Each file as <see cref="Load"/> read it (a hash of its text): <see cref="Save"/> leaves a file that would be written the same alone.</summary>
-			readonly Dictionary<string, byte[]> read = new(StringComparer.OrdinalIgnoreCase);
-
 			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
 			public static string LooksPath => Path.Combine(AgentPaths.Home, "looks.json");
 			/// <summary>The words read in the report's photos: they stay on this PC, in this file, and nowhere else.</summary>
 			public static string TextsPath => Path.Combine(AgentPaths.Home, "texts.json");
 
 			/// <summary>The hashes, close looks and words the last scan kept.</summary>
-			public static ContentHashes Load() {
-				var texts = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-				var hashes = new ContentHashes(Read<Stored>(FilePath, texts), Read<Look>(LooksPath, texts), Read<Words>(TextsPath, texts));
-				foreach (var (path, hash) in texts) hashes.read[path] = hash;
-				return hashes;
-			}
+			public static ContentHashes Load() => new(Read<Stored>(FilePath), Read<Look>(LooksPath), Read<Words>(TextsPath));
 
-			static Dictionary<string, T> Read<T>(string path, Dictionary<string, byte[]> texts) {
+			static Dictionary<string, T> Read<T>(string path) {
 				try {
-					if (File.Exists(path)) {
-						string text = File.ReadAllText(path);
-						texts[path] = SHA256.HashData(Encoding.UTF8.GetBytes(text));
-						if (JsonSerializer.Deserialize<Dictionary<string, T>>(text, AgentConfig.Json) is { } stored)
-							return new Dictionary<string, T>(stored, StringComparer.OrdinalIgnoreCase);
-					}
+					if (File.Exists(path) && JsonSerializer.Deserialize<Dictionary<string, T>>(File.ReadAllText(path), AgentConfig.Json) is { } stored)
+						return new Dictionary<string, T>(stored, StringComparer.OrdinalIgnoreCase);
 				}
 				catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) { }
 				return new Dictionary<string, T>(StringComparer.OrdinalIgnoreCase);
 			}
 
-			/// <summary>
-			/// Keeps this scan's hashes, close looks and words, and only those: a file no report needs any more drops out.
-			/// A file this scan would write as it read it isn't written again: a scan that finds the same files (a drive
-			/// with no journal is listed again every 6 hours) rewrote megabytes of the same hashes each time.
-			/// </summary>
+			/// <summary>Keeps this scan's hashes, close looks and words, and only those: a file no report needs any more drops out.</summary>
 			public void Save() {
-				Write(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
-				Write(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
-				Write(TextsPath, JsonSerializer.Serialize(wordsNow, AgentConfig.Json));
-			}
-
-			void Write(string path, string json) {
-				byte[] hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
-				if (read.TryGetValue(path, out byte[]? was) && was.AsSpan().SequenceEqual(hash) && File.Exists(path))
-					return;
-				AgentPaths.WriteAtomic(path, json);
-				read[path] = hash;
+				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
+				AgentPaths.WriteAtomic(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
+				AgentPaths.WriteAtomic(TextsPath, JsonSerializer.Serialize(wordsNow, AgentConfig.Json));
 			}
 
 			/// <summary>

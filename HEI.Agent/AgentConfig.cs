@@ -110,12 +110,26 @@ namespace HEI.Agent {
 		/// <summary>A new install's first scan waits for the person (<see cref="HEI.Agent.FirstScanWait"/>).</summary>
 		public static string FirstScanWaits => Path.Combine(Home, "first-scan-waits.txt");
 
-		/// <summary>Writes a file atomically (temp file, then replace), so readers never see half of it.</summary>
+		/// <summary>
+		/// Writes a file atomically (temp file, then replace), so readers never see half of it. A file that already
+		/// says exactly this is left as it is: a status or settings file saved again unchanged costs the disk nothing.
+		/// </summary>
 		public static void WriteAtomic(string path, string contents) {
+			if (Says(path, contents))
+				return;
 			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 			string tmp = path + $".{Environment.ProcessId}.tmp";
 			File.WriteAllText(tmp, contents);
 			File.Move(tmp, path, overwrite: true);
+		}
+
+		/// <summary>Whether the file holds exactly <paramref name="contents"/> (as UTF-8, which is how it's written).</summary>
+		static bool Says(string path, string contents) {
+			try {
+				var file = new FileInfo(path);
+				return file.Exists && file.Length == System.Text.Encoding.UTF8.GetByteCount(contents) && File.ReadAllText(path) == contents;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
 		}
 
 		public static void AppendLog(string line) {
