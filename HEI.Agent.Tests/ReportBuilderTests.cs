@@ -57,6 +57,13 @@ public sealed class ReportBuilderTests : IDisposable {
 			ColorLooks++;
 			return ColorsToKeeper.TryGetValue(a, out bool? x) ? x : ColorsToKeeper.TryGetValue(b, out bool? y) ? y : true;
 		}
+		/// <summary>A photo's sharpness against the kept one's (unset: as sharp).</summary>
+		public readonly Dictionary<string, bool?> DetailToKeeper = new(StringComparer.OrdinalIgnoreCase);
+		public int DetailLooks;
+		public bool? SameDetail(string a, string b) {
+			DetailLooks++;
+			return DetailToKeeper.TryGetValue(a, out bool? x) ? x : DetailToKeeper.TryGetValue(b, out bool? y) ? y : true;
+		}
 		/// <summary>A photo's words as the text reader reads them, a word a space apart (unset: no text reader, judged by look alone).</summary>
 		public readonly Dictionary<string, string> Words = new(StringComparer.OrdinalIgnoreCase);
 		public int Reads;
@@ -237,6 +244,37 @@ public sealed class ReportBuilderTests : IDisposable {
 
 		Single(Photo("r.jpg", 4032, 3024, Bytes(8000, 7)), Photo("r small.jpg", 1280, 960, Bytes(2000, 8), gray: 99.9f));
 		Assert.Equal(1, fingerprints.ColorLooks);
+	}
+
+	[Theory]
+	[InlineData(false)] // blurred all over: every block keeps its average, the detail goes
+	[InlineData(null)]  // sharpness that can't be compared
+	public void ASofterCopy_StaysInTheSetAsAnEdit_NotPreChecked(bool? sameDetail) {
+		var original = Photo("p.jpg", 4032, 3024, Bytes(8000, 1));
+		var resaved = Photo("p resaved.jpg", 4032, 3024, Bytes(5000, 2), gray: 99.9f);
+		var soft = Photo("p soft.jpg", 4032, 3024, Bytes(6000, 3), gray: 99.97f, ai: 99.1f);
+		fingerprints.DetailToKeeper[soft.Path] = sameDetail;
+		ReportGroup g = Single(original, resaved, soft);
+		Assert.Equal(3, g.Items.Count); // the set is the same; only what's checked changed
+		Assert.EndsWith("p.jpg", g.KeepPath);
+		Assert.Equal("edited", Named(g, "p soft.jpg").Relation);
+		Assert.False(Named(g, "p soft.jpg").Suggested);
+		Assert.Equal(99.1f, Named(g, "p soft.jpg").Similarity); // as an edit: the AI's match
+		Assert.True(Named(g, "p resaved.jpg").Suggested);
+		Assert.Equal(5000, g.ReclaimBytes);
+	}
+
+	[Fact]
+	public void SharpnessIsComparedForPlainCopiesOfPhotosAlone() {
+		byte[] same = Bytes(8000, 1);
+		Single(Photo("p.jpg", 4032, 3024, same), Photo(@"backup\p.jpg", 4032, 3024, same));
+		ReportBuilder.Build(new[] {
+			Photo("q.jpg", 4032, 3024, Bytes(8000, 3)), Photo("q crop.jpg", 4032, 3024, Bytes(7000, 4), gray: 97.4f) }, fingerprints);
+		ReportBuilder.Build(new[] { Video("v.mp4", Bytes(9000, 5)), Video("v small.mp4", Bytes(4000, 6), gray: 99.9f) }, fingerprints);
+		Assert.Equal(0, fingerprints.DetailLooks);
+
+		Single(Photo("r.jpg", 4032, 3024, Bytes(8000, 7)), Photo("r small.jpg", 1280, 960, Bytes(2000, 8), gray: 99.9f));
+		Assert.Equal(1, fingerprints.DetailLooks);
 	}
 
 	[Fact]

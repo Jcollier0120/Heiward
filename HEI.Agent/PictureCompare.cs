@@ -53,14 +53,15 @@ namespace HEI.Agent {
 	/// Compares two sets of pictures by look, for another agent: Chamberlain, finding duplicate documents, asks
 	/// whether two documents with the same words hold the same pictures too. Each picture is paired with its best
 	/// partner one to one, and each pair judged by Heiward's own rules for photos (<see cref="ReportBuilder.ByLook"/>):
-	/// the same bytes are <c>identical</c>; a grayscale match of <see cref="ReportBuilder.PlainCopyPercent"/> or more is
-	/// the same picture, pixel for pixel (<c>smaller</c>, <c>compressed</c>, <c>resaved</c>: the plain copies the review
-	/// page pre-checks); below that the AI's cosine says <c>edited</c> or <c>variant</c>. A picture less alike to every
+	/// the same bytes are <c>identical</c>; a grayscale match of <see cref="ReportBuilder.PlainCopyPercent"/> or more, with its
+	/// colours kept (<see cref="KeepsItsColors"/>), is the same picture, pixel for pixel (<c>smaller</c>, <c>compressed</c>,
+	/// <c>resaved</c>: the plain copies the review page pre-checks); a black-and-white copy is <c>edited</c>, and below that
+	/// the AI's cosine says <c>edited</c> or <c>variant</c>. A picture less alike to every
 	/// other than <see cref="ReportBuilder.MinAlikePercent"/> has no partner, as it would leave a set on the review page.
 	/// </summary>
 	static class PictureCompare {
 		/// <summary>The route's version, in /api/ping's <c>pictures</c>.</summary>
-		public const int Version = 1;
+		public const int Version = 2;
 		public const int MaxPictures = 64;
 		public const int MaxBodyBytes = 32 * 1024 * 1024;
 		/// <summary>A picture claiming more pixels than this isn't decoded: a few bytes can claim a picture too big to decode.</summary>
@@ -156,8 +157,47 @@ namespace HEI.Agent {
 			string relation = x.Animated || y.Animated ? "variant"
 				: ReportBuilder.ByLook(gray, () => ai, smaller: other.FrameSize < keep.FrameSize, shorterCut: false,
 					fewerBytes: other.Bytes.Length < keep.Bytes.Length, maxCell: GrayBytesUtils.MaxCellDifference(other.Gray, keep.Gray));
+			// A black-and-white copy is the same picture in gray without its colours: an edit, as on the review page.
+			if (ReportBuilder.IsPlainCopy(relation) && !KeepsItsColors(other, keep))
+				relation = "edited";
 			// As the page shows it (ReportBuilder.Alike): the AI's cosine for an edit or a variant, otherwise the grayscale match.
 			return (relation, relation is "edited" or "variant" && ai is float cosine ? cosine : gray);
+		}
+
+		/// <summary>A picture whose pixels lie less than this far from gray on average (0–255, <see cref="Colorfulness"/>) is gray already.</summary>
+		internal const double GrayBelow = 3;
+
+		/// <summary>
+		/// A copy keeping less than this share of the other picture's <see cref="Colorfulness"/> lost its colours. On made-up
+		/// photos' tune half, plain copies (saved again, smaller, more compressed) kept 0.81 or more, black-and-white copies
+		/// 0, and colour photos lay 7.2 or more from gray; the held-out half confirmed it (0.91 or more, 0, and 9.0 or more).
+		/// </summary>
+		internal const double ColorsKeptLimit = 0.5;
+
+		/// <summary>
+		/// One of the two pictures keeps the other's colours, as far as their 224×224 AI frames tell (which every picture here
+		/// has already): both are gray, or the less colourful keeps <see cref="ColorsKeptLimit"/> of the other's colourfulness.
+		/// The gray frames see brightness only, so a black-and-white copy matches its colour picture in gray. A warmer or
+		/// cooler copy keeps its colourfulness: on frames this small its tint is too close to a resize's to tell apart.
+		/// </summary>
+		internal static bool KeepsItsColors(Picture x, Picture y) {
+			double a = Colorfulness(x.Rgb), b = Colorfulness(y.Rgb), most = Math.Max(a, b);
+			return most < GrayBelow || Math.Min(a, b) / most >= ColorsKeptLimit;
+		}
+
+		/// <summary>
+		/// How far an RGB frame's pixels lie from gray, on average: the length of each pixel's blue-minus-gray and
+		/// red-minus-gray (Rec. 601 luma, as the gray frames weigh them). 0 for a black-and-white picture.
+		/// </summary>
+		internal static double Colorfulness(byte[] rgb) {
+			int pixels = rgb.Length / 3;
+			if (pixels == 0) return 0;
+			double sum = 0;
+			for (int i = 0; i < pixels * 3; i += 3) {
+				double y = 0.299 * rgb[i] + 0.587 * rgb[i + 1] + 0.114 * rgb[i + 2], blue = rgb[i + 2] - y, red = rgb[i] - y;
+				sum += Math.Sqrt(blue * blue + red * red);
+			}
+			return sum / pixels;
 		}
 	}
 

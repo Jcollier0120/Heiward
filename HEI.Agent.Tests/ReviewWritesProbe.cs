@@ -51,6 +51,7 @@ public class ReviewWritesProbe {
 		public int? MaxCellDifference(string a, string b) => 0;
 		public bool? SameUpClose(string a, string b) => true;
 		public bool? SameColors(string a, string b) => true;
+		public bool? SameDetail(string a, string b) => true;
 	}
 
 	[Fact]

@@ -208,6 +208,48 @@ public sealed class PictureCompareTests : IDisposable {
 		Assert.Equal("smaller", Assert.Single(answer.Pairs).Relation);
 	}
 
+	/// <summary>The scene in black and white: each pixel its gray, as the gray frames weigh it.</summary>
+	static byte[] Gray(byte[] rgb) {
+		var px = new byte[rgb.Length];
+		for (int o = 0; o < rgb.Length; o += 3)
+			px[o] = px[o + 1] = px[o + 2] = (byte)Math.Round(0.299 * rgb[o] + 0.587 * rgb[o + 1] + 0.114 * rgb[o + 2]);
+		return px;
+	}
+
+	[Fact]
+	public void InBlackAndWhite_IsAnEdit_NotTheSame() {
+		// Two documents with the same words, one picture in colour and the other in black and white, aren't the same document.
+		byte[] recolored = Jpeg(Bmp(Gray(SceneRgb), W, H), 4096);
+		var eye = new FixedEye(0.99f);
+		PicturesAnswer answer = PictureCompare.Compare([Original], [recolored], eye);
+		Assert.False(answer.Same, JsonSerializer.Serialize(answer));
+		PicturePair pair = Assert.Single(answer.Pairs);
+		Assert.Equal("edited", pair.Relation);
+		Assert.Equal(0.99, pair.Similarity, 2); // as an edit: the AI's cosine
+		// Without the model the pixels still answer: an edit, paired by its gray match.
+		PicturesAnswer alone = PictureCompare.Compare([recolored], [Original], eye: null);
+		Assert.False(alone.Same);
+		Assert.Equal("edited", Assert.Single(alone.Pairs).Relation);
+		var (relation, percent) = PictureCompare.Judge(PictureCompare.Decode(Original)!, PictureCompare.Decode(recolored)!, ai: null);
+		Assert.True(percent >= ReportBuilder.PlainCopyPercent, $"the gray frames can't see it: {percent}"); // the colours alone tell
+		Assert.Equal("edited", relation);
+	}
+
+	[Fact]
+	public void Colorfulness_IsHowFarFromGray() {
+		Assert.Equal(0, PictureCompare.Colorfulness([0, 0, 0, 128, 128, 128, 255, 255, 255]), 9);
+		// Pure red: blue-minus-gray −76.245 and red-minus-gray 178.755, about 194.3 from gray; with a gray pixel, half that.
+		Assert.Equal(194.34, PictureCompare.Colorfulness([255, 0, 0]), 2);
+		Assert.Equal(97.17, PictureCompare.Colorfulness([255, 0, 0, 40, 40, 40]), 2);
+	}
+
+	[Fact]
+	public void ABlackAndWhitePicture_SavedAgain_IsStillTheSame() {
+		byte[] bw = Bmp(Gray(SceneRgb), W, H);
+		Assert.True(PictureCompare.Compare([bw], [Jpeg(bw, 4096)], new FakeEye()).Same);
+		Assert.True(PictureCompare.Compare([Jpeg(bw, 320)], [bw], new FakeEye()).Same);
+	}
+
 	[Fact]
 	public void Cropped_IsNotTheSame() {
 		byte[] cropped = Bmp(Crop(SceneRgb, W, 0, 0, W * 2 / 3, H * 2 / 3), W * 2 / 3, H * 2 / 3);
@@ -388,7 +430,7 @@ public sealed class PictureCompareTests : IDisposable {
 
 		// The ping says the route is here, and what it had says stays.
 		using JsonDocument ping = JsonDocument.Parse(await page.Http.GetStringAsync("/api/ping"));
-		Assert.Equal(1, ping.RootElement.GetProperty("pictures").GetInt32());
+		Assert.Equal(PictureCompare.Version, ping.RootElement.GetProperty("pictures").GetInt32());
 		Assert.Equal("heiward", ping.RootElement.GetProperty("app").GetString());
 		Assert.True(ping.RootElement.GetProperty("tour").GetBoolean());
 	}

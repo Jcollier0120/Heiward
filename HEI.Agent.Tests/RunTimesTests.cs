@@ -153,7 +153,7 @@ public sealed class RunTimesTests : IDisposable {
 		Assert.Equal("Scans only when you press Scan now. No scan yet.", root.GetProperty("summary").GetString());
 		Assert.Equal(0, root.GetProperty("needsYou").GetArrayLength()); // no report, so nothing waits for review (ReviewWaiting)
 		Assert.Equal(JsonValueKind.Null, root.GetProperty("firstRound").ValueKind); // no first scan waiting or running (FirstRound)
-		Assert.Equal(1, root.GetProperty("pictures").GetInt32()); // POST /api/pictures/compare is here (PicturesRoute)
+		Assert.Equal(PictureCompare.Version, root.GetProperty("pictures").GetInt32()); // POST /api/pictures/compare is here (PicturesRoute)
 		Assert.True(root.GetProperty("tour").GetBoolean()); // its page has a tour at #/tour (tour.js)
 		Assert.Equal("heiward", root.GetProperty("app").GetString());
 		Assert.Equal("2026-10-03T12:00:00Z", root.GetProperty("lastRunAt").GetString());
