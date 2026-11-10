@@ -147,6 +147,11 @@ namespace HEI.Agent {
 		/// </summary>
 		bool? SameColors(string a, string b);
 		/// <summary>
+		/// Photos: the two are as sharp as each other up close too (<see cref="CloseLook.DetailKept"/>, at least
+		/// <see cref="ReportBuilder.SameDetailLimit"/>); null when it can't be told, as for <see cref="SameUpClose"/>.
+		/// </summary>
+		bool? SameDetail(string a, string b);
+		/// <summary>
 		/// Photos: one picture lines up with the other cropped, scaled or turned a little, with its colours changed at most
 		/// (<see cref="AlignedLook.SamePicture"/>); null when it can't be told: a file that can't be decoded, a picture too
 		/// even to place, or one on a resting drive.
@@ -216,9 +221,40 @@ namespace HEI.Agent {
 			return worst;
 		}
 
-		public bool? SameUpClose(string a, string b) =>
-			MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false ? null
-			: CloseLook.Difference(a, b) is double d ? d <= ReportBuilder.CloseLookLimit : null;
+		public bool? SameUpClose(string a, string b) {
+			if (MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false || CloseLook.Look(a, b) is not { } look)
+				return null;
+			if (look.Side > 0) {
+				// Kept for SameDetail: the close look's decode tells how sharp each one is too.
+				details[DetailKey(a, look.Side)] = look.DetailA;
+				details[DetailKey(b, look.Side)] = look.DetailB;
+			}
+			return look.Difference <= ReportBuilder.CloseLookLimit;
+		}
+
+		public bool? SameDetail(string a, string b) {
+			if (MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false || CloseLook.SideFor(a, b) is not int side)
+				return null;
+			if (side == 0)
+				return true; // under 64 pixels a side, the 32×32 frame already sees the whole picture
+			return Detail(a, side) is double da && Detail(b, side) is double db ? CloseLook.DetailKept(da, db) >= ReportBuilder.SameDetailLimit : null;
+		}
+
+		/// <summary>
+		/// Each photo's detail at a close-look side (<see cref="CloseLook.Detail(byte[], int)"/>): kept from its close look this
+		/// review, so a pair looked at now isn't decoded again, or decoded now for a close look kept from an earlier review,
+		/// once a photo (a set's kept photo is asked about with each of its copies).
+		/// </summary>
+		readonly Dictionary<string, double?> details = new(StringComparer.OrdinalIgnoreCase);
+
+		static string DetailKey(string path, int side) => $"{side}\n{path}";
+
+		double? Detail(string path, int side) {
+			string key = DetailKey(path, side);
+			if (!details.TryGetValue(key, out double? detail))
+				details[key] = detail = CloseLook.Detail(path, side);
+			return detail;
+		}
 
 		public bool? SameColors(string a, string b) =>
 			MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false ? null
@@ -392,6 +428,14 @@ namespace HEI.Agent {
 		/// gray already (0, a plain copy in every pixel).
 		/// </summary>
 		internal const double SameColorsLimit = 6;
+		/// <summary>
+		/// Photos: a plain copy is also as sharp as the kept one up close (<see cref="CloseLook.DetailKept"/>): the softer of the
+		/// two keeps at least this much of the other's detail, decoded at the close look's side. A blur over the whole photo
+		/// keeps every block's average, and on a large photo it's about a pixel at 512, so the close look passed three blurred
+		/// copies in the look-alike set. Measured on its tune half (docs/LOOKALIKE-BAR.md): its resaves and resizes, against
+		/// their original or each other, kept 0.84 of the detail at least; the blurred copies the close look passed, 0.50 at most.
+		/// </summary>
+		internal const double SameDetailLimit = 0.7;
 		/// <summary>
 		/// A file less alike than this to the kept one (the percentage the page shows) is a different
 		/// picture, not a look-alike: it leaves the set. VDF's groups chain (A is like B, B is like C), so
@@ -681,10 +725,12 @@ namespace HEI.Agent {
 			var reportItems = new List<ReportItem>(items.Count);
 			foreach (DuplicateItem i in items.OrderByDescending(i => ReferenceEquals(i, keep)).ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)) {
 				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes, fingerprints, bursts);
-				// A black-and-white or warmer copy is the same picture in gray, so it stays in the set, but it's an edit: shown as
-				// one, never pre-checked (SameColorsLimit). Only here: which pictures make a set is still the gray frames' call.
+				// A softer, black-and-white or warmer copy is the same picture in gray blocks, so it stays in the set, but it's an
+				// edit: shown as one, never pre-checked (SameDetailLimit, SameColorsLimit). Only here: which pictures make a set is
+				// still the gray frames' call.
 				if (isImage && IsPlainCopy(relation) && relation != "identical" &&
-						!hashes.SameColors(i.Path, keep.Path, () => fingerprints.SameColors(i.Path, keep.Path)))
+						(!hashes.SameDetail(i.Path, keep.Path, () => fingerprints.SameDetail(i.Path, keep.Path)) ||
+						!hashes.SameColors(i.Path, keep.Path, () => fingerprints.SameColors(i.Path, keep.Path))))
 					relation = "edited";
 				(int w, int h) = ParseFrameSize(i.FrameSize);
 				bool suggested = IsPlainCopy(relation);
@@ -915,9 +961,10 @@ namespace HEI.Agent {
 
 			/// <summary>
 			/// Two photos' close look (<see cref="UpClose"/>): each file's size and last-modified time when it was made, and the answer;
-			/// <paramref name="Colors"/>: whether their colours are the same too (<see cref="SameColors"/>), null until asked.
+			/// <paramref name="Colors"/>: whether their colours are the same too (<see cref="SameColors"/>), null until asked;
+			/// <paramref name="Detail"/>: whether they're as sharp as each other (<see cref="SameDetail"/>), null until asked.
 			/// </summary>
-			internal sealed record Look(long SizeA, DateTime ModifiedA, long SizeB, DateTime ModifiedB, bool Same, bool? Colors = null);
+			internal sealed record Look(long SizeA, DateTime ModifiedA, long SizeB, DateTime ModifiedB, bool Same, bool? Colors = null, bool? Detail = null);
 
 			readonly Dictionary<string, string?> cache = new(StringComparer.OrdinalIgnoreCase);
 			readonly Dictionary<string, Stored> earlier, now = new(StringComparer.OrdinalIgnoreCase);
@@ -1111,13 +1158,24 @@ namespace HEI.Agent {
 			/// it while both files are unchanged. False when it can't be told: a pair not looked at up close, or one on a resting
 			/// drive whose colours weren't compared before. No plain copy is claimed whose colours weren't compared.
 			/// </summary>
-			public bool SameColors(string a, string b, Func<bool?> look) {
+			public bool SameColors(string a, string b, Func<bool?> look) =>
+				AlsoSame(a, b, look, close => close.Colors, (close, same) => close with { Colors = same });
+
+			/// <summary>
+			/// The two photos are as sharp as each other (<paramref name="look"/>, <see cref="IFingerprints.SameDetail"/>): asked and
+			/// kept as <see cref="SameColors"/> is, of a pair already the same up close. False when it can't be told.
+			/// </summary>
+			public bool SameDetail(string a, string b, Func<bool?> look) =>
+				AlsoSame(a, b, look, close => close.Detail, (close, same) => close with { Detail = same });
+
+			/// <summary>A further question of a pair already the same up close, its answer kept in that close look (<see cref="SameColors"/>).</summary>
+			bool AlsoSame(string a, string b, Func<bool?> look, Func<Look, bool?> kept, Func<Look, bool, Look> keep) {
 				if (string.Compare(a, b, StringComparison.OrdinalIgnoreCase) > 0) (a, b) = (b, a);
 				// Only a close look made or kept this scan, for the files as they are now (LookAt checks that); the answer is kept in it.
 				if (!looksNow.TryGetValue(a + "\n" + b, out Look? close) || !close.Same) return false;
-				if (close.Colors is bool known) return known;
+				if (kept(close) is bool known) return known;
 				if (!CanRead(a) || !CanRead(b) || look() is not bool same) return false;
-				looksNow[a + "\n" + b] = close with { Colors = same };
+				looksNow[a + "\n" + b] = keep(close, same);
 				return same;
 			}
 

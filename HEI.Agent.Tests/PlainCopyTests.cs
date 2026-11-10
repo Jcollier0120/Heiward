@@ -299,4 +299,147 @@ public sealed class PlainCopyTests : IDisposable {
 		ReportBuilder.ContentHashes.Load().Save(); // no pair to look at this time: the look drops out, and looks.json is written
 		Assert.NotEqual(old, File.GetLastWriteTimeUtc(ReportBuilder.ContentHashes.LooksPath));
 	}
+
+	const int BigW = 3000, BigH = 2000;
+
+	/// <summary>
+	/// A large photo with fine detail all over (a smooth scene under a light texture at five scales), RGB24 rows top-down;
+	/// <paramref name="blur"/>: a box blur of that radius over the whole of it, as a "soften" filter does.
+	/// </summary>
+	static byte[] Detailed(int blur = 0) {
+		var px = new byte[BigW * BigH * 3];
+		for (int y = 0; y < BigH; y++)
+			for (int x = 0; x < BigW; x++) {
+				double u = x / (double)BigW, v = y / (double)BigH;
+				double t = Noise(x, y, 8, 4) * 12 + Noise(x, y, 12, 5) * 9 + Noise(x, y, 24, 1) * 7 + Noise(x, y, 48, 2) * 5 + Noise(x, y, 96, 3) * 4;
+				int o = (y * BigW + x) * 3;
+				px[o] = (byte)Math.Clamp(110 + 70 * u + t, 0, 255);
+				px[o + 1] = (byte)Math.Clamp(95 + 80 * v + t, 0, 255);
+				px[o + 2] = (byte)Math.Clamp(120 + 40 * Math.Sin(4 * u + 2 * v) + t, 0, 255);
+			}
+		if (blur > 0) {
+			BoxBlur(px, blur, horizontal: true);
+			BoxBlur(px, blur, horizontal: false);
+		}
+		return px;
+
+		// Value noise, -1 to 1: a fixed pseudo-random value every cell pixels, eased between.
+		static double Noise(int x, int y, int cell, int seed) {
+			int cx = x / cell, cy = y / cell;
+			double fx = Ease((x % cell) / (double)cell), fy = Ease((y % cell) / (double)cell);
+			double top = Lerp(At(cx, cy), At(cx + 1, cy), fx), bottom = Lerp(At(cx, cy + 1), At(cx + 1, cy + 1), fx);
+			return Lerp(top, bottom, fy);
+			double At(int i, int j) => (uint)(((i * 73856093) ^ (j * 19349663) ^ (seed * 83492791)) * 2654435761u) / (double)uint.MaxValue * 2 - 1;
+			static double Ease(double f) => f * f * (3 - 2 * f);
+			static double Lerp(double a, double b, double f) => a + (b - a) * f;
+		}
+
+		static void BoxBlur(byte[] px, int r, bool horizontal) {
+			int lines = horizontal ? BigH : BigW, length = horizontal ? BigW : BigH;
+			var line = new int[length];
+			for (int l = 0; l < lines; l++)
+				for (int c = 0; c < 3; c++) {
+					int At(int k) => ((horizontal ? l * BigW + k : k * BigW + l) * 3) + c;
+					for (int k = 0; k < length; k++) line[k] = px[At(k)];
+					for (int k = 0; k < length; k++) {
+						int sum = 0, n = 0;
+						for (int d = Math.Max(0, k - r); d <= Math.Min(length - 1, k + r); d++) { sum += line[d]; n++; }
+						px[At(k)] = (byte)(sum / n);
+					}
+				}
+		}
+	}
+
+	string SaveBig(string name, byte[] rgb) {
+		string path = Path.Combine(dir, name);
+		File.WriteAllBytes(path, PictureCompareTests.Bmp(rgb, BigW, BigH));
+		return path;
+	}
+
+	static double Kept(string a, string b) {
+		CloseLook.Result? look = CloseLook.Look(a, b);
+		Assert.NotNull(look);
+		return CloseLook.DetailKept(look.Value.DetailA, look.Value.DetailB);
+	}
+
+	[Fact]
+	public void AResizeOrARecompression_KeepsItsDetail() {
+		string original = SaveBig("original.bmp", Detailed());
+		foreach (int side in new[] { BigW, 1500, 1080, 600 }) {
+			double kept = Kept(original, Jpeg(original, $"copy-{side}.jpg", side));
+			Assert.True(kept >= ReportBuilder.SameDetailLimit, $"{side}: {kept}");
+		}
+	}
+
+	[Fact]
+	public void ABlurOverTheWholePhoto_PassesTheCloseLookButNotItsDetail() {
+		// Under two pixels at the close look's 512: every block keeps its average, half the detail goes.
+		string original = SaveBig("original.bmp", Detailed());
+		string soft = Jpeg(SaveBig("soft.bmp", Detailed(blur: 10)), "soft.jpg", BigW);
+		var j = Judge(original, soft);
+		Assert.True(PlainCopy(j), $"gray frames and blocks can't see it: {j}");
+		double kept = Kept(original, soft);
+		Assert.True(kept < ReportBuilder.SameDetailLimit, $"{kept}");
+		Assert.Equal(kept, Kept(soft, original)); // either way round: a sharper copy of a soft photo isn't a plain copy of it either
+	}
+
+	[Fact]
+	public void Detail_IsTheStepsBetweenPixels_NotTheirBrightness() {
+		var flat = new byte[64 * 64];
+		Array.Fill(flat, (byte)128);
+		Assert.Equal(0, CloseLook.Detail(flat, 64));
+		Assert.Equal(1, CloseLook.DetailKept(0, 0)); // two flat pictures: as sharp as each other
+		var stripes = new byte[64 * 64];
+		for (int i = 0; i < stripes.Length; i++) stripes[i] = (byte)(i % 2 == 0 ? 100 : 140);
+		byte[] brighter = stripes.Select(v => (byte)(v + 50)).ToArray();
+		Assert.Equal(CloseLook.Detail(stripes, 64), CloseLook.Detail(brighter, 64));
+		Assert.Equal(40, CloseLook.Detail(stripes, 64)); // a step of 40 to the right, none down
+		Assert.Equal(0.5, CloseLook.DetailKept(20, 40));
+		Assert.Throws<ArgumentException>(() => CloseLook.Detail(stripes, 32));
+	}
+
+	[Fact]
+	public void TheCloseLooksDecode_TellsHowSharpEachIs() {
+		// A pair looked at up close this review isn't decoded again for its sharpness; a close look kept from an earlier
+		// review is, once. (The copy is blurred after the close look, to tell the two apart.)
+		string a = SaveBig("a.bmp", Detailed()), b = Jpeg(a, "b.jpg", BigW);
+		var scan = new ScanFingerprints(null, withAi: false);
+		Assert.True(scan.SameUpClose(a, b));
+		File.Copy(Jpeg(SaveBig("soft.bmp", Detailed(blur: 10)), "soft.jpg", BigW), b, overwrite: true);
+		Assert.True(scan.SameDetail(a, b)); // from the close look's decode
+		Assert.False(new ScanFingerprints(null, withAi: false).SameDetail(a, b)); // decoded now
+	}
+
+	[Fact]
+	public void ACloseLookKeptBeforeSharpnessWasCompared_HasItComparedOnce() {
+		// looks.json from before this check: the close look is kept, the sharpness is compared on the next scan, and kept.
+		string a = Save("a.bmp", Scene()), b = Jpeg(a, "b.jpg", 600);
+		var (first, second) = string.Compare(a, b, StringComparison.OrdinalIgnoreCase) < 0 ? (a, b) : (b, a);
+		Directory.CreateDirectory(Path.GetDirectoryName(ReportBuilder.ContentHashes.LooksPath)!);
+		File.WriteAllText(ReportBuilder.ContentHashes.LooksPath, System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, object> {
+			[first + "\n" + second] = new {
+				sizeA = new FileInfo(first).Length, modifiedA = File.GetLastWriteTimeUtc(first),
+				sizeB = new FileInfo(second).Length, modifiedB = File.GetLastWriteTimeUtc(second), same = true, colors = true,
+			},
+		}));
+		int details = 0;
+		var hashes = ReportBuilder.ContentHashes.Load();
+		Assert.True(hashes.UpClose(a, b, () => throw new InvalidOperationException("looked at again")));
+		Assert.True(hashes.SameColors(a, b, () => throw new InvalidOperationException("colours compared again")));
+		Assert.False(hashes.SameDetail(a, b, () => { details++; return false; }));
+		Assert.False(hashes.SameDetail(b, a, () => { details++; return true; }));
+		hashes.Save();
+		var again = ReportBuilder.ContentHashes.Load();
+		Assert.True(again.UpClose(a, b, () => true));
+		Assert.False(again.SameDetail(a, b, () => { details++; return true; }));
+		Assert.True(again.SameColors(a, b, () => false)); // each answer is kept beside the other
+		Assert.Equal(1, details);
+
+		File.SetLastWriteTimeUtc(b, File.GetLastWriteTimeUtc(b).AddMinutes(5));
+		var changed = ReportBuilder.ContentHashes.Load();
+		Assert.False(changed.SameDetail(a, b, () => true)); // not looked at up close yet: no plain copy, nothing compared
+		Assert.True(changed.UpClose(a, b, () => true));
+		Assert.True(changed.SameDetail(a, b, () => { details++; return true; }));
+		Assert.Equal(2, details);
+	}
 }
