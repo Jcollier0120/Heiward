@@ -401,8 +401,9 @@ public sealed class GameUninstallTests : IDisposable {
 		var callers = Regex.Matches(Script, @"(?<!function )uninstallGame\(").Select(m => Script.LastIndexOf("\nfunction ", m.Index, StringComparison.Ordinal))
 			.Select(i => Regex.Match(Script[(i + 1)..], @"^function (\w+)").Groups[1].Value).ToList();
 		Assert.Equal(["gameUninstallButton", "openUninstallDialog"], callers);
-		// Going to another page closes the dialog: it belongs to its game's page.
-		Assert.Matches(@"window\.addEventListener\('hashchange', \(\) => \{\r?\n  closeUninstallDialog\(\);", Script);
+		// Going to another page closes the dialog: it belongs to its game's page. (Once Back and Forward's trail has
+		// noted the step: TrailTests.)
+		Assert.Matches(@"window\.addEventListener\('hashchange', \(\) => \{\r?\n  trail\.sync\(\);\r?\n  closeUninstallDialog\(\);", Script);
 	}
 
 	[Fact]

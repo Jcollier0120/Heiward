@@ -80,7 +80,7 @@ function startTour(from) {
   tourStep = 0;
   tourTab = homeTab;
   // The page under it is the home page, whose parts the tour walks.
-  if (isTourHash(location.hash)) history.replaceState(null, '', '#/');
+  if (isTourHash(location.hash)) trail.replace('#/');
   route = parseRoute();
   renderRoute();
   drawTour();

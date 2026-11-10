@@ -27,10 +27,9 @@ namespace HEI.Agent {
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
 	/// <param name="Gpu">The graphics card for GPU work, by name (<see cref="AgentConfig.Gpu"/>); "" for Windows' default.</param>
-	/// <param name="ManorCard">The home page's Castellan card: false from its "Not now", true from Settings (<see cref="AgentConfig.ManorCard"/>).</param>
 	/// <param name="GameMode">Heiward's own game mode switch (<see cref="AgentConfig.GameMode"/>), unless Manor decides it.</param>
 	/// <param name="AutoUpdate">Update by itself (<see cref="AgentConfig.AutoUpdate"/>): the copy from GitHub, when nothing else updates it.</param>
-	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null, bool? ManorCard = null,
+	sealed record SettingsRequest(bool? KeepHistory, string? ScanSpeed, bool? MoreMemory = null, bool? DeveloperMode = null, string? Gpu = null,
 		bool? GameMode = null, bool? AutoUpdate = null);
 	/// <param name="Minutes">How long; null: until the user resumes.</param>
 	sealed record PauseRequest(int? Minutes);
@@ -159,6 +158,8 @@ namespace HEI.Agent {
 			});
 			app.MapGet("/theme.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("theme.js"), "text/javascript; charset=utf-8"); });
 			app.MapGet("/tour.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("tour.js"), "text/javascript; charset=utf-8"); });
+			// Back and Forward by page, not by folder (wwwroot/trail.js), before app.js.
+			app.MapGet("/trail.js", (HttpContext ctx) => { ctx.Response.Headers.CacheControl = "no-cache"; return Results.Content(Asset("trail.js"), "text/javascript; charset=utf-8"); });
 			// About's links: the GNU AGPL's full text and the third-party notices, as this hei.exe carries them (LicenseTexts).
 			app.MapGet("/license.txt", () => Results.Bytes(LicenseTexts.Read(LicenseTexts.License), "text/plain; charset=utf-8"));
 			app.MapGet("/third-party-notices.txt", () => Results.Bytes(LicenseTexts.Read(LicenseTexts.Notices), "text/plain; charset=utf-8"));
@@ -252,7 +253,7 @@ namespace HEI.Agent {
 				return Results.Json(new { cleared });
 			}));
 			// The page's own settings: history on or off, how hard scans work, developer mode (unless Manor's Developer options
-			// decide it), and the home page's Castellan card (ManorCard).
+			// decide it), game mode, and updating by itself.
 			app.MapPost("/api/settings", (SettingsRequest request) => {
 				if (request.ScanSpeed != null && !AgentConfig.ScanSpeeds.Contains(request.ScanSpeed)) return Results.BadRequest(new { error = "Unknown scan speed." });
 				DevMode devMode = DevMode.Now(cfg);
@@ -277,7 +278,6 @@ namespace HEI.Agent {
 				if (request.ScanSpeed is string speed) saved.ScanSpeed = cfg.ScanSpeed = speed;
 				if (request.MoreMemory is bool more) saved.MoreMemory = cfg.MoreMemory = more;
 				if (request.DeveloperMode is bool dev) saved.DeveloperMode = cfg.DeveloperMode = dev ? "on" : "off";
-				if (request.ManorCard is bool card) saved.ManorCard = cfg.ManorCard = card;
 				if (request.GameMode is bool game) saved.GameMode = cfg.GameMode = game ? "on" : "off";
 				if (request.AutoUpdate is bool update) saved.AutoUpdate = cfg.AutoUpdate = update;
 				saved.Save();
@@ -286,8 +286,8 @@ namespace HEI.Agent {
 					(saved.MoreMemory ? ", with more memory" : ", with less memory") + $", developer mode {(saved.DeveloperModeOn ? "on" : "off")}" +
 					(devMode.ByManor ? $" (but {devMode.Manor.Name}'s Developer options turn it {(devMode.On ? "on" : "off")})" : "") +
 					$", game mode {(saved.GameModeOn ? "on" : "off")}" + (gameMode.ByManor ? $" (but {gameMode.Manor.Name} turns it {(gameMode.On ? "on" : "off")})" : "") +
-					$", the Castellan card {(saved.ManorCard ? "shown" : "hidden")}, updating by itself {(saved.AutoUpdate ? "on" : "off")}");
-				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu, saved.ManorCard,
+					$", updating by itself {(saved.AutoUpdate ? "on" : "off")}");
+				return Results.Json(new { saved.KeepHistory, saved.ScanSpeed, saved.MoreMemory, DeveloperMode = saved.DeveloperModeOn, saved.Gpu,
 					GameMode = saved.GameModeOn, saved.AutoUpdate }, AgentConfig.Json);
 			});
 			// The Store version's first run: the page's answers, installed in the background (StoreSetup).
@@ -769,8 +769,8 @@ namespace HEI.Agent {
 				},
 				dev = DevSummary(devMode, devReport, roles),
 				games = GamesSummary(gameMode, gameReport),
-				// Without Manor, the home page's Castellan card and its switch in Settings; with Manor, null: neither (ManorCard).
-				manorCard = ManorCard.For(cfg, manor),
+				// Without Manor, About's Castellan card; with Manor, null: none (ManorCard).
+				manorCard = ManorCard.For(manor),
 				auto = AutoView(report, devReport, decisions, gameReport),
 				drives,
 				glance,

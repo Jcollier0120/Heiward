@@ -68,6 +68,10 @@ const ICONS = {
   spark: [['path', 'M8 1.8v3M8 11.2v3M1.8 8h3M11.2 8h3M3.6 3.6l2.1 2.1M10.3 10.3l2.1 2.1M3.6 12.4l2.1-2.1M10.3 5.7l2.1-2.1', 'stroke']],
   alert: [['path', 'M8 2 14.5 13.5h-13zM8 6.5v3.2M8 11.6v.2', 'stroke']],
   pause: [['path', 'M6 3.5v9M10 3.5v9', 'stroke']],
+  copies: [['rect', '5,5,8.5,8.5,1.5', 'stroke'], ['path', 'M2.5 10.5V4A1.5 1.5 0 0 1 4 2.5h6.5M6.5 12l2-2.3 1.4 1.4 1-1 1.6 1.9', 'stroke']],
+  folder: [['path', 'M2 4.5A1.5 1.5 0 0 1 3.5 3h2.8l1.4 1.5h4.8A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z', 'stroke']],
+  bars: [['path', 'M2.5 13.5h11M4.5 11V8M8 11V4M11.5 11V6.5', 'stroke']],
+  bin: [['path', 'M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.7 9h5.6l.7-9', 'stroke']],
   play: [['path', 'M5.5 3.2v9.6l7.5-4.8z', 'stroke']],
   chip: [['rect', '4,4,8,8,1.5', 'stroke'], ['rect', '6.5,6.5,3,3,0.5', 'fill'],
     ['path', 'M6 1.5V4M10 1.5V4M6 12v2.5M10 12v2.5M1.5 6H4M1.5 10H4M12 6h2.5M12 10h2.5', 'stroke']],
@@ -453,7 +457,11 @@ function go(path) {
   else location.hash = next;
 }
 
+/** Back and Forward by page, skipping the folder view's steps (trail.js). */
+const trail = makeTrail(window);
+
 window.addEventListener('hashchange', () => {
+  trail.sync();
   closeUninstallDialog(); // a game's dialog belongs to its page
   route = parseRoute();
   groupsShown = PAGE;
@@ -662,6 +670,8 @@ function renderCrumbs() {
   crumbs.replaceChildren(...items);
   crumbs.scrollLeft = crumbs.scrollWidth;
   $('nav-up').disabled = route.view === 'home';
+  $('nav-back').disabled = !trail.canBack();
+  $('nav-fwd').disabled = !trail.canForward();
 }
 
 // ---------------------------------------------------------------- home: This PC
@@ -798,8 +808,100 @@ function renderHome(s) {
   })), s.games && s.games.scannedAtUtc ? 'Nothing left behind.' : 'After the first check.');
   renderFreed(s);
   renderDone(s);
-  renderManorCard(s.manorCard);
+  // A tab with nothing in it yet says so once, across the tab, rather than in two small boxes.
+  emptyTab('copies', scanned ? null : copiesEmpty(s));
+  emptyTab('history', s.done.length || s.totals.recycledBytes ? null : historyEmpty(s, copies));
   renderFooter(s);
+}
+
+/** Shows a tab's empty panel (its parts, or null for the tab's own parts instead). */
+function emptyTab(name, parts) {
+  $('panel-' + name).classList.toggle('is-empty', !!parts);
+  const box = $(name + '-empty');
+  box.classList.toggle('hidden', !parts);
+  if (!parts) { box.replaceChildren(); return; }
+  const inner = el('div', 'empty-inner');
+  inner.append(...parts);
+  box.replaceChildren(inner);
+}
+
+/** An empty tab's main part: a mark, what's missing, and why. */
+function emptyMain(glyph, title, text) {
+  const main = el('div', 'empty-main');
+  const mark = el('div', 'empty-mark');
+  mark.append(icon(glyph));
+  main.append(mark, el('h3', 'empty-title', title), el('p', 'empty-text', text));
+  return main;
+}
+
+/** Beside it on a wide window: what the tab will show, or what helps, a line each with its icon (and a link). */
+function emptyAside(title, points) {
+  const aside = el('div', 'empty-aside');
+  aside.append(el('div', 'glance-sub', title));
+  const list = el('ul', 'empty-points');
+  for (const [glyph, text, link] of points) {
+    const li = el('li');
+    const words = el('span', null, text);
+    if (link) words.append(' ', link);
+    li.append(icon(glyph), words);
+    list.append(li);
+  }
+  aside.append(list);
+  return aside;
+}
+
+/** A link-styled button for an empty tab's lines. */
+function emptyLink(text, run) {
+  const b = el('button', 'link', text);
+  b.addEventListener('click', run);
+  return b;
+}
+
+/** The Duplicates tab before the first scan: what a scan looks for, Scan now, and what the tab will show. */
+function copiesEmpty(s) {
+  const running = s.scan.running;
+  const main = emptyMain('copies', running ? 'The first scan is under way' : 'No scan yet', running
+    ? 'Heiward is looking through your drives for photos and videos saved more than once. The copies it finds show here as soon as it\'s done; the top of the page says how far it has got.'
+    : 'Heiward looks through your drives for photos and videos saved more than once: the same file in two folders, and look-alikes, such as a photo sent in a chat and saved again smaller. ' +
+      (s.auto.settings.duplicates ? 'Automatic cleanup is on, so plain copies go to the Recycle Bin by themselves after the wait you set; the rest wait for you.' : 'Nothing is moved until you say so.'));
+  if (!running) {
+    const actions = el('div', 'empty-actions');
+    const scan = el('button', 'btn', 'Scan now');
+    scan.addEventListener('click', scanNow);
+    actions.append(scan);
+    if (scansByItself(s)) actions.append(el('span', 'muted small', 'Or let it: Heiward ' + s.schedule.text + '.'));
+    main.append(actions);
+  }
+  return [main, emptyAside('After the first scan', [
+    ['folder', 'Where the duplicates are: the folders where cleaning up frees the most, biggest first. Open one to see its copies.'],
+    ['bars', 'Your photos and videos by file type, and the space each type takes.'],
+    ['bin', 'Copies you clean up go to the Recycle Bin, so you can still get one back until it\'s emptied.'],
+  ])];
+}
+
+/** The History tab before anything is cleaned up: what it will list, and what helps fill it. */
+function historyEmpty(s, copies) {
+  const keep = s.config.keepHistory;
+  const main = emptyMain('clock', keep ? 'Nothing cleaned up yet' : 'History is off', keep
+    ? 'What you clean up, and what you choose to keep, is listed here: when, how many files, how much space, and in which folder. The space freed adds up week by week, in a chart.'
+    : 'Nothing new is listed, and no file names are kept. Sets you kept still stay hidden.');
+  const actions = el('div', 'empty-actions');
+  if (!keep) actions.append(emptyLink('Turn it on in Settings', () => { location.hash = '#/settings'; }));
+  else if (copies) {
+    const review = el('button', 'btn', 'Review the duplicates');
+    review.addEventListener('click', () => pickTab('copies'));
+    actions.append(review);
+  }
+  if (actions.childElementCount) main.append(actions);
+  const auto = s.auto.settings.duplicates;
+  return [main, emptyAside('Ways to free space', [
+    ['spark', auto
+      ? 'Automatic cleanup is on: plain copies go to the Recycle Bin by themselves after the wait you set, and are listed here.'
+      : 'Automatic cleanup can move plain copies to the Recycle Bin by itself, a few days after they\'re listed. Edits and look-alikes always wait for you.',
+    emptyLink(auto ? 'Settings' : 'Turn it on in Settings', () => { location.hash = '#/settings'; })],
+    ['copies', copies ? count(copies, 'set of copies waits', 'sets of copies wait') + ' for your review, under Duplicates.' : 'After a scan, the copies to review are listed under Duplicates.'],
+    ['bin', 'Copies of photos and videos go to the Recycle Bin, so one can still come back until it\'s emptied.'],
+  ])];
 }
 
 /**
@@ -1047,9 +1149,10 @@ function renderSettings(s) {
 }
 
 // What's read once, behind the About button beside Settings (as on Manor's and every kit agent's page): this
-// build, the license's notice, and where its work runs. Its switches stay in Settings.
+// build, the license's notice, Castellan without Manor, and where its work runs. Its switches stay in Settings.
 function renderAbout(s) {
   renderAboutCard(s);
+  renderManorCard(s.manorCard);
   renderWhereCard(s);
 }
 
@@ -1097,7 +1200,7 @@ function renderAboutCard(s) {
   $('about-card').replaceChildren(card);
 }
 
-/** Settings' Updates: updating by itself, for the copy from GitHub, and the Castellan card, without Manor. Hidden when neither is there. */
+/** Settings' Updates: updating by itself, for the copy from GitHub. Hidden when something else updates it (the Store, Manor) or for a development build. */
 function renderUpdatesCard(s) {
   const update = s.about.update || {};
   const card = el('div', 'auto-card');
@@ -1122,16 +1225,6 @@ function renderUpdatesCard(s) {
     }
     updateRow.append(updateText);
     card.append(updateRow);
-  }
-  // Without Manor: the home page's Castellan card, on until its Not now; this brings it back.
-  if (s.manorCard) {
-    const manorRow = el('div', 'auto-row');
-    manorRow.append(toggleSwitch(s.manorCard.show, 'The Castellan card', settingsBusy, (on) => saveSettings({ manorCard: on })));
-    const manorText = el('div', 'auto-text');
-    manorText.append(el('div', 'auto-title', 'The Castellan card'),
-      el('div', 'muted small', 'Last on the home page: what Castellan adds to Heiward, with a link to its site. It\'s text in the page: nothing is sent anywhere for it.'));
-    manorRow.append(manorText);
-    card.append(manorRow);
   }
   $('updates-section').classList.toggle('hidden', !card.childElementCount);
   $('updates-card').replaceChildren(card);
@@ -1280,7 +1373,7 @@ function renderWhereCard(s) {
     ['Files', 'Listing folders, reading files and hashing them is processor and disk work. A rescan reads only new and changed files. ' +
       'Files of the same size are hashed whole, once, to find exact copies; photos are decoded, and the sound of videos fingerprinted, on the processor.'],
     ['When it runs', when + ' ' + pace + ' While a game or anything full screen runs, scans make way.'],
-    ['Taking turns', 'On the NPU, the model takes its turn in the queue the manor\'s agents on this PC share: Heiward holds the NPU for at most 2 seconds, ' +
+    ['Taking turns', 'On the NPU, the model takes its turn in the queue the household staff on this PC share: Heiward holds the NPU for at most 2 seconds, ' +
       'then joins the back of the line, and work someone is waiting on goes first. On a graphics card it takes that card\'s turn the same way.'],
     ['Why the processor and graphics come and go', 'A scan comes in bursts: the folders, then decoding and comparing what\'s new, then hashing, and between ' +
       'scans Heiward does nothing. The graphics chip is busy only while it decodes videos or runs the model, the NPU in short turns. ' +
@@ -1876,7 +1969,7 @@ function setupDone(s) {
     setupShown = null;
     document.documentElement.classList.remove('setup-mode');
     document.title = 'Heiward';
-    history.replaceState(null, '', '#/');
+    trail.replace('#/');
     route = parseRoute();
     renderRoute();
   });
@@ -2046,7 +2139,7 @@ function leaveUninstall() {
   uninstall.art = null;
   document.documentElement.classList.remove('setup-mode');
   document.title = 'Heiward';
-  history.replaceState(null, '', '#/');
+  trail.replace('#/');
   route = parseRoute();
   renderRoute();
 }
@@ -4373,7 +4466,7 @@ function renderDone(s) {
   }), ...more);
 }
 
-// ---------------------------------------------------------------- home: the Castellan card
+// ---------------------------------------------------------------- About: the Castellan card
 
 /** A few of the manor's staff, a line each, for the Castellan card. */
 const MANOR_STAFF = [
@@ -4384,15 +4477,18 @@ const MANOR_STAFF = [
   ['Miller', 'big videos and photos, made small.'],
 ];
 
+/** Castellan's launch offer, 25% off for anyone who subscribes by this day (its pricing page): after it, the card leaves it out. */
+const CASTELLAN_OFFER_ENDS = new Date(2026, 11, 11, 23, 59, 59);
+
 /**
- * Without Manor, the last thing on the home page: what Castellan (Manor, sold) adds, in a few lines, with a link to its site and Not now, which
- * hides it for good (settings.json's manorCard; Settings shows it again). It's text in the page: nothing is fetched or sent for
- * it. With Manor installed, card is null and there's nothing here: the title bar's "Back to <manor>" says where Heiward works.
+ * Without Manor, in About: what Castellan (Manor, sold) adds, in a few lines, with its prices and a link to its site.
+ * It was last on the home page until the owner moved it here (2026-11-09). It's text in the page: nothing is fetched
+ * or sent for it. With Manor installed, card is null and there's nothing here: the title bar's "Back to <manor>" says
+ * where Heiward works.
  */
 function renderManorCard(card) {
-  const show = !!(card && card.show);
-  $('manor-card-section').classList.toggle('hidden', !show);
-  if (!show) { $('manor-card').replaceChildren(); return; }
+  $('manor-card-section').classList.toggle('hidden', !card);
+  if (!card) { $('manor-card').replaceChildren(); return; }
   const box = el('div', 'auto-card manor-card');
   box.append(el('p', 'manor-card-lead',
     'Heiward is one of a household staff that look after this PC, each at its own job, all on this PC. Castellan is the house they share.'));
@@ -4403,25 +4499,20 @@ function renderManorCard(card) {
     staff.append(li);
   }
   box.append(staff);
-  // The launch offer's price (Household, 25% off); back to $4 when the offer ends.
-  box.append(el('p', null, 'Try every agent free for 7 days, with no card. After that, from $3 a month. ' +
-    'Stop paying and keep what you have: it all keeps working, just without new versions.'));
+  // The Household plan's prices, as castellan-software.com/pricing gives them; the launch offer until it ends.
+  box.append(el('p', null, 'Try all the staff free for 7 days, with no card. After that, the Household plan is $4 a month, or $36 a year (3 months free).' +
+    (Date.now() <= CASTELLAN_OFFER_ENDS.getTime() ? ' Until December 11, 2026, it\'s 25% off: $3 a month, or $27 a year.' : '') +
+    ' Stop paying and keep what you have: it all keeps working, just without new versions.'));
   box.append(el('p', 'muted small', 'Heiward stays free, and works the same without it.'));
   const actions = el('div', 'manor-card-actions');
   const see = outLink('See Castellan', card.url);
   see.className = 'btn';
-  const later = el('button', 'btn secondary', 'Not now');
-  later.addEventListener('click', async () => {
-    later.disabled = true;
-    try { await post('/api/settings', { manorCard: false }); } catch (e) { showError(e.message); later.disabled = false; return; }
-    showNotice('The Castellan card is hidden for good. Settings can show it again.', { label: 'Undo', run: () => saveSettings({ manorCard: true }) });
-    refresh(true);
-  });
-  actions.append(see, later);
+  actions.append(see);
   box.append(actions);
   $('manor-card').replaceChildren(box);
 }
 
+/** The foot of the home page: what's scanned, file types left out, and the settings file, only with developer mode on. */
 function renderFooter(s) {
   const f = $('footer');
   f.replaceChildren();
@@ -4429,9 +4520,12 @@ function renderFooter(s) {
     ? 'Every fixed drive is scanned, except folders that belong to Windows, installed programs, games and code projects (they show greyed out as exempt).'
     : 'Scanned: ' + s.config.folders.join('; ')));
   if (s.config.excludeExtensions.length) f.append(el('div', null, 'Skipped file types: ' + s.config.excludeExtensions.join(' ')));
-  const p = el('div', null, 'Settings: ');
-  p.append(el('code', null, s.config.path));
-  f.append(p);
+  // The server gives the settings file's path only with developer mode on: the page shows no file names otherwise.
+  if (s.config.path) {
+    const p = el('div', null, 'Settings: ');
+    p.append(el('code', null, s.config.path));
+    f.append(p);
+  }
 }
 
 // ---------------------------------------------------------------- folder tree
@@ -5140,7 +5234,7 @@ async function renderRoute() {
   // Developer mode is off (Settings): its pages aren't there, so a link to one lands home.
   // Game mode the same way: off, the Games area isn't there.
   if ((route.view === 'dev' && !state.dev.enabled) || (route.view === 'games' && !state.games.enabled)) {
-    history.replaceState(null, '', '#/');
+    trail.replace('#/');
     route = parseRoute();
   }
   renderCrumbs();
@@ -5411,15 +5505,17 @@ setupPauseMenu();
 $('nav-back').append(icon('back'));
 $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
-$('nav-back').addEventListener('click', () => history.back());
-$('nav-fwd').addEventListener('click', () => history.forward());
+// Back and Forward go by page (trail.js): the folder view's folders are Up's to climb.
+$('nav-back').addEventListener('click', () => trail.back());
+$('nav-fwd').addEventListener('click', () => trail.forward());
+// Up: one folder up, and from a drive's root (or Settings, About, an area's first page) to This PC.
 $('nav-up').addEventListener('click', () => {
   if (route.view === 'folder') go(parentOf(route.path));
   else if (route.view === 'dev') { if (route.cat || route.group) location.hash = '#/dev'; else go(null); }
   else if (route.view === 'games') { if (route.cat || route.drive || route.game) location.hash = '#/games'; else go(null); }
   else if (route.view === 'settings' || route.view === 'about') go(null);
 });
-// Heiward's name in the title bar goes home, wherever the page is.
+// Home, by Heiward's icon in the title bar, goes to This PC, wherever the page is.
 $('brand').addEventListener('click', (e) => { e.preventDefault(); go(null); $('home').scrollTop = 0; });
 $('settings-btn').append(icon('gear'));
 $('settings-btn').addEventListener('click', () => { location.hash = route.view === 'settings' ? '#/' : '#/settings'; });
