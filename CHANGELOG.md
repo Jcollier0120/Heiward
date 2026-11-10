@@ -4,7 +4,7 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 
 ## 1.10.1
 
-**Brings 3 changes: Big photo libraries now compare in seconds instead of minutes, with exactly the same results; Heiward's page uses a wide window better, and Back now goes back to the page you were on; Delete Highlighted and the cleanup dry run report are quick on big results.**
+**Brings 4 changes: Big photo libraries now compare in seconds instead of minutes, with exactly the same results; Heiward's page uses a wide window better, and Back now goes back to the page you were on; Delete Highlighted and the cleanup dry run report are quick on big results; Heiward writes far less to your disk as it scans: a save writes only the photos that changed.**
 
 ### What's new
 
@@ -27,10 +27,13 @@ Each version of Heiward, newest first. A version's entry is its release's notes:
 - **Export Checked Items Cleanup Dry Run Report** sorts the list into its sets once, instead of searching the whole list for each set. A report covering 8,000 sets out of 50,000 files took over three seconds and one covering 16,000 sets out of 100,000 over twenty. Both now take under a tenth of a second. The report is the same file as before, with the same files in the same order.
 - Kit 2.152.6: Local AI's setup downloads three files at once, and a big file in four byte ranges side by side: its 2.8 GB on an RTX card comes in a few minutes, not over twenty.
 - Kit 2.152.8: A big download comes in 8 MiB blocks on four connections, written in order, so each byte goes to disk once: kit 2.152.6's four ranges side by side had Windows write a big file 1.68 times over.
+- Heiward saves its list of scanned files and its AI cache as it scans: every five minutes during a long scan, and at the end of each scan that found something. Each save used to write the whole list and cache again, even for one new photo: about 92 MB for a library of 50,000 photos and 183 MB for 100,000. So a day of hourly scans that each found one new photo wrote about 2.2 GB, or 4.4 GB for 100,000 photos. A save now adds only what changed, under 2 KB for each new photo, and that day writes about 50 KB. Once the changes add up to a fifth of the list, Heiward writes the list whole once and starts adding again: on average about 7 KB more for each photo that changed. A scan that finds nothing new still writes nothing to them.
+- If Heiward is stopped in the middle of a save (the PC loses power, or the process is ended), the list and the cache stay as the last finished save left them, and the next scan carries on from there.
 
 ### Before you update
 
 - Nothing: it updates itself as usual. If you had hidden the Castellan card with **Not now**, that choice is no longer kept: the card is only in About now, which you open yourself.
+- Nothing: it updates itself as usual. If you go back to an older version, it reads the list as it was last written whole, so its next scan reads again the photos that changed since then (at most a fifth of them). Nothing is lost.
 
 ## 1.10.0
 
