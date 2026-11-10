@@ -2,6 +2,40 @@
 
 Each version of Heiward, newest first. A version's entry is its release's notes: what's new, what changed, and what to do before updating (the Steward's kit, spec/RELEASE-NOTES.md). Versions before 1.7.16 are described in their pull requests.
 
+## 1.10.3
+
+**Heiward writes less to your disk while it scans: only the files that changed go into its list of each drive, and a scan's progress is saved every few seconds instead of every second.**
+
+### What changed
+
+- To see what changed since the last scan, Heiward keeps a list of the files on each drive. It used to save that whole list again after every scan. It now adds only the files that changed, and saves the list whole again only once those additions are as big as the list. On a library of 50,000 photos with 1% of them changed, that's 4.2 MB down to about 40 KB a scan.
+- While a scan runs, its progress for Heiward's page is saved every 3 seconds while the page is open and every 30 seconds while it isn't, instead of every second. Each new step of a scan still shows on the page at once.
+- Which photos are found as duplicates and look-alikes is unchanged.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+- If you go back to an earlier version later, its first scan lists each drive again from the start, once. On a large drive that can take a minute or two, and nothing is missed.
+
+## 1.10.2
+
+**Brings 3 changes: At a manor, Heiward's first scan waiting for you is listed under When you have time, not This needs you; Heiward is gentler on your disk: a check that finds nothing new no longer rewrites what it already saved; On the review page, a black-and-white or warm-filtered version of a colour photo is no longer pre-checked as a copy.**
+
+### What changed
+
+- A new install of Heiward scans nothing until you say. Castellan's page used to show that in red under **This needs you**. It's now under **When you have time**, with the same words and link, and it's never a notification: nothing is lost while it waits.
+- When a check finds the same duplicates as last time, Heiward no longer saves the whole list of them again, or the fingerprints of your files that it keeps. It notes only when the check ran. On a library of 50,000 photos, on a drive Heiward has to list again every 6 hours, that's about 17.5 MB written per check down to a few hundred bytes, up to 70 MB a day.
+- Heiward's settings and status files are saved only when something in them changes.
+- Which photos are found as duplicates and look-alikes is unchanged.
+- The review page pre-checks the plain copies of a photo for the Recycle Bin: the same picture made smaller, more compressed or saved again. Heiward compared pictures in gray, so a black-and-white or warmer version of a colour photo looked the same as the photo and could be pre-checked as a copy of it. If you accepted the pre-checks, you'd have removed a picture that isn't a copy. Now Heiward compares the colours too. Such a version is shown as an **Edited version**, like other edits, and you decide whether to keep it. Automatic cleanup leaves it for you as well.
+- On a test set of 369 photos, 92 black-and-white versions and 117 warm ones were pre-checked as copies. Now one is: its photo was already black and white, so the two are the same. Every copy of the same colours that was pre-checked before still is. What's no longer pre-checked is a colour copy in a set where the picture kept is a black-and-white or warm version (10 on the test set): it isn't a copy of that one.
+- Which photos are grouped together, and which one is kept, is unchanged.
+- Kit 2.152.10: The kit's logs roll over: a model server's at its start, serve.log while a page stays up, an outside run's line by line, each past its cap kept as one old log.
+
+### Before you update
+
+- Nothing: it updates itself as usual. The first check after the update compares the colours of the copies it lists, once, so it may take a little longer.
+
 ## 1.10.1
 
 **Brings 4 changes: Big photo libraries now compare in seconds instead of minutes, with exactly the same results; Heiward's page uses a wide window better, and Back now goes back to the page you were on; Delete Highlighted and the cleanup dry run report are quick on big results; Heiward writes far less to your disk as it scans: a save writes only the photos that changed.**

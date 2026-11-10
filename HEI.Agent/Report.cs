@@ -142,6 +142,11 @@ namespace HEI.Agent {
 		/// </summary>
 		bool? SameUpClose(string a, string b);
 		/// <summary>
+		/// Photos: the two have the same colours too (<see cref="ColorLook"/>, at most <see cref="ReportBuilder.SameColorsLimit"/>
+		/// apart); null when it can't be told, as for <see cref="SameUpClose"/>.
+		/// </summary>
+		bool? SameColors(string a, string b);
+		/// <summary>
 		/// Photos: one picture lines up with the other cropped, scaled or turned a little, with its colours changed at most
 		/// (<see cref="AlignedLook.SamePicture"/>); null when it can't be told: a file that can't be decoded, a picture too
 		/// even to place, or one on a resting drive.
@@ -214,6 +219,25 @@ namespace HEI.Agent {
 		public bool? SameUpClose(string a, string b) =>
 			MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false ? null
 			: CloseLook.Difference(a, b) is double d ? d <= ReportBuilder.CloseLookLimit : null;
+
+		public bool? SameColors(string a, string b) =>
+			MayRead?.Invoke(a) == false || MayRead?.Invoke(b) == false ? null
+			: Colors(a) is { } x && Colors(b) is { } y ? ColorLook.Difference(x, y, ColorLook.Side) <= ReportBuilder.SameColorsLimit : null;
+
+		/// <summary>The last two photos' colour frames (<see cref="ColorLook.Frame"/>): a set's kept photo is asked about with each of its copies in turn.</summary>
+		readonly (string? Path, byte[]? Frame)[] colors = new (string?, byte[]?)[2];
+		int colorsUsed; // the one asked for last, which stays
+
+		byte[]? Colors(string path) {
+			for (int k = 0; k < colors.Length; k++)
+				if (string.Equals(colors[k].Path, path, StringComparison.OrdinalIgnoreCase)) {
+					colorsUsed = k;
+					return colors[k].Frame;
+				}
+			colorsUsed = 1 - colorsUsed;
+			colors[colorsUsed] = (path, ColorLook.Frame(path));
+			return colors[colorsUsed].Frame;
+		}
 
 		// The pictures last used for the aligned look, the last used at the end: a kept file's, asked about each of its set's
 		// other files (several at once, so one being decoded is waited for, not decoded twice), and those files again when
@@ -359,6 +383,15 @@ namespace HEI.Agent {
 		/// nothing (the benchmarks' CopyCellProbe).
 		/// </summary>
 		internal const double CloseLookLimit = 5;
+		/// <summary>
+		/// Photos: a plain copy also has the same colours (<see cref="ColorLook"/>): no cell's colour more than this (0–255)
+		/// from the kept one's. The gray frames and the close look see brightness only, so a black-and-white or warmer copy
+		/// passed them all and was pre-checked as a copy of its colour original. Measured on the look-alike set's tune half
+		/// (docs/LOOKALIKE-BAR.md, 249 photos): its 1,245 resaves and resizes, against their original or each other, came to
+		/// 4.3 at most; its warm edits to 8.5 at least, and its black-and-white ones to 12.1, but for one of a photo that was
+		/// gray already (0, a plain copy in every pixel).
+		/// </summary>
+		internal const double SameColorsLimit = 6;
 		/// <summary>
 		/// A file less alike than this to the kept one (the percentage the page shows) is a different
 		/// picture, not a look-alike: it leaves the set. VDF's groups chain (A is like B, B is like C), so
@@ -648,6 +681,11 @@ namespace HEI.Agent {
 			var reportItems = new List<ReportItem>(items.Count);
 			foreach (DuplicateItem i in items.OrderByDescending(i => ReferenceEquals(i, keep)).ThenBy(i => i.Path, StringComparer.OrdinalIgnoreCase)) {
 				string relation = ReferenceEquals(i, keep) ? "keep" : Relation(i, keep, hashes, fingerprints, bursts);
+				// A black-and-white or warmer copy is the same picture in gray, so it stays in the set, but it's an edit: shown as
+				// one, never pre-checked (SameColorsLimit). Only here: which pictures make a set is still the gray frames' call.
+				if (isImage && IsPlainCopy(relation) && relation != "identical" &&
+						!hashes.SameColors(i.Path, keep.Path, () => fingerprints.SameColors(i.Path, keep.Path)))
+					relation = "edited";
 				(int w, int h) = ParseFrameSize(i.FrameSize);
 				bool suggested = IsPlainCopy(relation);
 				// Shown similarity: to the kept file (the AI's cosine where the pixels differ).
@@ -875,8 +913,11 @@ namespace HEI.Agent {
 			/// <param name="ModifiedUtc">The file's last-modified time when it was hashed.</param>
 			internal sealed record Stored(long Size, DateTime ModifiedUtc, string Hash);
 
-			/// <summary>Two photos' close look (<see cref="UpClose"/>): each file's size and last-modified time when it was made, and the answer.</summary>
-			internal sealed record Look(long SizeA, DateTime ModifiedA, long SizeB, DateTime ModifiedB, bool Same);
+			/// <summary>
+			/// Two photos' close look (<see cref="UpClose"/>): each file's size and last-modified time when it was made, and the answer;
+			/// <paramref name="Colors"/>: whether their colours are the same too (<see cref="SameColors"/>), null until asked.
+			/// </summary>
+			internal sealed record Look(long SizeA, DateTime ModifiedA, long SizeB, DateTime ModifiedB, bool Same, bool? Colors = null);
 
 			readonly Dictionary<string, string?> cache = new(StringComparer.OrdinalIgnoreCase);
 			readonly Dictionary<string, Stored> earlier, now = new(StringComparer.OrdinalIgnoreCase);
@@ -1062,6 +1103,22 @@ namespace HEI.Agent {
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
 					return unknown;
 				}
+			}
+
+			/// <summary>
+			/// The two photos have the same colours too (<paramref name="look"/>, <see cref="IFingerprints.SameColors"/>): asked once a
+			/// pair, of a pair already the same up close (<see cref="UpClose"/>), and kept with that look, so the next scan reuses
+			/// it while both files are unchanged. False when it can't be told: a pair not looked at up close, or one on a resting
+			/// drive whose colours weren't compared before. No plain copy is claimed whose colours weren't compared.
+			/// </summary>
+			public bool SameColors(string a, string b, Func<bool?> look) {
+				if (string.Compare(a, b, StringComparison.OrdinalIgnoreCase) > 0) (a, b) = (b, a);
+				// Only a close look made or kept this scan, for the files as they are now (LookAt checks that); the answer is kept in it.
+				if (!looksNow.TryGetValue(a + "\n" + b, out Look? close) || !close.Same) return false;
+				if (close.Colors is bool known) return known;
+				if (!CanRead(a) || !CanRead(b) || look() is not bool same) return false;
+				looksNow[a + "\n" + b] = close with { Colors = same };
+				return same;
 			}
 
 			public bool Same(string a, string b) {
