@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.6
+
+**It carries kit 2.152.13: the parts all the staff share.**
+
+### What changed
+
+- Kit 2.152.13: What's new in About, and the changelog each release carries, now show only what is for the people who use the staff: the notes about how the staff are made are left out, as they are from Manor's update notes.
+
+### Before you update
+
+Nothing: it updates itself as usual.
+
 ## 1.10.5
 
 **Brings 2 changes: On the review page, a softened (blurred) version of a photo is no longer pre-checked as a copy. And a document with a picture in black and white is no longer the same as one with that picture in colour; Heiward's release notes and changelog describe Heiward itself.**
