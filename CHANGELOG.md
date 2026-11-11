@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.8
+
+**Small fixes and improvements.**
+
+### What changed
+
+- Small fixes and improvements.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.7
 
 **Small fixes and improvements.**
