@@ -1,6 +1,7 @@
 // The tour of the review page, for someone who has just installed Heiward: what it does, the few choices that are
 // theirs on day one, then the page, part by part. It's Heiward's own, so it works with or without Manor: it opens
-// by itself the first time the page is opened after a new install, from the Store or GitHub, and again at #/tour.
+// by itself the first time the page is opened after a new install, from the Store or GitHub, and again at #/tour,
+// which About's and Settings' Take the tour open (app.js, takeTheTour): the app window has no address bar.
 // Heiward says when (the state's tourDue, PageTour): the install sets it, and the tour's end, done or skipped, clears
 // it. Not the browser's storage, which Edge keeps in its own profile through an uninstall, so a PC that had Heiward
 // before never saw the tour again; nor does an update or a restart show it again. Manor's hire
@@ -14,7 +15,7 @@
 /** The parts of the page it walks, by their data-tour; only those showing are walked. */
 const TOUR_PARTS = [
   ['controls', 'Where the AI runs, and Scan now',
-    'The badge says where AI matching runs: on the NPU when this PC has one, else the graphics card or the processor. It reads "Running on the NPU" only while a scan is matching pictures there. Pause holds the scheduled scans for a while; About, beside Settings, has its version, its license and where its work runs; Scan now starts one at full speed.'],
+    'The badge says where AI matching runs: on the NPU when this PC has one, else the graphics card or the processor. It reads "Running on the NPU" only while a scan is matching pictures there. Pause holds the scheduled scans for a while; About, beside Settings, has its version, its license, where its work runs and this tour, to take again; Scan now starts one at full speed.'],
   ['tiles', 'At the top',
     'The free space on your drives, the copies waiting for your review and the space they take, and what you have freed so far. Click one to open its tab.'],
   ['drives', 'Devices and drives',
@@ -81,9 +82,13 @@ function tourScanWords(s) {
 
 function startTour(from) {
   if (!state || setupShowing(state) || uninstallShowing()) return; // the setup (and its Done until Open Heiward), and the uninstall
+  // Each time from the start (Take the tour in About or Settings, Manor's): it walks the parts showing now, so a Games
+  // or Developer area turned on or off since the last time is walked or not. Begun again while it shows (Manor's
+  // #/tour?from=), it still ends on the tab the page had before it, not one a step opened.
+  if (tourStep === null) tourTab = homeTab;
   tourFrom = from;
   tourStep = 0;
-  tourTab = homeTab;
+  tourParts = [];
   // The page under it is the home page, whose parts the tour walks.
   if (isTourHash(location.hash)) trail.replace('#/');
   route = parseRoute();
