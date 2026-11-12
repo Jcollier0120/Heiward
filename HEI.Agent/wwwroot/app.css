@@ -650,18 +650,27 @@ body > .titlebar { box-sizing: border-box; width: 100%; max-width: 1704px; margi
 html.setup-mode { color-scheme: dark; }
 html.setup-mode body { background: #020617; }
 html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
+/* The window, top to bottom: the banner, the step (which scrolls by itself, only when it must) and the footer with the
+   step's buttons, which stays in reach and never covers the step. The banner slims down in a short window (below), so a
+   1366 x 768 screen at 100 % or 125 % shows a whole step. The brand, the step and the footer line up on a column 1320 px
+   wide at most: a wide-ish window gives the questions columns and the pictures room. */
 .setup {
   --bg: #020617; --surface: #0b1224; --surface-2: #0f172a; --fg: #e2e8f0; --muted: #94a3b8; --faint: #64748b;
   --line: #1e293b; --hover: rgba(148, 163, 184, 0.08); --selected: rgba(16, 185, 129, 0.14);
   --accent: #10b981; --accent-fg: #ffffff; --accent-soft: rgba(16, 185, 129, 0.16); --accent-text: #6ee7b7;
   --ok: #34d399; --ok-bg: rgba(16, 185, 129, 0.16); --warn: #fbbf24; --warn-bg: rgba(251, 191, 36, 0.12);
   --alert: #f87171; --alert-bg: rgba(248, 113, 113, 0.12);
-  margin: 0; border: 0; border-radius: 0; overflow-y: auto; color: var(--fg);
+  --setup-edge: max(32px, calc((100% - 1320px) / 2 + 32px));
+  --setup-banner: 150px;
+  --setup-foot: 66px;
+  /* The height a step has, banner, footer and the step's own padding taken off: the pictures are sized to it. */
+  --setup-room: calc(100vh - var(--setup-banner) - var(--setup-foot) - 48px);
+  display: flex; flex-direction: column;
+  margin: 0; border: 0; border-radius: 0; overflow: hidden; color: var(--fg);
   background: radial-gradient(900px 420px at 85% 30%, rgba(79, 70, 229, 0.10), transparent 70%),
     radial-gradient(700px 380px at 10% 60%, rgba(16, 185, 129, 0.07), transparent 70%), #020617;
 }
-/* The brand and the steps line up with the page below, whose column is 1080px wide at most. */
-.setup-top { --setup-edge: max(32px, calc((100% - 1080px) / 2 + 32px)); position: relative; height: 172px; overflow: hidden; border-bottom: 1px solid #0f172a; }
+.setup-top { position: relative; flex: none; height: var(--setup-banner); overflow: hidden; border-bottom: 1px solid #0f172a; }
 .setup-banner { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: center bottom; }
 .setup-brand {
   position: absolute; left: var(--setup-edge); right: var(--setup-edge); top: 22px; display: flex; align-items: center; gap: 10px;
@@ -686,18 +695,23 @@ html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
 .setup-steps li.now .setup-step-dot { background: #10b981; border-color: #10b981; color: #022c22; }
 .setup-steps li.done .setup-step-dot { background: rgba(16, 185, 129, 0.18); border-color: #10b981; color: #6ee7b7; }
 
-.setup-card { max-width: 1080px; margin: 0 auto; padding: 30px 32px 6px; box-sizing: border-box; }
-.setup-welcome, .setup-progress, .setup-done {
-  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 44px; align-items: center;
+.setup-card {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; box-sizing: border-box; padding: 26px var(--setup-edge) 22px;
 }
-.setup-pc { max-width: 760px; }
+/* A step with a picture: the words, and the picture beside them, given the larger share so its words can be read. A
+   step shorter than the window sits in its middle; a taller one scrolls from its top. */
+.setup-welcome, .setup-progress, .setup-done {
+  display: grid; grid-template-columns: minmax(300px, 1fr) minmax(0, 1.3fr); gap: 20px 40px;
+  align-items: center; align-content: safe center;
+}
+.setup-progress { grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.5fr); }
+.setup-welcome { grid-template-columns: minmax(320px, 0.85fr) minmax(0, 1.45fr); }
 .setup-eyebrow { color: #fbbf24; font-size: 12px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
 .setup-eyebrow.castellan { color: #a5b4fc; }
 .setup-title {
   font: 700 34px/1.15 'Segoe UI Variable Display', 'Segoe UI', system-ui, sans-serif; color: #f8fafc;
   margin: 10px 0 12px; letter-spacing: -0.01em;
 }
-.setup-pc .setup-title { font-size: 28px; margin-top: 0; }
 .setup-hl { background: linear-gradient(90deg, #6ee7b7, #22d3ee); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .setup-lead { font-size: 15.5px; color: #cbd5e1; margin: 0 0 16px; }
 .setup-facts { list-style: none; padding: 0; margin: 18px 0 0; display: grid; gap: 11px; }
@@ -708,34 +722,46 @@ html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
 .setup .btn { border-radius: 10px; padding: 9px 18px; }
 .setup .btn.secondary { background: transparent; color: #e2e8f0; border-color: #334155; }
 .setup .btn.setup-go {
-  padding: 11px 26px; font-size: 15px; font-weight: 600; border: 0;
-  background: linear-gradient(135deg, #10b981, #0d9488); box-shadow: 0 10px 28px rgba(16, 185, 129, 0.25);
+  padding: 10px 26px; font-size: 15px; font-weight: 600; border: 0;
+  background: linear-gradient(135deg, #10b981, #0d9488); box-shadow: 0 8px 24px rgba(16, 185, 129, 0.22);
 }
 /* The Store version standing aside for Castellan's copy: Open Heiward is a link to that copy's page. */
 .setup a.btn.setup-go { display: inline-block; color: #ffffff; text-decoration: none; }
-.setup-part { font-size: 13px; color: #94a3b8; max-width: 460px; }
+.setup-part { font-size: 13px; color: #94a3b8; max-width: 460px; margin: 18px 0 0; }
 .setup a { color: #a5b4fc; }
+.setup-kept > * { max-width: 760px; }
 
-.setup-show { margin: 0; }
+/* The slides: as wide as their column, and no taller than the step's room. */
+.setup-show { margin: 0 auto; width: min(100%, calc((var(--setup-room) - 30px) * 1.911)); }
 .setup-show-img {
   display: block; width: 100%; aspect-ratio: 1200 / 628; border-radius: 16px; background: #0b1222;
   border: 1px solid #1e293b; box-shadow: 0 28px 70px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(99, 102, 241, 0.06);
 }
 .setup-show-img.in { animation: setup-fade 0.6s ease; }
 @keyframes setup-fade { from { opacity: 0.25; transform: scale(0.992); } to { opacity: 1; transform: none; } }
-.setup-dots { display: flex; justify-content: center; gap: 7px; margin-top: 14px; }
+.setup-dots { display: flex; justify-content: center; gap: 7px; margin-top: 12px; }
 .setup-dot { width: 8px; height: 8px; padding: 0; border: 0; border-radius: 4px; background: #334155; cursor: pointer; transition: width 0.25s, background 0.25s; }
 .setup-dot[aria-current="true"] { width: 24px; background: #6ee7b7; }
 
-/* The questions: the review page's fieldsets, in the night colours, and a bar that keeps the buttons in reach. */
-.setup-question { border-radius: 12px; background: var(--surface); }
+/* Your PC: the title and its line on one row, then the questions in as many columns as fit (300 px each at least,
+   three at most), each card whole in its column: a wide-ish window shows them all at once. */
+.setup-card.setup-pc { padding-top: 22px; }
+.setup-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 18px; margin: 0 0 14px; }
+.setup-pc .setup-title { font-size: 28px; margin: 0; }
+.setup-pc .setup-head .setup-lead { margin: 0; font-size: 15px; }
+.setup-questions { columns: 3 300px; column-gap: 16px; }
+.setup-questions > * { break-inside: avoid; }
+.setup-questions .setup-question, .setup-questions .setup-found { margin: 0 0 14px; }
+.setup-question { border-radius: 12px; background: var(--surface); padding: 8px 16px 4px; }
+.setup-question .setup-option { padding: 7px 0; }
+.setup-question .muted.small { line-height: 1.4; }
+.setup-why { margin: 4px 0 0; }
+.setup-switches .auto-row { padding: 10px 0; }
+.setup-switches .auto-row:last-child { border-bottom: 0; }
 .setup-option input { accent-color: #10b981; }
 .setup-found { border-color: rgba(16, 185, 129, 0.35); background: rgba(6, 78, 59, 0.22); border-radius: 12px; }
-.setup-note { margin-top: 14px; }
-.setup-actions.setup-bar {
-  position: sticky; bottom: 0; justify-content: flex-end; margin: 6px 0 0; padding: 22px 0 18px;
-  background: linear-gradient(rgba(2, 6, 23, 0), #020617 40%);
-}
+.setup-note { margin: 0; }
+.setup-note .setup-later { display: none; }
 .setup-found-icon { color: var(--ok); }
 .setup-chip { color: var(--ok); background: var(--ok-bg); }
 .setup-advice { color: var(--warn); background: var(--warn-bg); }
@@ -764,38 +790,93 @@ html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
   max-height: 220px; overflow: auto; font-size: 12px; white-space: pre-wrap; margin: 10px 0;
 }
 
-/* Done: Open Heiward, and Castellan beside it. */
+/* Done: the words and Open Heiward (in the footer), and Castellan beside them, its picture no taller than there's room for. */
 .setup-done-mark {
   width: 58px; height: 58px; border-radius: 50%; display: grid; place-items: center; color: #34d399;
   background: rgba(16, 185, 129, 0.14); border: 2px solid #10b981; box-shadow: 0 0 40px rgba(16, 185, 129, 0.25);
 }
 .setup-done-mark svg { width: 28px; height: 28px; }
 .setup-castellan {
+  margin: 0 auto; width: min(100%, calc((var(--setup-room) - 190px) * 1.911)); min-width: min(100%, 360px);
   border: 1px solid rgba(99, 102, 241, 0.35); border-radius: 16px; overflow: hidden;
   background: linear-gradient(180deg, rgba(49, 46, 129, 0.35), rgba(15, 23, 42, 0.7));
   box-shadow: 0 28px 70px rgba(0, 0, 0, 0.45);
 }
 .setup-castellan-img { display: block; width: 100%; aspect-ratio: 1200 / 628; border-bottom: 1px solid rgba(99, 102, 241, 0.25); }
-.setup-castellan-text { padding: 16px 22px 22px; }
-.setup-castellan h2 { font-size: 20px; color: #f8fafc; margin: 6px 0; letter-spacing: 0; }
-.setup-castellan p { color: #cbd5e1; margin: 0; }
+.setup-castellan-text { padding: 14px 20px 18px; }
+.setup-castellan h2 { font-size: 19px; color: #f8fafc; margin: 4px 0; letter-spacing: 0; }
+.setup-castellan p { color: #cbd5e1; margin: 0; font-size: 14px; }
 .setup a.btn.castellan-btn {
-  display: inline-block; margin-top: 14px; text-decoration: none; color: #ffffff; font-weight: 600;
+  display: inline-block; margin-top: 12px; text-decoration: none; color: #ffffff; font-weight: 600;
   background: linear-gradient(135deg, #6366f1, #4f46e5); box-shadow: 0 10px 28px rgba(79, 70, 229, 0.3);
 }
-.setup-foot {
-  max-width: 1080px; margin: 22px auto 0; padding: 14px 32px 22px; box-sizing: border-box;
-  display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 18px;
-  color: #64748b; font-size: 12px; border-top: 1px solid #0f172a;
-}
 
-/* A narrow window: one column, the pictures after the words. */
+/* The footer: the license and Castellan on the left, the step's buttons on the right (app.js, setupFootBar). */
+.setup-foot {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px 24px;
+  min-height: var(--setup-foot); box-sizing: border-box; padding: 10px var(--setup-edge);
+  border-top: 1px solid #1e293b; background: rgba(2, 6, 23, 0.9); color: #64748b; font-size: 12px;
+}
+.setup-foot-text { display: flex; flex-wrap: wrap; gap: 2px 18px; min-width: 0; }
+.setup-foot-bar { flex: none; }
+.setup-actions.setup-bar { justify-content: flex-end; margin: 0; }
+
+/* A shorter window: a slimmer banner. A short one (1366 x 768, at 100 % or 125 %): the banner a strip, the brand on its
+   left and the steps on its right, and the step's words a size smaller; the footer says Part of Castellan. */
+@media (max-height: 820px) {
+  .setup { --setup-banner: 112px; }
+  .setup-brand { top: 16px; }
+  .setup-steps { bottom: 12px; }
+  .setup-title { font-size: 30px; margin: 8px 0 10px; }
+  .setup-welcome { grid-template-columns: minmax(300px, 1fr) minmax(0, 1.3fr); }
+}
+@media (max-height: 700px) {
+  .setup { --setup-banner: 60px; --setup-foot: 58px; }
+  .setup-banner { object-position: center 78%; }
+  .setup-brand { top: 50%; right: auto; transform: translateY(-50%); }
+  .setup-brand .brand-mark { width: 26px; height: 26px; }
+  .setup-name { font-size: 19px; }
+  .setup-pill { display: none; }
+  .setup-steps { left: auto; right: var(--setup-edge); top: 50%; bottom: auto; transform: translateY(-50%); }
+  .setup-card, .setup-card.setup-pc { padding-top: 16px; padding-bottom: 14px; }
+  .setup-title { font-size: 26px; margin: 6px 0 8px; }
+  .setup-pc .setup-title { font-size: 24px; }
+  .setup-lead { font-size: 14.5px; margin-bottom: 10px; }
+  .setup-facts { margin-top: 10px; gap: 7px; }
+  .setup-head { margin-bottom: 10px; }
+  .setup-questions .setup-question, .setup-questions .setup-found { margin-bottom: 10px; }
+  .setup-question .setup-option { padding: 5px 0; }
+  .setup-switches .auto-row { padding: 7px 0; }
+  .setup-stages { gap: 9px; }
+  .setup-foot { padding-top: 8px; padding-bottom: 8px; }
+}
+/* The shortest (1366 x 768 at 125 %, about 530 px to show it in): the words a size smaller still. Step 1 drops its title,
+   which the strip's steps already say; Welcome drops its Castellan line, which the footer says; Done shows Castellan's
+   words without its picture, too small to read there. */
+@media (max-height: 600px) {
+  .setup-card, .setup-card.setup-pc { padding-top: 12px; padding-bottom: 10px; }
+  .setup-title { font-size: 24px; margin: 4px 0 6px; }
+  .setup-lead { font-size: 14px; margin-bottom: 8px; }
+  .setup-facts { margin-top: 8px; gap: 5px; font-size: 14px; }
+  .setup-welcome .setup-part { display: none; }
+  .setup-pc .setup-head, .setup-why-plain { display: none; }
+  .setup-note .setup-later { display: inline; }
+  .setup-questions { column-gap: 12px; font-size: 14px; }
+  .setup-questions .setup-question, .setup-questions .setup-found { margin-bottom: 8px; }
+  .setup-question { padding: 4px 14px 2px; }
+  .setup-question .setup-option { padding: 4px 0; gap: 8px; }
+  .setup-question .muted.small { font-size: 12.5px; line-height: 1.35; }
+  .setup-switches .auto-row { padding: 5px 0; }
+  .setup-castellan { width: 100%; }
+  .setup-castellan-img { display: none; }
+}
+/* A narrow window: one column, the pictures after the words, the whole width. */
 @media (max-width: 860px) {
-  .setup-welcome, .setup-progress, .setup-done { grid-template-columns: minmax(0, 1fr); gap: 26px; }
+  .setup { --setup-edge: 20px; }
+  .setup-welcome, .setup-progress, .setup-done { grid-template-columns: minmax(0, 1fr); gap: 26px; align-content: start; }
+  .setup-show, .setup-castellan { width: 100%; }
   .setup-title { font-size: 28px; }
-  .setup-top { height: 196px; }
-  .setup-card { padding: 24px 20px 6px; }
-  .setup-top { --setup-edge: 20px; }
+  .setup-foot { flex-wrap: wrap; }
 }
 @media (prefers-reduced-motion: reduce) {
   .setup-show-img.in, .setup-stages li.now .setup-stage-mark { animation: none; }

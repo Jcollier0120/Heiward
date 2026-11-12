@@ -73,10 +73,14 @@
       </div>
       <ol class="setup-steps" id="setup-steps" aria-label="Setup steps"></ol>
     </header>
+    <!-- The page scrolls on its own when it must; the footer, with the view's buttons (app.js, setupFootBar), stays put. -->
     <section class="setup-card" id="setup-card"></section>
     <footer class="setup-foot">
-      <span>Heiward is free software (AGPL v3).</span>
-      <span>Part of Castellan · <a data-castellan target="_blank" rel="noopener noreferrer">castellan-software.com</a></span>
+      <div class="setup-foot-text">
+        <span>Heiward is free software (AGPL v3).</span>
+        <span>Part of Castellan · <a data-castellan target="_blank" rel="noopener noreferrer">castellan-software.com</a></span>
+      </div>
+      <div class="setup-foot-bar" id="setup-bar"></div>
     </footer>
   </main>
 

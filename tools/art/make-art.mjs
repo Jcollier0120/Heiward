@@ -122,12 +122,17 @@ function chip(cx, cy, size, label, castellan = false) {
   ${text(cx, cy + size * 0.11, label, { size: size * 0.27, weight: 800, fill: '#fff', anchor: 'middle', ls: 1 })}`;
 }
 
+// Where the words go. The setup window shows a slide at about half its size, so the words are drawn large enough to
+// read there: the body's lines are kept to about 38 characters, to stay clear of the pictures on the right.
+const TITLE_TOP = 204, TITLE_LH = 54, BODY_LH = 31;
+const bodyTop = (titleLines) => TITLE_TOP + (titleLines - 1) * TITLE_LH + 48;
+
 /** The slide's frame: the night, Heiward's name, "Part of Castellan", and the site at the foot. */
 function slide(name, { eyebrow, title, body, art, foot = 'Free and open source · AGPL v3', washAt = [820, 300], castellan = false }) {
-  const titleLines = title.map((line, i) => text(56, 196 + i * 50, line, { size: 42, weight: 700, fill: '#f1f5f9' })).join('\n');
-  const bodyTop = 196 + title.length * 50 + 14;
-  const bodyLines = body.map((line, i) => text(56, bodyTop + i * 25, line, { size: 17, weight: 500, fill: '#cbd5e1' })).join('\n');
-  const castle = `<image href="${darkIcon(join(here, 'castellan.svg'))}" x="${W - 56 - 164}" y="46" width="22" height="22"/>`;
+  const titleLines = title.map((line, i) => text(56, TITLE_TOP + i * TITLE_LH, line, { size: 46, weight: 700, fill: '#f1f5f9' })).join('\n');
+  const top = bodyTop(title.length);
+  const bodyLines = body.map((line, i) => text(56, top + i * BODY_LH, line, { size: 22, weight: 500, fill: '#cbd5e1' })).join('\n');
+  const castle = `<image href="${darkIcon(join(here, 'castellan.svg'))}" x="${W - 56 - 190}" y="45" width="26" height="26"/>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title.map((l) => (Array.isArray(l) ? l.map((p) => (Array.isArray(p) ? p[0] : p)).join('') : l)).join(' '))}">
 <!-- Drawn by tools/art/make-art.mjs: change it there. -->
 ${defs}
@@ -135,18 +140,18 @@ ${defs}
 <rect width="${W}" height="${H}" fill="url(#dots)"/>
 <circle cx="${washAt[0]}" cy="${washAt[1]}" r="440" fill="url(#${castellan ? 'washc' : 'wash'})"/>
 <circle cx="80" cy="600" r="560" fill="url(#wash2)"/>
-${tile(56, 44, 46)}
-${text(116, 74.5, 'HEIWARD', { size: 18, weight: 700, fill: '#6ee7b7', ls: 4.4 })}
-<rect x="${W - 56 - 176}" y="42" width="176" height="30" rx="15" fill="#1e1b4b" fill-opacity="0.6" stroke="#4f46e5" stroke-opacity="0.6"/>
+${tile(56, 40, 52)}
+${text(122, 75, 'HEIWARD', { size: 21, weight: 700, fill: '#6ee7b7', ls: 4.6 })}
+<rect x="${W - 56 - 204}" y="40" width="204" height="36" rx="18" fill="#1e1b4b" fill-opacity="0.6" stroke="#4f46e5" stroke-opacity="0.6"/>
 ${castle}
-${text(W - 56 - 134, 62, 'Part of Castellan', { size: 14, weight: 600, fill: '#c7d2fe' })}
-${text(56, 142, eyebrow, { size: 15, weight: 700, fill: '#fbbf24', ls: 2.2 })}
+${text(W - 56 - 156, 64, 'Part of Castellan', { size: 17, weight: 600, fill: '#c7d2fe' })}
+${text(56, 146, eyebrow, { size: 18, weight: 700, fill: '#fbbf24', ls: 2.4 })}
 ${titleLines}
 ${bodyLines}
 ${art}
-<line x1="56" y1="572" x2="${W - 56}" y2="572" stroke="#1e293b"/>
-${text(56, 600, foot, { size: 14, weight: 500, fill: '#64748b' })}
-${text(W - 56, 600, SITE, { size: 15, weight: 700, fill: '#a5b4fc', anchor: 'end', ls: 0.3 })}
+<line x1="56" y1="566" x2="${W - 56}" y2="566" stroke="#1e293b"/>
+${text(56, 598, foot, { size: 16.5, weight: 500, fill: '#64748b' })}
+${text(W - 56, 598, SITE, { size: 18, weight: 700, fill: '#a5b4fc', anchor: 'end', ls: 0.3 })}
 </svg>
 `;
 }
@@ -156,7 +161,7 @@ ${text(W - 56, 600, SITE, { size: 15, weight: 700, fill: '#a5b4fc', anchor: 'end
 const found = slide('found', {
   eyebrow: 'FREE FOR WINDOWS',
   title: ['Look-alike photos', [['and videos, '], ['found.', 'url(#hl)']]],
-  body: ['AI matching finds the resized, recompressed,', 'cropped and edited copies on your drives,', 'and lists them for you to review. Nothing is', 'removed until you say so.'],
+  body: ['AI matching finds the resized,', 'recompressed, cropped and edited', 'copies on your drives, and lists them', 'for you to review. Nothing is removed', 'until you say so.'],
   art: (() => {
     const left = 506, top = 146;
     const files = [['IMG_4821.jpg', 'original'], ['IMG_4821-small.jpg', 'original'], ['beach-crop.jpg', 'crop'], ['IMG_4821 (edited).jpg', 'edited'], ['VID_0193.mp4', 'video']];
@@ -169,7 +174,7 @@ const found = slide('found', {
     ];
     const frows = found.map(([n, d, k, on], i) => {
       const y = top + 60 + i * 58;
-      return `${on == null ? `<circle cx="${rx + 27}" cy="${y + 15}" r="6" fill="#34d399"/>` : checkbox(rx + 18, y + 6, on)}${photo(rx + 46, y, k)}${text(rx + 102, y + 14, n, { size: 15, weight: 600, fill: '#f1f5f9' })}${text(rx + 102, y + 33, d, { size: 13, weight: 500, fill: on == null ? '#6ee7b7' : '#94a3b8' })}`;
+      return `${on == null ? `<circle cx="${rx + 27}" cy="${y + 15}" r="6" fill="#34d399"/>` : checkbox(rx + 18, y + 6, on)}${photo(rx + 46, y, k)}${text(rx + 102, y + 14, n, { size: 15, weight: 600, fill: '#f1f5f9' })}${text(rx + 102, y + 33, d, { size: 13.5, weight: 500, fill: on == null ? '#6ee7b7' : '#94a3b8' })}`;
     }).join('');
     return `${windowBox(left, top, 274, 344, 'Pictures')}${rows}
     <path d="M${left + 274} ${top + 172}H${rx}" stroke="#34d399" stroke-width="2" stroke-dasharray="3 6" stroke-linecap="round"/>
@@ -184,7 +189,7 @@ const found = slide('found', {
 const npu = slide('npu', {
   eyebrow: 'NPU FIRST',
   title: [[['AI on your '], ['NPU,', 'url(#hl)']], 'not in the cloud.'],
-  body: ['Heiward runs its AI on the PC\u2019s NPU, the chip', 'made for AI: quick, cool and light on the', 'battery, so scans can run every hour. With no', 'NPU, it uses the graphics card or processor.'],
+  body: ['Heiward runs its AI on the PC\u2019s NPU,', 'the chip made for AI: quick, cool and', 'light on the battery, so scans can run', 'every hour. With no NPU, it uses the', 'graphics card or the processor.'],
   washAt: [900, 280],
   art: (() => {
     const cx = 900, cy = 268;
@@ -193,22 +198,66 @@ const npu = slide('npu', {
       ['~3 ms', 'a picture, on a', 'Snapdragon X NPU'],
       ['Hourly', 'scans, on a sip', 'of power'],
       ['0 bytes', 'of your files', 'sent online'],
-    ].map(([big, a, b], i) => {
-      const x = 548 + i * 204, y = 436;
-      return `<rect x="${x}" y="${y}" width="190" height="100" rx="14" fill="#0f172a" stroke="#1e293b"/>${text(x + 18, y + 40, big, { size: 28, weight: 800, fill: 'url(#hl)' })}${text(x + 18, y + 66, a, { size: 13, weight: 500, fill: '#94a3b8' })}${text(x + 18, y + 84, b, { size: 13, weight: 500, fill: '#94a3b8' })}`;
-    }).join('');
+    ];
     return `${stream}<path d="M820 ${cy}H${cx - 120}" stroke="#34d399" stroke-width="2.5" stroke-dasharray="3 7" stroke-linecap="round"/>
     ${chip(cx, cy, 170, 'NPU')}
-    ${text(cx, cy + 150, 'Qualcomm Hexagon · Intel AI Boost · AMD Ryzen AI', { size: 13.5, weight: 600, fill: '#94a3b8', anchor: 'middle' })}
-    ${stats}`;
+    ${text(cx, cy + 150, 'Qualcomm Hexagon · Intel AI Boost · AMD Ryzen AI', { size: 15, weight: 600, fill: '#94a3b8', anchor: 'middle' })}
+    ${statTiles(stats)}`;
   })(),
   foot: 'Free and open source · Intel and AMD NPU support is new',
+});
+
+/** Three numbers in a row under a slide's picture: a big one and two lines on it. */
+function statTiles(stats) {
+  return stats.map(([big, a, b], i) => {
+    const x = 548 + i * 204, y = 432;
+    return `<rect x="${x}" y="${y}" width="190" height="108" rx="14" fill="#0f172a" stroke="#1e293b"/>${text(x + 18, y + 42, big, { size: 29, weight: 800, fill: 'url(#hl)' })}${text(x + 18, y + 70, a, { size: 15, weight: 500, fill: '#94a3b8' })}${text(x + 18, y + 90, b, { size: 15, weight: 500, fill: '#94a3b8' })}`;
+  }).join('');
+}
+
+/** A graphics card, its two fans to the front and its bracket at the left, centred on cx, cy; about 320 wide. */
+function graphicsCard(cx, cy) {
+  const x0 = cx - 150, y0 = cy - 78, w = 300, h = 150;
+  const fan = (fx, fy) => {
+    const blades = Array.from({ length: 7 }, (_, k) => `<path d="M0 -12C10 -20 14 -32 6 -41C-4 -38 -8 -24 -5 -12z" transform="rotate(${r2((k * 360) / 7)})" fill="url(#chipdie)" fill-opacity="0.75"/>`).join('');
+    return `<g transform="translate(${r2(fx)} ${r2(fy)})"><circle r="46" fill="#022c22" stroke="#34d399" stroke-width="2"/>${blades}<circle r="12" fill="#064e3b" stroke="#6ee7b7" stroke-width="2"/></g>`;
+  };
+  const fingers = Array.from({ length: 16 }, (_, i) => `<rect x="${x0 + 44 + i * 9 + (i > 3 ? 8 : 0)}" y="${y0 + h}" width="5" height="12" rx="1" fill="#fbbf24" fill-opacity="0.8"/>`).join('');
+  return `<circle cx="${cx}" cy="${cy}" r="200" fill="url(#greenhalo)"/>
+  ${fingers}
+  <rect x="${x0 - 18}" y="${y0 - 14}" width="18" height="${h + 40}" rx="4" fill="#1e293b" stroke="#64748b" stroke-width="2"/>
+  <path d="M${x0 - 9} ${y0 + 10}v28M${x0 - 9} ${y0 + 52}v28M${x0 - 9} ${y0 + 94}v28" stroke="#475569" stroke-width="5" stroke-linecap="round"/>
+  <rect x="${x0}" y="${y0}" width="${w}" height="${h}" rx="16" fill="url(#chipbody)" stroke="#34d399" stroke-width="2.5"/>
+  <rect x="${x0 + 14}" y="${y0 + 12}" width="${w - 28}" height="26" rx="8" fill="#022c22" stroke="#10b981" stroke-opacity="0.5"/>
+  ${text(x0 + 28, y0 + 31, 'GPU', { size: 17, weight: 800, fill: '#6ee7b7', ls: 2 })}
+  <circle cx="${x0 + w - 30}" cy="${y0 + 25}" r="4" fill="#6ee7b7"/><circle cx="${x0 + w - 46}" cy="${y0 + 25}" r="4" fill="#22d3ee"/>
+  ${fan(x0 + 80, y0 + 94)}${fan(x0 + w - 80, y0 + 94)}`;
+}
+
+// The NPU slide for a PC with none: the same promise, on the graphics card (the setup shows it there, app.js).
+const gpu = slide('gpu', {
+  eyebrow: 'YOUR GRAPHICS CARD',
+  title: [[['AI on your '], ['GPU,', 'url(#hl)']], 'not in the cloud.'],
+  body: ['Heiward runs its AI on the graphics', 'card: any DirectX 12 GPU, quicker and', 'lighter on power than the processor.', 'Scheduled scans run every 6 hours on', 'AC power, and never on battery.'],
+  washAt: [920, 280],
+  art: (() => {
+    const cx = 976, cy = 262;
+    const stream = [0, 1, 2, 3].map((i) => photo(548 + i * 58, cy - 15 + (i % 2 ? -26 : 22), ['original', 'crop', 'edited', 'video'][i])).join('');
+    return `${stream}<path d="M772 ${cy}H${cx - 176}" stroke="#34d399" stroke-width="2.5" stroke-dasharray="3 7" stroke-linecap="round"/>
+    ${graphicsCard(cx, cy)}
+    ${text(900, cy + 140, 'NVIDIA GeForce · AMD Radeon · Intel Arc and Iris Xe', { size: 15, weight: 600, fill: '#94a3b8', anchor: 'middle' })}
+    ${statTiles([
+      ['Any', 'DirectX 12', 'graphics card'],
+      ['6 hours', 'between scans,', 'on AC power'],
+      ['0 bytes', 'of your files', 'sent online'],
+    ])}`;
+  })(),
 });
 
 const safe = slide('safe', {
   eyebrow: 'YOU DECIDE',
   title: ['Nothing goes until', [['you '], ['say so.', 'url(#hl)']]],
-  body: ['Heiward lists what it finds on a review page.', 'What you check goes to the Recycle Bin, so it', 'can come back. The originals stay, and', 'cloud-only files are never downloaded.'],
+  body: ['Heiward lists what it finds on a', 'review page. What you check goes to', 'the Recycle Bin, so it can come back.', 'The originals stay, and cloud-only', 'files are never downloaded.'],
   art: (() => {
     const x = 540, y = 140, w = 470;
     const sets = [
@@ -219,15 +268,15 @@ const safe = slide('safe', {
     const rows = sets.map(([t, d, checked, k], i) => {
       const ry = y + 62 + i * 92;
       return `<rect x="${x + 16}" y="${ry}" width="${w - 32}" height="80" rx="12" fill="#0b1222" stroke="#1e293b"/>
-      ${photo(x + 30, ry + 14, k, 66, 52)}${text(x + 112, ry + 33, t, { size: 16, weight: 700, fill: '#f1f5f9' })}${text(x + 112, ry + 56, d, { size: 13, fill: '#94a3b8' })}
-      ${checked ? `${checkbox(x + w - 58, ry + 31, true)}${text(x + w - 66, ry + 45, `${checked} checked`, { size: 13, weight: 600, fill: '#6ee7b7', anchor: 'end' })}` : `${checkbox(x + w - 58, ry + 31, false)}${text(x + w - 66, ry + 45, 'kept', { size: 13, weight: 600, fill: '#94a3b8', anchor: 'end' })}`}`;
+      ${photo(x + 30, ry + 14, k, 66, 52)}${text(x + 112, ry + 33, t, { size: 16, weight: 700, fill: '#f1f5f9' })}${text(x + 112, ry + 57, d, { size: 14.5, fill: '#94a3b8' })}
+      ${checked ? `${checkbox(x + w - 58, ry + 31, true)}${text(x + w - 66, ry + 45, `${checked} checked`, { size: 14, weight: 600, fill: '#6ee7b7', anchor: 'end' })}` : `${checkbox(x + w - 58, ry + 31, false)}${text(x + w - 66, ry + 45, 'kept', { size: 14, weight: 600, fill: '#94a3b8', anchor: 'end' })}`}`;
     }).join('');
-    const bx = 1060, by = 300;
+    const bx = 1074, by = 300;
     return `${windowBox(x, y, w, 360, 'Review · 3 sets')}${rows}
     <path d="M${x + w + 8} ${by + 10}C${x + w + 30} ${by - 30} ${bx - 30} ${by - 30} ${bx - 6} ${by}" fill="none" stroke="#34d399" stroke-width="2.5" stroke-dasharray="3 7" stroke-linecap="round"/>
     <g transform="translate(${bx} ${by})"><circle r="62" fill="url(#greenhalo)"/><path d="M-26 -20h52l-5 52a6 6 0 0 1-6 5h-30a6 6 0 0 1-6-5z" fill="#0f172a" stroke="#34d399" stroke-width="2.5" stroke-linejoin="round"/><rect x="-32" y="-30" width="64" height="10" rx="4" fill="#34d399"/><path d="M-9 -30v-6h18v6" fill="none" stroke="#34d399" stroke-width="2.5"/><path d="M-11 -6v28M0 -6v28M11 -6v28" stroke="#34d399" stroke-opacity="0.5" stroke-width="2.5" stroke-linecap="round"/></g>
-    ${text(bx, by + 92, 'Recycle Bin', { size: 14, weight: 600, fill: '#cbd5e1', anchor: 'middle' })}
-    ${text(bx, by + 112, 'restore any time', { size: 12.5, fill: '#64748b', anchor: 'middle' })}`;
+    ${text(bx, by + 92, 'Recycle Bin', { size: 15.5, weight: 600, fill: '#cbd5e1', anchor: 'middle' })}
+    ${text(bx, by + 112, 'restore any time', { size: 14, fill: '#64748b', anchor: 'middle' })}`;
   })(),
 });
 
@@ -245,7 +294,7 @@ const icon = (name, x, y, scale = 1) => `<g transform="translate(${x} ${y}) scal
 const gentle = slide('gentle', {
   eyebrow: 'GENTLE BY DEFAULT',
   title: ['Gentle in the', [['background.', 'url(#hl)']]],
-  body: ['Scheduled scans run at a low priority, on', 'efficient cores, under a hard cap on the', 'processor. A drive with nothing new isn\u2019t', 'read at all, so a sleeping disk stays asleep.'],
+  body: ['Scheduled scans run at a low priority,', 'on efficient cores, under a hard cap', 'on the processor. A drive with nothing', 'new isn\u2019t read at all, so a sleeping', 'disk stays asleep.'],
   art: (() => {
     const tiles = [
       ['gauge', '\u00bc of the processor', 'at most, and never more than', 'two cores\u2019 worth'],
@@ -256,7 +305,7 @@ const gentle = slide('gentle', {
     return tiles.map(([ic, t, a, b], i) => {
       const x = 548 + (i % 2) * 304, y = 150 + Math.floor(i / 2) * 182;
       return `<rect x="${x}" y="${y}" width="290" height="166" rx="18" fill="#0f172a" stroke="#1e293b"/><rect x="${x + 22}" y="${y + 22}" width="52" height="52" rx="14" fill="#022c22" stroke="#10b981" stroke-opacity="0.4"/>${icon(ic, x + 34, y + 34, 1)}
-      ${text(x + 22, y + 108, t, { size: 19, weight: 700, fill: '#f1f5f9' })}${text(x + 22, y + 132, a, { size: 13.5, fill: '#94a3b8' })}${text(x + 22, y + 151, b, { size: 13.5, fill: '#94a3b8' })}`;
+      ${text(x + 22, y + 106, t, { size: 20, weight: 700, fill: '#f1f5f9' })}${text(x + 22, y + 131, a, { size: 15, fill: '#94a3b8' })}${text(x + 22, y + 151, b, { size: 15, fill: '#94a3b8' })}`;
     }).join('');
   })(),
 });
@@ -264,28 +313,29 @@ const gentle = slide('gentle', {
 const more = slide('more', {
   eyebrow: 'GAME MODE · DEVELOPER MODE',
   title: ['Games and code,', [['tidied ', ], ['too.', 'url(#hl)']]],
-  body: ['In game mode: what games leave behind, from', 'shader caches to leftovers of uninstalled', 'games, never your saves. In developer mode:', 'build outputs, worktrees and merged branches.'],
+  body: ['In game mode: what games leave behind,', 'from shader caches to leftovers of', 'uninstalled games, never your saves.', 'In developer mode: build outputs,', 'worktrees and merged branches.'],
   art: (() => {
     const panel = (x, ic, title, items) => `<rect x="${x}" y="150" width="290" height="330" rx="18" fill="#0f172a" stroke="#1e293b"/>
       <rect x="${x + 20}" y="170" width="44" height="44" rx="12" fill="#022c22" stroke="#10b981" stroke-opacity="0.4"/>${icon(ic, x + 28, x ? 178 : 178, 1)}
       ${text(x + 78, 199, title, { size: 18, weight: 700, fill: '#f1f5f9' })}
-      ${items.map(([n, s], i) => `<line x1="${x + 20}" y1="${238 + i * 56}" x2="${x + 270}" y2="${238 + i * 56}" stroke="#1e293b"/>${text(x + 20, 268 + i * 56, n, { size: 14.5, weight: 500, fill: '#cbd5e1' })}${text(x + 270, 268 + i * 56, s, { size: 14.5, weight: 700, fill: '#6ee7b7', anchor: 'end' })}`).join('')}`;
+      ${items.map(([n, s], i) => `<line x1="${x + 20}" y1="${238 + i * 56}" x2="${x + 270}" y2="${238 + i * 56}" stroke="#1e293b"/>${text(x + 20, 268 + i * 56, n, { size: 15.5, weight: 500, fill: '#cbd5e1' })}${text(x + 270, 268 + i * 56, s, { size: 15.5, weight: 700, fill: '#6ee7b7', anchor: 'end' })}`).join('')}`;
     return `${panel(548, 'game', 'Games', [['Leftovers of old games', '12.8 GB'], ['Shader caches', '4.1 GB'], ['Launcher downloads', '2.3 GB'], ['Crash dumps', '640 MB']])}
     ${panel(852, 'code', 'Developer', [['Build outputs', '18.4 GB'], ['Package caches', '6.7 GB'], ['Finished worktrees', '3.2 GB'], ['Merged branches', '27']])}
-    ${text(852, 512, 'Each is off until you turn it on in Settings. An example.', { size: 13, fill: '#64748b', anchor: 'middle' })}`;
+    ${text(852, 512, 'Each is off until you turn it on in Settings. An example.', { size: 14.5, fill: '#64748b', anchor: 'middle' })}`;
   })(),
 });
 
-const castellan = slide('castellan', {
+/** Castellan's slide; `chipLabel` names the chip its staff are wired to: the NPU, or the graphics card on a PC with none. */
+const castellanSlide = (chipLabel) => slide(chipLabel === 'NPU' ? 'castellan' : 'castellan-gpu', {
   eyebrow: 'ONE OF A STAFF',
   title: ['Heiward works for', [['Castellan.', 'url(#hlc)']]],
-  body: ['Castellan\u2019s staff keep your PC tidy and up', 'to date, with AI that runs on the PC, on', 'its NPU when it has one. Private, offline.', 'Heiward stays free, on its own or among them.'],
+  body: ['Castellan\u2019s staff keep your PC tidy', 'and up to date, with AI that runs on', chipLabel === 'NPU' ? 'the PC, on its NPU when it has one.' : 'the PC, on its graphics card or NPU.', 'Private, offline. Heiward stays free,', 'on its own or among them.'],
   castellan: true,
   washAt: [880, 300],
   art: (() => {
     const cx = 870, cy = 318;
     const staff = [
-      // Only staff that use the local AI (the site's lib/npu-staff.ts): this picture wires each to the NPU.
+      // Only staff that use the local AI (the site's lib/npu-staff.ts): this picture wires each to the chip.
       ['warrener', 'Warrener', 'Names your downloads'],
       ['thatcher', 'Thatcher', 'Explains app upgrades'],
       ['lamplighter', 'Lamplighter', 'Puts back good drivers'],
@@ -308,15 +358,18 @@ const castellan = slide('castellan', {
         : `<rect x="${r2(x - s / 2)}" y="${r2(y - s / 2 - 10)}" width="${s}" height="${s}" rx="${s * 0.26}" fill="#0f172a" stroke="#4f46e5" stroke-opacity="0.7"/><image href="${darkIcon(join(here, 'agents', id + '.svg'))}" x="${r2(x - s * 0.34)}" y="${r2(y - s * 0.34 - 10)}" width="${r2(s * 0.68)}" height="${r2(s * 0.68)}"/>`;
       const above = Math.sin(a) < -0.2;
       const ny = above ? y - s / 2 - 34 : y + s / 2 + 8, jy = above ? y - s / 2 - 17 : y + s / 2 + 25;
-      ring.push(`<g>${tileSvg}${text(x, ny, name, { size: me ? 15 : 13.5, weight: 700, fill: me ? '#6ee7b7' : '#e2e8f0', anchor: 'middle' })}${text(x, jy, job, { size: 11.5, fill: '#94a3b8', anchor: 'middle' })}</g>`);
+      ring.push(`<g>${tileSvg}${text(x, ny, name, { size: me ? 16 : 14.5, weight: 700, fill: me ? '#6ee7b7' : '#e2e8f0', anchor: 'middle' })}${text(x, jy, job, { size: 12.5, fill: '#94a3b8', anchor: 'middle' })}</g>`);
     });
     const [lines, tiles] = [ring.filter((s) => s.startsWith('<line')), ring.filter((s) => !s.startsWith('<line'))];
-    return `${lines.join('')}${chip(cx, cy, 96, 'NPU', true)}${tiles.join('')}
-    <rect x="56" y="${196 + 2 * 50 + 14 + 4 * 25 + 8}" width="292" height="40" rx="20" fill="#4f46e5"/>
-    ${text(56 + 146, 196 + 2 * 50 + 14 + 4 * 25 + 33, 'Meet the staff at ' + SITE, { size: 14, weight: 700, fill: '#fff', anchor: 'middle' })}`;
+    const by = bodyTop(2) + 4 * BODY_LH + 24;
+    return `${lines.join('')}${chip(cx, cy, 96, chipLabel, true)}${tiles.join('')}
+    <rect x="56" y="${by}" width="340" height="46" rx="23" fill="#4f46e5"/>
+    ${text(56 + 170, by + 29.5, 'Meet the staff at ' + SITE, { size: 17, weight: 700, fill: '#fff', anchor: 'middle' })}`;
   })(),
   foot: 'Heiward is free and open source · Castellan is sold with its staff',
 });
+const castellan = castellanSlide('NPU');
+const castellanGpu = castellanSlide('GPU');
 
 /**
  * The setup window's banner: a hedgerow at night, a field gate in it and fireflies over it (a heiward kept the
@@ -366,7 +419,8 @@ ${flies}
 }
 
 mkdirSync(out, { recursive: true });
-const slides = { found, npu, safe, gentle, more, castellan };
+// gpu and castellan-gpu stand in for npu and castellan on a PC with no NPU (app.js, GPU_SLIDES).
+const slides = { found, npu, gpu, safe, gentle, more, castellan, 'castellan-gpu': castellanGpu };
 for (const [n, svg] of Object.entries(slides)) writeFileSync(join(out, n + '.svg'), svg);
 writeFileSync(join(out, 'banner.svg'), banner());
 console.log(`wrote ${Object.keys(slides).length} slides and the banner to ${out}`);

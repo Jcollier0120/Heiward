@@ -92,7 +92,33 @@ namespace HEI.Agent {
 			ReviewServer.OpenInDefaultBrowser(url);
 		}
 
-		internal static string[] EdgeArguments(string url) => [$"--app={url}", "--window-size=1180,820", "--no-first-run"];
+		/// <summary>
+		/// Edge's flags for the window: where it was last and how big (<see cref="WindowPlace"/>), maximized if it was, or
+		/// the first window's size, centred on the main screen. Edge takes them only when it isn't running already; the page
+		/// puts the window in its place either way (app.js, placeWindow).
+		/// </summary>
+		internal static string[] EdgeArguments(string url) {
+			WindowPlace? saved = WindowPlace.Load();
+			return EdgeArguments(url, saved, WindowPlace.MainWorkArea(), saved?.OnAScreen() ?? false);
+		}
+
+		/// <param name="savedOnScreen">Whether the top of <paramref name="saved"/> is on a screen now; when not, Edge places it.</param>
+		internal static string[] EdgeArguments(string url, WindowPlace? saved, WindowPlace.WorkArea? work, bool savedOnScreen) {
+			var args = new List<string> { $"--app={url}" };
+			if (saved != null) {
+				if (savedOnScreen) args.Add($"--window-position={saved.X},{saved.Y}");
+				args.Add($"--window-size={saved.Width},{saved.Height}");
+				if (saved.Maximized) args.Add("--start-maximized");
+			}
+			else if (work is WindowPlace.WorkArea area) {
+				WindowPlace first = WindowPlace.Default(area);
+				args.Add($"--window-position={first.X},{first.Y}");
+				args.Add($"--window-size={first.Width},{first.Height}");
+			}
+			else args.Add("--window-size=1180,700");
+			args.Add("--no-first-run");
+			return [.. args];
+		}
 
 		/// <summary>Edge, as Windows registers it (App Paths), else where it's installed; null when it isn't.</summary>
 		static string? EdgePath() {

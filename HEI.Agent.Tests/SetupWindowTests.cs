@@ -29,7 +29,7 @@ public sealed class SetupWindowTests {
 
 	[Fact]
 	public void TheWindow_IsAnEdgeAppWindow_OnThePage() {
-		string[] args = Installer.EdgeArguments("http://heiward.localhost:28474/");
+		string[] args = Installer.EdgeArguments("http://heiward.localhost:28474/", saved: null, work: null, savedOnScreen: false);
 		Assert.Equal("--app=http://heiward.localhost:28474/", args[0]);
 		Assert.Contains(args, a => a.StartsWith("--window-size=", StringComparison.Ordinal));
 	}
