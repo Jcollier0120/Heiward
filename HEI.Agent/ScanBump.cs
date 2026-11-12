@@ -112,9 +112,13 @@ namespace HEI.Agent {
 		static string Key(string root) => Path.TrimEndingDirectorySeparator(root);
 
 		/// <summary>The roots read, as the scan names them, by when it started.</summary>
-		public static void Record(IEnumerable<string> read, DateTime startedUtc) {
+		/// <param name="before">
+		/// Each root's "Last scanned" as the page gave it before the file was there (<see cref="Before"/>): it starts the file, so
+		/// a root the scan didn't read (Scan this drive now on another, a folder's scan) keeps its time rather than "never".
+		/// </param>
+		public static void Record(IEnumerable<string> read, DateTime startedUtc, IReadOnlyDictionary<string, DateTime>? before = null) {
 			try {
-				var times = Load() ?? new Dictionary<string, DateTime>(Roots);
+				var times = Load() ?? new Dictionary<string, DateTime>(before ?? new Dictionary<string, DateTime>(), Roots);
 				foreach (string root in read) times[Key(root)] = startedUtc;
 				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(times.OrderBy(t => t.Key, Roots).ToDictionary(t => t.Key, t => t.Value), AgentConfig.Json));
 			}
@@ -131,6 +135,19 @@ namespace HEI.Agent {
 				return read == null ? null : new Dictionary<string, DateTime>(read.Select(r => KeyValuePair.Create(Key(r.Key), r.Value)), Roots);
 			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException or ArgumentException) { return null; }
+		}
+
+		/// <summary>
+		/// Each of <paramref name="roots"/>' "Last scanned" as the page gives it while the file isn't there (scans before kept
+		/// none, <see cref="ExplorerView.Drives"/>): the last scan's (<paramref name="index"/>), for each drive it listed. Null
+		/// with no last scan. Once the file is there, it says it all, and <see cref="Record"/> leaves this aside.
+		/// </summary>
+		public static Dictionary<string, DateTime>? Before(ScanIndex? index, IEnumerable<string> roots) {
+			if (index == null) return null;
+			var times = new Dictionary<string, DateTime>(Roots);
+			foreach (string root in roots)
+				if (index.Drives.ContainsKey(ScanIndex.DriveOf(root))) times[Key(root)] = DateTime.SpecifyKind(index.ScannedAtUtc, DateTimeKind.Utc);
+			return times;
 		}
 
 		/// <summary><paramref name="root"/>'s last read in <paramref name="times"/>.</summary>

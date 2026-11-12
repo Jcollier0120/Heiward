@@ -5195,9 +5195,21 @@ async function setOnRequest(root, onRequest) {
   } catch (e) { showError(e.message); }
 }
 
-/** Scans a drive that's scanned only when asked, now (and everything else as usual). */
+/**
+ * Scan this drive now: only that drive is read, whether scheduled scans read it or it's scanned only when asked, and the
+ * others stay as their last scans found them.
+ */
 async function scanDrive(root) {
-  try { await post('/api/scan/drive', { root }); refresh(true); } catch (e) { showError(e.message); }
+  try {
+    await post('/api/scan/drive', { root });
+    showNotice('Scanning ' + nameOf(root) + ' only. ' + otherDrivesStay(cardFor(root)));
+    refresh(true);
+  } catch (e) { showError(e.message); }
+}
+
+/** What Scan this drive now leaves alone, on drive card `d`: the scheduled scans keep their times only where they read it. */
+function otherDrivesStay(d) {
+  return 'The other drives stay as their last scans found them' + (d && d.scans === 'auto' ? ', and the scheduled scans keep their times.' : '.');
 }
 
 /**
@@ -5243,7 +5255,7 @@ function scanTime(iso) {
 
 /**
  * A drive's page, under its title: when it was last scanned ("never" before its first), when it's scanned next, and
- * its buttons. "Scan this drive now" on every drive; on one scheduled scans read, also "Scan now instead of at 18:00",
+ * its buttons. "Scan this drive now" on every drive, which reads just that drive; on one scheduled scans read, also "Scan now instead of at 18:00",
  * the next scheduled scan brought forward; on one scanned only when asked, the way back to scheduled scans.
  */
 function scanStrip(d, folder) {
@@ -5282,7 +5294,7 @@ function scanStrip(d, folder) {
   }
   const now = el('button', folder ? 'btn secondary' : 'btn', folder ? 'Scan the whole drive' : state.scan.running ? 'Scanning…' : 'Scan this drive now');
   now.disabled = busy;
-  if (d.scans === 'auto') now.title = 'Scans now, with the other drives Heiward scans by itself. The scheduled scans keep their times.';
+  now.title = 'Reads only ' + it + '. ' + otherDrivesStay(d);
   now.addEventListener('click', () => scanDrive(d.root));
   strip.append(now);
   if (!folder && d.scans === 'auto' && s.nextUtc) {
