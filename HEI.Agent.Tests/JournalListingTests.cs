@@ -448,7 +448,11 @@ public sealed class JournalListingTests : IDisposable {
 	public void ScanNowOnAFolder_ReadsOnlyIt_AndTheNextScanFindsItAsListed() {
 		if (!HasJournal(dir)) return;
 		string a = Photo("a.png"), b = Photo(@"Trip\b.jpg");
-		Scanned(Plan());
+		ListingPlan first = Plan();
+		Scanned(first);
+		var lastScanned = new DateTime(2026, 11, 1, 9, 0, 0, DateTimeKind.Utc);
+		DriveScans.Record(AgentScanner.ScannedWhole(first, new[] { photos }), lastScanned);
+		Assert.Equal(lastScanned, DriveScans.Of(DriveScans.Load(), photos));
 		string c = Photo(@"Trip\Day 2\c.jpg"), d = Photo("d.png", 32);
 		string trip = Path.Combine(photos, "Trip");
 
@@ -458,6 +462,10 @@ public sealed class JournalListingTests : IDisposable {
 		Assert.Equal(new[] { trip }, r.Only);
 		Assert.False(folder.NothingChanged);
 		Assert.Empty(folder.ReadWhole); // the drive's last full scan is still the one before
+		// So the drive's "Last scanned" stays that scan's (drive-scans.json), and one folder doesn't set it.
+		DriveScans.Record(AgentScanner.ScannedWhole(folder, new[] { photos }), DateTime.UtcNow);
+		Assert.Equal(lastScanned, DriveScans.Of(DriveScans.Load(), photos));
+		Assert.Equal(new[] { photos }, AgentScanner.ScannedWhole(null, new[] { photos })); // no plan: every root was walked
 		// Its folder's files are listed; the rest of the scanned folder is handed over as the last scan found it, unread.
 		AssertHanded(r, new[] { b, c }, new[] { a });
 		Assert.True(folder.MayRead!(c));

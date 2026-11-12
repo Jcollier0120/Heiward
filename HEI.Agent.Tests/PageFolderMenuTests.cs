@@ -63,8 +63,10 @@ public sealed class PageFolderMenuTests {
 		function trim(p) { return p.replace(/\\+$/, '').toLowerCase(); }
 		function sameFolder(a, b) { return trim(a) === trim(b); }
 		var drive = { root: 'E:\\', type: 'fixed', onRequest: false, scans: 'auto' };
-		var state = { drives: [drive], scan: { running: false }, schedule: { everyMinutes: 60, text: 'scans every hour' } };
-		function scanNow() { }
+		var state = { drives: [drive], scan: { running: false }, schedule: { everyMinutes: 60, text: 'scans every hour' }, setup: { needed: false }, agent: { paused: false } };
+		function scanNow() { } function bumpScan() { } function ago() { return 'an hour ago'; } function scanTime() { return 'today 09:00'; }
+		// A drive scanned only when asked, as the page has it from the server.
+		function onRequest() { drive.onRequest = true; drive.scans = 'manual'; drive.manualWhy = 'drive'; }
 		var shown = null, scanned = [];
 		function showMenu(e, label, items, hint) { shown = { label: label, items: items, hint: hint }; }
 		function closeFolderMenu() { }
@@ -80,12 +82,13 @@ public sealed class PageFolderMenuTests {
 	public PageFolderMenuTests() {
 		string script = ThePage.Asset("app.js").ReplaceLineEndings("\n");
 		js.Execute(FakePage);
-		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy" })
+		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip" })
 			js.Execute(ThePage.Function(script, name));
 		int render = script.IndexOf("async function renderContent(", StringComparison.Ordinal);
 		js.Execute(script[render..script.IndexOf("\nfunction subfolderTable(", render, StringComparison.Ordinal)]);
 		// The stubs stand: the slices above bring the page's own of some of them along.
-		js.Execute("function scanFolder(path) { scanned.push(path); } function scanDrive(root) { drivesScanned.push(root); } function overrideFolder() { }");
+		js.Execute("function scanFolder(path) { scanned.push(path); } function scanDrive(root) { drivesScanned.push(root); } function overrideFolder() { }" +
+			" function bumpScan() { } function scanTime() { return 'today 09:00'; }");
 	}
 
 	string[] Menu(string node) => JsonSerializer.Deserialize<string[]>(js.Evaluate($"JSON.stringify(menu({node}))").AsString())!;
@@ -101,7 +104,7 @@ public sealed class PageFolderMenuTests {
 
 	[Fact]
 	public void AFoldersPage_OnADriveScannedOnlyWhenAsked_ScansJustThatFolder_OrTheWholeDrive() {
-		js.Execute("drive.onRequest = true;");
+		js.Execute("onRequest();");
 		Assert.Equal(new[] { "Scan this folder now", "Scan the whole drive", "Scan automatically again" }, Page(@"E:\Development"));
 		js.Execute("press('Scan this folder now');");
 		Assert.Equal(@"[""E:\\Development""]", Json("scanned"));
@@ -112,15 +115,19 @@ public sealed class PageFolderMenuTests {
 
 	[Fact]
 	public void TheDrivesOwnPage_ScansTheDrive_AndWhileAScanRunsNothingStarts() {
-		js.Execute("drive.onRequest = true;");
+		js.Execute("onRequest();");
 		Assert.Equal(new[] { "Scan this drive now", "Scan automatically again" }, Page(@"E:\"));
 		js.Execute("state.scan.running = true;");
 		Assert.Equal(new[] { "Scanning… (off)", "Scan the whole drive (off)", "Scan automatically again" }, Page(@"E:\Development"));
 	}
 
 	[Fact]
-	public void AFoldersPage_OnADriveScannedAutomatically_HasNoStrip() =>
-		Assert.Empty(Page(@"E:\Development"));
+	public void ADriveScannedAutomatically_ItsOwnPageScansTheDrive_AndAFoldersPageHasNoStrip() {
+		string[] drivePage = Page(@"E:\");
+		Assert.Contains("Scan this drive now", drivePage);
+		Assert.DoesNotContain("Scan this folder now", drivePage);
+		Assert.Empty(Page(@"E:\Development")); // its right-click menu has Scan now
+	}
 
 	[Fact]
 	public void AFolderOnADrive_CanBeScannedByItself() {
@@ -135,7 +142,7 @@ public sealed class PageFolderMenuTests {
 
 	[Fact]
 	public void AFolderOnADriveScannedOnlyWhenAsked_OrInAScannedFolder_CanBeScannedByItself() {
-		js.Execute("drive.onRequest = true;");
+		js.Execute("onRequest();");
 		Assert.Contains("Scan now", Menu(@"{ name: 'Development', path: 'E:\\Development', drive: drive }"));
 		js.Execute(@"state.drives.push({ root: 'C:\\Users\\me\\Pictures', type: 'folder' });");
 		Assert.Contains("Scan now", Menu(@"{ name: '2019', path: 'C:\\Users\\me\\Pictures\\2019', drive: state.drives[1] }"));

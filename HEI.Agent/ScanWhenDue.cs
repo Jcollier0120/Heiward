@@ -49,6 +49,17 @@ namespace HEI.Agent {
 		public static string? ScheduledSkip(int everyMinutes) =>
 			everyMinutes <= 0 ? "scans run only when you press Scan now, so none is scheduled" : null;
 
+		/// <summary>
+		/// Why the scheduled scan starting at <paramref name="nowUtc"/> skips itself: it was brought forward ("Scan now instead
+		/// of at 18:00", <see cref="ScanBump"/>), and that scan went through. Null when it runs: no bump, a bump for a later
+		/// scheduled scan, or one whose scheduled scans have all gone by. A bump whose scan failed or was stopped was never
+		/// recorded, so it skips nothing.
+		/// </summary>
+		public static string? BumpedSkip(ScanBump? bump, DateTime nowUtc, int everyMinutes) =>
+			bump != null && bump.Covers(nowUtc, everyMinutes)
+				? $"it was brought forward: the scan started {bump.ScannedUtc.ToLocalTime():g} from the review page ran in its place"
+				: null;
+
 		/// <summary>When the next scan is due by the same rule, for the page; null when scans run only when asked.</summary>
 		public static DateTime? NextUtc(DateTime? lastScanUtc, DateTime? lastStartUtc, int everyMinutes) {
 			if (everyMinutes <= 0) return null;

@@ -4762,7 +4762,8 @@ function scanModeTitle(d) {
   const s = state.schedule;
   const it = d.type === 'folder' ? 'this folder' : 'this drive';
   if (d.scans === 'auto') {
-    const next = s.next ? ' Next scheduled scan: ' + s.next + '.' : scanDueIn(s) ? ' Next scan ' + scanDueIn(s) + '.' : '';
+    const next = s.nextUtc ? ' Next scheduled scan: ' + scanTime(s.nextUtc) + '.' : s.next ? ' Next scheduled scan: ' + s.next + '.'
+      : scanDueIn(s) ? ' Next scan ' + scanDueIn(s) + '.' : '';
     return 'Auto: scheduled scans read ' + it + '. Heiward ' + s.text + '.' + next +
       ' Right-click the ' + (d.type === 'folder' ? 'folder' : 'drive') + ' to scan it only when you ask.';
   }
@@ -5095,7 +5096,7 @@ async function scanDrive(root) {
 
 /**
  * Scans only this folder and the folders in it, now, on whatever drive (one scanned only when asked too): the rest
- * of every drive stays as its last scan found it.
+ * of every drive stays as its last scan found it. It isn't the drive's scan: the drive's "Last scanned" stays as it was.
  */
 async function scanFolder(path) {
   try {
@@ -5108,6 +5109,91 @@ async function scanFolder(path) {
 /** Why Scan now on a folder can't start now (the menu greys it out), or null. */
 function scanFolderWhy() {
   return state.scan.running ? 'A scan is running now.' : null;
+}
+
+/**
+ * Brings the next scheduled scan (at `slotUtc`, as the page shows it) forward to now: it scans at once, and once that
+ * has gone through, the scheduled one skips itself; the one after runs as usual. One that fails or is stopped skips nothing.
+ */
+async function bumpScan(slotUtc) {
+  try {
+    await post('/api/scan/bump', { slotUtc });
+    showNotice('Scanning now. Once it has gone through, the scheduled scan at ' + scanTime(slotUtc) + ' is skipped.');
+    refresh(true);
+  } catch (e) { showError(e.message); }
+}
+
+/** A scan's time: "today 18:00", "tomorrow 06:00", "yesterday 21:15", "Fri 13 Nov 18:00". */
+function scanTime(iso) {
+  const t = new Date(iso);
+  const time = t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((day(t) - day(new Date())) / 86400000);
+  if (days === 0) return 'today ' + time;
+  if (days === 1) return 'tomorrow ' + time;
+  if (days === -1) return 'yesterday ' + time;
+  return t.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + time;
+}
+
+/**
+ * A drive's page, under its title: when it was last scanned ("never" before its first), when it's scanned next, and
+ * its buttons. "Scan this drive now" on every drive; on one scheduled scans read, also "Scan now instead of at 18:00",
+ * the next scheduled scan brought forward; on one scanned only when asked, the way back to scheduled scans.
+ */
+function scanStrip(d, folder) {
+  const s = state.schedule;
+  const it = d.type === 'folder' ? 'this folder' : 'this drive';
+  const strip = el('div', 'rest-strip scan-strip');
+  const text = el('span');
+  text.append(el('span', 'scan-last', d.lastScanUtc ? 'Last scanned ' + ago(d.lastScanUtc) + ' (' + scanTime(d.lastScanUtc) + ').' : 'Last scanned: never.'));
+  let next;
+  if (d.scans === 'auto') {
+    next = s.nextUtc ? 'Next scheduled scan: ' + scanTime(s.nextUtc) + '.'
+      : state.agent.paused ? 'Scheduled scans are paused ' + state.agent.pausedText + '.'
+      : 'Heiward ' + s.text + '.';
+    if (s.skipped) {
+      next += ' The scheduled scan at ' + scanTime(s.skipped.firstUtc) +
+        (s.skipped.lastUtc !== s.skipped.firstUtc ? ' and the next ones up to ' + scanTime(s.skipped.lastUtc) : '') +
+        ' ' + (s.skipped.lastUtc !== s.skipped.firstUtc ? 'are' : 'is') + ' skipped: you scanned ' + scanTime(s.skipped.scannedUtc) + ' instead.';
+    }
+  } else if (d.manualWhy === 'drive') {
+    next = 'No scheduled scans: ' + it + ' is scanned only when you ask. ' + (s.everyMinutes ? 'Scheduled scans, ' : '') +
+      'Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.';
+  } else {
+    next = 'No scheduled scans: ' + (d.manualWhy === 'devBuild' ? 'a development build has none' : 'Heiward scans only when you press Scan now') + '.';
+  }
+  if (folder) next += ' Scan this folder now reads only this folder and the folders in it.';
+  text.append(' ', el('span', 'scan-next', next));
+  strip.append(text);
+  const busy = !!(state.scan.running || state.setup.needed);
+  // On a folder's page, its scan reads just that folder and the folders in it; the whole drive is the second choice.
+  if (folder) {
+    const just = el('button', 'btn', state.scan.running ? 'Scanning…' : 'Scan this folder now');
+    just.disabled = busy;
+    just.title = 'Reads only this folder and the folders in it. The rest of the drive stays as its last scan found it, and so does its "Last scanned".';
+    just.addEventListener('click', () => scanFolder(folder));
+    strip.append(just);
+  }
+  const now = el('button', folder ? 'btn secondary' : 'btn', folder ? 'Scan the whole drive' : state.scan.running ? 'Scanning…' : 'Scan this drive now');
+  now.disabled = busy;
+  if (d.scans === 'auto') now.title = 'Scans now, with the other drives Heiward scans by itself. The scheduled scans keep their times.';
+  now.addEventListener('click', () => scanDrive(d.root));
+  strip.append(now);
+  if (!folder && d.scans === 'auto' && s.nextUtc) {
+    const time = new Date(s.nextUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const bump = el('button', 'btn secondary', 'Scan now instead of at ' + time);
+    bump.disabled = busy;
+    bump.title = 'Scans now, and once that scan has gone through, the scheduled scan at ' + scanTime(s.nextUtc) +
+      ' is skipped; the one after runs as usual. If this scan fails or you stop it, the scheduled one still runs.';
+    bump.addEventListener('click', () => bumpScan(s.nextUtc));
+    strip.append(bump);
+  }
+  if (d.onRequest) {
+    const auto = el('button', 'btn secondary', s.everyMinutes ? 'Scan automatically again' : 'Include in Scan now');
+    auto.addEventListener('click', () => setOnRequest(d.root, false));
+    strip.append(auto);
+  }
+  return strip;
 }
 
 /** Includes the folder in scans, or leaves it out; asks first when that means removing a wider rule of the user's. */
@@ -5172,31 +5258,9 @@ async function renderContent() {
   title.append(chips);
   head.append(title);
   frag.append(head);
-  // A drive scanned only when asked: its scan is here, on its own page.
-  // On a folder's page, its scan reads just that folder and the folders in it; the whole drive is the second choice.
-  if (d && d.onRequest) {
-    const drivePage = isDrive && d.type !== 'folder';
-    const strip = el('div', 'rest-strip');
-    strip.append(el('span', null, (drivePage ? 'This drive' : 'This folder\'s drive') +
-      ' is scanned only when you ask: ' + (state.schedule.everyMinutes ? 'scheduled scans, ' : '') +
-      'Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.' +
-      (drivePage ? '' : ' Scan this folder now reads only this folder and the folders in it.')));
-    const running = state.scan.running;
-    const now = el('button', 'btn', running ? 'Scanning…' : drivePage ? 'Scan this drive now' : 'Scan this folder now');
-    now.disabled = running;
-    now.addEventListener('click', () => drivePage ? scanDrive(d.root) : scanFolder(path));
-    strip.append(now);
-    if (!drivePage) {
-      const whole = el('button', 'btn secondary', 'Scan the whole drive');
-      whole.disabled = running;
-      whole.addEventListener('click', () => scanDrive(d.root));
-      strip.append(whole);
-    }
-    const auto = el('button', 'btn secondary', state.schedule.everyMinutes ? 'Scan automatically again' : 'Include in Scan now');
-    auto.addEventListener('click', () => setOnRequest(d.root, false));
-    strip.append(auto);
-    frag.append(strip);
-  }
+  // Every drive's page, and every page of a drive scanned only when asked: when it was last scanned, when it's
+  // scanned next, and its scan, here. On a folder's page, its scan reads just that folder and the folders in it.
+  if (d && (isDrive || d.onRequest)) frag.append(scanStrip(d, isDrive ? null : path));
 
   if (data.exempt) {
     const panel = el('div', 'exempt-panel');

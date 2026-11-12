@@ -36,6 +36,8 @@ namespace HEI.Agent {
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
 	/// <param name="OnRequest">Scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>), or automatically again.</param>
 	sealed record DriveRequest(string Root, bool OnRequest = false);
+	/// <param name="SlotUtc">The next scheduled scan as the page showed it, to be brought forward.</param>
+	sealed record BumpRequest(DateTime? SlotUtc);
 	sealed record FolderScanRequest(string Path);
 	/// <param name="Open">For a folder: open it, rather than show it selected in the folder it's in.</param>
 	sealed record RevealRequest(string? Path, bool Open = false);
@@ -356,8 +358,21 @@ namespace HEI.Agent {
 				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
 				return Results.Accepted();
 			});
+			// "Scan now instead of at 18:00", on the page of a drive scanned automatically: the next scheduled scan brought
+			// forward. It scans now, and once that has gone through, the scheduled scan skips itself (ScanBump).
+			app.MapPost("/api/scan/bump", (BumpRequest request) => {
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
+				if (BumpRefusal(request.SlotUtc, ScanEveryMinutes(cfg), RunTimes.Now(cfg).NextRunAt) is string why) return Results.Conflict(new { error = why });
+				FirstScanWait.End("Scan now instead, on a drive's page");
+				DateTime slot = request.SlotUtc!.Value.ToUniversalTime();
+				AgentPaths.AppendLog($"scheduled scan at {slot.ToLocalTime():g} brought forward from the review page");
+				ScanLaunch.Started(StartDetached("scan", "--bump", slot.ToString("O")), DateTime.UtcNow);
+				return Results.Accepted();
+			});
 			// "Scan now" on a folder (its right-click menu, or "Scan this folder now" on its page): that folder and the
-			// folders in it are read, and nothing else is, whatever drive it's on.
+			// folders in it are read, and nothing else is, whatever drive it's on. It isn't the drive's scan, nor a scheduled
+			// one brought forward: the drive's "Last scanned" and the next scheduled scan stay as they were.
 			app.MapPost("/api/scan/folder", (FolderScanRequest request) => {
 				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
@@ -665,6 +680,19 @@ namespace HEI.Agent {
 					? "left out of Scan now: scan it from its page. Its sets stay listed."
 					: "included in Scan now again.";
 
+		/// <summary>
+		/// Why the next scheduled scan can't be brought forward to now, or null: there must be one (scheduled scans, not paused,
+		/// the scan task there), and it must be the one the page showed, <paramref name="slotUtc"/>, give or take <see cref="ScanBump.Grace"/>.
+		/// </summary>
+		/// <param name="nextUtc">The next scheduled scan as Heiward knows it now (<see cref="RunTimes.NextRunAt"/>).</param>
+		internal static string? BumpRefusal(DateTime? slotUtc, int everyMinutes, DateTime? nextUtc) {
+			if (everyMinutes <= 0) return "Heiward has no scheduled scans: Scan now scans at once.";
+			if (nextUtc is not { } next) return "No scheduled scan is coming to bring forward: Scan now scans at once.";
+			if (slotUtc is not { } slot || (slot.ToUniversalTime() - next).Duration() > ScanBump.Grace)
+				return "The next scheduled scan has moved: reload the page to see when it is.";
+			return null;
+		}
+
 		/// <summary>The minutes between scheduled scans; 0 in a development build, which scans only when asked (it has no scan task).</summary>
 		static int ScanEveryMinutes(AgentConfig cfg) => DevBuild.Current ? 0 : cfg.ScanEveryMinutes;
 
@@ -783,6 +811,9 @@ namespace HEI.Agent {
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
 			var drives = ExplorerView.Drives(cfg, index, pending);
 			var glance = Glance(drives, index, pending, devReport, gameReport);
+			RunTimes runs;
+			try { runs = RunTimes.Now(cfg); }
+			catch { runs = new RunTimes(null, null, null, null); } // as the agent's status does: the page shows without the time
 			AiStatus? ai = AiStatus.Load();
 			// The History: newest first, a folder-wide action (a batch) as one row, cleared entries left out.
 			var done = decisions
@@ -837,9 +868,13 @@ namespace HEI.Agent {
 				gpu = GpuView(cfg),
 				// dueUtc: when the next scan is due by the last one and the interval, as the page starting checks (ScanIfDue).
 				// text: "scans every 6 hours on AC power", for Settings' "Where its work runs".
+				// nextUtc: the next scheduled scan, after any a bump stands in for (skipped: those, ScanBump).
 				schedule = new {
 					next = Scheduler.NextRun(), everyMinutes = ScanEveryMinutes(cfg), text = Scheduler.Describe(cfg),
 					dueUtc = ScanWhenDue.NextUtc(anyReport?.ScannedAtUtc, AgentScanner.LastStartedUtc(), ScanEveryMinutes(cfg)),
+					nextUtc = runs.NextRunAt,
+					skipped = ScanBump.Load() is { } bump && !bump.Spent(DateTime.UtcNow, ScanEveryMinutes(cfg))
+						? new { firstUtc = bump.FirstSlotUtc, lastUtc = bump.LastSlotUtc, scannedUtc = bump.ScannedUtc } : null,
 				},
 				// The settings file's path only with developer mode on: the page shows no file names otherwise.
 				config = new {
