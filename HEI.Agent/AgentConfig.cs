@@ -109,6 +109,8 @@ namespace HEI.Agent {
 		public static string PageSeen => Path.Combine(Home, "page-seen");
 		/// <summary>A new install's first scan waits for the person (<see cref="HEI.Agent.FirstScanWait"/>).</summary>
 		public static string FirstScanWaits => Path.Combine(Home, "first-scan-waits.txt");
+		/// <summary>A new install's tour of the page waits to open by itself (<see cref="HEI.Agent.PageTour"/>).</summary>
+		public static string TourDue => Path.Combine(Home, "tour-due.txt");
 
 		/// <summary>
 		/// Writes a file atomically (temp file, then replace), so readers never see half of it. A file that already

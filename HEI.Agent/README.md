@@ -372,7 +372,7 @@ While the review page is up, its `GET /api/ping` answers `{"app":"heiward","stor
 | `lastRunOk` | Whether that scan went through: a fresh report, or nothing new to scan. `false` when it failed, found none of its folders, or was stopped; `null` when unknown |
 | `nextRunAt` | The scan task's next run, from Task Scheduler (a time already past moves on by the interval); `null` while paused, with scans only when asked, with no scan task (a development build has none), or when Task Scheduler's wording isn't a time this PC reads |
 | `runningSince` | When the scan under way started; `null` when none is |
-| `tour` | `true`: the page has a tour at `#/tour` (`wwwroot/tour.js`), as a kit agent's ping says, so Manor's hire flow offers **Take the tour**. The tour is Heiward's own: it also opens by itself the first time the page is opened after setup, with or without Manor |
+| `tour` | `true`: the page has a tour at `#/tour` (`wwwroot/tour.js`), as a kit agent's ping says, so Manor's hire flow offers **Take the tour**. The tour is Heiward's own: it also opens by itself the first time the page is opened after a new install, with or without Manor. The install leaves `tour-due.txt` in Heiward's data folder (an update doesn't), and the tour's end, done or skipped, removes it, rather than the browser remembering it: an Edge app window keeps a page's storage in the person's Edge profile, which uninstalling Heiward leaves as it was |
 | `pictures` | `2`: the page compares pictures by look for another agent, [`POST /api/pictures/compare`](#pictures-compared-by-look-post-apipicturescompare), at this version (from 2, a black-and-white copy of a colour picture is `edited`, never a plain copy) |
 
 ### Disk space for the manor: `GET /api/disk`
