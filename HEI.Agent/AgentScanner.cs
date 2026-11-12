@@ -67,9 +67,9 @@ namespace HEI.Agent {
 		/// It isn't a drive's scan: no drive's "Last scanned" is set by it (<see cref="DriveScans"/>), and it never stands in for a scheduled one.
 		/// </param>
 		/// <param name="only">
-		/// Scan this drive now, on the page of a drive scheduled scans read ("D:\"): only that drive is read, whole, as any scan
-		/// reads it, and every other drive rests (<see cref="ListingPlan.Make"/>). Its "Last scanned" alone is set; it never stands
-		/// in for a scheduled scan, which still reads every drive at its time.
+		/// Scan this drive now, on a drive's page ("D:\"), one scheduled scans read or one scanned only when asked: only that drive
+		/// is read, whole, as any scan reads it, and every other drive rests (<see cref="ListingPlan.Make"/>). Its "Last scanned"
+		/// alone is set; it never stands in for a scheduled scan, which still reads every drive it reads at its time.
 		/// </param>
 		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false,
 			DateTime? bumpedSlotUtc = null, IReadOnlyCollection<string>? folders = null, IReadOnlyCollection<string>? only = null) {
@@ -107,6 +107,17 @@ namespace HEI.Agent {
 		/// roots alone, the others resting; with no plan (the journal unread), every root was walked.
 		/// </summary>
 		internal static List<string> ScannedWhole(ListingPlan? plan, IEnumerable<string> walked) => plan?.ReadWhole ?? walked.ToList();
+
+		/// <summary>
+		/// The drives scanned only when asked that the developer check after this scan reads now, due or not, so their developer
+		/// items catch up with their photos and videos: those asked for (<c>--drive</c>), or the one Scan this drive now read
+		/// (<c>--only</c>) when it's scanned only when asked. Null for none: the check runs only when it's due, as after any scan.
+		/// </summary>
+		internal static IReadOnlyCollection<string>? DevDrives(AgentConfig cfg, IReadOnlyCollection<string>? drives, IReadOnlyCollection<string>? only) {
+			if (drives is { Count: > 0 }) return drives;
+			List<string> asked = (only ?? Array.Empty<string>()).Select(cfg.OnRequestDriveOf).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+			return asked.Count > 0 ? asked : null;
+		}
 
 		/// <summary>
 		/// Why <c>scan --only</c> (<paramref name="only"/>, Scan this drive now) can't run with the rest it was given, or null. It's
@@ -308,7 +319,7 @@ namespace HEI.Agent {
 				// that reads just some folders of a drive doesn't make the drive's "Last scanned", so it records nothing here.
 				DriveScans.Record(ScannedWhole(plan, reading), started, shownBefore);
 				// The report stands from here: Stop now leaves out what's still to come after it.
-				try { auto = Housekeeping(cfg, stopped.Token, drives, stage => Finish(stage)); }
+				try { auto = Housekeeping(cfg, stopped.Token, DevDrives(cfg, drives, only), stage => Finish(stage)); }
 				catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
 					AgentPaths.AppendLog("scan stopped after its report was saved: the developer check, the games check and automatic cleanup wait for the next scan");
 					auto = null;

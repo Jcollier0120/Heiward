@@ -103,28 +103,19 @@ public sealed class ScanBumpTests : IDisposable {
 	}
 
 	[Fact]
-	public void ScanThisDriveNow_OnADriveScheduledScansRead_ReadsThatDriveAlone() {
-		// The roots as the settings give them: no drive is looked at.
-		string[] roots = [@"C:\", @"E:\", @"\\nas\photos"];
-		var cfg = new AgentConfig();
-		ReviewServer.DriveScanStart? e = ReviewServer.DriveScanNow(cfg, @"E:\", roots, out string? error);
-		Assert.Null(error);
-		Assert.Equal(new[] { "scan", "--only", @"E:\" }, e!.Args);
-		Assert.Equal(new[] { @"E:\" }, e.Reads); // the page shows the scan on E:\'s card alone
-		Assert.True(e.Only);
+	public void ScanThisDriveNow_ReadsThatDriveAlone() {
+		// The roots as the settings give them, a drive scanned only when asked (D:\) among them: no drive is looked at.
+		string[] roots = [@"C:\", @"D:\", @"E:\", @"\\nas\photos"];
+		foreach (string drive in new[] { @"E:\", @"D:\" }) {
+			ReviewServer.DriveScanStart? e = ReviewServer.DriveScanNow(drive, roots, out string? error);
+			Assert.Null(error);
+			Assert.Equal(new[] { "scan", "--only", drive }, e!.Args);
+			Assert.Equal(new[] { drive }, e.Reads); // the page shows the scan on that drive's card alone
+		}
 		// A folder scanned apart (a network share): just it.
-		ReviewServer.DriveScanStart? share = ReviewServer.DriveScanNow(cfg, @"\\nas\photos", roots, out _);
+		ReviewServer.DriveScanStart? share = ReviewServer.DriveScanNow(@"\\nas\photos", roots, out _);
 		Assert.Equal(new[] { "scan", "--only", @"\\nas\photos" }, share!.Args);
 		Assert.Equal(new[] { @"\\nas\photos" }, share.Reads);
-	}
-
-	[Fact]
-	public void ScanThisDriveNow_OnADriveScannedOnlyWhenAsked_ReadsItWithTheOthers_AsBefore() {
-		var cfg = new AgentConfig { OnRequestDrives = [@"D:\"] };
-		ReviewServer.DriveScanStart? d = ReviewServer.DriveScanNow(cfg, @"D:\", [@"C:\", @"D:\"], out string? error);
-		Assert.Null(error);
-		Assert.Equal(new[] { "scan", "--drive", @"D:\" }, d!.Args);
-		Assert.False(d.Only);
 	}
 
 	[Theory]
@@ -132,8 +123,20 @@ public sealed class ScanBumpTests : IDisposable {
 	[InlineData("", "That isn't a drive.")]
 	[InlineData(@"Photos", "That isn't a drive.")]
 	public void ScanThisDriveNow_OnADriveNotScanned_StartsNothing(string root, string why) {
-		Assert.Null(ReviewServer.DriveScanNow(new AgentConfig(), root, [@"C:\", @"E:\"], out string? error));
+		Assert.Null(ReviewServer.DriveScanNow(root, [@"C:\", @"E:\"], out string? error));
 		Assert.Equal(why, error);
+	}
+
+	[Fact]
+	public void ScanThisDriveNow_OnADriveScannedOnlyWhenAsked_BringsItsDeveloperItemsUpToDate() {
+		var cfg = new AgentConfig { OnRequestDrives = [@"D:\"] };
+		// As --drive did: the developer check after the scan reads that drive now, due or not.
+		Assert.Equal(new[] { @"D:\" }, AgentScanner.DevDrives(cfg, null, [@"D:\"]));
+		Assert.Equal(new[] { @"D:\" }, AgentScanner.DevDrives(cfg, null, [@"d:\Photos"])); // a folder scanned apart on it
+		Assert.Equal(new[] { @"D:\" }, AgentScanner.DevDrives(cfg, [@"D:\"], null)); // hei scan --drive D:\
+		// A drive scheduled scans read: the developer check runs when it's due, as after any scan.
+		Assert.Null(AgentScanner.DevDrives(new AgentConfig(), null, [@"E:\"]));
+		Assert.Null(AgentScanner.DevDrives(cfg, null, null));
 	}
 
 	[Fact]
@@ -287,10 +290,10 @@ public sealed class ScanBumpTests : IDisposable {
 		Assert.Contains("bumpScan(s.nextUtc)", strip);
 		Assert.Contains("is skipped", strip);
 		Assert.Contains("post('/api/scan/bump', { slotUtc })", Function(script, "bumpScan"));
-		// Scan this drive now: just that drive, on a drive the scheduled scans read (PageFolderMenuTests has its tooltip).
+		// Scan this drive now: just that drive, on every drive (PageFolderMenuTests has its tooltip).
 		string scan = Function(script, "scanDrive");
 		Assert.Contains("post('/api/scan/drive', { root })", scan);
-		Assert.Contains("if (r && r.only)", scan);
-		Assert.Contains("' only. The other drives stay as their last scans found them'", scan);
+		Assert.Contains("showNotice('Scanning ' + nameOf(root) + ' only. ' + otherDrivesStay(cardFor(root)));", scan);
+		Assert.Contains("d && d.scans === 'auto' ? ', and the scheduled scans keep their times.' : '.'", Function(script, "otherDrivesStay"));
 	}
 }

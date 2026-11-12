@@ -5172,18 +5172,20 @@ async function setOnRequest(root, onRequest) {
 }
 
 /**
- * Scan this drive now. On a drive scheduled scans read, only that drive is read, and the others stay as their last
- * scans found them (`only`); on one scanned only when asked, it's read along with the drives scheduled scans read.
+ * Scan this drive now: only that drive is read, whether scheduled scans read it or it's scanned only when asked, and the
+ * others stay as their last scans found them.
  */
 async function scanDrive(root) {
   try {
-    const r = await post('/api/scan/drive', { root });
-    if (r && r.only) {
-      showNotice('Scanning ' + nameOf(root) + ' only. The other drives stay as their last scans found them' +
-        (state.schedule.everyMinutes ? ', and the scheduled scans keep their times.' : '.'));
-    }
+    await post('/api/scan/drive', { root });
+    showNotice('Scanning ' + nameOf(root) + ' only. ' + otherDrivesStay(cardFor(root)));
     refresh(true);
   } catch (e) { showError(e.message); }
+}
+
+/** What Scan this drive now leaves alone, on drive card `d`: the scheduled scans keep their times only where they read it. */
+function otherDrivesStay(d) {
+  return 'The other drives stay as their last scans found them' + (d && d.scans === 'auto' ? ', and the scheduled scans keep their times.' : '.');
 }
 
 /**
@@ -5229,8 +5231,7 @@ function scanTime(iso) {
 
 /**
  * A drive's page, under its title: when it was last scanned ("never" before its first), when it's scanned next, and
- * its buttons. "Scan this drive now" on every drive (just that drive, but for one scanned only when asked, which it reads with
- * the drives scheduled scans read); on one scheduled scans read, also "Scan now instead of at 18:00",
+ * its buttons. "Scan this drive now" on every drive, which reads just that drive; on one scheduled scans read, also "Scan now instead of at 18:00",
  * the next scheduled scan brought forward; on one scanned only when asked, the way back to scheduled scans.
  */
 function scanStrip(d, folder) {
@@ -5269,10 +5270,7 @@ function scanStrip(d, folder) {
   }
   const now = el('button', folder ? 'btn secondary' : 'btn', folder ? 'Scan the whole drive' : state.scan.running ? 'Scanning…' : 'Scan this drive now');
   now.disabled = busy;
-  if (!d.onRequest) {
-    now.title = 'Reads only ' + it + '. The other drives stay as their last scans found them' +
-      (d.scans === 'auto' ? ', and the scheduled scans keep their times.' : '.');
-  }
+  now.title = 'Reads only ' + it + '. ' + otherDrivesStay(d);
   now.addEventListener('click', () => scanDrive(d.root));
   strip.append(now);
   if (!folder && d.scans === 'auto' && s.nextUtc) {

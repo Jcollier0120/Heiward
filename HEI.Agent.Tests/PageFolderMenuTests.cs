@@ -82,7 +82,7 @@ public sealed class PageFolderMenuTests {
 	public PageFolderMenuTests() {
 		string script = ThePage.Asset("app.js").ReplaceLineEndings("\n");
 		js.Execute(FakePage);
-		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip" })
+		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip", "otherDrivesStay" })
 			js.Execute(ThePage.Function(script, name));
 		int render = script.IndexOf("async function renderContent(", StringComparison.Ordinal);
 		js.Execute(script[render..script.IndexOf("\nfunction subfolderTable(", render, StringComparison.Ordinal)]);
@@ -134,17 +134,20 @@ public sealed class PageFolderMenuTests {
 		js.Evaluate($"find(content, function (n) {{ return n.tagName === 'BUTTON' && n.textContent === {JsonSerializer.Serialize(words)}; }})[0].title").AsString();
 
 	[Fact]
-	public void ScanThisDriveNow_SaysItReadsOnlyThatDrive_ButNotOnADriveScannedOnlyWhenAsked() {
+	public void ScanThisDriveNow_SaysItReadsOnlyThatDrive_OnEveryDrive() {
+		const string Alone = "Reads only this drive. The other drives stay as their last scans found them.";
 		Page(@"E:\");
 		Assert.Equal("Reads only this drive. The other drives stay as their last scans found them, and the scheduled scans keep their times.", Title("Scan this drive now"));
 		// No scheduled scans at all (the setup's "only when I press Scan now"): just that drive too, with no schedule to keep.
 		js.Execute("drive.scans = 'manual'; drive.manualWhy = 'onDemand';");
 		Page(@"E:\");
-		Assert.Equal("Reads only this drive. The other drives stay as their last scans found them.", Title("Scan this drive now"));
-		// Scanned only when asked: it's read with the drives scheduled scans read, as before.
+		Assert.Equal(Alone, Title("Scan this drive now"));
+		// Scanned only when asked: just that drive as well, not with the drives scheduled scans read, which don't read this one.
 		js.Execute("onRequest();");
 		Page(@"E:\");
-		Assert.Equal("", Title("Scan this drive now"));
+		Assert.Equal(Alone, Title("Scan this drive now"));
+		Page(@"E:\Development");
+		Assert.Equal(Alone, Title("Scan the whole drive"));
 	}
 
 	[Fact]
