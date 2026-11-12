@@ -97,6 +97,39 @@ namespace HEI.Agent {
 	}
 
 	/// <summary>
+	/// The page's tour (wwwroot/tour.js) opens by itself the first time the page is opened after a new install, from the
+	/// Store or GitHub, and not again once it's done or skipped. Heiward keeps that here, tied to the install, and not in
+	/// the browser: the page opens in an Edge app window on http://heiward.localhost:&lt;port&gt;/, and Edge keeps that
+	/// page's storage in its own profile, which uninstalling Heiward leaves as it was, so a PC that had Heiward before
+	/// (from GitHub, Castellan's copy or the Store) never saw the tour after installing it again. The install says whether
+	/// it's due (<see cref="ForInstall"/>); the tour's end removes the file, the only write it costs. Reading it is all a
+	/// page load does.
+	/// </summary>
+	static class PageTour {
+		public static bool Due => File.Exists(AgentPaths.TourDue);
+
+		/// <summary>
+		/// Whether an install opens the tour: a new one, which replaces no copy (the install's "Installed"), as one after an
+		/// uninstall is, since uninstalling removes what marks a copy (Apps &amp; Features' entry, the Store version's
+		/// setup.txt); or one whose first scan waits for the person (<see cref="FirstScanWait"/>), since the setup's Done says
+		/// the tour asks about it. Not an update: what the tour's end said stays.
+		/// </summary>
+		/// <param name="replaces">The version of the copy the install replaces, "" when it isn't known; null: none.</param>
+		public static bool ForInstall(string? replaces, bool firstScanWaits) => replaces == null || firstScanWaits;
+
+		public static void Begin() {
+			AgentPaths.WriteAtomic(AgentPaths.TourDue, DateTime.UtcNow.ToString("O"));
+			AgentPaths.AppendLog("tour: opens by itself the next time the page is opened");
+		}
+
+		/// <summary>The tour was done or skipped: it doesn't open by itself again. Nothing is written when it wasn't due.</summary>
+		public static void End() {
+			try { File.Delete(AgentPaths.TourDue); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+		}
+	}
+
+	/// <summary>
 	/// Stopping a scan that's running in another process: the page (or <c>hei stop</c>) leaves a request, and the
 	/// scan checks for one every second and stops the way Ctrl+C would, without writing a report.
 	/// </summary>

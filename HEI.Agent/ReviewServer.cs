@@ -497,6 +497,12 @@ namespace HEI.Agent {
 				FirstScanWait.End("the person let it scan by itself");
 				return Results.Json(AgentView(cfg), AgentConfig.Json);
 			});
+			// The tour was done or skipped (tour.js): it doesn't open by itself again (PageTour). Ending it when it wasn't
+			// due writes nothing.
+			app.MapPost("/api/tour/done", () => {
+				PageTour.End();
+				return Results.Ok();
+			});
 			// Another copy's installer wants the port for its own page (AskToCloseAsync). Only the page closes: scans
 			// run in processes of their own. Not during the Store version's setup, whose progress only this page shows.
 			app.MapPost("/api/quit", () => {
@@ -788,6 +794,8 @@ namespace HEI.Agent {
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = ScanView(),
 				setup = StoreSetup.View(cfg.Port),
+				// A new install's tour opens by itself once the setup is done (PageTour): the install says so, not the browser.
+				tourDue = PageTour.Due,
 				agent = AgentView(cfg),
 				// Settings' About: this build ("1.6.0+<commit>") and where it came from.
 				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current, update = SelfUpdate.View(cfg) },
