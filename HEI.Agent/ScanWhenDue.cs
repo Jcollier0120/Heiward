@@ -40,6 +40,15 @@ namespace HEI.Agent {
 			return since >= every ? $"the last scan started {Span(since)} ago, and scans run every {Span(every)}" : null;
 		}
 
+		/// <summary>
+		/// Why a scan the scan task started (<c>scan --scheduled</c>) steps aside before it reads anything; null when it runs.
+		/// With scans only when you press Scan now (the setup's on-demand answer, <see cref="AgentConfig.ScanEveryMinutes"/> 0)
+		/// there's no scan task, but one left behind (its removal failed, or it came back from a backup) mustn't scan either:
+		/// no drive is scanned on a schedule then.
+		/// </summary>
+		public static string? ScheduledSkip(int everyMinutes) =>
+			everyMinutes <= 0 ? "scans run only when you press Scan now, so none is scheduled" : null;
+
 		/// <summary>When the next scan is due by the same rule, for the page; null when scans run only when asked.</summary>
 		public static DateTime? NextUtc(DateTime? lastScanUtc, DateTime? lastStartUtc, int everyMinutes) {
 			if (everyMinutes <= 0) return null;

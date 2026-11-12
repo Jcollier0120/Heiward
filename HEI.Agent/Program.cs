@@ -66,6 +66,10 @@ scan.SetAction(async (r, ct) => {
 		// The page stays up, paused or not: should it have gone (a crash, a stopped install), it's back within a
 		// scan's interval. Before the scan sets its pace, so the page doesn't start capped or at a low priority.
 		ReviewServer.EnsureRunningInBackground(cfg);
+		if (ScanWhenDue.ScheduledSkip(cfg.ScanEveryMinutes) is { } onDemand) {
+			AgentPaths.AppendLog("scheduled scan skipped: " + onDemand);
+			return 0;
+		}
 		if (FirstScanWait.Waiting) {
 			AgentPaths.AppendLog("scheduled scan skipped: the first scan waits for the person (Scan now, or Scan by itself, on the review page)");
 			return 0;
