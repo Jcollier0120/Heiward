@@ -5515,6 +5515,51 @@ function duplicatesSection(path) {
   return box;
 }
 
+// Moving checked files to the Recycle Bin (a folder's or one set's), skipping a folder's look-alikes, or keeping a set:
+// from the press, once its question is answered, until the page is drawn again without those sets. The button pressed
+// spins (the kit's ui-spinner) and stays greyed, the folder's page takes no clicks meanwhile (aria-busy, the busy
+// cursor), and the page's polls wait: one drawing the page half-way would put the buttons back, pressable. With many
+// sets, drawing the page again is the slow part (the owner, 2026-11-12: "it's slow to reload the ui and needs to display
+// a spinner from start to finish"), so the removal awaits it before it lets go, and says how it went after.
+let removing = 0; // removals under way
+
+/** Holds the folder's page for a removal, `btn` spinning and `also` greyed, until the call it returns: call it once the page is drawn again. */
+function holdForRemoval(btn, ...also) {
+  const page = $('folder');
+  const buttons = [btn, ...also].map((b) => [b, b.disabled]);
+  for (const [b] of buttons) b.disabled = true;
+  const spin = el('span', 'ui-spinner');
+  spin.setAttribute('aria-hidden', 'true');
+  btn.prepend(spin);
+  btn.setAttribute('aria-busy', 'true');
+  // A click or right-click anywhere on the folder's page goes nowhere: a checkbox, another set, the tree.
+  const swallow = (e) => { e.preventDefault(); e.stopPropagation(); };
+  page.addEventListener('click', swallow, true);
+  page.addEventListener('contextmenu', swallow, true);
+  page.setAttribute('aria-busy', 'true');
+  removing++;
+  let held = true;
+  return () => {
+    if (!held) return;
+    held = false;
+    spin.remove();
+    btn.removeAttribute('aria-busy');
+    // As they were: once the page is drawn again these buttons are gone; after a failure they're pressable again.
+    for (const [b, was] of buttons) b.disabled = was;
+    page.removeEventListener('click', swallow, true);
+    page.removeEventListener('contextmenu', swallow, true);
+    if (--removing === 0) page.removeAttribute('aria-busy');
+  };
+}
+
+/** While a removal runs, a poll waits for it, as holdForRemoval says; a scan's progress still draws in place meanwhile. */
+function waitForRemoval(force) {
+  if (force || !removing) return false;
+  if (state && state.scan.running && !state.setup.needed) schedule(pollProgress, PROGRESS_EVERY);
+  else schedule(refresh, 1000);
+  return true;
+}
+
 /** "Skip all": every look-alike set with a file in this folder is kept as it is, and leaves the list. */
 function skipBar(path, groups) {
   const bar = el('div', 'cleanup');
@@ -5527,16 +5572,17 @@ function skipBar(path, groups) {
     if (!(await askDialog('Nothing is deleted: they leave the list' +
         (state.config.keepHistory ? ', and History can bring them back.' : '. History is off, so they won\'t be listed there.'),
         { title: 'Skip all ' + count(groups.length, 'look-alike set', 'look-alike sets') + ' in ' + nameOf(path) + '?', ok: 'Skip them all' }))) return;
-    btn.disabled = true;
+    const done = holdForRemoval(btn);
     try {
       const r = await post('/api/groups/skip', { keys: groups.map((g) => g.key), batch: batchId(), folder: trimSep(path) });
       for (const g of groups) checks.delete(g.key);
       groupsShown = PAGE;
+      await refresh(true);
       showNotice('Skipped ' + count(r.skipped, 'look-alike set', 'look-alike sets') + '.');
-      refresh(true);
     } catch (e) {
       showError(e.message);
-      btn.disabled = false;
+    } finally {
+      done();
     }
   });
   bar.append(btn);
@@ -5573,25 +5619,32 @@ function cleanupBar(path, groups) {
       ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days).' : '';
     // A cloud-synced file goes from the cloud and the other devices too: then its OK is in the alert colour.
     if (!(await askDialog(msg, { title, ok: 'Move to the Recycle Bin', danger: !!synced }))) return;
-    btn.disabled = true;
+    const done = holdForRemoval(btn);
     let moved = 0, freed = 0;
     const failed = [];
     const batch = batchId(); // one History row for the whole folder
-    for (const [i, p] of plan.entries()) {
-      result.textContent = 'Moving… set ' + (i + 1) + ' of ' + plan.length;
-      try {
-        const r = await post('/api/groups/' + encodeURIComponent(p.g.key) + '/recycle', { paths: p.paths, batch, folder: trimSep(path) });
-        moved += r.recycled.length;
-        freed += r.recycledBytes;
-        for (const f of r.failed) failed.push(f.path.split(SEP).pop() + ' (' + f.reason + ')');
-        checks.delete(p.g.key);
-      } catch (e) {
-        failed.push(p.g.items[0].name + ' (' + e.message + ')');
+    try {
+      for (const [i, p] of plan.entries()) {
+        result.textContent = 'Moving… set ' + (i + 1) + ' of ' + plan.length;
+        try {
+          const r = await post('/api/groups/' + encodeURIComponent(p.g.key) + '/recycle', { paths: p.paths, batch, folder: trimSep(path) });
+          moved += r.recycled.length;
+          freed += r.recycledBytes;
+          for (const f of r.failed) failed.push(f.path.split(SEP).pop() + ' (' + f.reason + ')');
+          checks.delete(p.g.key);
+        } catch (e) {
+          failed.push(p.g.items[0].name + ' (' + e.message + ')');
+        }
       }
+      const said = 'Moved ' + count(moved, 'file', 'files') + ', ' + bytes(freed) + ', to the Recycle Bin.' + (failed.length ? ' Not moved: ' + failed.join('; ') : '');
+      result.textContent = said; // while the page is drawn again, the button still spinning
+      result.className = 'result small ' + (failed.length ? 'bad' : 'ok');
+      await refresh(true);
+      // This bar has gone with the sets it moved: what it said stays under the command bar.
+      if (failed.length) showError(said); else showNotice(said);
+    } finally {
+      done();
     }
-    result.textContent = 'Moved ' + count(moved, 'file', 'files') + ', ' + bytes(freed) + ', to the Recycle Bin.' + (failed.length ? ' Not moved: ' + failed.join('; ') : '');
-    result.className = 'result small ' + (failed.length ? 'bad' : 'ok');
-    setTimeout(() => refresh(true), failed.length ? 4000 : 1200);
   });
   bar.append(btn);
   return bar;
@@ -5672,28 +5725,36 @@ function groupCard(g, folder) {
         'Moving ' + (synced === 1 ? 'it' : 'them') + ' to the Recycle Bin also deletes ' + (synced === 1 ? 'it' : 'them') +
         ' from the cloud and your other devices (the cloud keeps deleted items for about 30 days). Continue?',
         { ok: 'Move to the Recycle Bin', danger: true }))) return;
-    recycle.disabled = keep.disabled = true;
+    const done = holdForRemoval(recycle, keep);
     try {
       const r = await post('/api/groups/' + encodeURIComponent(g.key) + '/recycle', { paths: [...set] });
       const lines = [];
       if (r.recycled.length) lines.push('Moved ' + r.recycled.length + ' file(s), ' + bytes(r.recycledBytes) + ', to the Recycle Bin.');
       for (const f of r.failed) lines.push('Not moved: ' + f.path.split(SEP).pop() + ' (' + f.reason + ')');
-      result.textContent = lines.join(' ');
+      const said = lines.join(' ');
+      result.textContent = said;
       result.className = 'result small ' + (r.failed.length ? 'bad' : 'ok');
       checks.delete(g.key);
-      setTimeout(() => refresh(true), r.failed.length ? 4000 : 800);
+      await refresh(true);
+      if (r.failed.length) showError(said); else if (said) showNotice(said);
     } catch (e) {
       result.textContent = e.message;
       result.className = 'result small bad';
-      recycle.disabled = keep.disabled = false;
+    } finally {
+      done();
     }
   });
   keep.addEventListener('click', async () => {
+    const done = holdForRemoval(keep, recycle);
     try {
       await post('/api/groups/' + encodeURIComponent(g.key) + '/keep');
       checks.delete(g.key);
-      refresh(true);
-    } catch (e) { showError(e.message); }
+      await refresh(true);
+    } catch (e) {
+      showError(e.message);
+    } finally {
+      done();
+    }
   });
   actions.append(recycle, keep);
   card.append(actions, result);
@@ -5790,7 +5851,8 @@ const rootsOf = (scan) => JSON.stringify((scan.status && scan.status.roots) || n
 
 /** While a scan runs: its progress alone, drawn in place; the whole state when anything else moved, or every 20 seconds. */
 async function pollProgress() {
-  if (!state || !state.scan.running || Date.now() - lastFull >= FULL_EVERY) return refresh();
+  // The 20 seconds' whole state waits for a removal under way (waitForRemoval), and the progress goes on meanwhile.
+  if (!state || !state.scan.running || (Date.now() - lastFull >= FULL_EVERY && !removing)) return refresh();
   const seq = refreshSeq;
   try {
     const res = await fetch('/api/progress' + seenQuery());
@@ -5811,12 +5873,14 @@ async function pollProgress() {
 async function refresh(force) {
   clearTimeout(timer);
   if (uninstall.gone) return; // uninstalled: the page's process has stopped
+  if (waitForRemoval(force)) return; // the removal draws the page when it's done
   const seq = ++refreshSeq;
   try {
     const res = await fetch('/api/state' + seenQuery());
     if (!res.ok) throw new Error(res.status + ' ' + res.statusText);
     const s = await res.json();
     if (seq !== refreshSeq) return; // a newer poll (a save's) is under way: its answer is the one to draw
+    if (waitForRemoval(force)) return; // asked before a removal began
     // Heiward is back, as a new process: its buttons need the token of a page it served.
     if (serverLost) { location.reload(); return; }
     lastFull = Date.now();

@@ -1242,6 +1242,13 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .btn.secondary { background: var(--surface); color: var(--fg); border-color: var(--line); }
 .btn.secondary:hover:not(:disabled) { background: var(--hover); filter: none; }
+/* Busy: a turning ring in the text's colour, in a button whose work runs (app.js, holdForRemoval). The kit's ui-spinner,
+   as on every kit agent's page, turning as the setup's stages do. */
+.ui-spinner { display: inline-block; flex: none; box-sizing: border-box; width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: setup-spin .8s linear infinite; vertical-align: -2px; }
+@media (prefers-reduced-motion: reduce) { .ui-spinner { animation-duration: 2.4s; } }
+button:has(> .ui-spinner) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+/* A folder's page while a removal runs: it takes no clicks (app.js swallows them), and the busy cursor says so. */
+#folder[aria-busy="true"], #folder[aria-busy="true"] * { cursor: progress; }
 /* Greyed, yet focusable and hovered, so its tooltip can say why (a game's Uninstall with no uninstaller to open). */
 .btn[aria-disabled="true"], .btn[aria-disabled="true"]:hover { opacity: 0.5; cursor: default; filter: none; }
 .btn.secondary[aria-disabled="true"]:hover { background: var(--surface); }
