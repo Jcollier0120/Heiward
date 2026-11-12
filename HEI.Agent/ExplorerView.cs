@@ -20,8 +20,10 @@ namespace HEI.Agent {
 
 	/// <param name="OnRequest">Scanned only when asked, from its page (<see cref="AgentConfig.OnRequestDrives"/>).</param>
 	/// <param name="Label">The drive's own name in Windows ("Games"), or "" when it has none: <paramref name="Name"/> says "Local Disk" then.</param>
+	/// <param name="Scans">"auto": scheduled scans read it; "manual": only a scan you start does (<see cref="ExplorerView.ScanMode"/>).</param>
+	/// <param name="ManualWhy">Why it's "manual": <see cref="ExplorerView.ByDrive"/>, <see cref="ExplorerView.OnDemand"/> or <see cref="ExplorerView.DevBuildWhy"/>; null for "auto".</param>
 	sealed record DriveCard(string Root, string Name, string Type, long TotalBytes, long FreeBytes, bool Scanned,
-		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false, string Label = "");
+		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false, string Label = "", string Scans = "auto", string? ManualWhy = null);
 
 	sealed record Hotspot(string Folder, int Copies, long Reclaim);
 
@@ -34,11 +36,32 @@ namespace HEI.Agent {
 	/// tree listed live from disk, each folder marked scanned or exempt (and why) by the scan's own rules.
 	/// </summary>
 	static class ExplorerView {
+		/// <summary>The drive is scanned only when asked, from its page (<see cref="AgentConfig.OnRequestDrives"/>): Scan now leaves it alone too.</summary>
+		public const string ByDrive = "drive";
+		/// <summary>Heiward scans only when you press Scan now (<see cref="AgentConfig.ScanEveryMinutes"/> 0, the setup's "Only when I press Scan now").</summary>
+		public const string OnDemand = "onDemand";
+		/// <summary>A development build has no scheduled scans.</summary>
+		public const string DevBuildWhy = "devBuild";
+
+		/// <summary>
+		/// Whether scheduled scans read a drive ("auto") or only a scan someone starts does ("manual"), and why. Both settings
+		/// count, and neither is copied into the other: the setup's "Only when I press Scan now" (no scheduled scans at all, so
+		/// every drive is manual) and the drive's own "Scan only when I ask" (<see cref="AgentConfig.OnRequestDrives"/>, which
+		/// Scan now and the developer check leave alone too). The drive's own comes first: it says the most.
+		/// </summary>
+		internal static (string Scans, string? Why) ScanMode(AgentConfig cfg, bool onRequest, bool devBuild) =>
+			onRequest ? ("manual", ByDrive)
+			: devBuild ? ("manual", DevBuildWhy)
+			: cfg.ScanEveryMinutes <= 0 ? ("manual", OnDemand)
+			: ("auto", null);
+
 		/// <summary>
 		/// The drives, and the extra folders, the next scan looks at: from the settings rather than the last
 		/// scan, so a folder the user includes or leaves out on the page shows so at once.
 		/// </summary>
-		public static List<DriveCard> Drives(AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending) {
+		/// <param name="devBuild">This is a development build, with no scheduled scans; null: whether it is (<see cref="DevBuild.Current"/>).</param>
+		public static List<DriveCard> Drives(AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending, bool? devBuild = null) {
+			bool dev = devBuild ?? DevBuild.Current;
 			var cards = new List<DriveCard>();
 			var roots = ScanScope.Roots(cfg);
 			foreach (DriveInfo drive in DriveInfo.GetDrives()) {
@@ -64,15 +87,19 @@ namespace HEI.Agent {
 				bool scanned = roots.Any(r => r.Equals(root, StringComparison.OrdinalIgnoreCase));
 				DriveScan? scan = null;
 				index?.Drives.TryGetValue(root, out scan);
-				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), scanned && cfg.IsOnRequest(root), own));
+				bool onRequest = scanned && cfg.IsOnRequest(root);
+				var (scans, why) = ScanMode(cfg, onRequest, dev);
+				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), onRequest, own, scans, why));
 			}
 			// Extra folders that aren't a whole drive (a folder on a USB drive, a network share).
 			foreach (string root in roots.Where(r => !cards.Any(c => c.Root.Equals(r, StringComparison.OrdinalIgnoreCase)))) {
 				DriveScan? scan = null;
 				index?.Drives.TryGetValue(ScanIndex.DriveOf(root), out scan);
 				var (files, bytes) = index?.Subtree(root) ?? (0, 0);
+				bool onRequest = cfg.IsOnRequest(root);
+				var (scans, why) = ScanMode(cfg, onRequest, dev);
 				cards.Add(new DriveCard(root, Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } n ? n : root, "folder", 0, 0, true,
-					scan == null ? null : scan with { Files = files, Bytes = bytes }, Stats(root, pending), cfg.IsOnRequest(root)));
+					scan == null ? null : scan with { Files = files, Bytes = bytes }, Stats(root, pending), onRequest, "", scans, why));
 			}
 			return cards;
 		}
@@ -93,12 +120,8 @@ namespace HEI.Agent {
 		/// folder is outside what the agent scans, or missing.
 		/// </summary>
 		public static TreeListing? Tree(string path, bool all, AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending) {
-			if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return null;
-			string full = RealPath.Of(path); // as scans walk it: the roots are real paths (ScanScope.Roots)
 			var roots = ScanScope.Roots(cfg);
-			// The deepest root: a listed folder inside an exempt one is a root of its own.
-			string? root = roots.Where(r => IsSameOrUnder(full, r)).MaxBy(r => r.TrimEnd(Path.DirectorySeparatorChar).Length);
-			if (root == null || !Directory.Exists(full)) return null;
+			if (Shown(path, roots) is not var (full, root)) return null;
 
 			var rules = ScanScope.ExclusionRules(cfg);
 			string? exempt = ScanScope.ExemptBelow(root, full, rules);
@@ -157,6 +180,18 @@ namespace HEI.Agent {
 				}
 			}
 			return new DupStats(copies, lookalikes, reclaim);
+		}
+
+		/// <summary>
+		/// The folder as the tree shows it, by its real path (as scans walk it: the roots are real paths, ScanScope.Roots), and
+		/// the scanned folder it's in, the deepest (a listed folder inside an exempt one is a root of its own); null when the
+		/// path isn't a full one, isn't there, or is outside what Heiward scans.
+		/// </summary>
+		internal static (string Full, string Root)? Shown(string? path, IReadOnlyList<string> roots) {
+			if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path)) return null;
+			string full = RealPath.Of(path);
+			string? root = roots.Where(r => IsSameOrUnder(full, r)).MaxBy(r => r.TrimEnd(Path.DirectorySeparatorChar).Length);
+			return root == null || !Directory.Exists(full) ? null : (full, root);
 		}
 
 		static bool HasSubfolders(DirectoryInfo folder) {

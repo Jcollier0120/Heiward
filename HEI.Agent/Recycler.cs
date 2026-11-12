@@ -71,6 +71,7 @@ namespace HEI.Agent {
 			};
 			int rc = FileUtils.SHFileOperation(ref op);
 			RecycleBinSize.Forget();
+			FolderSizes.Shared.Forget(ok);
 			var recycled = new List<string>();
 			long bytes = 0;
 			foreach (string p in ok) {
@@ -111,6 +112,7 @@ namespace HEI.Agent {
 			};
 			int rc = FileUtils.SHFileOperation(ref op);
 			RecycleBinSize.Forget();
+			FolderSizes.Shared.Forget(ok.Select(o => o.Path));
 			var recycled = new List<string>();
 			long bytes = 0;
 			foreach (var (p, size) in ok) {
