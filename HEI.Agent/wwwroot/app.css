@@ -1072,7 +1072,7 @@ footer code { font-size: 12px; }
 footer code, .auto-foot code { overflow-wrap: anywhere; }
 
 /* ---- Folder view: navigation pane + content ---- */
-.split { display: grid; grid-template-columns: minmax(240px, 300px) 1fr; overflow: hidden; }
+.split { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; overflow: hidden; }
 .navpane { border-right: 1px solid var(--line); overflow: auto; padding: 8px 6px 24px; background: var(--surface); }
 .navpane-toggle { display: none; }
 .tree ul { list-style: none; margin: 0; padding: 0; }
@@ -1095,6 +1095,13 @@ footer code, .auto-foot code { overflow-wrap: anywhere; }
 .tree-row.exempt { color: var(--faint); }
 .tree-row.exempt .count { color: var(--faint); background: transparent; border: 1px solid var(--line); font-weight: 500; }
 .tree-row.empty .label { color: var(--muted); }
+/* A folder's size on disk; a drive's used space. "…" while it's measured. */
+.tree-row .size { flex: none; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tree-row.exempt .size, .size.measuring { color: var(--faint); }
+/* A drive's Auto / Manual tag: drawn like the Exempt tag, so neither looks like a count. */
+.tree-row .count.scan-mode { flex: none; color: var(--muted); background: transparent; border: 1px solid var(--line); font-weight: 500; }
+.tree-row .count.scan-mode.auto { color: var(--accent-text); }
+.details td.col-size { font-variant-numeric: tabular-nums; }
 .tree-note { padding: 4px 8px; font-size: 12px; color: var(--muted); }
 .tree-section { font-size: 12px; font-weight: 600; color: var(--muted); padding: 10px 10px 4px; }
 

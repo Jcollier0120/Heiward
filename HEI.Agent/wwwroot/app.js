@@ -17,6 +17,7 @@ const listings = new Map();   // folder path (lower case, + '|all') -> /api/tree
 const expanded = new Set();   // lower-case folder paths open in the tree
 const showAll = new Set();    // lower-case folder paths showing their empty subfolders too
 const exemptOpen = new Set(); // lower-case folder paths whose exempt subfolders are unfolded
+const folderSizes = new Map(); // lower-case folder path -> its size on disk, from /api/sizes (see askSizes)
 const FOLD_EXEMPT = 5;        // more exempt subfolders than this fold into one row
 const showKeptHere = new Set(); // lower-case folder paths showing the sets that only keep their original there
 
@@ -4653,6 +4654,128 @@ function renderFooter(s) {
   }
 }
 
+// ---------------------------------------------------------------- folder sizes
+
+// Each folder's size on disk, beside it in the tree, in the Folders table and on its own page. This PC measures the folders
+// the page shows, in the background and never while a request waits, and keeps the sizes in memory for a while: nothing is
+// written to disk. Until a size comes the page shows a placeholder, and it asks again while some are still being measured.
+// A drive shows its used space, Windows' own figure, until it's opened.
+const SIZE_NOTE = 'Size on disk, as File Explorer counts it: a file kept only online in OneDrive counts as next to nothing until it\'s downloaded. ' +
+  'Links to other folders aren\'t followed, so nothing is counted twice.';
+const SIZES_AGAIN = 1500;
+let sizesTimer = null;
+let sizesBusy = false;
+let sizesAgain = false;
+
+/** A folder's size as the page shows it ({ bytes, files, unreadable, denied, link } from /api/sizes): its text and tooltip. */
+function sizeText(s) {
+  if (!s || s.bytes === null || s.bytes === undefined) return ['…', 'Measuring the size on disk…'];
+  if (s.link) return ['link', 'A link to another folder: not followed, so what it points to is counted once, where it is.'];
+  if (s.denied) return ['–', 'Windows didn\'t let Heiward read this folder, so its size isn\'t known.'];
+  let title = bytes(s.bytes) + ' on disk, ' + count(s.files, 'file', 'files') + '. ' + SIZE_NOTE;
+  if (s.unreadable) title += ' Windows didn\'t let Heiward read ' + count(s.unreadable, 'folder', 'folders') + ' in it: ' + (s.unreadable === 1 ? 'it isn\'t' : 'they aren\'t') + ' counted.';
+  return [bytes(s.bytes), title];
+}
+
+/** Several folders' sizes added up (a folded row of exempt folders); null until each is known. */
+function sumSizes(paths) {
+  const sum = { bytes: 0, files: 0, unreadable: 0 };
+  for (const p of paths) {
+    const s = folderSizes.get(key(p));
+    if (!s || s.bytes === null || s.bytes === undefined) return null;
+    if (s.link) continue;
+    if (s.denied) { sum.unreadable++; continue; }
+    sum.bytes += s.bytes;
+    sum.files += s.files;
+    sum.unreadable += s.unreadable;
+  }
+  return sum;
+}
+
+/** A drive's used space, as Windows counts it: what the tree shows for a drive. */
+function driveUsed(d) {
+  const used = Math.max(0, d.totalBytes - d.freeBytes);
+  return [bytes(used), bytes(used) + ' used of ' + bytes(d.totalBytes) + ', ' + bytes(d.freeBytes) + ' free (Windows\' figures for the whole drive).'];
+}
+
+/** A size the page fills in once it comes: one folder's, or several added up. `prefix` goes before it ("Size on disk: "). */
+function sizeNode(tag, cls, paths, prefix) {
+  const node = el(tag, cls);
+  node.dataset.size = JSON.stringify(paths);
+  if (prefix) node.dataset.sizePrefix = prefix;
+  fillSize(node);
+  return node;
+}
+
+function fillSize(node) {
+  const paths = JSON.parse(node.dataset.size);
+  const s = paths.length === 1 ? folderSizes.get(key(paths[0])) : sumSizes(paths);
+  const [text, title] = sizeText(s);
+  setText(node, (node.dataset.sizePrefix || '') + text);
+  setTitle(node, title);
+  node.classList.toggle('measuring', !s || s.bytes === null || s.bytes === undefined);
+}
+
+/** The folders to ask about: the one shown, then the tree's open ones, the deepest first (quickest, and reused above). */
+function sizesWanted() {
+  const paths = [];
+  const seen = new Set();
+  const add = (p) => { if (p && !seen.has(key(p))) { seen.add(key(p)); paths.push(p); } };
+  if (route.view === 'folder' && route.path) add(route.path);
+  [...$('tree').querySelectorAll('[data-size-ask]')].map((r) => r.dataset.sizeAsk)
+    .sort((a, b) => b.split(SEP).length - a.split(SEP).length).forEach(add);
+  return paths.slice(0, 32);
+}
+
+/** Asks for the sizes the page shows, shortly: after a render, a folder opened, or while some are still being measured. */
+function askSizesSoon(ms) {
+  clearTimeout(sizesTimer);
+  sizesTimer = setTimeout(askSizes, ms === undefined ? 100 : ms);
+}
+
+async function askSizes() {
+  if (route.view !== 'folder' || document.visibilityState === 'hidden') return; // showing it again renders, and asks
+  if (sizesBusy) { sizesAgain = true; return; }
+  const paths = sizesWanted();
+  if (!paths.length) return;
+  sizesBusy = true;
+  let pending = false;
+  try {
+    const res = await fetch('/api/sizes?' + paths.map((p) => 'path=' + encodeURIComponent(p)).join('&'));
+    if (res.ok) {
+      const data = await res.json();
+      for (const f of data.folders) {
+        if (f.own) folderSizes.set(key(f.path), f.own);
+        for (const c of f.children) folderSizes.set(key(c.path), c);
+      }
+      pending = data.pending;
+      for (const node of document.querySelectorAll('[data-size]')) fillSize(node);
+    }
+  } catch { /* the page's server is down: the next render asks again */ }
+  sizesBusy = false;
+  if (sizesAgain) { sizesAgain = false; askSizesSoon(0); }
+  else if (pending) askSizesSoon(SIZES_AGAIN);
+}
+
+/** How the drive's scans run, for its tag's tooltip: the scan window, and how to change it. */
+function scanModeTitle(d) {
+  const s = state.schedule;
+  const it = d.type === 'folder' ? 'this folder' : 'this drive';
+  if (d.scans === 'auto') {
+    const next = s.next ? ' Next scheduled scan: ' + s.next + '.' : scanDueIn(s) ? ' Next scan ' + scanDueIn(s) + '.' : '';
+    return 'Auto: scheduled scans read ' + it + '. Heiward ' + s.text + '.' + next +
+      ' Right-click the ' + (d.type === 'folder' ? 'folder' : 'drive') + ' to scan it only when you ask.';
+  }
+  if (d.manualWhy === 'drive') {
+    return 'Manual: ' + it + ' is scanned only when you ask, from its page or its right-click menu. ' +
+      (s.everyMinutes ? 'Scheduled scans, Scan now and the developer check leave it alone. Right-click the drive to scan it automatically again.'
+        : 'Scan now and the developer check leave it alone. Right-click the drive to scan it now, or to include it in Scan now again.');
+  }
+  return 'Manual: ' + (d.manualWhy === 'devBuild' ? 'a development build has no scheduled scans: Heiward scans only when you press Scan now.'
+    : 'Heiward scans only when you press Scan now, so no drive is scanned on a schedule.') +
+    ' Right-click the drive to scan now, or to leave it out of Scan now.';
+}
+
 // ---------------------------------------------------------------- folder tree
 
 async function listing(path, all) {
@@ -4696,12 +4819,14 @@ async function renderTree() {
   tree.replaceChildren(frag);
   const sel = tree.querySelector('.tree-row.selected');
   if (sel) sel.scrollIntoView({ block: 'nearest' });
+  askSizesSoon();
 }
 
 async function treeItem(node, depth) {
   const li = el('li');
   li.setAttribute('role', 'none');
-  const row = el('button', 'tree-row' + (node.exempt ? ' exempt' : '') + (!node.exempt && !node.files ? ' empty' : ''));
+  // A drive with nothing found yet isn't dimmed: it's scanned like any other (its tag says when).
+  const row = el('button', 'tree-row' + (node.exempt ? ' exempt' : '') + (!node.drive && !node.exempt && !node.files ? ' empty' : ''));
   row.setAttribute('role', 'treeitem');
   row.dataset.path = node.path;
   row.style.paddingLeft = (6 + depth * 14) + 'px';
@@ -4716,6 +4841,23 @@ async function treeItem(node, depth) {
   row.append(twisty);
   row.append(node.drive ? driveIcon(node.drive.type, 'glyph') : folderIcon(!!node.exempt, 'glyph'));
   row.append(el('span', 'label', node.name));
+  if (node.drive) {
+    // Auto: scheduled scans read it; Manual: only a scan someone starts does (its own setting, or no scheduled scans at all).
+    const auto = node.drive.scans === 'auto';
+    const tag = el('span', 'count scan-mode' + (auto ? ' auto' : ''), auto ? 'Auto' : 'Manual');
+    tag.title = scanModeTitle(node.drive);
+    row.append(tag);
+  }
+  // Its size: a drive's used space until it's opened; an open folder's own comes with its subfolders'.
+  if (node.drive && node.drive.type !== 'folder' && node.drive.totalBytes) {
+    const [text, title] = driveUsed(node.drive);
+    const used = el('span', 'size', text);
+    used.title = title;
+    row.append(used);
+  } else {
+    row.append(sizeNode('span', 'size', [node.path]));
+  }
+  if ((node.expandable && open) || (node.drive && node.drive.type === 'folder')) row.dataset.sizeAsk = node.path;
   if (node.exempt) {
     row.append(el('span', 'count', 'Exempt'));
     row.title = node.name + ': not scanned (' + node.exempt + ')';
@@ -4752,7 +4894,8 @@ async function treeItem(node, depth) {
         row.setAttribute('aria-expanded', String(exemptOpen.has(k)));
         const tw = el('span', 'twisty');
         tw.append(icon('chevron'));
-        row.append(tw, folderIcon(true, 'glyph'), el('span', 'label', count(exempt.length, 'exempt folder', 'exempt folders')));
+        row.append(tw, folderIcon(true, 'glyph'), el('span', 'label', count(exempt.length, 'exempt folder', 'exempt folders')),
+          sizeNode('span', 'size', exempt.map((c) => c.path)));
         row.title = 'Not scanned: ' + [...new Set(exempt.map((c) => c.exempt))].join(', ').toLowerCase();
         row.addEventListener('click', () => { if (exemptOpen.has(k)) exemptOpen.delete(k); else exemptOpen.add(k); renderTree(); });
         li.append(row);
@@ -4887,12 +5030,22 @@ function openFolderMenu(e, node) {
     item('Include in scans', () => overrideFolder(node.path, true));
     hint = 'Not scanned now: ' + node.exempt.toLowerCase() + '.';
   } else if (isDrive && card.onRequest) {
+    // Its own setting. With no scheduled scans at all, the setting only leaves it out of Scan now.
     item('Scan this drive now', () => scanDrive(card.root));
-    item('Scan automatically again', () => setOnRequest(card.root, false));
-    hint = 'Scanned only when you ask: scheduled scans, Scan now and the developer check leave it alone.';
+    item(state.schedule.everyMinutes ? 'Scan automatically again' : 'Include in Scan now', () => setOnRequest(card.root, false));
+    hint = 'Manual: scanned only when you ask. ' + (state.schedule.everyMinutes
+      ? 'Scheduled scans, Scan now and the developer check leave it alone.'
+      : 'Scan now and the developer check leave it alone, and Heiward has no scheduled scans.');
+  } else if (isDrive && card.scans !== 'auto') {
+    // No scheduled scans (the setup's "only when I press Scan now", or a development build): every drive is Manual.
+    item('Scan now', () => scanNow(), state.scan.running ? 'A scan is already running.' : null);
+    item('Leave out of Scan now', () => setOnRequest(card.root, true));
+    hint = 'Manual: ' + (card.manualWhy === 'devBuild' ? 'a development build has no scheduled scans' : 'Heiward scans only when you press Scan now') +
+      ', so no drive is scanned on a schedule. Left out of Scan now, it\'s scanned only from its page.';
   } else if (isDrive) {
     item('Scan only when I ask', () => setOnRequest(card.root, true));
-    hint = 'Scheduled scans, Scan now and the developer check would leave this drive alone, so a disk that sleeps stays asleep. Its sets and developer items stay listed; scan it from its page.';
+    hint = 'Auto: Heiward ' + state.schedule.text + '. Scanned only when you ask, scheduled scans, Scan now and the developer check would leave this drive alone, ' +
+      'so a disk that sleeps stays asleep. Its sets and developer items stay listed; scan it from its page.';
   } else if (card && card.type !== 'folder') {
     item('Scan now', () => scanFolder(node.path), scanFolderWhy());
     item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
@@ -4998,6 +5151,15 @@ async function renderContent() {
   title.style.minWidth = '0';
   title.append(el('h1', null, nameOf(path)), el('div', 'folder-path', data.path));
   const chips = el('div', 'chips');
+  // Its size on disk; a drive's used space and free space, as Windows counts them.
+  if (isDrive && d.type !== 'folder' && d.totalBytes) {
+    const [, title] = driveUsed(d);
+    const used = el('span', 'chip quiet', bytes(Math.max(0, d.totalBytes - d.freeBytes)) + ' used · ' + bytes(d.freeBytes) + ' free');
+    used.title = title;
+    chips.append(used);
+  } else {
+    chips.append(sizeNode('span', 'chip quiet', [data.path], 'Size on disk: '));
+  }
   if (data.exempt) {
     chips.append(el('span', 'chip quiet', 'Exempt · ' + data.exempt));
   } else {
@@ -5016,7 +5178,8 @@ async function renderContent() {
     const drivePage = isDrive && d.type !== 'folder';
     const strip = el('div', 'rest-strip');
     strip.append(el('span', null, (drivePage ? 'This drive' : 'This folder\'s drive') +
-      ' is scanned only when you ask: scheduled scans, Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.' +
+      ' is scanned only when you ask: ' + (state.schedule.everyMinutes ? 'scheduled scans, ' : '') +
+      'Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.' +
       (drivePage ? '' : ' Scan this folder now reads only this folder and the folders in it.')));
     const running = state.scan.running;
     const now = el('button', 'btn', running ? 'Scanning…' : drivePage ? 'Scan this drive now' : 'Scan this folder now');
@@ -5029,7 +5192,7 @@ async function renderContent() {
       whole.addEventListener('click', () => scanDrive(d.root));
       strip.append(whole);
     }
-    const auto = el('button', 'btn secondary', 'Scan automatically again');
+    const auto = el('button', 'btn secondary', state.schedule.everyMinutes ? 'Scan automatically again' : 'Include in Scan now');
     auto.addEventListener('click', () => setOnRequest(d.root, false));
     strip.append(auto);
     frag.append(strip);
@@ -5050,12 +5213,14 @@ async function renderContent() {
     panel.append(text);
     frag.append(panel);
     content.replaceChildren(frag);
+    askSizesSoon();
     return;
   }
 
   if (data.children.length || data.hiddenEmpty) frag.append(subfolderTable(path, data));
   frag.append(duplicatesSection(path));
   content.replaceChildren(frag);
+  askSizesSoon();
 }
 
 function subfolderTable(path, data) {
@@ -5068,6 +5233,7 @@ function subfolderTable(path, data) {
   const tr = el('tr');
   const columns = [
     ['name', 'Name', ''],
+    ['size', 'Size', 'num col-size'],
     ['files', 'Photos & videos', 'num col-files'],
     ['copies', 'Sets of copies', 'num'],
     ['reclaim', 'To free', 'num'],
@@ -5079,13 +5245,15 @@ function subfolderTable(path, data) {
       sortBy = { key: k, desc: sortBy.key === k ? !sortBy.desc : k !== 'name' };
       renderContent();
     });
+    if (k === 'size') b.title = SIZE_NOTE;
     th.append(b);
     tr.append(th);
   }
   thead.append(tr);
   table.append(thead);
 
-  const value = (c) => ({ name: c.name.toLowerCase(), files: c.files, copies: c.duplicates.copies, reclaim: c.duplicates.reclaim })[sortBy.key];
+  const sizeOf = (c) => { const s = folderSizes.get(key(c.path)); return s && s.bytes !== null && s.bytes !== undefined ? s.bytes : -1; };
+  const value = (c) => ({ name: c.name.toLowerCase(), size: sizeOf(c), files: c.files, copies: c.duplicates.copies, reclaim: c.duplicates.reclaim })[sortBy.key];
   const rows = [...data.children].sort((a, b) => {
     if (!!a.exempt !== !!b.exempt) return a.exempt ? 1 : -1; // exempt folders last, like a footnote
     const va = value(a), vb = value(b);
@@ -5105,6 +5273,7 @@ function subfolderTable(path, data) {
     if (c.exempt) cell.append(el('span', 'tag', 'Exempt · ' + c.exempt));
     name.append(cell);
     row.append(name);
+    row.append(sizeNode('td', 'num col-size', [c.path]));
     row.append(el('td', 'num col-files', c.exempt ? '' : c.files ? c.files.toLocaleString() : '–'));
     row.append(el('td', 'num', c.exempt ? '' : c.duplicates.copies ? c.duplicates.copies.toLocaleString() : '–'));
     row.append(el('td', 'num', c.exempt ? '' : c.duplicates.reclaim ? bytes(c.duplicates.reclaim) : '–'));
@@ -5119,13 +5288,14 @@ function subfolderTable(path, data) {
     const row = el('tr', 'row exempt');
     row.tabIndex = 0;
     const td = el('td');
-    td.colSpan = 4;
     const cell = el('div', 'name-cell');
     const reasons = [...new Set(exemptRows.map((c) => c.exempt))];
     cell.append(folderIcon(true), el('span', null, count(exemptRows.length, 'exempt folder', 'exempt folders')),
       el('span', 'tag', reasons.slice(0, 3).join(', ') + (reasons.length > 3 ? '…' : '')));
     td.append(cell);
-    row.append(td);
+    const rest = el('td');
+    rest.colSpan = 3;
+    row.append(td, sizeNode('td', 'num col-size', exemptRows.map((c) => c.path)), rest);
     row.title = 'Not scanned: ' + exemptRows.map((c) => c.name).join(', ');
     const unfold = () => { exemptOpen.add(key(path)); renderRoute(); };
     row.addEventListener('click', unfold);

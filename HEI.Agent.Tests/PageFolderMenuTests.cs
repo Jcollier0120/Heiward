@@ -54,6 +54,7 @@ public sealed class PageFolderMenuTests {
 		function nameOf(p) { return p; } function count(n) { return String(n); } function bytes() { return ''; } function took() { return ''; }
 		function driveIcon() { return makeEl('svg'); } function folderIcon() { return makeEl('svg'); } function icon() { return makeEl('svg'); }
 		function subfolderTable() { return makeEl('table'); } function duplicatesSection() { return makeEl('section'); }
+		function sizeNode(tag) { return makeEl(tag); } function driveUsed() { return ['', '']; } function askSizesSoon() { }
 		function buttons() {
 		  return find(content, function (n) { return n.tagName === 'BUTTON'; })
 		    .map(function (b) { return b.textContent + (b.disabled ? ' (off)' : ''); });
@@ -61,8 +62,9 @@ public sealed class PageFolderMenuTests {
 		function press(words) { find(content, function (n) { return n.tagName === 'BUTTON' && n.textContent === words; })[0].click(); }
 		function trim(p) { return p.replace(/\\+$/, '').toLowerCase(); }
 		function sameFolder(a, b) { return trim(a) === trim(b); }
-		var drive = { root: 'E:\\', type: 'fixed', onRequest: false };
-		var state = { drives: [drive], scan: { running: false } };
+		var drive = { root: 'E:\\', type: 'fixed', onRequest: false, scans: 'auto' };
+		var state = { drives: [drive], scan: { running: false }, schedule: { everyMinutes: 60, text: 'scans every hour' } };
+		function scanNow() { }
 		var shown = null, scanned = [];
 		function showMenu(e, label, items, hint) { shown = { label: label, items: items, hint: hint }; }
 		function closeFolderMenu() { }

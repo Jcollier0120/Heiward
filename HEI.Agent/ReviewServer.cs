@@ -202,6 +202,13 @@ namespace HEI.Agent {
 				TreeListing? listing = ExplorerView.Tree(path, all == true, cfg, ScanIndex.Load(), pending);
 				return listing == null ? Results.NotFound(new { error = "That folder isn't one Heiward scans." }) : Results.Json(listing, AgentConfig.Json);
 			});
+			// Folder sizes on disk, for the folders the page shows (?path=…, repeated: the tree's open folders, the one shown),
+			// with their subfolders': what's measured, from memory. The rest is measured on a thread of its own (FolderSizes),
+			// never here, and the page asks again while any is pending. Only below what Heiward scans, as /api/tree.
+			app.MapGet("/api/sizes", (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-store";
+				return Results.Json(Sizes(ctx.Request.Query["path"], ScanScope.Roots(cfg), FolderSizes.Shared), AgentConfig.Json);
+			});
 
 			app.MapGet("/api/thumb/{key}/{index:int}", (string key, int index, HttpContext ctx) => {
 				ReportGroup? g = Report.Load()?.Groups.FirstOrDefault(x => x.Key == key);
@@ -328,11 +335,7 @@ namespace HEI.Agent {
 				saved.Save();
 				cfg.OnRequestDrives = saved.OnRequestDrives;
 				AgentPaths.AppendLog($"{drive} {(request.OnRequest ? "scanned only on request" : "scanned automatically again")}, from the page");
-				return Results.Json(new {
-					message = request.OnRequest
-						? "scanned only when you ask, from its page. Scheduled scans leave it alone, and its sets stay listed."
-						: "scanned automatically again, from the next scan.",
-				});
+				return Results.Json(new { message = OnRequestMessage(request.OnRequest, ScanEveryMinutes(cfg)) });
 			});
 			// "Show in File Explorer" on a file or folder the page lists (right-click): see Reveal.
 			app.MapPost("/api/reveal", (RevealRequest request) => {
@@ -501,6 +504,12 @@ namespace HEI.Agent {
 				FirstScanWait.End("the person let it scan by itself");
 				return Results.Json(AgentView(cfg), AgentConfig.Json);
 			});
+			// The tour was done or skipped (tour.js): it doesn't open by itself again (PageTour). Ending it when it wasn't
+			// due writes nothing.
+			app.MapPost("/api/tour/done", () => {
+				PageTour.End();
+				return Results.Ok();
+			});
 			// Another copy's installer wants the port for its own page (AskToCloseAsync). Only the page closes: scans
 			// run in processes of their own. Not during the Store version's setup, whose progress only this page shows.
 			app.MapPost("/api/quit", () => {
@@ -629,6 +638,32 @@ namespace HEI.Agent {
 			AgentPaths.AppendLog($"review page started: scanning, since {why}" + (setAside ? $" (and Heiward {AppBuild.Current} set aside the last report)" : ""));
 			ScanLaunch.Started(StartDetached("scan"), DateTime.UtcNow);
 		}
+
+		/// <summary>
+		/// /api/sizes' answer: <paramref name="asked"/> as each is measured so far, under the path the page asked by; the ones
+		/// outside <paramref name="roots"/>, or gone, left out. At most <see cref="FolderSizes.MaxAsked"/>.
+		/// </summary>
+		internal static object Sizes(IEnumerable<string?> asked, IReadOnlyList<string> roots, FolderSizes sizes) {
+			var shown = new List<(string Asked, string Full)>();
+			foreach (string? path in asked.Distinct(StringComparer.OrdinalIgnoreCase).Take(FolderSizes.MaxAsked))
+				if (ExplorerView.Shown(path, roots) is var (full, _)) shown.Add((path!, full));
+			var views = sizes.Look(shown.Select(s => s.Full).ToList());
+			var folders = views.Select((v, i) => v with { Path = shown[i].Asked }).ToList();
+			return new { folders, pending = folders.Any(f => f.Pending) };
+		}
+
+		/// <summary>
+		/// What the page says once a drive is scanned only when asked, or no longer: with no scheduled scans (the setup's "only
+		/// when I press Scan now", <paramref name="everyMinutes"/> 0) the setting leaves it out of Scan now, or puts it back.
+		/// </summary>
+		internal static string OnRequestMessage(bool onRequest, int everyMinutes) =>
+			everyMinutes > 0
+				? onRequest
+					? "scanned only when you ask, from its page. Scheduled scans leave it alone, and its sets stay listed."
+					: "scanned automatically again, from the next scan."
+				: onRequest
+					? "left out of Scan now: scan it from its page. Its sets stay listed."
+					: "included in Scan now again.";
 
 		/// <summary>The minutes between scheduled scans; 0 in a development build, which scans only when asked (it has no scan task).</summary>
 		static int ScanEveryMinutes(AgentConfig cfg) => DevBuild.Current ? 0 : cfg.ScanEveryMinutes;
@@ -792,6 +827,8 @@ namespace HEI.Agent {
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = ScanView(),
 				setup = StoreSetup.View(cfg.Port),
+				// A new install's tour opens by itself once the setup is done (PageTour): the install says so, not the browser.
+				tourDue = PageTour.Due,
 				agent = AgentView(cfg),
 				// Settings' About: this build ("1.6.0+<commit>") and where it came from.
 				about = new { build = AppBuild.Current, store = StorePackage.IsPackaged, dev = DevBuild.Current, update = SelfUpdate.View(cfg) },

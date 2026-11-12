@@ -239,10 +239,14 @@ namespace HEI.Agent {
 			bool firstScanWaits = FirstScanWait.ForInstall(keepSettings, FirstRound.Done());
 			// Read before this install records its own version (Apps & Features, the Store's setup.txt).
 			string? replaces = Replaces() ?? (keepSettings ? "" : null);
+			// A new install's page opens its tour by itself, once (PageTour); an update leaves it as the tour's end did.
+			bool tourDue = PageTour.ForInstall(replaces, firstScanWaits);
 			if (firstScanWaits) Step("First scan: waits until you press Scan now on the review page, or choose there to let it scan by itself");
 			if (!dryRun) {
 				cfg.Save();
 				if (firstScanWaits) FirstScanWait.Begin();
+				// Before the Store version's setup.txt, which ends its setup: the page's next poll has it.
+				if (tourDue) PageTour.Begin();
 				// What the install found, for the review page's badge until the first scan says otherwise.
 				AiStatus.Record(cfg, npu ? "NPU" : cfg.AiDevice == "gpu" ? "GPU" : "CPU", "install");
 			}
