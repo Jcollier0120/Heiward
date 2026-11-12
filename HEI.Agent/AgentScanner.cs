@@ -61,7 +61,9 @@ namespace HEI.Agent {
 		/// <param name="scheduled">Started by Task Scheduler: in the background unless the review page is open (<see cref="ScanPace"/>).</param>
 		/// <param name="drives">Drives scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) that this scan reads: from the drive's own page.</param>
 		/// <param name="waitTurn">The install's first scan: waits its turn among the agents' first rounds as a scheduled one does (<see cref="FirstRound"/>).</param>
-		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false) {
+		/// <param name="bumpedSlotUtc">The scheduled scan this one was brought forward from (<see cref="ScanBump"/>): skipped once this one goes through.</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false,
+			DateTime? bumpedSlotUtc = null) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			using FileStream? scanLock = TryLock();
 			if (scanLock == null) {
@@ -84,7 +86,20 @@ namespace HEI.Agent {
 			Exception? error = null;
 			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, started, firstTurn != null, ct)).Value; }
 			catch (Exception e) { error = e; throw; }
-			finally { LastScan.Record(started, DateTime.UtcNow, code, error); }
+			finally { AfterScan(LastScan.Record(started, DateTime.UtcNow, code, error), bumpedSlotUtc, cfg.ScanEveryMinutes); }
+		}
+
+		/// <summary>
+		/// Once a scan brought forward from the scheduled one at <paramref name="bumpedSlotUtc"/> has ended: that scheduled scan
+		/// is skipped only if this one went through (<see cref="LastScan.Ok"/>). One that failed, or was stopped, skips nothing.
+		/// </summary>
+		internal static ScanBump? AfterScan(LastScan last, DateTime? bumpedSlotUtc, int everyMinutes) {
+			if (bumpedSlotUtc is not { } slot) return null;
+			if (!last.Ok) {
+				AgentPaths.AppendLog($"scan brought forward didn't go through: the scheduled scan at {slot.ToLocalTime():g} runs as usual");
+				return null;
+			}
+			return ScanBump.Record(slot, last.StartedUtc, everyMinutes);
 		}
 
 		/// <summary>
@@ -118,6 +133,7 @@ namespace HEI.Agent {
 			// settings: a scheduled scan has nothing to do, and no drive is read, nor anything compared.
 			if (scheduled && plan is { NothingChanged: true, SameScanAsLast: true } && Report.Load() != null) {
 				plan.SaveSkipped();
+				DriveScans.Record(plan.Roots.Where(r => r.Mode != ListingMode.Resting).Select(r => r.Root), started);
 				AgentPaths.AppendLog("scan skipped, nothing new: " + plan.Describe());
 				await NotifyAsync(cfg, notify, Housekeeping(cfg, ct), new());
 				return 0;
@@ -229,6 +245,9 @@ namespace HEI.Agent {
 				// This listing, and where the journal was read up to: the next scan starts from them.
 				try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
+				// Each drive this scan read, for its page's "Last scanned"; one left alone keeps its time. Whole roots only: a scan
+				// that reads just some folders of a drive doesn't make the drive's "Last scanned", so it records nothing here.
+				DriveScans.Record(reading, started);
 				// The report stands from here: Stop now leaves out what's still to come after it.
 				try { auto = Housekeeping(cfg, stopped.Token, drives, stage => Finish(stage)); }
 				catch (OperationCanceledException) when (!ct.IsCancellationRequested) {
