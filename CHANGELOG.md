@@ -2,6 +2,42 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.9
+
+**Brings 5 changes: Each drive's page says when the drive was last scanned and when it's scanned next, and you can bring the next scheduled scan forward; The folder view shows how much space each folder takes, and each drive says whether Heiward scans it by itself; Scan just one folder; Setting Heiward up fits on the screen, and its window remembers where it was; Heiward's tour now opens after every new install, including on a PC that had Heiward before.**
+
+### What's new
+
+- A drive's page shows when the drive was last scanned ("never" before its first scan) and when the next scheduled scan is. For a drive Heiward scans only when you ask, or if you chose at setup that Heiward scans only when you press Scan now, it says no scans are scheduled.
+- **Scan this drive now** is on every drive's page, including drives Heiward scans by itself. On those drives it scans every drive Heiward scans by itself, and scheduled scans keep their times.
+- On a drive Heiward scans by itself, **Scan now instead of at 6:00 PM** brings the next scheduled scan forward. Heiward scans straight away, and once that scan has finished, the 6:00 PM scan is skipped. The one after runs as usual. If the scan fails or you stop it, nothing is skipped and the 6:00 PM scan still runs. The drive's page says which scheduled scan is skipped, and the drive's tag gives the next scan after it.
+- Each folder in the folder tree, and in the Folders table on a drive's or a folder's page, shows its size on disk, so you can see where your space goes. Folders Heiward doesn't scan show their size too, and so does the row that folds them away ("14 exempt folders"). The Folders table has a Size column you can sort by.
+- A drive shows its used space and free space as soon as it's listed. A folder's size shows "…" until it has been measured. Heiward measures only the folders you have open, in the background, so the page never waits for it. A big folder, such as Windows or your user folder, can take a minute.
+- Sizes are what the files take on this PC's drive, as File Explorer's "Size on disk" counts them. A file kept only online in OneDrive counts as next to nothing until it's downloaded, and opening the page downloads nothing. Links to other folders are not followed, so nothing is counted twice. A folder Windows won't let Heiward read is skipped, and the folder's tooltip says how many were skipped.
+- Each drive in the folder tree has a tag: **Auto** if scheduled scans read it, **Manual** if only a scan you start does. Hover over the tag to see when scans run (for example every 6 hours on AC power), when the next one is due, and how to change it: right-click the drive.
+- Right-click a folder on the review page, on its drive's card or in the folder list, and choose **Scan now**. Heiward reads only that folder and the folders inside it, and the rest of every drive stays as its last scan found it.
+- On a drive that's scanned only when you ask, a folder's page now has **Scan this folder now**, which reads that folder and the folders inside it while the disk stays asleep for the rest. **Scan the whole drive** is still there.
+- A folder's scan isn't the drive's: the drive's "Last scanned" and the next scheduled scan stay as they were.
+- Heiward's window opens where you left it, at the size you left it, and maximized if it was. The first time, it opens in the middle of the screen at a size that fits.
+- Setting up asks about game mode and developer mode, so you don't have to find them in Settings later.
+- On a PC with no NPU, the pictures shown while Heiward is set up show the graphics card, where its AI runs there.
+
+### What changed
+
+- A drive with nothing found yet is no longer greyed out in the folder tree, so it no longer looks like a drive Heiward leaves out.
+- If you chose at setup that Heiward scans only when you press Scan now, every drive now shows **Manual**. Its tooltip and its right-click menu say there are no scheduled scans. Before, the right-click menu offered "Scan only when I ask", as if scheduled scans still read the drive. The menu now offers "Scan now" and "Leave out of Scan now".
+- With scans only when you press Scan now, a scheduled scan left over from an earlier setup now ends at once without reading any drive.
+- Setting up fits on the screen without scrolling, on 1366 x 768 and 1920 x 1080 screens at their usual scalings. Its questions sit side by side in a wide window, the banner gets slimmer in a short one, and the buttons stay at the bottom, clear of everything.
+- The pictures shown while Heiward is set up have larger words, so they're easier to read.
+- The first time you open Heiward's page after installing it, from the Microsoft Store or from GitHub, its tour walks you through the page and ends by asking about the first scan. On a PC where Heiward had been installed before, the tour never opened again, even after uninstalling and installing it fresh: the browser remembered that the tour had been seen, and uninstalling Heiward doesn't clear what the browser remembers.
+- Now Heiward itself keeps track. Installing it shows the tour once, the first time the page opens after setup. Once you finish or skip it, it doesn't open by itself again, after a restart or an update. Uninstall Heiward and install it again, and the tour opens again.
+- You can still take the tour any time at `#/tour` on the page.
+
+### Before you update
+
+- Nothing: it updates itself as usual. Heiward now saves two small files with its settings: when a scan last read each drive, and, after you bring a scan forward, which scheduled scan to skip. Each is written once per scan, never per folder.
+- Nothing: it updates itself as usual. Heiward keeps folder sizes in memory for 15 minutes and saves nothing new on your PC.
+
 ## 1.10.8
 
 **Small fixes and improvements.**
