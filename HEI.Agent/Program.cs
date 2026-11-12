@@ -60,7 +60,8 @@ var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task
 var drive = new Option<string[]>("--drive") { Description = "Also read these drives that are scanned only when you ask (onRequestDrives), e.g. --drive D:\\. Without it they're left alone." };
 var waitTurn = new Option<bool>("--wait-turn") { Description = "A first scan the person didn't start by hand (the install's): waits its turn among the manor's agents' first rounds, as a scheduled one does." };
 var bump = new Option<DateTime?>("--bump") { Description = "Brought forward from the scheduled scan at this time (UTC, as 2026-11-12T23:00:00Z), from a drive's page: once this scan goes through, that scheduled scan skips itself." };
-var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, bump };
+var folder = new Option<string[]>("--folder") { Description = "Read only this folder and the folders in it (on any scanned drive, one scanned only when you ask too), e.g. --folder \"E:\\Photos\\2019\". The rest of every drive stays as its last scan listed it." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, bump, folder };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
@@ -101,7 +102,13 @@ scan.SetAction(async (r, ct) => {
 		_ = OpenReviewPageAsync(cfg, ct);
 	}
 	DateTime? bumpedSlot = r.GetValue(bump) is { } slot ? slot.ToUniversalTime() : null;
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn), bumpedSlot);
+	string[]? folders = r.GetValue(folder);
+	// A folder's scan reads one folder: it doesn't stand in for a scheduled scan of every drive.
+	if (folders is { Length: > 0 } && (r.GetValue(scheduled) || bumpedSlot != null)) {
+		Console.Error.WriteLine("--folder is for a scan you start, not a scheduled one or one brought forward (--bump).");
+		return 2;
+	}
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn), bumpedSlot, folders);
 });
 root.Subcommands.Add(scan);
 

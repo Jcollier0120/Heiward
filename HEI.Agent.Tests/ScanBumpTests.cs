@@ -70,6 +70,14 @@ public sealed class ScanBumpTests : IDisposable {
 	}
 
 	[Fact]
+	public void AFolderScan_NeverSpendsABump() {
+		// Scan now on a folder reads one folder: the scheduled scan of every drive still runs.
+		Assert.Null(AgentScanner.AfterScan(Ended(0), Slot, Every, folderScan: true));
+		Assert.Null(ScanBump.Load());
+		Assert.Null(ScanBump.Take(Slot.AddSeconds(20), Every));
+	}
+
+	[Fact]
 	public void AScanNotBroughtForward_SkipsNothing() {
 		Assert.Null(AgentScanner.AfterScan(Ended(0), bumpedSlotUtc: null, Every));
 		Assert.Null(ScanBump.Load());
@@ -186,7 +194,8 @@ public sealed class ScanBumpTests : IDisposable {
 	[Fact]
 	public void EveryDrivesPage_HasItsScan_TheLastAndNextScans_AndTheBump() {
 		string script = Asset("app.js");
-		Assert.Contains("if (d && (isDrive || d.onRequest)) frag.append(scanStrip(d));", Function(script, "renderContent"));
+		// On a folder's page (of a drive scanned only when asked), the strip scans just that folder first (PageFolderMenuTests).
+		Assert.Contains("if (d && (isDrive || d.onRequest)) frag.append(scanStrip(d, isDrive ? null : path));", Function(script, "renderContent"));
 		string strip = Function(script, "scanStrip");
 		Assert.Contains("'Scan this drive now'", strip); // auto or manual
 		Assert.Contains("'Last scanned: never.'", strip);

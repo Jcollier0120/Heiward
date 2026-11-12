@@ -74,6 +74,24 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
+		/// Scan now on a folder (the review page's right-click menu, and a folder's page): <paramref name="folder"/> as a scan
+		/// walks it, and the scanned drive or folder it's in; or why it can't be scanned by itself.
+		/// </summary>
+		internal static (string Folder, string Root)? ScanTarget(AgentConfig cfg, string folder, out string? error) {
+			error = null;
+			if (Normalize(folder) is not { } full || !Directory.Exists(full)) {
+				error = "That folder doesn't exist.";
+				return null;
+			}
+			string? root = ScanScope.Roots(cfg).Where(r => IsSameOrUnder(full, r)).MaxBy(r => r.TrimEnd(Path.DirectorySeparatorChar).Length);
+			if (root == null || ScanScope.ExemptBelow(root, full, ScanScope.ExclusionRules(cfg)) != null) {
+				error = "That folder isn't scanned: include it in scans first.";
+				return null;
+			}
+			return (full, root);
+		}
+
+		/// <summary>
 		/// The folder by its real path (<see cref="RealPath"/>), as scans walk it, without a trailing separator (a drive's root
 		/// keeps its own: C:\); null when it isn't a full path.
 		/// </summary>

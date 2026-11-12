@@ -38,6 +38,7 @@ namespace HEI.Agent {
 	sealed record DriveRequest(string Root, bool OnRequest = false);
 	/// <param name="SlotUtc">The next scheduled scan as the page showed it, to be brought forward.</param>
 	sealed record BumpRequest(DateTime? SlotUtc);
+	sealed record FolderScanRequest(string Path);
 	/// <param name="Open">For a folder: open it, rather than show it selected in the folder it's in.</param>
 	sealed record RevealRequest(string? Path, bool Open = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
@@ -376,6 +377,19 @@ namespace HEI.Agent {
 				DateTime slot = request.SlotUtc!.Value.ToUniversalTime();
 				AgentPaths.AppendLog($"scheduled scan at {slot.ToLocalTime():g} brought forward from the review page");
 				ScanLaunch.Started(StartDetached("scan", "--bump", slot.ToString("O")), DateTime.UtcNow);
+				return Results.Accepted();
+			});
+			// "Scan now" on a folder (its right-click menu, or "Scan this folder now" on its page): that folder and the
+			// folders in it are read, and nothing else is, whatever drive it's on. It isn't the drive's scan, nor a scheduled
+			// one brought forward: the drive's "Last scanned" and the next scheduled scan stay as they were.
+			app.MapPost("/api/scan/folder", (FolderScanRequest request) => {
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
+				if (FolderOverride.ScanTarget(AgentConfig.Load(), request.Path ?? "", out string? error) is not { } target)
+					return Results.BadRequest(new { error });
+				var (folder, root) = target;
+				FirstScanWait.End("Scan now on a folder, on the review page");
+				ScanLaunch.Started(StartDetached("scan", "--folder", folder), DateTime.UtcNow, [root]);
 				return Results.Accepted();
 			});
 			// Developer mode off (Settings, or Manor's Developer options, read fresh for each request): its part of the page is

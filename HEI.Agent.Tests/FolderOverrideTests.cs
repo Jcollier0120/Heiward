@@ -35,6 +35,35 @@ public sealed class FolderOverrideTests : IDisposable {
 	static TreeNode Child(TreeListing listing, string name) => listing.Children.Single(c => c.Name == name);
 
 	[Fact]
+	public void ScanNowOnAFolder_TakesAScannedFolder_WithTheScannedFolderItsIn() {
+		string trip = Dir("Photos", "Trip");
+		var cfg = Config();
+		Assert.Equal((trip, root), FolderOverride.ScanTarget(cfg, trip + @"\", out string? error));
+		Assert.Null(error);
+		Assert.Equal((root, root), FolderOverride.ScanTarget(cfg, root, out _));
+	}
+
+	[Fact]
+	public void ScanNowOnAFolder_RefusesOneThatIsntScanned_OrIsntThere() {
+		var cfg = Config();
+		Assert.Null(FolderOverride.ScanTarget(cfg, Path.Combine(root, "Gone"), out string? error));
+		Assert.Equal("That folder doesn't exist.", error);
+		Assert.Null(FolderOverride.ScanTarget(cfg, "Photos", out error)); // not a full path
+		Assert.Equal("That folder doesn't exist.", error);
+
+		// Left out by the built-in rules, by the user's, or outside every scanned folder.
+		string modules = Dir("node_modules");
+		Assert.Null(FolderOverride.ScanTarget(cfg, modules, out error));
+		Assert.Equal("That folder isn't scanned: include it in scans first.", error);
+		string old = Dir("Old photos");
+		cfg.ExcludeFolders.Add(old);
+		Assert.Null(FolderOverride.ScanTarget(cfg, old, out error));
+		Assert.NotNull(error);
+		Assert.Null(FolderOverride.ScanTarget(new AgentConfig { ScanAllDrives = false, Folders = { Dir("Elsewhere") } }, Dir("Photos"), out error));
+		Assert.NotNull(error);
+	}
+
+	[Fact]
 	public void LeavingOutAScannedFolder_AndIncludingItAgain_RoundTrips() {
 		string photos = Dir("Photos");
 		var cfg = Config();
