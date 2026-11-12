@@ -1,14 +1,15 @@
 // The tour of the review page, for someone who has just installed Heiward: what it does, the few choices that are
 // theirs on day one, then the page, part by part. It's Heiward's own, so it works with or without Manor: it opens
-// by itself the first time the page is opened after setup (once per browser), and again at #/tour. Manor's hire
+// by itself the first time the page is opened after a new install, from the Store or GitHub, and again at #/tour.
+// Heiward says when (the state's tourDue, PageTour): the install sets it, and the tour's end, done or skipped, clears
+// it. Not the browser's storage, which Edge keeps in its own profile through an uninstall, so a PC that had Heiward
+// before never saw the tour again; nor does an update or a restart show it again. Manor's hire
 // flow opens #/tour?from=<the role's card>, and the last step then offers Back to Manor beside Done. While a new
 // install's first scan waits for the person (FirstScanWait), one more step ends it and asks when that scan runs:
 // Scan now, or Scan by itself (with the next scheduled scan), or Later. Like Manor's welcome, it holds the page while
 // it shows: the page is dimmed and can't be clicked or tabbed to, so the tour is answered, or skipped, first.
 // Loaded after app.js, whose state, el(), icon(), toggleSwitch() and saveSettings() it uses.
 'use strict';
-
-const TOURED = 'heiward.toured';
 
 /** The parts of the page it walks, by their data-tour; only those showing are walked. */
 const TOUR_PARTS = [
@@ -34,12 +35,16 @@ let tourFrom = null;
 let tourFocus = null;
 let tourTab = null; // the home tab showing when the tour began, shown again after it
 
-function toured() {
-  try { return localStorage.getItem(TOURED) === '1'; } catch { return false; }
+/** A new install's tour waits to open by itself (the state's tourDue, which the install sets). */
+function tourDue() {
+  return !!(state && state.tourDue);
 }
 
+/** Done or skipped: Heiward forgets it was due, so it opens by itself no more, in any browser. Only once: one small write. */
 function markToured() {
-  try { localStorage.setItem(TOURED, '1'); } catch { /* a private window: it may open again next time */ }
+  if (!tourDue()) return;
+  state.tourDue = false; // the next poll says so too
+  post('/api/tour/done').catch(() => { /* Heiward isn't running: it opens again the next time */ });
 }
 
 /** The page #/tour?from= names, only when it's on this PC (localhost, 127.0.0.1, [::1], a *.localhost name). */
@@ -263,10 +268,15 @@ window.addEventListener('hashchange', () => {
   if (isTourHash(location.hash)) startTour(tourFromHash(location.hash));
 });
 
-// The first time the page is opened after setup, and at #/tour: once the page has its state.
-const tourWait = setInterval(() => {
-  if (!state || setupShowing(state) || uninstallShowing()) return; // the setup (and its Done until Open Heiward), and the uninstall
-  clearInterval(tourWait);
+/**
+ * Once the page has its state, and the setup is done: the tour at #/tour (Manor's #/tour?from=), or by itself when a
+ * new install's waits. False while it can't tell yet, so it asks again.
+ */
+function tourOnLoad() {
+  if (!state || setupShowing(state) || uninstallShowing()) return false; // the setup (and its Done until Open Heiward), and the uninstall
   if (isTourHash(location.hash)) startTour(tourFromHash(location.hash));
-  else if (!toured()) startTour(null);
-}, 300);
+  else if (tourDue()) startTour(null);
+  return true;
+}
+
+const tourWait = setInterval(() => { if (tourOnLoad()) clearInterval(tourWait); }, 300);
