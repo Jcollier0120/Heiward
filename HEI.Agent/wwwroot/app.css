@@ -892,6 +892,9 @@ html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
 .auto-kinds label { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; cursor: pointer; }
 .auto-foot { padding: 12px 0; display: grid; gap: 6px; font-size: 13px; }
 .about a { color: var(--accent-text); }
+/* About's Take the tour: the button beside its words, under them in a narrow window. */
+.tour-again { align-items: center; flex-wrap: wrap; }
+.tour-again .auto-text { flex: 1 1 260px; }
 /* With Manor's Developer options set, they decide developer mode: which way, and a link to change it in Manor, in place of the switch. */
 .manor-decides { margin: 2px 0 4px; overflow-wrap: anywhere; }
 .manor-decides a { color: var(--accent-text); }

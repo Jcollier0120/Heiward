@@ -1284,7 +1284,16 @@ const outLink = (text, href) => {
   return a;
 };
 
-/** This build of Heiward and where it came from, and the license's "appropriate legal notices". */
+/**
+ * The tour (tour.js) again, from About and Settings. It opens at #/tour, as Manor's Take the tour does, over the home
+ * page, and ends there; Back returns to where it was taken from. Taken again, its end writes nothing: only a new
+ * install's tour, the one that opens by itself, is marked done.
+ */
+function takeTheTour() {
+  location.hash = '#/tour';
+}
+
+/** This build of Heiward and where it came from, the tour again, and the license's "appropriate legal notices". */
 function renderAboutCard(s) {
   const [version, commit] = s.about.build.split('+');
   const card = el('div', 'auto-card about');
@@ -1306,6 +1315,15 @@ function renderAboutCard(s) {
   text.append(from);
   row.append(text);
   card.append(row);
+  // The tour again, where people look for help: the app window has no address bar to type #/tour in.
+  const tour = el('div', 'auto-row tour-again');
+  const tourText = el('div', 'auto-text');
+  tourText.append(el('div', 'auto-title', 'The tour'),
+    el('div', 'muted small', 'A short walk through the page: what Heiward does, the choices that are yours, and each part of the page.'));
+  const take = el('button', 'btn secondary', 'Take the tour');
+  take.addEventListener('click', takeTheTour);
+  tour.append(tourText, take);
+  card.append(tour);
   // The license notice the AGPL asks for, with the copyright of the code Heiward includes. Its full text and the
   // third-party notices are the ones this hei.exe carries (LicenseTexts.cs).
   const foot = el('div', 'auto-foot');
@@ -1546,6 +1564,12 @@ function renderMoreCard(s) {
   } else {
     foot.append(el('div', 'muted small', 'The switches on this page keep your choices.'));
   }
+  // The tour again, as About has it.
+  const tour = el('div', 'muted small', 'Not sure what a part of the page is for? ');
+  const take = el('button', 'link small', 'Take the tour');
+  take.addEventListener('click', takeTheTour);
+  tour.append(take);
+  foot.append(tour);
   card.append(foot);
   $('more-card').replaceChildren(card);
 }

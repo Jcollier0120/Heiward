@@ -187,6 +187,148 @@ public sealed class PageTourTests : IDisposable {
 		Assert.Equal(JsonSerializer.Serialize(new[] { from }), Started(js));
 	}
 
+	// ---- Taking it again: About's and Settings' Take the tour (the app window has no address bar for #/tour)
+
+	[Fact]
+	public void About_HasTakeTheTour_WhichOpensItAtItsAddress() {
+		var js = Again();
+		js.Execute("location.hash = '#/about'; renderAboutCard(aboutState);");
+		Assert.Equal(new[] { "Take the tour" }, Buttons(js, "about-card"));
+		js.Execute("press('about-card', 'Take the tour');");
+		Assert.Equal("#/tour", js.Evaluate("location.hash").AsString());
+		Assert.True(js.Evaluate("isTourHash(location.hash)").AsBoolean());
+		Assert.Equal("[null]", js.Evaluate("JSON.stringify([tourFromHash(location.hash)])").AsString()); // no Back to Manor
+	}
+
+	[Fact]
+	public void SettingsEverythingElse_HasTakeTheTour_Too() {
+		var js = Again();
+		js.Execute("location.hash = '#/settings'; renderMoreCard(settingsState);");
+		Assert.Equal(new[] { "Take the tour" }, Buttons(js, "more-card"));
+		js.Execute("press('more-card', 'Take the tour');");
+		Assert.Equal("#/tour", js.Evaluate("location.hash").AsString());
+	}
+
+	[Fact]
+	public void TakenAgain_ItRunsOverThisPC_WalksThePartsShowingNow_AndItsEndWritesNothing() {
+		var js = Again();
+		// Taken from About, the home page showing Duplicates before: it runs over the home page, from its start.
+		js.Execute("location.hash = '#/about'; renderAboutCard(aboutState); press('about-card', 'Take the tour'); hashChange();");
+		Assert.Equal("[\"#/\"]", js.Evaluate("JSON.stringify(replaced)").AsString()); // Back returns to About
+		Assert.Equal("home", js.Evaluate("route.view").AsString());
+		Assert.Equal(0, (int)js.Evaluate("tourStep").AsNumber());
+		Assert.Equal("controls,tiles,drives,hotspots,history", js.Evaluate("walked[0]").AsString());
+		// A step opens History; Done ends it on Duplicates, as the page was, and writes nothing: it wasn't due.
+		js.Execute("showTab('history'); endTour(false);");
+		Assert.True(js.Evaluate("tourStep === null").AsBoolean());
+		Assert.Equal("copies", js.Evaluate("homeTab").AsString());
+		Assert.Equal("[]", js.Evaluate("JSON.stringify(posted)").AsString());
+
+		// Game mode turned on since: taken again from Settings, it walks the Games area too, not the first time's parts.
+		js.Execute("showing.splice(3, 0, 'games'); location.hash = '#/settings'; renderMoreCard(settingsState); press('more-card', 'Take the tour'); hashChange();");
+		Assert.Equal("controls,tiles,drives,games,hotspots,history", js.Evaluate("walked[1]").AsString());
+		js.Execute("endTour(false);"); // Skip, or Esc
+		Assert.Equal("[]", js.Evaluate("JSON.stringify(posted)").AsString());
+		Assert.Equal("[\"#/\",\"#/\"]", js.Evaluate("JSON.stringify(replaced)").AsString()); // and again after that, as often as asked
+	}
+
+	[Fact]
+	public void TakenAgain_BeforeANewInstallsTourWasDone_ItsEndMarksItDone_Once() {
+		var js = Again();
+		js.Execute("state.tourDue = true; location.hash = '#/about'; renderAboutCard(aboutState); press('about-card', 'Take the tour'); hashChange(); endTour(false);");
+		Assert.Equal("[\"/api/tour/done\"]", js.Evaluate("JSON.stringify(posted)").AsString());
+		js.Execute("location.hash = '#/about'; press('about-card', 'Take the tour'); hashChange(); endTour(false);");
+		Assert.Equal(1, (int)js.Evaluate("posted.length").AsNumber());
+	}
+
+	[Fact]
+	public void BegunAgainWhileItShows_ItStillEndsOnTheTabFromBefore() {
+		var js = Again();
+		js.Execute("location.hash = '#/about'; renderAboutCard(aboutState); press('about-card', 'Take the tour'); hashChange(); showTab('history');");
+		// Manor's #/tour?from= while it shows: from its start, and Back to Manor at its end.
+		js.Execute("startTour('http://localhost:19000/'); endTour(false);");
+		Assert.Equal("copies", js.Evaluate("homeTab").AsString());
+	}
+
+	[Fact]
+	public void TheFakesBelow_AreThePagesOwn() {
+		// What Again() stands in for: tour.js's hashchange, and drawTour counting the parts only when it has none.
+		string tour = ThePage.Asset("tour.js").ReplaceLineEndings("\n");
+		Assert.Contains("window.addEventListener('hashchange', () => {\n  if (isTourHash(location.hash)) startTour(tourFromHash(location.hash));\n});", tour);
+		Assert.Contains("if (!tourParts.length) tourParts = partsShowing();", ThePage.Function(tour, "drawTour"));
+		// startTour shows the home page before drawing, whose parts the tour walks.
+		string start = ThePage.Function(tour, "startTour");
+		Assert.True(start.IndexOf("renderRoute();", StringComparison.Ordinal) < start.IndexOf("drawTour();", StringComparison.Ordinal));
+	}
+
+	/// <summary>
+	/// About's and Settings' cards (app.js) and the tour's start and end (tour.js), against just enough of a page: a DOM
+	/// for the cards, the trail, the home page's tabs and the parts showing, and a drawTour that only notes what it walks.
+	/// </summary>
+	static Engine Again() {
+		string app = ThePage.Asset("app.js").ReplaceLineEndings("\n");
+		string tour = ThePage.Asset("tour.js").ReplaceLineEndings("\n");
+		var js = new Engine();
+		js.Execute("""
+			function makeEl(tag) {
+			  return {
+			    tagName: tag.toUpperCase(), handlers: {}, children: [], className: '', textContent: '',
+			    addEventListener: function (t, f) { (this.handlers[t] = this.handlers[t] || []).push(f); },
+			    click: function () { (this.handlers.click || []).forEach(function (f) { f({}); }); },
+			    append: function () { for (var i = 0; i < arguments.length; i++) this.children.push(arguments[i]); },
+			    replaceChildren: function () { this.children = []; this.append.apply(this, arguments); },
+			  };
+			}
+			var document = { createElement: makeEl };
+			var cards = {};
+			function $(id) { return id === 'tour' ? null : (cards[id] = cards[id] || makeEl('div')); }
+			function find(node, test, found) {
+			  found = found || [];
+			  if (test(node)) found.push(node);
+			  (node.children || []).forEach(function (c) { if (typeof c === 'object') find(c, test, found); });
+			  return found;
+			}
+			function buttons(id) { return find($(id), function (n) { return n.tagName === 'BUTTON'; }).map(function (b) { return b.textContent; }); }
+			function press(id, words) { find($(id), function (n) { return n.tagName === 'BUTTON' && n.textContent === words; })[0].click(); }
+			function outLink(text, href) { var a = makeEl('a'); a.textContent = text; a.href = href; return a; }
+			var SEP = '\\';
+			function trimSep(p) { return p; }
+			function acceleratorNotes() { return []; }
+			var aboutState = { about: { build: '1.10.9+0123456789abcdef', store: true, dev: false, update: {} }, dev: { enabled: false } };
+			var settingsState = { config: { allDrives: true, folders: [], excludeExtensions: [], aiDevice: 'auto', path: null }, dev: { enabled: false }, accelerators: null, gpu: null };
+
+			var state = { tourDue: false }, posted = [], replaced = [], walked = [];
+			var location = { hash: '', href: 'http://heiward.localhost:18484/' };
+			var homeTab = 'copies', route = { view: 'home' };
+			var trail = { replace: function (h) { replaced.push(h); location.hash = h; } };
+			function setupShowing() { return false; }
+			function uninstallShowing() { return false; }
+			function parseRoute() { return { view: location.hash === '#/about' ? 'about' : location.hash === '#/settings' ? 'settings' : 'home' }; }
+			function renderRoute() { }
+			function holdPage() { }
+			function showTab(name) { homeTab = name; }
+			function post(url) { posted.push(url); return { catch: function () { } }; }
+			// The parts showing on the home page now (partsShowing), and drawTour's first lines: it counts them when it has none.
+			var showing = ['controls', 'tiles', 'drives', 'hotspots', 'history'];
+			function partsShowing() { return showing.map(function (n) { return [n]; }); }
+			function drawTour() {
+			  if (!tourParts.length) tourParts = partsShowing();
+			  if (tourStep === 0) walked.push(tourParts.map(function (p) { return p[0]; }).join(','));
+			}
+			// tour.js's hashchange (TheFakesBelow_AreThePagesOwn).
+			function hashChange() { route = parseRoute(); if (isTourHash(location.hash)) startTour(tourFromHash(location.hash)); }
+			var tourStep = null, tourParts = [], tourFrom = null, tourFocus = null, tourTab = null;
+			""");
+		foreach (string name in new[] { "el", "takeTheTour", "renderAboutCard", "renderMoreCard" })
+			js.Execute(ThePage.Function(app, name));
+		foreach (string name in new[] { "tourDue", "markToured", "tourFromHash", "isTourHash", "startTour", "endTour", "clearTourFocus" })
+			js.Execute(ThePage.Function(tour, name));
+		return js;
+	}
+
+	static string[] Buttons(Engine js, string card) =>
+		JsonSerializer.Deserialize<string[]>(js.Evaluate($"JSON.stringify(buttons('{card}'))").AsString())!;
+
 	/// <summary>tour.js's decisions, against just enough of the page: its state, the setup, the address and startTour().</summary>
 	static Engine Script() {
 		string tour = ThePage.Asset("tour.js");
