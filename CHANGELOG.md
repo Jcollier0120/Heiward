@@ -2,6 +2,32 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.10
+
+**Brings 3 changes: Scan this drive now reads just that drive; A spinner while Heiward removes sets, from your click until the page is ready again; Take Heiward's tour again from About or Settings.**
+
+### What's new
+
+- **Take the tour** is in About (the (i) button beside Settings), and at the bottom of Settings, under Everything else. It walks you through the page again: what Heiward does, the choices that are yours, and each part of the page. Before, the tour could only be reopened by typing an address, and Heiward's window has no address bar.
+- Finish or skip it and you're on the home page, on the tab you had open. Back takes you to where you were. Take it as often as you like. Taking it again doesn't change when the tour opens by itself, which happens only after a new install.
+
+### What changed
+
+- **Scan this drive now**, on a drive's page, now reads only that drive. Before, it also scanned every drive Heiward scans by itself. That was true even on a drive Heiward scans only when you ask. The other drives stay as their last scans found them, so a disk that sleeps stays asleep, and their duplicates stay listed.
+- Only that drive's "Last scanned" changes. The scheduled scans keep their times and still read every drive they read. **Scan now instead of at 6:00 PM** is still the button that stands in for the next scheduled scan.
+- On a drive Heiward scans only when you ask, Scan this drive now still brings that drive's developer items up to date at the same time.
+- If you chose at setup that Heiward scans only when you press Scan now, **Scan this drive now** reads only that drive too. **Scan now** still reads them all.
+- After updating, if your first scan reads just one drive or one folder, the other drives now keep their "Last scanned" time. Before, they could show "Last scanned: never" until the next full scan.
+- **Move to Recycle Bin**, **Skip all**, and a set's own **Move** and **Keep** buttons now spin from the moment you confirm until the folder's page has been drawn again without those sets. With many sets, redrawing the page is the slow part, and before this nothing showed while it ran.
+- While a removal runs, the folder's page takes no clicks and shows the busy cursor, so the same sets can't be removed twice. The page no longer redraws partway through and puts the button back.
+- What the removal did ("Moved 40 files, 1.2 GB, to the Recycle Bin.") shows while the page is redrawn, then stays under the command bar for a while. If any file couldn't be moved, it shows in red.
+- If something goes wrong, the spinner stops and the buttons can be pressed again.
+- Each time you take the tour, it shows the parts of the page that are there now. If you have turned on game mode or developer mode since your last tour, it includes the Games or Developer area.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.9
 
 **Brings 5 changes: Each drive's page says when the drive was last scanned and when it's scanned next, and you can bring the next scheduled scan forward; The folder view shows how much space each folder takes, and each drive says whether Heiward scans it by itself; Scan just one folder; Setting Heiward up fits on the screen, and its window remembers where it was; Heiward's tour now opens after every new install, including on a PC that had Heiward before.**
