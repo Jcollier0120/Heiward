@@ -357,15 +357,16 @@ namespace HEI.Agent {
 				}
 				return Results.Ok();
 			});
-			// "Scan this drive now", on the page of a drive scanned only when asked.
+			// "Scan this drive now", on a drive's page (DriveScanNow): that drive alone, or on a drive scanned only when asked,
+			// that drive with the ones scheduled scans read. Neither brings a scheduled scan forward: they keep their times.
 			app.MapPost("/api/scan/drive", (DriveRequest request) => {
 				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
-				string? drive = AgentConfig.DriveOf(request.Root ?? "");
-				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
+				AgentConfig saved = AgentConfig.Load();
+				if (DriveScanNow(saved, request.Root, ScanScope.Roots(saved), out string? error) is not { } scan) return Results.BadRequest(new { error });
 				FirstScanWait.End("Scan this drive now, on the review page");
-				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
-				return Results.Accepted();
+				ScanLaunch.Started(StartDetached(scan.Args), DateTime.UtcNow, scan.Reads);
+				return Results.Accepted(value: new { only = scan.Only });
 			});
 			// "Scan now instead of at 18:00", on the page of a drive scanned automatically: the next scheduled scan brought
 			// forward. It scans now, and once that has gone through, the scheduled scan skips itself (ScanBump).
@@ -700,6 +701,35 @@ namespace HEI.Agent {
 			if (slotUtc is not { } slot || (slot.ToUniversalTime() - next).Duration() > ScanBump.Grace)
 				return "The next scheduled scan has moved: reload the page to see when it is.";
 			return null;
+		}
+
+		/// <summary>What "Scan this drive now" starts: <c>hei scan</c>'s arguments, and the scanned folders it reads, for the page's cards.</summary>
+		/// <param name="Only">That drive alone (<c>scan --only</c>): every other drive stays as its last scan found it.</param>
+		internal sealed record DriveScanStart(string[] Args, List<string> Reads, bool Only);
+
+		/// <summary>
+		/// "Scan this drive now" on <paramref name="root"/>'s page (a drive card's root, or a folder scanned apart). On a drive
+		/// scanned only when asked, that drive is read along with the drives scheduled scans read (<c>scan --drive</c>), as
+		/// before. On any other, that drive alone is read, whole, as any scan reads it (<c>scan --only</c>): each of
+		/// <paramref name="roots"/> on it, and nothing else, so only its "Last scanned" moves (<see cref="DriveScans"/>). It's a
+		/// scan you start: it brings no scheduled scan forward and skips none (<see cref="ScanBump"/>). Null with
+		/// <paramref name="error"/> when Heiward doesn't scan it.
+		/// </summary>
+		internal static DriveScanStart? DriveScanNow(AgentConfig cfg, string? root, IReadOnlyList<string> roots, out string? error) {
+			error = "That isn't a drive.";
+			if (string.IsNullOrWhiteSpace(root) || !Path.IsPathFullyQualified(root) || AgentConfig.DriveOf(root) is not { } drive) return null;
+			if (cfg.IsOnRequest(root)) {
+				if (drive.Length != 3) return null;
+				error = null;
+				return new DriveScanStart(["scan", "--drive", drive], [drive], Only: false);
+			}
+			List<string> reads = roots.Where(r => ListingPlan.IsUnder(r, root)).ToList();
+			if (reads.Count == 0) {
+				error = "Heiward doesn't scan that drive.";
+				return null;
+			}
+			error = null;
+			return new DriveScanStart(["scan", "--only", root], reads, Only: true);
 		}
 
 		/// <summary>The minutes between scheduled scans; 0 in a development build, which scans only when asked (it has no scan task).</summary>

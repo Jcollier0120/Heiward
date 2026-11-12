@@ -61,7 +61,8 @@ var drive = new Option<string[]>("--drive") { Description = "Also read these dri
 var waitTurn = new Option<bool>("--wait-turn") { Description = "A first scan the person didn't start by hand (the install's): waits its turn among the manor's agents' first rounds, as a scheduled one does." };
 var bump = new Option<DateTime?>("--bump") { Description = "Brought forward from the scheduled scan at this time (UTC, as 2026-11-12T23:00:00Z), from a drive's page: once this scan goes through, that scheduled scan skips itself." };
 var folder = new Option<string[]>("--folder") { Description = "Read only this folder and the folders in it (on any scanned drive, one scanned only when you ask too), e.g. --folder \"E:\\Photos\\2019\". The rest of every drive stays as its last scan listed it." };
-var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, bump, folder };
+var only = new Option<string[]>("--only") { Description = "Read only this drive (or scanned folder), whole, e.g. --only D:\\. Every other drive stays as its last scan listed it, and keeps its \"Last scanned\"." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, bump, folder, only };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
@@ -108,7 +109,13 @@ scan.SetAction(async (r, ct) => {
 		Console.Error.WriteLine("--folder is for a scan you start, not a scheduled one or one brought forward (--bump).");
 		return 2;
 	}
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn), bumpedSlot, folders);
+	// So does a drive's: the scheduled scan still reads every drive at its time.
+	string[]? onlyDrives = r.GetValue(only);
+	if (AgentScanner.OnlyRefusal(onlyDrives, r.GetValue(scheduled), bumpedSlot != null, folders is { Length: > 0 }, r.GetValue(drive) is { Length: > 0 }) is { } refused) {
+		Console.Error.WriteLine(refused);
+		return 2;
+	}
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn), bumpedSlot, folders, onlyDrives);
 });
 root.Subcommands.Add(scan);
 

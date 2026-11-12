@@ -66,8 +66,13 @@ namespace HEI.Agent {
 		/// Scan now on a folder, from the review page: only these folders are read, each with the folders in it (<see cref="ListingPlan.Make"/>).
 		/// It isn't a drive's scan: no drive's "Last scanned" is set by it (<see cref="DriveScans"/>), and it never stands in for a scheduled one.
 		/// </param>
+		/// <param name="only">
+		/// Scan this drive now, on the page of a drive scheduled scans read ("D:\"): only that drive is read, whole, as any scan
+		/// reads it, and every other drive rests (<see cref="ListingPlan.Make"/>). Its "Last scanned" alone is set; it never stands
+		/// in for a scheduled scan, which still reads every drive at its time.
+		/// </param>
 		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false,
-			DateTime? bumpedSlotUtc = null, IReadOnlyCollection<string>? folders = null) {
+			DateTime? bumpedSlotUtc = null, IReadOnlyCollection<string>? folders = null, IReadOnlyCollection<string>? only = null) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			using FileStream? scanLock = TryLock();
 			if (scanLock == null) {
@@ -88,26 +93,42 @@ namespace HEI.Agent {
 			// How it ended, written before scan.lock is let go: /api/ping's last run (RunTimes).
 			int? code = null;
 			Exception? error = null;
-			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, folders, started, firstTurn != null, ct)).Value; }
+			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, folders, only, started, firstTurn != null, ct)).Value; }
 			catch (Exception e) { error = e; throw; }
-			finally { AfterScan(LastScan.Record(started, DateTime.UtcNow, code, error), bumpedSlotUtc, cfg.ScanEveryMinutes, folderScan: folders is { Count: > 0 }); }
+			finally {
+				AfterScan(LastScan.Record(started, DateTime.UtcNow, code, error), bumpedSlotUtc, cfg.ScanEveryMinutes,
+					folderScan: folders is { Count: > 0 }, driveScan: only is { Count: > 0 });
+			}
 		}
 
 		/// <summary>
 		/// The roots a scan records as scanned (<see cref="DriveScans"/>, each drive's "Last scanned"): those it read whole. A
-		/// scan of folders alone (Scan now on a folder) records none; with no plan (the journal unread), every root was walked.
+		/// scan of folders alone (Scan now on a folder) records none, and one of a drive alone (Scan this drive now) that drive's
+		/// roots alone, the others resting; with no plan (the journal unread), every root was walked.
 		/// </summary>
 		internal static List<string> ScannedWhole(ListingPlan? plan, IEnumerable<string> walked) => plan?.ReadWhole ?? walked.ToList();
+
+		/// <summary>
+		/// Why <c>scan --only</c> (<paramref name="only"/>, Scan this drive now) can't run with the rest it was given, or null. It's
+		/// a scan someone starts, of one drive: never a scheduled one, nor one brought forward (<c>--bump</c>), which stand for
+		/// every drive. A scan of folders (<c>--folder</c>) or of drives scanned only when asked besides (<c>--drive</c>) is another.
+		/// </summary>
+		internal static string? OnlyRefusal(IReadOnlyCollection<string>? only, bool scheduled, bool bumped, bool folders, bool drives) =>
+			only is not { Count: > 0 } ? null
+			: scheduled || bumped ? "--only is for a scan you start, not a scheduled one or one brought forward (--bump): those read every drive."
+			: folders || drives ? "--only reads just that drive: it doesn't go with --folder or --drive."
+			: null;
 
 		/// <summary>
 		/// Once a scan brought forward from the scheduled one at <paramref name="bumpedSlotUtc"/> has ended: that scheduled scan
 		/// is skipped only if this one went through (<see cref="LastScan.Ok"/>). One that failed, or was stopped, skips nothing.
 		/// </summary>
 		/// <param name="folderScan">Scan now on a folder: it reads one folder, so it never stands in for a scheduled scan of every drive.</param>
-		internal static ScanBump? AfterScan(LastScan last, DateTime? bumpedSlotUtc, int everyMinutes, bool folderScan = false) {
+		/// <param name="driveScan">Scan this drive now (<c>scan --only</c>): it reads one drive, so it never stands in for one either.</param>
+		internal static ScanBump? AfterScan(LastScan last, DateTime? bumpedSlotUtc, int everyMinutes, bool folderScan = false, bool driveScan = false) {
 			if (bumpedSlotUtc is not { } slot) return null;
-			if (folderScan) {
-				AgentPaths.AppendLog($"a folder's scan doesn't stand in for the scheduled scan at {slot.ToLocalTime():g}: it runs as usual");
+			if (folderScan || driveScan) {
+				AgentPaths.AppendLog($"a {(folderScan ? "folder's" : "drive's")} scan doesn't stand in for the scheduled scan at {slot.ToLocalTime():g}: it runs as usual");
 				return null;
 			}
 			if (!last.Ok) {
@@ -123,7 +144,7 @@ namespace HEI.Agent {
 		/// has it make way.
 		/// </summary>
 		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, IReadOnlyCollection<string>? folders,
-			DateTime started, bool firstTurn, CancellationToken ct) {
+			IReadOnlyCollection<string>? only, DateTime started, bool firstTurn, CancellationToken ct) {
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
 			bool fullSpeed = firstTurn || ScanPace.FullSpeed(cfg, scheduled);
@@ -138,11 +159,12 @@ namespace HEI.Agent {
 			// What changed on each drive since the last scan, from its change journal: a drive with nothing
 			// new isn't walked, and one with something new has only those folders listed again.
 			ListingPlan? plan = null;
-			try { plan = ListingPlan.Make(settings, cfg, started, ct, drives, folders); }
-			catch (Exception e) when (e is not OperationCanceledException && folders is { Count: > 0 }) {
-				// Asked for one folder: walking every drive instead would be a far longer scan than the one asked for.
-				AgentPaths.AppendLog($"scan of {string.Join(", ", folders)} not started, the last listing not read: " + e.Message);
-				Console.Error.WriteLine("The scan of the folder couldn't start: " + e.Message);
+			try { plan = ListingPlan.Make(settings, cfg, started, ct, drives, folders, only); }
+			catch (Exception e) when (e is not OperationCanceledException && (folders is { Count: > 0 } || only is { Count: > 0 })) {
+				// Asked for one folder or drive: walking every drive instead would be a far longer scan than the one asked for.
+				string asked = string.Join(", ", folders is { Count: > 0 } ? folders : only!);
+				AgentPaths.AppendLog($"scan of {asked} not started, the last listing not read: " + e.Message);
+				Console.Error.WriteLine($"The scan of {asked} couldn't start: " + e.Message);
 				return 1;
 			}
 			catch (Exception e) when (e is not OperationCanceledException) {
@@ -157,11 +179,20 @@ namespace HEI.Agent {
 				Console.Error.WriteLine("None of those folders is scanned: " + string.Join(", ", folders));
 				return 1;
 			}
+			// Scan this drive now, and Heiward doesn't scan that drive (any more): there's nothing to read.
+			if (only is { Count: > 0 } && plan != null && plan.Roots.All(r => r.Mode == ListingMode.Resting)) {
+				AgentPaths.AppendLog($"scan of {string.Join(", ", only)} not started: Heiward doesn't scan it now");
+				Console.Error.WriteLine("Heiward doesn't scan " + string.Join(", ", only));
+				return 1;
+			}
+			// Each drive's "Last scanned" as the page gave it, from the last scan, while scans didn't keep each drive's yet: a
+			// drive this scan leaves alone keeps it once they do.
+			var shownBefore = DriveScans.Load() == null ? DriveScans.Before(ScanIndex.Load(), settings.IncludeList) : null;
 			// Nothing a scan would see changed since the last one, which made this report with these
 			// settings: a scheduled scan has nothing to do, and no drive is read, nor anything compared.
 			if (scheduled && plan is { NothingChanged: true, SameScanAsLast: true } && Report.Load() != null) {
 				plan.SaveSkipped();
-				DriveScans.Record(ScannedWhole(plan, settings.IncludeList), started);
+				DriveScans.Record(ScannedWhole(plan, settings.IncludeList), started, shownBefore);
 				AgentPaths.AppendLog("scan skipped, nothing new: " + plan.Describe());
 				await NotifyAsync(cfg, notify, Housekeeping(cfg, ct), new());
 				return 0;
@@ -275,7 +306,7 @@ namespace HEI.Agent {
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
 				// Each drive this scan read, for its page's "Last scanned"; one left alone keeps its time. Whole roots only: a scan
 				// that reads just some folders of a drive doesn't make the drive's "Last scanned", so it records nothing here.
-				DriveScans.Record(ScannedWhole(plan, reading), started);
+				DriveScans.Record(ScannedWhole(plan, reading), started, shownBefore);
 				// The report stands from here: Stop now leaves out what's still to come after it.
 				try { auto = Housekeeping(cfg, stopped.Token, drives, stage => Finish(stage)); }
 				catch (OperationCanceledException) when (!ct.IsCancellationRequested) {

@@ -129,7 +129,7 @@ namespace HEI.Agent {
 		public string Describe() => string.Join("; ", Roots.Select(r => $"{r.Root} {r.Mode switch {
 			ListingMode.Unchanged => r.Changes == 0 ? "unchanged" : $"unchanged ({r.Changes:N0} changes elsewhere)",
 			ListingMode.Changed => $"{r.ChangedFolders:N0} folder(s) listed again",
-			ListingMode.Resting => "left alone (scanned when you ask)",
+			ListingMode.Resting => $"left alone ({(r.Why is { Length: > 0 } why ? why : "scanned when you ask")})",
 			ListingMode.Folder => $"only {string.Join(", ", r.Only)} listed again",
 			_ => "walked: " + r.Why,
 		}}"));
@@ -140,8 +140,12 @@ namespace HEI.Agent {
 		/// Scan now on a folder ("E:\Photos\2019"): only these folders are read, each with the folders in it, on whatever drive
 		/// (one scanned only when asked too). Everything else rests, every drive's last listing standing as it is.
 		/// </param>
+		/// <param name="only">
+		/// Scan this drive now, on a drive's page ("D:\"): the scanned folders that are these, or inside them, are read whole, as
+		/// any scan reads them (from the journal, or walked); every other one rests, as a drive scanned only when asked does.
+		/// </param>
 		public static ListingPlan Make(Settings settings, AgentConfig cfg, DateTime nowUtc, CancellationToken ct, IReadOnlyCollection<string>? scanNow = null,
-			IReadOnlyCollection<string>? folders = null) {
+			IReadOnlyCollection<string>? folders = null, IReadOnlyCollection<string>? only = null) {
 			string key = ListingKey(settings);
 			var plan = new ListingPlan { scanKey = ScanKey(settings), listingKey = key };
 			Stored stored = Stored.Load();
@@ -158,10 +162,12 @@ namespace HEI.Agent {
 						PlanFolders(r, last, folders, settings, rules, scanned, ct);
 						continue;
 					}
-					// Scanned only when asked, and not asked now: nothing on the drive is touched, not even its
-					// journal. Its photos and videos as its last scan listed them still count.
-					if (cfg.IsOnRequest(root) && !AgentConfig.IsOnDrive(root, scanNow)) {
+					// Scanned only when asked, and not asked now, or not the drive Scan this drive now is for: nothing on the
+					// drive is touched, not even its journal. Its photos and videos as its last scan listed them still count.
+					bool rests = only is { Count: > 0 } ? !only.Any(o => IsUnder(root, o)) : cfg.IsOnRequest(root) && !AgentConfig.IsOnDrive(root, scanNow);
+					if (rests) {
 						r.Mode = ListingMode.Resting;
+						if (only is { Count: > 0 }) r.Why = OnlyAnother;
 						List<string> known = last != null && StoredListing.Load(last.File) is { } kept ? kept.PathsOutside(new HashSet<string>()) : new();
 						r.Listing = new ScanEngine.RootListing(Array.Empty<FileInfo>(), known);
 						continue;
@@ -233,6 +239,9 @@ namespace HEI.Agent {
 
 		/// <summary>Why a folder whose listing so far came from a scan of folders in it alone (its journal not read then) is walked.</summary>
 		internal const string OnlyFoldersBefore = "only folders in it were scanned before";
+
+		/// <summary>Why a scanned folder rests in a scan of one drive alone (Scan this drive now): it isn't on that drive.</summary>
+		internal const string OnlyAnother = "only another drive is scanned now";
 
 		static void Decide(RootPlan r, StoredRoot? last, string key, Volume volume, Settings settings, IReadOnlyList<ScanScope.Rule> rules,
 			Dictionary<string, bool> scanned, DateTime nowUtc, CancellationToken ct) {

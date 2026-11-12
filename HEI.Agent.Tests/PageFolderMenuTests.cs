@@ -129,6 +129,24 @@ public sealed class PageFolderMenuTests {
 		Assert.Empty(Page(@"E:\Development")); // its right-click menu has Scan now
 	}
 
+	/// <summary>The tooltip of the button saying <paramref name="words"/> on the page drawn last.</summary>
+	string Title(string words) =>
+		js.Evaluate($"find(content, function (n) {{ return n.tagName === 'BUTTON' && n.textContent === {JsonSerializer.Serialize(words)}; }})[0].title").AsString();
+
+	[Fact]
+	public void ScanThisDriveNow_SaysItReadsOnlyThatDrive_ButNotOnADriveScannedOnlyWhenAsked() {
+		Page(@"E:\");
+		Assert.Equal("Reads only this drive. The other drives stay as their last scans found them, and the scheduled scans keep their times.", Title("Scan this drive now"));
+		// No scheduled scans at all (the setup's "only when I press Scan now"): just that drive too, with no schedule to keep.
+		js.Execute("drive.scans = 'manual'; drive.manualWhy = 'onDemand';");
+		Page(@"E:\");
+		Assert.Equal("Reads only this drive. The other drives stay as their last scans found them.", Title("Scan this drive now"));
+		// Scanned only when asked: it's read with the drives scheduled scans read, as before.
+		js.Execute("onRequest();");
+		Page(@"E:\");
+		Assert.Equal("", Title("Scan this drive now"));
+	}
+
 	[Fact]
 	public void AFolderOnADrive_CanBeScannedByItself() {
 		string[] items = Menu(@"{ name: 'Development', path: 'E:\\Development', drive: drive }");

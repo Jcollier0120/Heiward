@@ -545,6 +545,90 @@ public sealed class JournalListingTests : IDisposable {
 		}
 	}
 
+	/// <summary>The entry in listing\index.json of a scanned folder.</summary>
+	JsonElement KeptOf(string root) => JsonDocument.Parse(File.ReadAllText(Index)).RootElement.GetProperty("roots").GetProperty(root).Clone();
+
+	[Fact]
+	public void ScanThisDriveNow_ReadsOnlyThatDrive_AndSetsOnlyItsLastScanned() {
+		// Two scanned drives (two scanned folders here), each scheduled scans read: Photos, and Other.
+		string other = Path.Combine(dir, "Other");
+		Directory.CreateDirectory(other);
+		Settings Both() {
+			Settings s = Settings();
+			s.IncludeList.Add(other);
+			return s;
+		}
+		AgentConfig cfg = Config();
+		cfg.Folders.Add(other);
+		string a = Photo("a.png");
+		string b = Path.Combine(other, "b.jpg");
+		File.WriteAllBytes(b, new byte[64]);
+		void ScannedBoth(ListingPlan plan) {
+			var found = new[] { photos, other }.SelectMany(root => Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+				.Select(p => (p, new FileInfo(p).Length)).ToList();
+			plan.Save(found, p => File.GetLastWriteTimeUtc(p), DateTime.UtcNow);
+		}
+		ListingPlan first = ListingPlan.Make(Both(), cfg, DateTime.UtcNow, CancellationToken.None);
+		Assert.Equal(new[] { photos, other }, first.ReadWhole);
+		ScannedBoth(first);
+		var lastScanned = new DateTime(2026, 11, 1, 9, 0, 0, DateTimeKind.Utc);
+		DriveScans.Record(AgentScanner.ScannedWhole(first, new[] { photos, other }), lastScanned);
+		string c = Photo(@"Trip\c.jpg");
+		string d = Path.Combine(other, "d.jpg");
+		File.WriteAllBytes(d, new byte[32]); // a change on the other drive, which this scan doesn't look at
+		string otherKept = KeptOf(other).GetRawText();
+
+		// Scan this drive now on Photos: it's read whole, as any scan reads it, and Other rests.
+		ListingPlan only = ListingPlan.Make(Both(), cfg, DateTime.UtcNow, CancellationToken.None, only: new[] { photos + @"\" });
+		RootPlan read = only.Roots.Single(r => r.Root == photos), rested = only.Roots.Single(r => r.Root == other);
+		Assert.NotEqual(ListingMode.Resting, read.Mode);
+		Assert.NotEqual(ListingMode.Folder, read.Mode);
+		if (HasJournal(dir)) {
+			Assert.Equal(ListingMode.Changed, read.Mode); // from the journal: just the folder with the new photo
+			Assert.Contains(read.Listing!.Listed, f => f.FullName == c);
+			Assert.Contains(a, read.Listing.Unchanged);
+		}
+		Assert.Equal((ListingMode.Resting, ListingPlan.OnlyAnother), (rested.Mode, rested.Why));
+		AssertHanded(rested, Array.Empty<string>(), new[] { b }); // its files as its last scan found them; d isn't seen
+		Assert.Equal(new[] { photos }, only.ReadWhole);
+		Assert.True(only.MayRead!(c));
+		Assert.False(only.MayRead!(b));
+		Assert.False(only.MayRead!(d));
+		Assert.Contains(ListingPlan.OnlyAnother, only.Describe());
+
+		// Only Photos' "Last scanned" moves; Other keeps its last scan's.
+		var now = new DateTime(2026, 11, 12, 15, 0, 0, DateTimeKind.Utc);
+		DriveScans.Record(AgentScanner.ScannedWhole(only, new[] { photos, other }), now);
+		Assert.Equal(now, DriveScans.Of(DriveScans.Load(), photos));
+		Assert.Equal(lastScanned, DriveScans.Of(DriveScans.Load(), other));
+
+		// Saved: Photos' listing has c; Other's, and where its journal was read up to, stand as they were.
+		ScannedAsPlanned(only);
+		Assert.Equal(otherKept, KeptOf(other).GetRawText());
+		if (!HasJournal(dir)) return;
+		// The next scan finds Other's change, and Photos as Scan this drive now listed it.
+		ListingPlan next = ListingPlan.Make(Both(), cfg, DateTime.UtcNow, CancellationToken.None);
+		Assert.Equal(new[] { photos, other }, next.ReadWhole);
+		Assert.Equal(ListingMode.Unchanged, next.Roots.Single(r => r.Root == photos).Mode);
+		RootPlan found = next.Roots.Single(r => r.Root == other);
+		Assert.Equal(ListingMode.Changed, found.Mode);
+		Assert.Contains(found.Listing!.Listed, f => f.FullName == d);
+	}
+
+	[Fact]
+	public void ScanThisDriveNow_ReadsADriveScannedOnlyWhenAsked_AndNothingOnADriveNotScanned() {
+		Photo("a.png");
+		Scanned(Plan());
+		AgentConfig cfg = Config();
+		cfg.OnRequestDrives.Add(AgentConfig.DriveOf(photos)!);
+		// Asked for: read, whether or not scheduled scans read it.
+		Assert.NotEqual(ListingMode.Resting, Assert.Single(ListingPlan.Make(Settings(), cfg, DateTime.UtcNow, CancellationToken.None, only: new[] { photos }).Roots).Mode);
+		// A drive (or folder) Heiward doesn't scan: every scanned one rests, and nothing is read.
+		ListingPlan none = ListingPlan.Make(Settings(), Config(), DateTime.UtcNow, CancellationToken.None, only: new[] { Path.Combine(dir, "Elsewhere") });
+		Assert.Equal(ListingMode.Resting, Assert.Single(none.Roots).Mode);
+		Assert.Empty(none.ReadWhole);
+	}
+
 	[Theory]
 	[InlineData(@"D:\Archive\a.jpg", @"d:\", true)]
 	[InlineData(@"D:\", @"D:", true)]

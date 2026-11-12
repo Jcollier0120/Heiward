@@ -78,6 +78,65 @@ public sealed class ScanBumpTests : IDisposable {
 	}
 
 	[Fact]
+	public void ScanThisDriveNow_NeverSpendsABump_NorMakesOne() {
+		// Scan this drive now reads one drive: the scheduled scan of every drive still runs, even if asked to stand in for it.
+		Assert.Null(AgentScanner.AfterScan(Ended(0), Slot, Every, driveScan: true));
+		Assert.Null(ScanBump.Load());
+		Assert.Null(ScanBump.Take(Slot.AddSeconds(20), Every));
+
+		// A bump made before ("Scan now instead of at 18:00") stands as it was: the drive's scan neither spends nor moves it.
+		ScanBump made = ScanBump.Record(Slot, Asked, Every);
+		Assert.Null(AgentScanner.AfterScan(LastScan.Record(Asked.AddHours(1), Asked.AddHours(1).AddMinutes(5), 0, null), bumpedSlotUtc: null, Every, driveScan: true));
+		Assert.Equal(made, ScanBump.Load());
+		Assert.NotNull(ScanBump.Take(Slot.AddSeconds(20), Every)); // the scheduled scan it stands in for still skips itself
+	}
+
+	[Fact]
+	public void ScanOnly_IsAScanYouStart_OfThatDriveAlone() {
+		string[] d = [@"D:\"];
+		Assert.Null(AgentScanner.OnlyRefusal(d, scheduled: false, bumped: false, folders: false, drives: false));
+		Assert.Null(AgentScanner.OnlyRefusal(null, scheduled: true, bumped: true, folders: true, drives: true)); // not --only: not its to refuse
+		Assert.Contains("scheduled", AgentScanner.OnlyRefusal(d, scheduled: true, bumped: false, folders: false, drives: false));
+		Assert.Contains("--bump", AgentScanner.OnlyRefusal(d, scheduled: false, bumped: true, folders: false, drives: false));
+		Assert.Contains("--folder", AgentScanner.OnlyRefusal(d, scheduled: false, bumped: false, folders: true, drives: false));
+		Assert.Contains("--drive", AgentScanner.OnlyRefusal(d, scheduled: false, bumped: false, folders: false, drives: true));
+	}
+
+	[Fact]
+	public void ScanThisDriveNow_OnADriveScheduledScansRead_ReadsThatDriveAlone() {
+		// The roots as the settings give them: no drive is looked at.
+		string[] roots = [@"C:\", @"E:\", @"\\nas\photos"];
+		var cfg = new AgentConfig();
+		ReviewServer.DriveScanStart? e = ReviewServer.DriveScanNow(cfg, @"E:\", roots, out string? error);
+		Assert.Null(error);
+		Assert.Equal(new[] { "scan", "--only", @"E:\" }, e!.Args);
+		Assert.Equal(new[] { @"E:\" }, e.Reads); // the page shows the scan on E:\'s card alone
+		Assert.True(e.Only);
+		// A folder scanned apart (a network share): just it.
+		ReviewServer.DriveScanStart? share = ReviewServer.DriveScanNow(cfg, @"\\nas\photos", roots, out _);
+		Assert.Equal(new[] { "scan", "--only", @"\\nas\photos" }, share!.Args);
+		Assert.Equal(new[] { @"\\nas\photos" }, share.Reads);
+	}
+
+	[Fact]
+	public void ScanThisDriveNow_OnADriveScannedOnlyWhenAsked_ReadsItWithTheOthers_AsBefore() {
+		var cfg = new AgentConfig { OnRequestDrives = [@"D:\"] };
+		ReviewServer.DriveScanStart? d = ReviewServer.DriveScanNow(cfg, @"D:\", [@"C:\", @"D:\"], out string? error);
+		Assert.Null(error);
+		Assert.Equal(new[] { "scan", "--drive", @"D:\" }, d!.Args);
+		Assert.False(d.Only);
+	}
+
+	[Theory]
+	[InlineData(@"F:\", "Heiward doesn't scan that drive.")]
+	[InlineData("", "That isn't a drive.")]
+	[InlineData(@"Photos", "That isn't a drive.")]
+	public void ScanThisDriveNow_OnADriveNotScanned_StartsNothing(string root, string why) {
+		Assert.Null(ReviewServer.DriveScanNow(new AgentConfig(), root, [@"C:\", @"E:\"], out string? error));
+		Assert.Equal(why, error);
+	}
+
+	[Fact]
 	public void AScanNotBroughtForward_SkipsNothing() {
 		Assert.Null(AgentScanner.AfterScan(Ended(0), bumpedSlotUtc: null, Every));
 		Assert.Null(ScanBump.Load());
@@ -162,6 +221,28 @@ public sealed class ScanBumpTests : IDisposable {
 	}
 
 	[Fact]
+	public void TheFirstScanToKeepEachDrivesTime_ReadingOneDrive_LeavesTheOthersTheirLastScan() {
+		// Before scans kept each drive's time, the page gave each drive the last scan's, for a drive it listed.
+		var index = new ScanIndex { ScannedAtUtc = Asked };
+		index.Drives[ScanIndex.DriveOf(@"C:\")] = new DriveScan(1, 1, 0, 0);
+		index.Drives[ScanIndex.DriveOf(@"E:\Photos")] = new DriveScan(1, 1, 0, 0);
+		var before = DriveScans.Before(index, [@"C:\", @"E:\Photos", @"F:\"]);
+		Assert.Null(DriveScans.Before(null, [@"C:\"])); // no scan yet: every drive was "never"
+
+		// Scan this drive now on C:\, the first scan to keep each drive's time: E:\Photos keeps the last scan's, not "never".
+		DriveScans.Record([@"C:\"], Slot, before);
+		var read = DriveScans.Load();
+		Assert.Equal(Slot, DriveScans.Of(read, @"C:\"));
+		Assert.Equal(Asked, DriveScans.Of(read, @"E:\Photos"));
+		Assert.Equal(DateTimeKind.Utc, DriveScans.Of(read, @"E:\Photos")!.Value.Kind);
+		Assert.Null(DriveScans.Of(read, @"F:\")); // the last scan didn't list it
+
+		// From then on the file says it all: what the page gave before is left aside.
+		DriveScans.Record([@"F:\"], Slot.AddHours(1), new Dictionary<string, DateTime> { [@"E:\Photos"] = Slot.AddHours(1) });
+		Assert.Equal(Asked, DriveScans.Of(DriveScans.Load(), @"E:\Photos"));
+	}
+
+	[Fact]
 	public void ADrivesCard_SaysWhenItWasLastScanned_NeverBeforeItsFirst() {
 		string folder = RealTemp.Folder("hei-bump-root-");
 		Directory.CreateDirectory(folder);
@@ -206,5 +287,10 @@ public sealed class ScanBumpTests : IDisposable {
 		Assert.Contains("bumpScan(s.nextUtc)", strip);
 		Assert.Contains("is skipped", strip);
 		Assert.Contains("post('/api/scan/bump', { slotUtc })", Function(script, "bumpScan"));
+		// Scan this drive now: just that drive, on a drive the scheduled scans read (PageFolderMenuTests has its tooltip).
+		string scan = Function(script, "scanDrive");
+		Assert.Contains("post('/api/scan/drive', { root })", scan);
+		Assert.Contains("if (r && r.only)", scan);
+		Assert.Contains("' only. The other drives stay as their last scans found them'", scan);
 	}
 }
