@@ -183,6 +183,15 @@ namespace HEI.Agent {
 				StoreSetup.Seen();
 				return Results.Json(State(cfg), AgentConfig.Json);
 			});
+			// Where Heiward's window was, and how big (WindowPlace): asked as the page opens in its own window, which it then puts
+			// back there, and sent whenever that window has moved or changed size (app.js, placeWindow). Nothing else reads it
+			// but the next window's opening (Installer.EdgeArguments).
+			app.MapGet("/api/window", (HttpContext ctx) => {
+				ctx.Response.Headers.CacheControl = "no-store";
+				return Results.Json(new { place = WindowPlace.Load() }, AgentConfig.Json);
+			});
+			app.MapPost("/api/window", (WindowPlace place) =>
+				WindowPlace.Save(place) ? Results.NoContent() : Results.BadRequest(new { error = "Not a place a window can be put back to." }));
 			// Manor's disk tile, once a minute: the glance alone, as /api/state gives it, without the review lists, the History
 			// and the settings it reads and sends. Not the page's poll, so it leaves the page's marks (seen, the setup) alone.
 			app.MapGet("/api/glance", (HttpContext ctx) => {

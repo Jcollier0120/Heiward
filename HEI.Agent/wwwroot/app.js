@@ -1681,6 +1681,9 @@ const SETUP_SLIDES = [
   ['more', 'Games and code, tidied too'],
   ['castellan', 'Heiward works for Castellan'],
 ];
+// Where the AI won't run on an NPU (this PC has none, or the person chose the graphics card or the processor), the slides
+// that say NPU give way to the graphics card's, as Castellan's own setup does: make-art.mjs draws both.
+const GPU_SLIDES = { npu: ['gpu', 'AI on your GPU, not in the cloud'], castellan: ['castellan-gpu', 'Heiward works for Castellan'] };
 const SETUP_STEPS = [['welcome', 'Welcome'], ['pc', 'Your PC'], ['progress', 'Setting up'], ['done', 'Done']];
 // The install's output, as stages: each matches the lines Installer.InstallStepsAsync writes when it gets there.
 const SETUP_STAGES = [
@@ -1689,9 +1692,13 @@ const SETUP_STAGES = [
   ['Saving your settings and schedule', /^(Settings:|Remove the copy from GitHub)/],
   ['Adding Heiward to Start and notifications', /^(Start menu|Notifications|Apps & Features|heiward: links)/],
 ];
-// More memory and the history are the Settings page's own switches (moreMemory, keepHistory), saved there before the
-// install runs, which keeps them; null until the form is built from the settings as they are.
-const setupAnswers = { device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true, gpu: null, moreMemory: null, keepHistory: null };
+// More memory, the history, game mode and developer mode are the Settings page's own switches (moreMemory, keepHistory,
+// gameMode, developerMode), saved there before the install runs, which keeps them; null until the form is built from the
+// settings as they are.
+const setupAnswers = {
+  device: null, onDemand: false, scanSpeed: 'background', removeGitHubCopy: true, gpu: null, moreMemory: null, keepHistory: null,
+  gameMode: null, developerMode: null,
+};
 let setupRetry = false;
 let setupStep = 'welcome'; // before the install: the welcome or the questions
 let setupShown = null; // the view built last: each is built once, so a poll doesn't reset the answers or the slideshow
@@ -1704,6 +1711,29 @@ const setupOnDemand = () => setupAnswers.device !== 'npu' && setupAnswers.onDema
 
 /** Whether the page shows the setup: until it's done, and after, until Open Heiward when this page ran it. */
 const setupShowing = (s) => s.setup.needed || setupRan;
+
+/**
+ * Whether the AI runs on an NPU: the answer once the person gave it; before that, whether setup found one it can use;
+ * once Heiward is set up (the uninstall's slides), where its AI ran last.
+ */
+function setupOnNpu() {
+  if (setupAnswers.device) return setupAnswers.device === 'npu';
+  if (!state) return false;
+  return state.setup.needed ? !!state.setup.npu : !!(state.ai && state.ai.device === 'NPU');
+}
+
+/** The slides, with the graphics card's in place of the NPU's where the AI won't run on one. */
+const setupSlides = () => SETUP_SLIDES.map(([name, title]) => (!setupOnNpu() && GPU_SLIDES[name]) || [name, title]);
+
+/**
+ * The view's buttons (its .setup-bar) go to the footer, beside the license line: they stay in reach at any window
+ * height, and the page above scrolls, when it has to, without them over it.
+ */
+function setupFootBar(card) {
+  const bar = card.querySelector('.setup-bar');
+  $('setup-bar').replaceChildren(...(bar ? [bar] : []));
+  card.scrollTop = 0;
+}
 
 /** Castellan's site, from the page's poll (ManorCard.ManorSiteUrl), as the home page's Castellan card has it. */
 function castellanLink(text, cls) {
@@ -1718,11 +1748,12 @@ function setupSlideshow(start) {
   const box = el('figure', 'setup-show');
   const img = el('img', 'setup-show-img');
   const dots = el('div', 'setup-dots');
+  const slides = setupSlides();
   let at = 0;
   const show = (n) => {
-    at = (n + SETUP_SLIDES.length) % SETUP_SLIDES.length;
-    img.src = '/setup/' + SETUP_SLIDES[at][0] + '.svg';
-    img.alt = SETUP_SLIDES[at][1];
+    at = (n + slides.length) % slides.length;
+    img.src = '/setup/' + slides[at][0] + '.svg';
+    img.alt = slides[at][1];
     img.classList.remove('in');
     void img.offsetWidth; // the fade again, for the next picture
     img.classList.add('in');
@@ -1732,7 +1763,7 @@ function setupSlideshow(start) {
     clearInterval(slideTimer);
     slideTimer = setInterval(() => { if (document.visibilityState === 'visible') show(at + 1); }, 8000);
   };
-  SETUP_SLIDES.forEach(([name, title], k) => {
+  slides.forEach(([name, title], k) => {
     new Image().src = '/setup/' + name + '.svg'; // ready before its turn
     const dot = el('button', 'setup-dot');
     dot.type = 'button';
@@ -1798,8 +1829,12 @@ function setupChoice(title, name, options, current, onPick) {
 async function startSetup(button) {
   button.disabled = true;
   try {
-    // The two switches first, through Settings' own save: the install reads settings.json and keeps them.
-    await post('/api/settings', { moreMemory: setupAnswers.moreMemory, keepHistory: setupAnswers.keepHistory });
+    // The switches first, through Settings' own save: the install reads settings.json and keeps them. Game and developer
+    // mode only where they're Heiward's own: where Manor decides them, the page asked nothing.
+    const switches = { moreMemory: setupAnswers.moreMemory, keepHistory: setupAnswers.keepHistory };
+    if (setupAnswers.gameMode != null && !state.games.manor) switches.gameMode = setupAnswers.gameMode;
+    if (setupAnswers.developerMode != null && !state.dev.manor) switches.developerMode = setupAnswers.developerMode;
+    await post('/api/settings', switches);
     await post('/api/setup', {
       device: setupAnswers.device,
       onDemand: setupOnDemand(),
@@ -1835,7 +1870,7 @@ function renderSetup(s) {
     const card = $('setup-card');
     card.className = 'setup-card setup-pc setup-kept';
     card.replaceChildren(...setupKeptByCastellan(setup));
-    $('setup').scrollTop = 0;
+    setupFootBar(card);
     return;
   }
   // The Store version's setup has no welcome: Heiward's Store page was that.
@@ -1852,7 +1887,7 @@ function renderSetup(s) {
   if (view === 'welcome') card.replaceChildren(...setupWelcome(setup));
   else if (view === 'pc') card.replaceChildren(...setupForm(s));
   else card.replaceChildren(...setupDone(s));
-  $('setup').scrollTop = 0;
+  setupFootBar(card);
 }
 
 /**
@@ -1867,7 +1902,7 @@ function setupKeptByCastellan(setup) {
       'Only one copy runs on a PC: Castellan\'s carries on as it is, with your settings, the report and the history.'));
   const open = el('a', 'btn setup-go', 'Open Heiward');
   open.href = setup.castellan.url;
-  const actions = el('div', 'setup-actions');
+  const actions = el('div', 'setup-actions setup-bar');
   actions.append(open);
   return [head, actions,
     el('p', 'muted setup-note', 'You can uninstall this app from the Microsoft Store in Settings > Apps > Installed apps. ' +
@@ -1898,7 +1933,7 @@ function setupWelcome(setup) {
   part.append(document.createTextNode('Heiward is part of Castellan, a household staff that looks after your PC, with its AI on the PC itself. '), castellanLink('castellan-software.com'));
   const go = el('button', 'btn setup-go', 'Get started');
   go.addEventListener('click', () => { setupStep = 'pc'; renderSetup(state); });
-  const actions = el('div', 'setup-actions');
+  const actions = el('div', 'setup-actions setup-bar');
   actions.append(go);
   text.append(actions, part);
   const art = el('div', 'setup-col setup-art');
@@ -1912,11 +1947,14 @@ function setupForm(s) {
   if (!setupAnswers.device) setupAnswers.device = setup.npu ? 'npu' : 'gpu';
   const head = el('div', 'setup-head');
   head.append(el('h1', 'setup-title', 'Your PC'), el('p', 'setup-lead', 'How Heiward works on this PC. You can change any of it later, in Settings.'));
-  const parts = [head];
+  // The questions, in as many columns as the window has room for (.setup-questions), each card whole in one, so a
+  // wide-ish window shows them all at once.
+  const parts = [];
   if (setup.npu) parts.push(npuFound(setup));
-  else parts.push(el('p', 'muted', (setup.unsupportedNpu
+  // The plain "no NPU" line gives way on the shortest windows (setup-why-plain): the choices say as much.
+  const noNpu = setup.npu ? null : el('p', 'muted small setup-why' + (setup.unsupportedNpu ? '' : ' setup-why-plain'), (setup.unsupportedNpu
     ? 'This version of Heiward can\'t use this PC\'s NPU yet (' + setup.unsupportedNpu + '), so'
-    : 'This PC has no NPU, so') + ' AI matching runs on the graphics card or the processor.'));
+    : 'This PC has no NPU, so') + ' AI matching runs on the graphics card or the processor.');
 
   // Where the AI runs. With an NPU, the GPU and the CPU stay available, with advice against them.
   const devices = [];
@@ -1938,6 +1976,7 @@ function setupForm(s) {
     go.textContent = 'Set up';
   }
   const where = setupChoice('Where should the AI run?', 'setup-device', devices, setupAnswers.device, (v) => { setupAnswers.device = v; sync(); });
+  if (noNpu) where.firstChild.after(noNpu);
   where.append(advice);
   sync();
   parts.push(where, when);
@@ -1959,7 +1998,8 @@ function setupForm(s) {
     ['full', 'At full speed', 'As many cores as it takes, at normal priority, to finish as fast as possible.'],
   ], setupAnswers.scanSpeed, (v) => { setupAnswers.scanSpeed = v; }));
 
-  // Two of Settings' switches, with its words: more memory for faster scans, and the history (its Clear history stays in Settings).
+  // Two of Settings' switches, with its words, shorter: more memory for faster scans, and the history (its Clear history
+  // stays in Settings).
   if (setupAnswers.moreMemory == null) setupAnswers.moreMemory = s.config.moreMemory !== false;
   if (setupAnswers.keepHistory == null) setupAnswers.keepHistory = s.config.keepHistory !== false;
   const switches = el('fieldset', 'setup-question setup-switches');
@@ -1968,16 +2008,15 @@ function setupForm(s) {
   const historyText = el('div', 'muted small');
   const words = () => {
     memoryText.textContent = setupAnswers.moreMemory
-      ? 'In the background, the graphics chip decodes more videos at once, taking up to ' + bytes(s.config.moreMemoryBytes) + ' of memory while a scan runs, so it finishes sooner on less of the processor.'
-      : 'The graphics chip decodes two videos at once, up to about 1 GB of memory. Scans take longer.';
+      ? 'More videos decoded at once, with up to ' + bytes(s.config.moreMemoryBytes) + ' of memory while a scan runs, so it finishes sooner. Games and full-screen programs come first.'
+      : 'Two videos decoded at once, with up to about 1 GB of memory. Scans take longer.';
     historyText.textContent = setupAnswers.keepHistory
-      ? 'What you and automatic cleanup clean up or keep is listed under History on the home page, with file names.'
+      ? 'What\'s cleaned up or kept is listed under History, with file names.'
       : 'Off: nothing new is listed, and no file names are kept. Sets you kept still stay hidden.';
   };
   const memoryRow = el('div', 'auto-row');
   const memoryInfo = el('div', 'auto-text');
-  memoryInfo.append(el('div', 'auto-title', 'Use more memory to scan faster'), memoryText,
-    el('div', 'muted small', 'While a game or another 3D program runs, or anything full screen, scans make way: they run in the background with less memory until it\'s closed.'));
+  memoryInfo.append(el('div', 'auto-title', 'Use more memory to scan faster'), memoryText);
   memoryRow.append(toggleSwitch(setupAnswers.moreMemory, 'Use more memory to scan faster', false, (on) => { setupAnswers.moreMemory = on; words(); }), memoryInfo);
   const historyRow = el('div', 'auto-row');
   const historyInfo = el('div', 'auto-text');
@@ -1986,6 +2025,8 @@ function setupForm(s) {
   words();
   switches.append(memoryRow, historyRow);
   parts.push(switches);
+  const modes = setupModes(s);
+  if (modes) parts.push(modes);
 
   // A copy installed from GitHub, on the Store version's first run: this one replaces it, and the Store keeps it up to date.
   if (setup.gitHubCopy != null) {
@@ -2007,8 +2048,13 @@ function setupForm(s) {
   }
 
   go.addEventListener('click', () => startSetup(go));
-  parts.push(el('p', 'muted small setup-note', (setup.firstRun ? 'Heiward keeps itself up to date.' : 'The Microsoft Store keeps Heiward up to date.') +
-    ' Your photos, videos and files are never deleted unless you choose them on Heiward\'s page.'));
+  // The note last in the columns, under the shortest, rather than a line of its own below them. On the shortest windows
+  // the head gives way, and the note says what it said (setup-later).
+  const note = el('p', 'muted small setup-note', (setup.firstRun ? 'Heiward keeps itself up to date.' : 'The Microsoft Store keeps Heiward up to date.') +
+    ' Your photos, videos and files are never deleted unless you choose them on Heiward\'s page.');
+  note.append(el('span', 'setup-later', ' You can change any of this later, in Settings.'));
+  const questions = el('div', 'setup-questions');
+  questions.append(...parts, note);
   const bar = el('div', 'setup-actions setup-bar');
   if (setup.firstRun) {
     const back = el('button', 'btn secondary', 'Back');
@@ -2016,8 +2062,41 @@ function setupForm(s) {
     bar.append(back);
   }
   bar.append(go);
-  parts.push(bar);
-  return parts;
+  return [head, questions, bar];
+}
+
+/**
+ * Game mode and developer mode, asked here rather than left to be found in Settings, with Settings' words, shorter. Only
+ * where they're Heiward's own switches: where Manor decides one (its Developer options, its game mode), Settings says so
+ * and the setup asks nothing about it. Both off unless already on: each adds a daily check.
+ */
+function setupModes(s) {
+  const rows = [];
+  const row = (title, on, words, onChange) => {
+    const r = el('div', 'auto-row');
+    const text = el('div', 'auto-text');
+    text.append(el('div', 'auto-title', title), el('div', 'muted small', words));
+    r.append(toggleSwitch(on, title, false, onChange), text);
+    return r;
+  };
+  if (!s.games.manor) {
+    if (setupAnswers.gameMode == null) setupAnswers.gameMode = !!s.games.enabled;
+    rows.push(row('Game mode', setupAnswers.gameMode,
+      'Once a day it also finds what games leave behind: leftovers of uninstalled games, download and shader caches, crash ' +
+      'dumps. Your games and your saves are never touched.',
+      (on) => { setupAnswers.gameMode = on; }));
+  }
+  if (!s.dev.manor) {
+    if (setupAnswers.developerMode == null) setupAnswers.developerMode = !!s.dev.enabled;
+    rows.push(row('Developer mode', setupAnswers.developerMode,
+      'Once a day it also finds what tools can recreate: build outputs, package caches, old temp files, and the worktrees ' +
+      'and merged branches of projects you\'ve left.',
+      (on) => { setupAnswers.developerMode = on; }));
+  }
+  if (!rows.length) return null;
+  const box = el('fieldset', 'setup-question setup-switches');
+  box.append(el('legend', 'auto-title', 'Games and code'), ...rows);
+  return box;
 }
 
 /** While the install runs: its stages, its output under Details, and the slideshow; Try again when it failed. */
@@ -2042,10 +2121,13 @@ function renderSetupProgress(setup, s) {
     details.append(el('summary', null, 'Details'), log);
     const again = el('button', 'btn setup-go hidden', 'Try again');
     again.addEventListener('click', () => { setupRetry = true; setupStep = 'pc'; setupShown = null; renderSetup(state); });
-    col.append(title, lead, bar, stages, again, details);
+    const actions = el('div', 'setup-actions setup-bar');
+    actions.append(again);
+    col.append(title, lead, bar, stages, details, actions);
     const art = el('div', 'setup-col setup-art');
     art.append(setupSlideshow(1));
     card.replaceChildren(col, art);
+    setupFootBar(card);
     setupRun = { title, lead, fill: bar.firstChild, stages, details, log, again };
   }
   const r = setupRun;
@@ -2093,13 +2175,13 @@ function setupDone(s) {
     route = parseRoute();
     renderRoute();
   });
-  const actions = el('div', 'setup-actions');
+  const actions = el('div', 'setup-actions setup-bar');
   actions.append(open);
   col.append(actions);
-  // Castellan: the staff Heiward works with, and where to meet them.
+  // Castellan: the staff Heiward works with, and where to meet them; wired to the graphics card where there's no NPU.
   const more = el('aside', 'setup-castellan');
   const pic = el('img', 'setup-castellan-img');
-  pic.src = '/setup/castellan.svg';
+  pic.src = '/setup/' + (setupOnNpu() ? 'castellan' : 'castellan-gpu') + '.svg';
   pic.alt = 'Heiward among Castellan\'s staff';
   const text = el('div', 'setup-castellan-text');
   text.append(el('div', 'setup-eyebrow castellan', 'Part of Castellan'),
@@ -2140,7 +2222,7 @@ function renderUninstall(s) {
   const card = $('setup-card');
   card.className = 'setup-card setup-' + (uninstall.phase === 'ask' ? 'welcome' : uninstall.phase);
   card.replaceChildren(...(uninstall.phase === 'ask' ? uninstallAsk() : uninstall.phase === 'progress' ? uninstallProgress() : uninstallDone()));
-  $('setup').scrollTop = 0;
+  setupFootBar(card);
 }
 
 /** The slideshow beside the uninstall, from "Nothing goes until you say so": the same one throughout, so Done needs no new picture. */
@@ -2225,7 +2307,7 @@ function uninstallDone() {
     uninstall.phase = 'ask';
     renderUninstall(state);
   });
-  const actions = el('div', 'setup-actions');
+  const actions = el('div', 'setup-actions setup-bar');
   actions.append(button);
   col.append(actions, details);
   return [col, uninstallArt()];
@@ -5865,6 +5947,88 @@ function setupThemeMenu() {
   });
 }
 
+// Heiward's window remembers where it was and how big (the owner's ask, 2026-11-12; WindowPlace on the agent). Only in its
+// own window (an Edge app window), and only when it opened on this page rather than another page went on to it. The page
+// puts the window back where it was, or, the first time, centres it at the size the setup is laid out for; then it says
+// where the window is whenever it has moved or changed size and stayed so a moment, and once more as it closes. Edge,
+// when it starts with the window, opens it in its place itself (Installer.EdgeArguments).
+const WINDOW_POLL_MS = 1500;
+let windowSent = null;
+
+function ownWindow() {
+  if (typeof matchMedia !== 'function' || !matchMedia('(display-mode: standalone)').matches) return false;
+  try { return !document.referrer || new URL(document.referrer).origin === location.origin; } catch { return true; }
+}
+
+const screenArea = () => ({ x: screen.availLeft || 0, y: screen.availTop || 0, w: screen.availWidth, h: screen.availHeight });
+
+/** The first window: as WindowPlace.Default works it out, on the screen the window is on. */
+function defaultWindow(a) {
+  const width = a.w < 1200 ? a.w : Math.min(1280, a.w - 48);
+  const height = a.h < 720 ? a.h : Math.min(860, a.h - 24);
+  return { x: a.x + Math.floor((a.w - width) / 2), y: a.y + Math.floor((a.h - height) / 2), width, height };
+}
+
+/** Where the window is: maximized when it fills its screen. */
+function windowNow() {
+  const a = screenArea();
+  return { x: screenX, y: screenY, width: outerWidth, height: outerHeight, maximized: outerWidth >= a.w && outerHeight >= a.h };
+}
+
+/** The same place, give or take a pixel of rounding; two maximized windows are in the same place wherever they were before. */
+function samePlace(p, q) {
+  if (!p || !q || !!p.maximized !== !!q.maximized) return false;
+  const near = (a, b) => Math.abs(a - b) <= 2;
+  return !!p.maximized || (near(p.x, q.x) && near(p.y, q.y) && near(p.width, q.width) && near(p.height, q.height));
+}
+
+function putWindow(p) {
+  try { resizeTo(p.width, p.height); moveTo(p.x, p.y); } catch { /* not this page's window to move */ }
+}
+
+/** The top of the window, where it's dragged from, on its screen (one unplugged since it was there); else centred on it. */
+function keepWindowOnScreen() {
+  const a = screenArea();
+  const middle = screenX + outerWidth / 2;
+  if (middle >= a.x && middle <= a.x + a.w && screenY >= a.y - 12 && screenY + 30 <= a.y + a.h) return;
+  const width = Math.min(outerWidth, a.w), height = Math.min(outerHeight, a.h);
+  putWindow({ x: a.x + Math.floor((a.w - width) / 2), y: a.y + Math.floor((a.h - height) / 2), width, height });
+}
+
+function sendWindow(p, closing) {
+  windowSent = p;
+  fetch('/api/window', {
+    method: 'POST', keepalive: !!closing,
+    headers: { 'Content-Type': 'application/json', 'X-Agent-Token': token }, body: JSON.stringify(p),
+  }).catch(() => { /* kept next time it moves */ });
+}
+
+async function placeWindow() {
+  if (!ownWindow()) return;
+  let saved = null;
+  try { saved = (await (await fetch('/api/window', { cache: 'no-store' })).json()).place; } catch { /* the first window's place, then */ }
+  if (saved && saved.maximized) {
+    if (!windowNow().maximized) { const a = screenArea(); putWindow({ x: a.x, y: a.y, width: a.w, height: a.h }); }
+  } else {
+    const want = saved || defaultWindow(screenArea());
+    if (!samePlace({ ...want, maximized: false }, windowNow())) putWindow(want);
+  }
+  windowSent = saved;
+  setTimeout(keepWindowOnScreen, 400);
+  let seen = null;
+  setInterval(() => {
+    if (document.hidden || screenX <= -30000) return; // minimized: nothing to keep
+    const p = windowNow();
+    if (samePlace(p, seen) && !samePlace(p, windowSent)) sendWindow(p);
+    seen = p;
+  }, WINDOW_POLL_MS);
+  addEventListener('pagehide', () => {
+    const p = windowNow();
+    if (screenX > -30000 && !samePlace(p, windowSent)) sendWindow(p, true);
+  });
+}
+
+placeWindow();
 setupThemeMenu();
 setupPauseMenu();
 $('nav-back').append(icon('back'));
