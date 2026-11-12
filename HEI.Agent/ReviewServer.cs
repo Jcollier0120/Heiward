@@ -129,6 +129,8 @@ namespace HEI.Agent {
 				}
 				ctx.Response.Headers.XContentTypeOptions = "nosniff";
 				ctx.Response.Headers.ContentSecurityPolicy = "default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'";
+				// The report, decisions and index stay parsed in memory while the page is in use, and only then (KeptFiles).
+				if (KeptFiles.FromThePage(ctx.Request.Path)) KeptFiles.PageUsed(DateTime.UtcNow);
 				await next();
 			});
 
@@ -207,10 +209,12 @@ namespace HEI.Agent {
 			});
 			// Folder names only, and only below what the agent scans (a GET from another site can't read
 			// the answer: no CORS, and a foreign Host header is refused above).
-			app.MapGet("/api/tree", (string path, bool? all) => {
+			// The page asks for the open folders' listings at once: one at a time per disk that seeks (DiskListingGate).
+			app.MapGet("/api/tree", async (string path, bool? all, HttpContext ctx) => {
 				var decisions = DecisionStore.Load();
 				var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
-				TreeListing? listing = ExplorerView.Tree(path, all == true, cfg, ScanIndex.Load(), pending);
+				ScanIndex? index = ScanIndex.Load();
+				TreeListing? listing = await DiskListingGate.RunAsync(path, () => ExplorerView.Tree(path, all == true, cfg, index, pending), ctx.RequestAborted);
 				return listing == null ? Results.NotFound(new { error = "That folder isn't one Heiward scans." }) : Results.Json(listing, AgentConfig.Json);
 			});
 			// Folder sizes on disk, for the folders the page shows (?path=…, repeated: the tree's open folders, the one shown),
@@ -559,6 +563,8 @@ namespace HEI.Agent {
 
 			await app.StartAsync(ct);
 			Console.WriteLine($"Review page: {PageUrl(port)}");
+			// What the page read stays in memory while it's in use, and is let go once it's gone unused a while.
+			_ = KeptFiles.RunAsync(app.Lifetime.ApplicationStopping);
 			// Standing aside, the page only says so: no scans, no journal or disk watch, no task moves (Castellan's copy does
 			// that work), and it stops once nobody looks at it.
 			if (aside) {

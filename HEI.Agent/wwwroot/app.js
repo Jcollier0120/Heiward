@@ -4885,6 +4885,13 @@ function scanModeTitle(d) {
 
 // ---------------------------------------------------------------- folder tree
 
+// At most this many listings on their way at once; the rest wait their turn, in the order asked. Heiward lists one at a
+// time on a disk that seeks anyway (DiskListingGate), and the browser has six connections to it: the thumbnails and the
+// page's own state need some.
+const LISTINGS_AT_ONCE = 3;
+let listingsOut = 0;
+const listingsWaiting = [];
+
 /**
  * A folder's listing (/api/tree). It's kept from the moment it's asked, as the promise of its answer, so the tree, the
  * folders above the one shown and that folder's own page share one request, however many ask while it's on its way.
@@ -4892,8 +4899,19 @@ function scanModeTitle(d) {
 function listing(path, all) {
   const k = key(path) + (all ? '|all' : '');
   if (listings.has(k)) return listings.get(k);
-  const asked = fetch('/api/tree?path=' + encodeURIComponent(path) + (all ? '&all=true' : ''))
-    .then((res) => (res.ok ? res.json() : null));
+  const url = '/api/tree?path=' + encodeURIComponent(path) + (all ? '&all=true' : '');
+  const asked = new Promise((resolve, reject) => {
+    const start = () => {
+      listingsOut++;
+      fetch(url).then((res) => (res.ok ? res.json() : null)).then(resolve, reject).finally(() => {
+        listingsOut--;
+        const next = listingsWaiting.shift();
+        if (next) next();
+      });
+    };
+    if (listingsOut < LISTINGS_AT_ONCE) start();
+    else listingsWaiting.push(start);
+  });
   // No answer (Heiward has stopped): asked again next time, unless the listings were cleared and asked anew meanwhile.
   asked.catch(() => { if (listings.get(k) === asked) listings.delete(k); });
   listings.set(k, asked);
@@ -4910,7 +4928,8 @@ function shownInTree(path) {
 
 /**
  * Opens every folder from the drive down to the one shown, and asks for every listing the tree and the page will draw at
- * once: the folder shown, and each open folder the tree shows. They come back side by side, rather than one after another.
+ * once: the folder shown first, then each open folder the tree shows. They come back side by side (LISTINGS_AT_ONCE at a
+ * time), rather than each only once the tree has drawn the one above it.
  */
 function revealInTree(path) {
   const d = cardFor(path);

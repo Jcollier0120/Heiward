@@ -33,7 +33,12 @@ public sealed class StampedFileTests : IDisposable {
 	public StampedFileTests() {
 		Directory.CreateDirectory(Path.Combine(dir, "heiward"));
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", Path.Combine(dir, "heiward"));
+		// The page in use: files are kept only then (KeptFiles). The tests below that need it otherwise say so.
+		KeptFiles.PageUsed(DateTime.UtcNow);
 	}
+
+	/// <summary>The page last used longer ago than KeptFiles keeps files for.</summary>
+	static void PageUnused() => KeptFiles.PageUsed(DateTime.UtcNow - KeptFiles.Idle - TimeSpan.FromMinutes(1));
 
 	public void Dispose() {
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", heiwardHome);
@@ -223,4 +228,77 @@ public sealed class StampedFileTests : IDisposable {
 		Made(Set("b2", "b.jpg", "b copy.jpg")).Save();
 		Assert.Equal("b2", Report.Load()!.Groups.Single().Key);
 	}
+
+	[Fact]
+	public void WhileThePageIsntInUse_EachReadParsesTheFile_AndNothingIsKept() {
+		// The page's process stays up all day; Manor reads the disk glance (the report, decisions and index) every minute.
+		Made(Set("a1", "a.jpg", "a copy.jpg")).Save();
+		Index().Save();
+		PageUnused();
+		int report = Report.Saved.Parses, index = ScanIndex.Saved.Parses;
+		for (int i = 0; i < 3; i++) {
+			Assert.Equal("a1", Report.Load()!.Groups.Single().Key);
+			Assert.NotNull(ScanIndex.Load());
+		}
+		Assert.Equal(report + 3, Report.Saved.Parses);
+		Assert.Equal(index + 3, ScanIndex.Saved.Parses);
+		Assert.False(Report.Saved.Holds);
+		Assert.False(ScanIndex.Saved.Holds);
+		// A decision recorded meanwhile (a scan's automatic cleanup in this process) keeps nothing either.
+		DecisionStore.Record(new AgentConfig { KeepHistory = true }, "a1", new Decision("kept", Six, new(), 0));
+		Assert.False(DecisionStore.Saved.Holds);
+		Assert.True(DecisionStore.Load().ContainsKey("a1"));
+		Assert.False(DecisionStore.Saved.Holds);
+	}
+
+	[Fact]
+	public void ThePageGoneUnused_LetsGoOfWhatsKept_AndTheNextReadParsesAgain() {
+		Made(Set("a1", "a.jpg", "a copy.jpg")).Save();
+		Index().Save();
+		DecisionStore.Record(new AgentConfig { KeepHistory = true }, "a1", new Decision("kept", Six, new(), 0));
+		DateTime used = DateTime.UtcNow;
+		KeptFiles.PageUsed(used);
+		Report.Load();
+		ScanIndex.Load();
+		Assert.True(Report.Saved.Holds && ScanIndex.Saved.Holds && DecisionStore.Saved.Holds);
+
+		// A minute later, and just short of the idle time: kept.
+		Assert.False(KeptFiles.DropIfIdle(used.AddMinutes(1)));
+		Assert.False(KeptFiles.DropIfIdle(used + KeptFiles.Idle - TimeSpan.FromSeconds(1)));
+		Assert.True(Report.Saved.Holds && ScanIndex.Saved.Holds && DecisionStore.Saved.Holds);
+		// The idle time past: all let go.
+		Assert.True(KeptFiles.DropIfIdle(used + KeptFiles.Idle));
+		Assert.False(Report.Saved.Holds || ScanIndex.Saved.Holds || DecisionStore.Saved.Holds);
+		Assert.False(KeptFiles.DropIfIdle(used + KeptFiles.Idle)); // nothing left to let go
+
+		// The page used again: the next read parses the file, and keeps it.
+		int before = Report.Saved.Parses;
+		KeptFiles.PageUsed(DateTime.UtcNow);
+		Assert.Equal("a1", Report.Load()!.Groups.Single().Key);
+		Assert.Equal("a1", Report.Load()!.Groups.Single().Key);
+		Assert.Equal(before + 1, Report.Saved.Parses);
+		Assert.True(Report.Saved.Holds);
+	}
+
+	[Theory]
+	[InlineData("/api/state", true)]
+	[InlineData("/api/tree", true)]
+	[InlineData("/api/thumb/a1/0", true)]
+	[InlineData("/api/groups/a1/recycle", true)]
+	[InlineData("/api/progress", true)]
+	// Manor's: its tiles and its ping, every minute or so all day.
+	[InlineData("/api/glance", false)]
+	[InlineData("/api/disk", false)]
+	[InlineData("/api/ping", false)]
+	// Another agent's (Chamberlain comparing pictures), and another copy's installer.
+	[InlineData("/api/pictures/compare", false)]
+	[InlineData("/api/quit", false)]
+	// The page's files: what follows them is.
+	[InlineData("/app.js", false)]
+	[InlineData("/", false)]
+	public void OnlyThePagesOwnRequests_CountAsItsUse(string path, bool fromThePage) =>
+		Assert.Equal(fromThePage, KeptFiles.FromThePage(new Microsoft.AspNetCore.Http.PathString(path)));
+
+	static ScanIndex Index() => ScanIndex.Build(Six, new[] { @"E:\" }, new[] { (@"E:\Photos\a.jpg", 10L) },
+		new Dictionary<string, TimeSpan>(), new Dictionary<string, TimeSpan>());
 }

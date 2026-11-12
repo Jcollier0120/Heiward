@@ -21,10 +21,12 @@ namespace HEI.Agent.Tests;
 
 /// <summary>
 /// A folder's page drawn again (after sets are removed, refresh(true) clears the listings) asks for every listing it draws
-/// at once: the folders above the one shown, the other folders open in the tree, and the folder shown, asked once though
-/// the tree and the page both draw it. It used to ask them one after another (the owner, 2026-11-12: "When heiward deletes
-/// a lot of pairs, it's slow to reload the ui"). app.js's listing, folder tree, renderRoute and renderContent run in a
-/// JavaScript engine, against a page with just enough of a DOM, whose /api/tree answers only when a test says so.
+/// together: the folder shown (once, though the tree and the page both draw it), the folders above it, and the other
+/// folders open in the tree. It used to ask them one after another, each once the tree had drawn the folder above (the
+/// owner, 2026-11-12: "When heiward deletes a lot of pairs, it's slow to reload the ui"). Three are on their way at most
+/// (LISTINGS_AT_ONCE), the next going out as each answers: Heiward lists one at a time on a spinning disk anyway, and the
+/// page's other requests need the browser's connections too. app.js's listing, folder tree, renderRoute and renderContent
+/// run in a JavaScript engine, against a page with just enough of a DOM, whose /api/tree answers only when a test says so.
 /// </summary>
 public sealed class PageListingTests {
 	const string FakePage = """
@@ -61,11 +63,13 @@ public sealed class PageListingTests {
 		var asked = [];
 		function fetch(url) {
 		  var m = /path=([^&]*)(&all=true)?/.exec(url);
-		  return new Promise(function (ok, no) {
-		    asked.push({ path: decodeURIComponent(m[1]), all: !!m[2], ok: ok, no: no });
+		  return new Promise(function (resolve, reject) {
+		    asked.push({ path: decodeURIComponent(m[1]), all: !!m[2], done: false,
+		      ok: function (v) { this.done = true; resolve(v); }, no: function (e) { this.done = true; reject(e); } });
 		  });
 		}
 		function askedPaths() { return asked.map(function (a) { return a.path; }); }
+		function onTheirWay() { return asked.filter(function (a) { return !a.done; }).length; }
 		// Folders on E:, and which of them have folders in them.
 		var folders = {
 		  'E:\\': ['Old', 'Photos', 'Videos'],
@@ -82,7 +86,7 @@ public sealed class PageListingTests {
 		  a.ok({ ok: true, json: function () { return Promise.resolve({ path: a.path, exempt: null, files: 1, bytes: 10,
 		    duplicates: { copies: 0, lookalikes: 0, reclaim: 0 }, children: children, hiddenEmpty: 0 }); } });
 		}
-		function answerAll(order) { var all = asked.slice(); if (order === 'last first') all.reverse(); all.forEach(answer); }
+		function answerAll(order) { var all = asked.filter(function (a) { return !a.done; }); if (order === 'last first') all.reverse(); all.forEach(answer); }
 
 		var SEP = '\\', FOLD_EXEMPT = 5;
 		var listings = new Map(), expanded = new Map(), showAll = new Set(), exemptOpen = new Set();
@@ -133,43 +137,75 @@ public sealed class PageListingTests {
 		js.Advanced.ProcessTasks();
 	}
 
+	/// <summary>Answers every listing on its way, and those that go out meanwhile, until none is left.</summary>
+	void AnswerEverything(string order = "") {
+		for (int i = 0; i < 20 && Js<int>("onTheirWay()") > 0; i++) Run($"answerAll('{order}');");
+		Assert.Equal(0, Js<int>("onTheirWay()"));
+	}
+
 	static readonly string[] Drawn = ["This PC", "Data (E:)", "Old", "Photos", "2019 (selected)", "Trip", "2020", "Videos", "Clips"];
 
 	[Fact]
-	public void AFoldersPage_AsksForEveryListingItDraws_AtOnce_AndForTheFolderShownOnce() {
+	public void AFoldersPage_AsksForEveryListingItDraws_Together_AndForTheFolderShownOnce() {
 		Run("draw();");
-		// Before any answer: the drive, the folders down to the one shown, that one (the tree and the page both draw it),
-		// and the other open folder the tree shows; not the open one inside a closed folder.
-		Assert.Equal([@"E:\", @"E:\Photos", @"E:\Photos\2019", @"E:\Videos"], Js<string[]>("askedPaths()").Order());
+		// Before any answer: the folder shown (the tree and the page both draw it), then the drive and the folder down to it.
+		Assert.Equal([@"E:\Photos\2019", @"E:\", @"E:\Photos"], Js<string[]>("askedPaths()"));
+		// The other open folder the tree shows goes out as soon as any answers: before the tree has drawn its parent.
+		Run(@"answer(asked[0]);");
+		Assert.Equal([@"E:\Photos\2019", @"E:\", @"E:\Photos", @"E:\Videos"], Js<string[]>("askedPaths()"));
 		Assert.Equal(0, Js<int>("drawn"));
 
-		Run("answerAll('last first');");
+		AnswerEverything("last first");
 		Assert.Equal(1, Js<int>("drawn"));
+		// Not the open folder inside a closed one.
 		Assert.Equal(4, Js<int>("asked.length"));
 		Assert.Equal(Drawn, Js<string[]>("rows()"));
 		Assert.Equal("2019", Js<string>("heading()"));
 	}
 
 	[Fact]
-	public void DrawnAgainAfterARemoval_TheListingsAreAllAskedAgain_AtOnce() {
-		Run("draw(); answerAll();");
+	public void DrawnAgainAfterARemoval_TheListingsAreAllAskedAgain_Together() {
+		Run("draw();");
+		AnswerEverything();
 		Assert.Equal(1, Js<int>("drawn"));
 		// refresh(true), after sets are removed: the counts in the tree follow the report.
 		Run("asked = []; listings.clear(); draw();");
-		Assert.Equal([@"E:\", @"E:\Photos", @"E:\Photos\2019", @"E:\Videos"], Js<string[]>("askedPaths()").Order());
-		Run("answerAll('last first');");
+		Assert.Equal([@"E:\Photos\2019", @"E:\", @"E:\Photos"], Js<string[]>("askedPaths()"));
+		AnswerEverything("last first");
 		Assert.Equal(2, Js<int>("drawn"));
+		Assert.Equal([@"E:\", @"E:\Photos", @"E:\Photos\2019", @"E:\Videos"], Js<string[]>("askedPaths()").Order());
 		Assert.Equal(Drawn, Js<string[]>("rows()"));
 	}
 
 	[Fact]
-	public void AnOpenFolderDeeperDown_IsAskedWithTheRest() {
+	public void AnOpenFolderDeeperDown_IsAskedWithTheRest_NotOnceTheFolderAboveIsDrawn() {
 		Run(@"open('E:\\Videos\\Clips'); draw();");
-		Assert.Equal([@"E:\", @"E:\Photos", @"E:\Photos\2019", @"E:\Videos", @"E:\Videos\Clips"], Js<string[]>("askedPaths()").Order());
-		Run("answerAll('last first');");
+		// Three answers in, the two still waiting go out: Videos and the folder open inside it, before Videos answers.
+		Run("answerAll();");
+		Assert.Equal([@"E:\Photos\2019", @"E:\", @"E:\Photos", @"E:\Videos", @"E:\Videos\Clips"], Js<string[]>("askedPaths()"));
+		Assert.Equal(2, Js<int>("onTheirWay()"));
+		AnswerEverything("last first");
 		Assert.Equal(1, Js<int>("drawn"));
 		Assert.Equal(5, Js<int>("asked.length"));
 		Assert.Equal([.. Drawn, "Cut"], Js<string[]>("rows()"));
+	}
+
+	[Fact]
+	public void AtMostThreeListings_AreOnTheirWay_TheNextGoingOut_InTheOrderAsked_AsEachAnswersOrFails() {
+		Run(@"open('E:\\Videos\\Clips'); open('E:\\Old'); draw();");
+		Assert.Equal(3, Js<int>("asked.length"));
+		Assert.Equal(3, Js<int>("onTheirWay()"));
+		Run(@"answer(asked[1]);");
+		Assert.Equal(4, Js<int>("asked.length"));
+		Assert.Equal(3, Js<int>("onTheirWay()"));
+		// One that gets no answer frees its place too.
+		Run(@"asked[3].no(new TypeError('Failed to fetch'));");
+		Assert.Equal(5, Js<int>("asked.length"));
+		Assert.Equal(3, Js<int>("onTheirWay()"));
+		Run(@"answer(asked[0]); answer(asked[2]);");
+		// The rest in their turn, in the order they were asked: the open folders in the order they were opened.
+		Assert.Equal([@"E:\Photos\2019", @"E:\", @"E:\Photos", @"E:\Videos", @"E:\Old\Deep", @"E:\Videos\Clips", @"E:\Old"], Js<string[]>("askedPaths()"));
+		Assert.Equal(3, Js<int>("onTheirWay()"));
 	}
 
 	[Fact]
