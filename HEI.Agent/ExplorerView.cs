@@ -22,8 +22,10 @@ namespace HEI.Agent {
 	/// <param name="Label">The drive's own name in Windows ("Games"), or "" when it has none: <paramref name="Name"/> says "Local Disk" then.</param>
 	/// <param name="Scans">"auto": scheduled scans read it; "manual": only a scan you start does (<see cref="ExplorerView.ScanMode"/>).</param>
 	/// <param name="ManualWhy">Why it's "manual": <see cref="ExplorerView.ByDrive"/>, <see cref="ExplorerView.OnDemand"/> or <see cref="ExplorerView.DevBuildWhy"/>; null for "auto".</param>
+	/// <param name="LastScanUtc">When a scan last read it (<see cref="DriveScans"/>); null: never.</param>
 	sealed record DriveCard(string Root, string Name, string Type, long TotalBytes, long FreeBytes, bool Scanned,
-		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false, string Label = "", string Scans = "auto", string? ManualWhy = null);
+		DriveScan? Scan, DupStats Duplicates, bool OnRequest = false, string Label = "", string Scans = "auto", string? ManualWhy = null,
+		DateTime? LastScanUtc = null);
 
 	sealed record Hotspot(string Folder, int Copies, long Reclaim);
 
@@ -60,8 +62,14 @@ namespace HEI.Agent {
 		/// scan, so a folder the user includes or leaves out on the page shows so at once.
 		/// </summary>
 		/// <param name="devBuild">This is a development build, with no scheduled scans; null: whether it is (<see cref="DevBuild.Current"/>).</param>
-		public static List<DriveCard> Drives(AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending, bool? devBuild = null) {
+		/// <param name="lastRead">When a scan last read each root (<see cref="DriveScans.Load"/>); null: as saved.</param>
+		public static List<DriveCard> Drives(AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending, bool? devBuild = null,
+			IReadOnlyDictionary<string, DateTime>? lastRead = null) {
 			bool dev = devBuild ?? DevBuild.Current;
+			lastRead ??= DriveScans.Load();
+			// Before scans kept each drive's time: the last scan's, for each drive it listed.
+			DateTime? ReadAt(string root) => lastRead != null ? DriveScans.Of(lastRead, root)
+				: index != null && index.Drives.ContainsKey(ScanIndex.DriveOf(root)) ? DateTime.SpecifyKind(index.ScannedAtUtc, DateTimeKind.Utc) : null;
 			var cards = new List<DriveCard>();
 			var roots = ScanScope.Roots(cfg);
 			foreach (DriveInfo drive in DriveInfo.GetDrives()) {
@@ -89,7 +97,8 @@ namespace HEI.Agent {
 				index?.Drives.TryGetValue(root, out scan);
 				bool onRequest = scanned && cfg.IsOnRequest(root);
 				var (scans, why) = ScanMode(cfg, onRequest, dev);
-				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), onRequest, own, scans, why));
+				cards.Add(new DriveCard(root, $"{label} ({letter})", type, total, free, scanned, scanned ? scan : null, Stats(root, pending), onRequest, own, scans, why,
+					scanned ? ReadAt(root) : null));
 			}
 			// Extra folders that aren't a whole drive (a folder on a USB drive, a network share).
 			foreach (string root in roots.Where(r => !cards.Any(c => c.Root.Equals(r, StringComparison.OrdinalIgnoreCase)))) {
@@ -99,7 +108,7 @@ namespace HEI.Agent {
 				bool onRequest = cfg.IsOnRequest(root);
 				var (scans, why) = ScanMode(cfg, onRequest, dev);
 				cards.Add(new DriveCard(root, Path.GetFileName(root.TrimEnd(Path.DirectorySeparatorChar)) is { Length: > 0 } n ? n : root, "folder", 0, 0, true,
-					scan == null ? null : scan with { Files = files, Bytes = bytes }, Stats(root, pending), onRequest, "", scans, why));
+					scan == null ? null : scan with { Files = files, Bytes = bytes }, Stats(root, pending), onRequest, "", scans, why, ReadAt(root)));
 			}
 			return cards;
 		}

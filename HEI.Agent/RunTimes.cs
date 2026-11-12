@@ -72,7 +72,7 @@ namespace HEI.Agent {
 			// A development build has no scan task: the installed copy's runs the installed copy.
 			int every = DevBuild.Current ? 0 : cfg.ScanEveryMinutes;
 			string? nextRun = paused || every <= 0 ? null : Scheduler.NextRun();
-			return Build(now, last, reportAt, AgentScanner.IsRunning(), AgentScanner.LastStartedUtc(), paused, every, nextRun);
+			return Build(now, last, reportAt, AgentScanner.IsRunning(), AgentScanner.LastStartedUtc(), paused, every, nextRun, ScanBump.Load());
 		}
 
 		/// <param name="reportAt">When report.json was last written: only used without <paramref name="last"/>.</param>
@@ -80,13 +80,15 @@ namespace HEI.Agent {
 		/// <param name="lastStartedUtc">When the last scan started (<see cref="AgentScanner.LastStartedUtc"/>).</param>
 		/// <param name="everyMinutes">Minutes between scheduled scans; 0: only when asked.</param>
 		/// <param name="nextRun">What <see cref="Scheduler.NextRun"/> gave: Task Scheduler's local time, in this PC's format.</param>
+		/// <param name="bump">A scan brought forward from a scheduled one (<see cref="ScanBump"/>): the scheduled one it ran for is skipped, so the next is the one after.</param>
 		internal static RunTimes Build(DateTime nowUtc, LastScan? last, DateTime? reportAt, bool scanning, DateTime? lastStartedUtc,
-			bool paused, int everyMinutes, string? nextRun) {
+			bool paused, int everyMinutes, string? nextRun, ScanBump? bump = null) {
 			DateTime? lastRunAt = last != null ? Utc(last.EndedUtc) : Utc(reportAt);
 			bool? lastRunOk = last?.Ok;
 			// The scan holding the lock wrote its start just after taking it; until then the file is the last scan's.
 			DateTime? runningSince = scanning && lastStartedUtc is { } s && (last == null || s > Utc(last.StartedUtc)) ? Utc(s) : null;
 			DateTime? nextRunAt = paused || everyMinutes <= 0 ? null : NextUtc(nextRun, nowUtc, everyMinutes);
+			if (nextRunAt is { } next && bump != null) nextRunAt = bump.After(next, everyMinutes);
 			return new RunTimes(lastRunAt, lastRunOk, nextRunAt, runningSince);
 		}
 
