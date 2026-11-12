@@ -4894,8 +4894,10 @@ function openFolderMenu(e, node) {
     item('Scan only when I ask', () => setOnRequest(card.root, true));
     hint = 'Scheduled scans, Scan now and the developer check would leave this drive alone, so a disk that sleeps stays asleep. Its sets and developer items stay listed; scan it from its page.';
   } else if (card && card.type !== 'folder') {
+    item('Scan now', () => scanFolder(node.path), scanFolderWhy());
     item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
   } else {
+    if (card) item('Scan now', () => scanFolder(node.path), scanFolderWhy());
     item('Leave out of scans', () => overrideFolder(node.path, false));
   }
   item('Copy path', () => copyPath(node.path));
@@ -4936,6 +4938,23 @@ async function setOnRequest(root, onRequest) {
 /** Scans a drive that's scanned only when asked, now (and everything else as usual). */
 async function scanDrive(root) {
   try { await post('/api/scan/drive', { root }); refresh(true); } catch (e) { showError(e.message); }
+}
+
+/**
+ * Scans only this folder and the folders in it, now, on whatever drive (one scanned only when asked too): the rest
+ * of every drive stays as its last scan found it.
+ */
+async function scanFolder(path) {
+  try {
+    await post('/api/scan/folder', { path });
+    showNotice('Scanning ' + nameOf(path) + ' and the folders in it.');
+    refresh(true);
+  } catch (e) { showError(e.message); }
+}
+
+/** Why Scan now on a folder can't start now (the menu greys it out), or null. */
+function scanFolderWhy() {
+  return state.scan.running ? 'A scan is running now.' : null;
 }
 
 /** Includes the folder in scans, or leaves it out; asks first when that means removing a wider rule of the user's. */
@@ -4992,16 +5011,27 @@ async function renderContent() {
   head.append(title);
   frag.append(head);
   // A drive scanned only when asked: its scan is here, on its own page.
+  // On a folder's page, its scan reads just that folder and the folders in it; the whole drive is the second choice.
   if (d && d.onRequest) {
+    const drivePage = isDrive && d.type !== 'folder';
     const strip = el('div', 'rest-strip');
-    strip.append(el('span', null, (d.type === 'folder' ? 'This folder\'s drive' : 'This drive') +
-      ' is scanned only when you ask: scheduled scans, Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.'));
-    const now = el('button', 'btn', state.scan.running ? 'Scanning…' : 'Scan this drive now');
-    now.disabled = state.scan.running;
-    now.addEventListener('click', () => scanDrive(d.root));
+    strip.append(el('span', null, (drivePage ? 'This drive' : 'This folder\'s drive') +
+      ' is scanned only when you ask: scheduled scans, Scan now and the developer check leave it alone, and its sets and developer items are from its last scan.' +
+      (drivePage ? '' : ' Scan this folder now reads only this folder and the folders in it.')));
+    const running = state.scan.running;
+    const now = el('button', 'btn', running ? 'Scanning…' : drivePage ? 'Scan this drive now' : 'Scan this folder now');
+    now.disabled = running;
+    now.addEventListener('click', () => drivePage ? scanDrive(d.root) : scanFolder(path));
+    strip.append(now);
+    if (!drivePage) {
+      const whole = el('button', 'btn secondary', 'Scan the whole drive');
+      whole.disabled = running;
+      whole.addEventListener('click', () => scanDrive(d.root));
+      strip.append(whole);
+    }
     const auto = el('button', 'btn secondary', 'Scan automatically again');
     auto.addEventListener('click', () => setOnRequest(d.root, false));
-    strip.append(now, auto);
+    strip.append(auto);
     frag.append(strip);
   }
 
@@ -5031,7 +5061,7 @@ async function renderContent() {
 function subfolderTable(path, data) {
   const box = el('div');
   const head = el('div', 'section-head');
-  head.append(el('h2', null, 'Folders'), el('span', 'muted small', 'Right-click a folder to include it in scans or leave it out.'));
+  head.append(el('h2', null, 'Folders'), el('span', 'muted small', 'Right-click a folder to scan it now, include it in scans or leave it out.'));
   box.append(head);
   const table = el('table', 'details');
   const thead = el('thead');

@@ -422,6 +422,7 @@ public sealed class JournalListingTests : IDisposable {
 		RootPlan r = Assert.Single(resting.Roots);
 		Assert.Equal(ListingMode.Resting, r.Mode);
 		Assert.True(resting.NothingChanged);
+		Assert.Empty(resting.ReadWhole);
 		Assert.Equal(2, r.Listing!.Unchanged.Count); // its files as its last scan found them still count
 		Assert.Empty(r.Listing.Listed);
 		Assert.False(resting.MayRead!(Path.Combine(photos, "a.png")));
@@ -430,6 +431,110 @@ public sealed class JournalListingTests : IDisposable {
 		ListingPlan asked = ListingPlan.Make(Settings(), cfg, DateTime.UtcNow, CancellationToken.None, new[] { drive });
 		Assert.NotEqual(ListingMode.Resting, Assert.Single(asked.Roots).Mode);
 		Assert.Null(asked.MayRead);
+	}
+
+	/// <summary>After a scan of what <paramref name="plan"/> handed the engine: what it listed, and what it vouched for, as the engine finds them.</summary>
+	static void ScannedAsPlanned(ListingPlan plan) {
+		var found = plan.Roots.Where(r => r.Listing != null)
+			.SelectMany(r => r.Listing!.Listed.Select(f => (f.FullName, f.Length)).Concat(r.Listing.Unchanged.Select(p => (p, new FileInfo(p).Length))))
+			.ToList();
+		plan.Save(found, p => File.GetLastWriteTimeUtc(p), DateTime.UtcNow);
+	}
+
+	ListingPlan FolderPlan(AgentConfig? cfg = null, params string[] folders) =>
+		ListingPlan.Make(Settings(), cfg ?? Config(), DateTime.UtcNow, CancellationToken.None, folders: folders);
+
+	[Fact]
+	public void ScanNowOnAFolder_ReadsOnlyIt_AndTheNextScanFindsItAsListed() {
+		if (!HasJournal(dir)) return;
+		string a = Photo("a.png"), b = Photo(@"Trip\b.jpg");
+		Scanned(Plan());
+		string c = Photo(@"Trip\Day 2\c.jpg"), d = Photo("d.png", 32);
+		string trip = Path.Combine(photos, "Trip");
+
+		ListingPlan folder = FolderPlan(null, trip + @"\");
+		RootPlan r = Assert.Single(folder.Roots);
+		Assert.Equal(ListingMode.Folder, r.Mode);
+		Assert.Equal(new[] { trip }, r.Only);
+		Assert.False(folder.NothingChanged);
+		Assert.Empty(folder.ReadWhole); // the drive's last full scan is still the one before
+		// Its folder's files are listed; the rest of the scanned folder is handed over as the last scan found it, unread.
+		AssertHanded(r, new[] { b, c }, new[] { a });
+		Assert.True(folder.MayRead!(c));
+		Assert.False(folder.MayRead!(a));
+		Assert.False(folder.MayRead!(d));
+		Assert.True(folder.MayRead!(Path.Combine(dir, "elsewhere.png"))); // outside every scanned folder
+		Assert.Contains(trip, folder.Describe());
+		long usn = Kept().GetProperty("usn").GetInt64();
+		ScannedAsPlanned(folder);
+		Assert.Equal(usn, Kept().GetProperty("usn").GetInt64()); // where the journal was read up to stands
+
+		// The next scan reads the changes since the last one: the folder's are as the folder scan listed them, and the other is found.
+		ListingPlan next = Plan();
+		Assert.Equal(new[] { photos }, next.ReadWhole);
+		r = Assert.Single(next.Roots);
+		Assert.Equal(ListingMode.Changed, r.Mode);
+		Assert.Contains(r.Listing!.Listed, f => f.FullName == d);
+		Assert.DoesNotContain(r.Listing.Listed, f => f.FullName == c || f.FullName == b);
+		Assert.Contains(c, r.Listing.Unchanged);
+		Assert.Contains(b, r.Listing.Unchanged);
+	}
+
+	[Fact]
+	public void ScanNowOnAFolder_BeforeAnyScan_ListsIt_AndTheNextScanWalks() {
+		string a = Photo("a.png"), b = Photo(@"Trip\b.jpg");
+		ListingPlan folder = FolderPlan(null, Path.Combine(photos, "Trip"));
+		RootPlan r = Assert.Single(folder.Roots);
+		Assert.Equal(ListingMode.Folder, r.Mode);
+		AssertHanded(r, new[] { b }, Array.Empty<string>());
+		Assert.False(folder.MayRead!(a));
+		ScannedAsPlanned(folder);
+		Assert.False(Kept().TryGetProperty("journalId", out JsonElement id) && id.ValueKind != JsonValueKind.Null); // no place in the journal yet
+
+		if (!HasJournal(dir)) return;
+		r = Assert.Single(Plan().Roots);
+		Assert.Equal((ListingMode.Walk, ListingPlan.OnlyFoldersBefore), (r.Mode, r.Why));
+		Scanned(Plan());
+		Assert.Equal(ListingMode.Unchanged, Assert.Single(Plan().Roots).Mode);
+	}
+
+	[Fact]
+	public void ScanNowOnAFolder_OnADriveScannedOnlyWhenAsked_ReadsJustIt() {
+		string a = Photo("a.png"), b = Photo(@"Trip\b.jpg");
+		Scanned(Plan());
+		AgentConfig cfg = Config();
+		cfg.OnRequestDrives.Add(AgentConfig.DriveOf(photos)!);
+		string c = Photo(@"Trip\c.jpg");
+		Photo("d.png"); // a change the folder scan doesn't look at
+
+		ListingPlan folder = FolderPlan(cfg, Path.Combine(photos, "Trip"));
+		RootPlan r = Assert.Single(folder.Roots);
+		Assert.Equal(ListingMode.Folder, r.Mode);
+		AssertHanded(r, new[] { b, c }, new[] { a });
+		ScannedAsPlanned(folder);
+
+		// Resting again: the folder as the folder scan found it counts, and the rest as the drive's last scan did.
+		r = Assert.Single(ListingPlan.Make(Settings(), cfg, DateTime.UtcNow, CancellationToken.None).Roots);
+		Assert.Equal(ListingMode.Resting, r.Mode);
+		Assert.Equal(new[] { a, b, c }.Order(StringComparer.OrdinalIgnoreCase), r.Listing!.Unchanged.Order(StringComparer.OrdinalIgnoreCase), StringComparer.OrdinalIgnoreCase);
+	}
+
+	[Fact]
+	public void ScanNowOnAFolder_AboveTheScannedOne_ReadsAllOfIt_AndOneLeftOutOrGone_NothingAtAll() {
+		string a = Photo("a.png");
+		Photo(@"project\icon.png");
+		Directory.CreateDirectory(Path.Combine(photos, "project", ".git"));
+
+		RootPlan whole = Assert.Single(FolderPlan(null, dir).Roots);
+		Assert.Equal(ListingMode.Folder, whole.Mode);
+		Assert.Equal(new[] { photos }, whole.Only);
+		AssertHanded(whole, new[] { a }, Array.Empty<string>()); // as a scan walks it: the repository left out
+
+		foreach (string notScanned in new[] { Path.Combine(photos, "project"), Path.Combine(photos, "Gone") }) {
+			ListingPlan plan = FolderPlan(null, notScanned);
+			Assert.Equal(ListingMode.Resting, Assert.Single(plan.Roots).Mode);
+			Assert.True(plan.NothingChanged);
+		}
 	}
 
 	[Theory]

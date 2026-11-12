@@ -61,7 +61,9 @@ namespace HEI.Agent {
 		/// <param name="scheduled">Started by Task Scheduler: in the background unless the review page is open (<see cref="ScanPace"/>).</param>
 		/// <param name="drives">Drives scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>) that this scan reads: from the drive's own page.</param>
 		/// <param name="waitTurn">The install's first scan: waits its turn among the agents' first rounds as a scheduled one does (<see cref="FirstRound"/>).</param>
-		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false) {
+		/// <param name="folders">Scan now on a folder, from the review page: only these folders are read, each with the folders in it (<see cref="ListingPlan.Make"/>).</param>
+		public static async Task<int> RunAsync(AgentConfig cfg, bool notify, bool scheduled, CancellationToken ct, IReadOnlyCollection<string>? drives = null, bool waitTurn = false,
+			IReadOnlyCollection<string>? folders = null) {
 			Directory.CreateDirectory(AgentPaths.Home);
 			using FileStream? scanLock = TryLock();
 			if (scanLock == null) {
@@ -82,7 +84,7 @@ namespace HEI.Agent {
 			// How it ended, written before scan.lock is let go: /api/ping's last run (RunTimes).
 			int? code = null;
 			Exception? error = null;
-			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, started, firstTurn != null, ct)).Value; }
+			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, folders, started, firstTurn != null, ct)).Value; }
 			catch (Exception e) { error = e; throw; }
 			finally { LastScan.Record(started, DateTime.UtcNow, code, error); }
 		}
@@ -92,7 +94,8 @@ namespace HEI.Agent {
 		/// turn among the agents' first rounds (FirstRound), at full speed since nothing else heavy runs then; a game still
 		/// has it make way.
 		/// </summary>
-		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, DateTime started, bool firstTurn, CancellationToken ct) {
+		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, IReadOnlyCollection<string>? folders,
+			DateTime started, bool firstTurn, CancellationToken ct) {
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
 			bool fullSpeed = firstTurn || ScanPace.FullSpeed(cfg, scheduled);
@@ -107,12 +110,24 @@ namespace HEI.Agent {
 			// What changed on each drive since the last scan, from its change journal: a drive with nothing
 			// new isn't walked, and one with something new has only those folders listed again.
 			ListingPlan? plan = null;
-			try { plan = ListingPlan.Make(settings, cfg, started, ct, drives); }
+			try { plan = ListingPlan.Make(settings, cfg, started, ct, drives, folders); }
+			catch (Exception e) when (e is not OperationCanceledException && folders is { Count: > 0 }) {
+				// Asked for one folder: walking every drive instead would be a far longer scan than the one asked for.
+				AgentPaths.AppendLog($"scan of {string.Join(", ", folders)} not started, the last listing not read: " + e.Message);
+				Console.Error.WriteLine("The scan of the folder couldn't start: " + e.Message);
+				return 1;
+			}
 			catch (Exception e) when (e is not OperationCanceledException) {
 				AgentPaths.AppendLog("change journal not read, walking every folder: " + e.Message);
 				// Drives scanned only when asked stay unread all the same: left out of this scan.
 				foreach (string root in settings.IncludeList.Where(r => cfg.IsOnRequest(r) && !AgentConfig.IsOnDrive(r, drives)).ToList())
 					settings.IncludeList.Remove(root);
+			}
+			// None of the folders asked for is there now, or each is left out of scans: there's nothing to read.
+			if (folders is { Count: > 0 } && plan != null && plan.Roots.All(r => r.Mode == ListingMode.Resting)) {
+				AgentPaths.AppendLog($"scan of {string.Join(", ", folders)} not started: no such folder among the scanned ones now");
+				Console.Error.WriteLine("None of those folders is scanned: " + string.Join(", ", folders));
+				return 1;
 			}
 			// Nothing a scan would see changed since the last one, which made this report with these
 			// settings: a scheduled scan has nothing to do, and no drive is read, nor anything compared.

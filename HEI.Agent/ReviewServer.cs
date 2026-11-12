@@ -36,6 +36,7 @@ namespace HEI.Agent {
 	sealed record FolderOverrideRequest(string Path, bool Include, string? RemoveRule);
 	/// <param name="OnRequest">Scanned only when asked (<see cref="AgentConfig.OnRequestDrives"/>), or automatically again.</param>
 	sealed record DriveRequest(string Root, bool OnRequest = false);
+	sealed record FolderScanRequest(string Path);
 	/// <param name="Open">For a folder: open it, rather than show it selected in the folder it's in.</param>
 	sealed record RevealRequest(string? Path, bool Open = false);
 	sealed record AutoHoldRequest(string Target, bool Hold);
@@ -350,6 +351,18 @@ namespace HEI.Agent {
 				if (drive is not { Length: 3 }) return Results.BadRequest(new { error = "That isn't a drive." });
 				FirstScanWait.End("Scan this drive now, on the review page");
 				ScanLaunch.Started(StartDetached("scan", "--drive", drive), DateTime.UtcNow, [drive]);
+				return Results.Accepted();
+			});
+			// "Scan now" on a folder (its right-click menu, or "Scan this folder now" on its page): that folder and the
+			// folders in it are read, and nothing else is, whatever drive it's on.
+			app.MapPost("/api/scan/folder", (FolderScanRequest request) => {
+				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
+				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
+				if (FolderOverride.ScanTarget(AgentConfig.Load(), request.Path ?? "", out string? error) is not { } target)
+					return Results.BadRequest(new { error });
+				var (folder, root) = target;
+				FirstScanWait.End("Scan now on a folder, on the review page");
+				ScanLaunch.Started(StartDetached("scan", "--folder", folder), DateTime.UtcNow, [root]);
 				return Results.Accepted();
 			});
 			// Developer mode off (Settings, or Manor's Developer options, read fresh for each request): its part of the page is

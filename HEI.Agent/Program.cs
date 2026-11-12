@@ -59,7 +59,8 @@ var open = new Option<bool>("--open") { Description = "Open the review page (it 
 var scheduled = new Option<bool>("--scheduled") { Description = "Started by Task Scheduler: on battery, step aside in Battery Saver or below the configured charge; run in the background unless the review page is open." };
 var drive = new Option<string[]>("--drive") { Description = "Also read these drives that are scanned only when you ask (onRequestDrives), e.g. --drive D:\\. Without it they're left alone." };
 var waitTurn = new Option<bool>("--wait-turn") { Description = "A first scan the person didn't start by hand (the install's): waits its turn among the manor's agents' first rounds, as a scheduled one does." };
-var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn };
+var folder = new Option<string[]>("--folder") { Description = "Read only this folder and the folders in it (on any scanned drive, one scanned only when you ask too), e.g. --folder \"E:\\Photos\\2019\". The rest of every drive stays as its last scan listed it." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, folder };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
 	if (r.GetValue(scheduled)) {
@@ -91,7 +92,12 @@ scan.SetAction(async (r, ct) => {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.
 		_ = OpenReviewPageAsync(cfg, ct);
 	}
-	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn));
+	string[]? folders = r.GetValue(folder);
+	if (folders is { Length: > 0 } && r.GetValue(scheduled)) {
+		Console.Error.WriteLine("--folder is for a scan you start, not a scheduled one.");
+		return 2;
+	}
+	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn), folders);
 });
 root.Subcommands.Add(scan);
 
