@@ -108,11 +108,20 @@ namespace HEI.Agent {
 				yield return sorted[i];
 		}
 
+		/// <summary>index.json as last parsed, parsed again only once it has changed (<see cref="StampedFile{T}"/>); each caller gets its own copy.</summary>
+		internal static readonly StampedFile<ScanIndex> Saved =
+			new(json => JsonSerializer.Deserialize<ScanIndex>(json, AgentConfig.Json) is { } index ? Normalized(index) : null, index => index.Copy());
+
+		/// <summary>An index with dictionaries of its own (its folders sorted again on first use, from its own).</summary>
+		ScanIndex Copy() => new() {
+			ScannedAtUtc = ScannedAtUtc, Roots = [.. Roots ?? []],
+			Drives = new(Drives, Drives.Comparer), Folders = new(Folders, Folders.Comparer),
+			Types = Types?.ToDictionary(t => t.Key, t => new Dictionary<string, FolderFiles>(t.Value, t.Value.Comparer), Types.Comparer)!,
+		};
+
 		public static ScanIndex? Load() {
 			try {
-				if (File.Exists(FilePath))
-					return JsonSerializer.Deserialize<ScanIndex>(File.ReadAllText(FilePath), AgentConfig.Json) is { } index
-						? Normalized(index) : null;
+				return Saved.Read(FilePath);
 			}
 			catch (Exception e) when (e is IOException or JsonException or UnauthorizedAccessException) {
 				AgentPaths.AppendLog($"index.json unreadable: {e.Message}");

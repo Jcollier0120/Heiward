@@ -73,10 +73,16 @@ namespace HEI.Agent {
 		/// <summary>A report another build made, which a scan should replace (<see cref="Load"/> sets it aside).</summary>
 		public static bool IsStale() => LoadAny() is { } report && report.Build != AppBuild.Current;
 
+		/// <summary>
+		/// report.json as last parsed, parsed again only once it has changed (<see cref="StampedFile{T}"/>): the review page reads it
+		/// for every folder it lists and every thumbnail it shows. Each caller gets its own copy (<see cref="Copy"/>).
+		/// </summary>
+		internal static readonly StampedFile<Report> Saved = new(json => JsonSerializer.Deserialize<Report>(json, AgentConfig.Json), r => r.Copy());
+
 		/// <summary>The report, whichever build made it: only for telling which sets are new.</summary>
 		public static Report? LoadAny() {
 			try {
-				if (!File.Exists(AgentPaths.Report) || JsonSerializer.Deserialize<Report>(File.ReadAllText(AgentPaths.Report), AgentConfig.Json) is not { } report)
+				if (Saved.Read(AgentPaths.Report) is not { } report)
 					return null;
 				// A later scan that found the same sets wrote only its own facts.
 				return ScanFacts.Load() is { } facts && facts.About(new FileInfo(AgentPaths.Report)) && facts.ScannedAtUtc >= report.ScannedAtUtc
@@ -105,6 +111,15 @@ namespace HEI.Agent {
 			AgentPaths.WriteAtomic(ScanFacts.FilePath, JsonSerializer.Serialize(
 				new ScanFacts(ScannedAtUtc, DurationSec, FilesScanned, sets, file.Length, file.LastWriteTimeUtc), AgentConfig.Json));
 		}
+
+		/// <summary>The report with lists of its own: its sets, each set's files, its folders and notes. The files are records, which nothing changes.</summary>
+		internal Report Copy() => this with {
+			Folders = Own(Folders), ExcludedExtensions = Own(ExcludedExtensions), Notes = Own(Notes),
+			Groups = Groups?.ConvertAll(g => g with { Items = Own(g.Items) })!,
+		};
+
+		// A list missing from the file stays missing (null), as it was read.
+		static List<TItem> Own<TItem>(List<TItem>? list) => list == null ? null! : [.. list];
 	}
 
 	/// <summary>

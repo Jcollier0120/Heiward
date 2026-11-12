@@ -73,13 +73,30 @@ namespace HEI.Agent {
 			}
 		}
 
-		static void Save(Dictionary<string, Decision> all) => AgentPaths.WriteAtomic(AgentPaths.Decisions, JsonSerializer.Serialize(all, AgentConfig.Json));
+		/// <summary>
+		/// decisions.json as last parsed, parsed again only once it has changed (<see cref="StampedFile{T}"/>). Each caller gets
+		/// its own copy, since they change it (<see cref="SetMany"/>).
+		/// </summary>
+		internal static readonly StampedFile<Dictionary<string, Decision>> Saved =
+			new(json => JsonSerializer.Deserialize<Dictionary<string, Decision>>(json, AgentConfig.Json), Copy);
+
+		static Dictionary<string, Decision> Copy(Dictionary<string, Decision> all) {
+			var copy = new Dictionary<string, Decision>(all.Count, all.Comparer);
+			foreach (var (key, d) in all) copy[key] = d.Recycled == null ? d : d with { Recycled = [.. d.Recycled] };
+			return copy;
+		}
+
+		static void Save(Dictionary<string, Decision> all) {
+			string json = JsonSerializer.Serialize(all, AgentConfig.Json);
+			AgentPaths.WriteAtomic(AgentPaths.Decisions, json);
+			// This process's change shows on its next read at once, without parsing the file again.
+			Saved.Wrote(AgentPaths.Decisions, all, json);
+		}
 
 		public static Dictionary<string, Decision> Load() {
 			lock (gate) {
 				try {
-					if (File.Exists(AgentPaths.Decisions))
-						return JsonSerializer.Deserialize<Dictionary<string, Decision>>(File.ReadAllText(AgentPaths.Decisions), AgentConfig.Json) ?? new();
+					return Saved.Read(AgentPaths.Decisions) ?? new();
 				}
 				catch (Exception e) {
 					AgentPaths.AppendLog($"decisions.json unreadable: {e.Message}");

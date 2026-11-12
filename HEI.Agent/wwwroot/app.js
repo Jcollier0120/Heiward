@@ -13,8 +13,8 @@ let groupsShown = PAGE;
 let groupFilter = 'copies';
 let sortBy = { key: 'reclaim', desc: true };
 const checks = new Map();      // group key -> Set of checked paths (the user's edits survive refreshes)
-const listings = new Map();   // folder path (lower case, + '|all') -> /api/tree answer
-const expanded = new Set();   // lower-case folder paths open in the tree
+const listings = new Map();   // folder path (lower case, + '|all') -> /api/tree answer, a promise from when it's asked (see listing)
+const expanded = new Map();   // lower-case folder path -> the folder's path, for each folder open in the tree
 const showAll = new Set();    // lower-case folder paths showing their empty subfolders too
 const exemptOpen = new Set(); // lower-case folder paths whose exempt subfolders are unfolded
 const folderSizes = new Map(); // lower-case folder path -> its size on disk, from /api/sizes (see askSizes)
@@ -585,7 +585,7 @@ window.addEventListener('hashchange', () => {
   dropQuestions(); // and a question to the page it was asked on
   route = parseRoute();
   groupsShown = PAGE;
-  if (route.view === 'folder') expanded.add(key(route.path)); // opening a folder opens it in the tree too
+  if (route.view === 'folder') expanded.set(key(route.path), route.path); // opening a folder opens it in the tree too
   renderRoute();
   $('content').scrollTop = 0;
 });
@@ -4885,25 +4885,39 @@ function scanModeTitle(d) {
 
 // ---------------------------------------------------------------- folder tree
 
-async function listing(path, all) {
+/**
+ * A folder's listing (/api/tree). It's kept from the moment it's asked, as the promise of its answer, so the tree, the
+ * folders above the one shown and that folder's own page share one request, however many ask while it's on its way.
+ */
+function listing(path, all) {
   const k = key(path) + (all ? '|all' : '');
   if (listings.has(k)) return listings.get(k);
-  const res = await fetch('/api/tree?path=' + encodeURIComponent(path) + (all ? '&all=true' : ''));
-  const data = res.ok ? await res.json() : null;
-  listings.set(k, data);
-  return data;
+  const asked = fetch('/api/tree?path=' + encodeURIComponent(path) + (all ? '&all=true' : ''))
+    .then((res) => (res.ok ? res.json() : null));
+  // No answer (Heiward has stopped): asked again next time, unless the listings were cleared and asked anew meanwhile.
+  asked.catch(() => { if (listings.get(k) === asked) listings.delete(k); });
+  listings.set(k, asked);
+  return asked;
 }
 
-/** Opens every folder from the drive down to the one shown, loading what isn't loaded yet. */
-async function revealInTree(path) {
+/** Whether the folder shows in the tree: each folder above it, up to its drive, is open. */
+function shownInTree(path) {
+  const d = cardFor(path);
+  if (!d || !d.scanned) return false;
+  for (let p = parentOf(path); p; p = parentOf(p)) if (!expanded.has(key(p))) return false;
+  return true;
+}
+
+/**
+ * Opens every folder from the drive down to the one shown, and asks for every listing the tree and the page will draw at
+ * once: the folder shown, and each open folder the tree shows. They come back side by side, rather than one after another.
+ */
+function revealInTree(path) {
   const d = cardFor(path);
   if (!d) return;
-  const chain = [];
-  for (let p = path; p; p = parentOf(p)) chain.unshift(p);
-  for (const p of chain.slice(0, -1)) {
-    expanded.add(key(p));
-    await listing(p, showAll.has(key(p)));
-  }
+  for (let p = parentOf(path); p; p = parentOf(p)) expanded.set(key(p), p);
+  listing(path, showAll.has(key(path)));
+  for (const [k, p] of expanded) if (shownInTree(p)) listing(p, showAll.has(k));
 }
 
 async function renderTree() {
@@ -4916,17 +4930,20 @@ async function renderTree() {
   frag.append(pc);
   const list = el('ul');
   list.setAttribute('role', 'group');
-  for (const d of state.drives.filter((x) => x.scanned)) {
-    list.append(await treeItem({
-      name: d.name, path: d.root, exempt: null, files: d.scan ? d.scan.files : 0,
-      duplicates: d.duplicates, expandable: true, drive: d,
-    }, 1));
-  }
+  list.append(...await treeItems(state.drives.filter((x) => x.scanned).map((d) => ({
+    name: d.name, path: d.root, exempt: null, files: d.scan ? d.scan.files : 0,
+    duplicates: d.duplicates, expandable: true, drive: d,
+  })), 1));
   frag.append(list);
   tree.replaceChildren(frag);
   const sel = tree.querySelector('.tree-row.selected');
   if (sel) sel.scrollIntoView({ block: 'nearest' });
   askSizesSoon();
+}
+
+/** The rows of folders side by side in the tree, in their order: each open one's listing is asked at the same time as the others'. */
+function treeItems(nodes, depth) {
+  return Promise.all(nodes.map((n) => treeItem(n, depth)));
 }
 
 async function treeItem(node, depth) {
@@ -4991,7 +5008,7 @@ async function treeItem(node, depth) {
     if (data) {
       const scanned = data.children.filter((c) => !c.exempt);
       const exempt = data.children.filter((c) => c.exempt);
-      for (const c of scanned) ul.append(await treeItem(c, depth + 1));
+      ul.append(...await treeItems(scanned, depth + 1));
       if (exempt.length > FOLD_EXEMPT) {
         // Many exempt folders (a profile's dot-folders, a drive's system folders): one greyed row that opens.
         const k = key(node.path);
@@ -5008,12 +5025,12 @@ async function treeItem(node, depth) {
         li.append(row);
         if (exemptOpen.has(k)) {
           const inner = el('ul');
-          for (const c of exempt) inner.append(await treeItem(c, depth + 2));
+          inner.append(...await treeItems(exempt, depth + 2));
           li.append(inner);
         }
         ul.append(li);
       } else {
-        for (const c of exempt) ul.append(await treeItem(c, depth + 1));
+        ul.append(...await treeItems(exempt, depth + 1));
       }
       if (data.hiddenEmpty) {
         const more = el('li', 'tree-note');
@@ -5031,7 +5048,7 @@ async function treeItem(node, depth) {
 
 async function toggle(path) {
   const k = key(path);
-  if (expanded.has(k)) expanded.delete(k); else expanded.add(k);
+  if (expanded.has(k)) expanded.delete(k); else expanded.set(k, path);
   await renderTree();
   const row = [...$('tree').querySelectorAll('.tree-row')].find((r) => r.dataset.path && sameFolder(r.dataset.path, path));
   if (row) row.focus();
@@ -5460,7 +5477,7 @@ function subfolderTable(path, data) {
     row.append(el('td', 'num', c.exempt ? '' : c.duplicates.copies ? c.duplicates.copies.toLocaleString() : '–'));
     row.append(el('td', 'num', c.exempt ? '' : c.duplicates.reclaim ? bytes(c.duplicates.reclaim) : '–'));
     row.title = c.path + (c.exempt ? ' (not scanned: ' + c.exempt + ')' : '');
-    const open = () => { expanded.add(key(path)); go(c.path); };
+    const open = () => { expanded.set(key(path), path); go(c.path); };
     row.addEventListener('click', open);
     row.addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
     row.addEventListener('contextmenu', (e) => openFolderMenu(e, c));
@@ -5851,7 +5868,7 @@ async function renderRoute() {
     return;
   }
   const y = $('content').scrollTop;
-  await revealInTree(route.path);
+  revealInTree(route.path); // asks for every listing drawn below at once
   await Promise.all([renderTree(), renderContent()]);
   $('content').scrollTop = y;
 }
@@ -6194,5 +6211,5 @@ $('scan-now').addEventListener('click', scanNow);
 // A tab coming back into view tells the agent at once, so a scan running in the background speeds up.
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
 setupFolderMenu();
-if (route.view === 'folder') expanded.add(key(route.path));
+if (route.view === 'folder') expanded.set(key(route.path), route.path);
 refresh(true);
