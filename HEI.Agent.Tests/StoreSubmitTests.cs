@@ -410,6 +410,30 @@ public sealed class StoreSubmitTests : IDisposable {
 		Assert.DoesNotContain(pc.Calls, c => c.Method != "GET" && c.Method != "POST");
 	}
 
+	// Friday's later runs (store.yml's 15:00 and 17:00 UTC) come after one that sent the release: they find it on its
+	// way, or in the Store, and pass, sending nothing.
+	[Theory]
+	[InlineData("CommitStarted", "Heiward 1.9.137 is being committed in the Microsoft Store already: nothing to send.")]
+	[InlineData("PreProcessing", "Heiward 1.9.137 is being checked in the Microsoft Store already: nothing to send.")]
+	[InlineData("Certification", "Heiward 1.9.137 is in certification in the Microsoft Store already: nothing to send.")]
+	[InlineData("Published", "Heiward 1.9.137 is in the Microsoft Store already: nothing to send.")]
+	public async Task Check_AFridayRunAfterOneThatSentIt_SendsNothing_AndPasses(string status, string notice) {
+		var pc = new FakePartnerCenter();
+		if (status == "Published") {
+			pc.NoPending();
+			pc.Submissions[FakePartnerCenter.PublishedId]["applicationPackages"] = new JsonArray(new JsonObject {
+				["fileName"] = "Heiward-1.9.137.msixbundle", ["fileStatus"] = "Uploaded", ["version"] = "1.9.137.0",
+			});
+		}
+		else pc.Pending(status, "1.9.137");
+		Ran ran = await Run(pc, ["check", "--target", "1.9.137"]);
+		Assert.Equal(0, ran.Code);
+		Assert.Equal("false", ran.Outputs["submit"]);
+		Assert.Contains("::notice title=Microsoft Store::" + notice, ran.Log);
+		Assert.DoesNotContain("::warning", ran.Log);
+		Assert.DoesNotContain(pc.Calls, c => c.Method != "GET" && c.Method != "POST");
+	}
+
 	[Fact]
 	public async Task Check_AFailedCertification_IsAWarning() {
 		var pc = new FakePartnerCenter();
@@ -594,8 +618,20 @@ public sealed class StoreSubmitTests : IDisposable {
 	[Fact]
 	public void TheWorkflow_SendsOnFridaysAt10NewYorkTime_OneRunAtATime_AndKeepsTheSecretsInTheEnvironment() {
 		string yml = File.ReadAllText(Path.Combine(Repo(), ".github", "workflows", "store.yml")).ReplaceLineEndings("\n");
-		// One schedule, kept at 10:00 in New York through daylight saving time by GitHub's timezone key (cron alone is UTC).
-		Assert.Matches(new Regex(@"^  schedule:\n    - cron: '0 10 \* \* 5'\n      timezone: 'America/New_York'\n  workflow_dispatch:", RegexOptions.Multiline), yml);
+		// Plain UTC times (with GitHub's timezone key, no scheduled run ever started): 10:00 in New York in summer (14:00)
+		// and in winter (15:00), and a backup in case GitHub drops those on a busy day.
+		Assert.Matches(new Regex(@"^  schedule:\n    - cron: '0 14 \* \* 5'\n    - cron: '0 15 \* \* 5'\n    - cron: '0 17 \* \* 5'\n  workflow_dispatch:", RegexOptions.Multiline), yml);
+		Assert.DoesNotContain("timezone:", yml);
+		// The check job's first step lets a scheduled run go on only on Friday from 10:00 in New York, and nothing that
+		// leads to Partner Center goes when it says no.
+		int steps = yml.IndexOf("  check:\n", StringComparison.Ordinal);
+		steps = yml.IndexOf("    steps:\n", steps, StringComparison.Ordinal) + "    steps:\n".Length;
+		Assert.Matches(new Regex(@"^(      #.*\n)*      - name: Friday from 10:00 in New York\n        id: when\n        if: github\.event_name == 'schedule'\n"), yml[steps..]);
+		Assert.Contains("TZ=America/New_York date '+%u %H'", yml);
+		Assert.Contains("if [[ \"$day\" != 5 ]] || (( 10#$hour < 10 )); then", yml);
+		Assert.Contains("      - name: Which release\n        id: which\n        if: steps.when.outputs.skip != 'true'\n", yml);
+		Assert.Contains("      - name: A release of Heiward\n        id: heiward\n        if: steps.when.outputs.skip != 'true'\n", yml);
+		Assert.Contains("        id: setup\n        if: steps.heiward.outcome == 'success' && steps.heiward.outputs.skip != 'true'\n", yml);
 		// Friday's run and runs by hand queue in one group; a release's run, which only builds, is kept out of it, so a
 		// release can't cancel Friday's run waiting there.
 		Assert.Matches(new Regex(@"^concurrency:\n  group: \$\{\{ github\.event_name == 'release' && format\('store-build-\{0\}', github\.run_id\) \|\| 'store' \}\}\n  cancel-in-progress: false$", RegexOptions.Multiline), yml);
