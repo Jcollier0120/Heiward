@@ -16,6 +16,12 @@ name: Microsoft Store
 # certification, nor a draft. Otherwise it waits for the next Friday, with a notice that says what holds it, and the
 # run passes. Its What's new covers every release since the Store's last one.
 #
+# GitHub's schedule is in UTC, and on a busy day GitHub starts a scheduled run late or not at all. So Friday's run has
+# three times (on: schedule, below), and each goes on only when it's Friday from 10:00 in New York (the check job's
+# first step). Two or three of them go each Friday, one at a time (concurrency, below). Each asks Partner Center
+# afresh: once one has sent the release, the later ones find it on its way to the Store and pass with nothing sent. If
+# one was dropped or failed, the next one does its work.
+#
 # Started by hand (Actions > Microsoft Store > Run workflow), it does the same at once for a release's tag (empty: the
 # newest), and it can leave the submission as a draft in Partner Center instead of sending it to certification. A dry
 # run only asks Partner Center and says what it would send, with its What's new: it builds and sends nothing.
@@ -23,11 +29,13 @@ name: Microsoft Store
 on:
   release:
     types: [published]
-  # Fridays at 10:00 in New York, the same hour through daylight saving time. The check runs on Linux and builds nothing
-  # unless there's a release to send.
+  # Fridays at 10:00 in New York, in UTC: 14:00 is 10:00 there in summer (9:00 in winter, so the check job's first step
+  # stops that one), 15:00 is 10:00 there in winter (11:00 in summer), and 17:00 is the backup, in case GitHub dropped
+  # the others. The check runs on Linux and builds nothing unless there's a release to send.
   schedule:
-    - cron: '0 10 * * 5'
-      timezone: 'America/New_York'
+    - cron: '0 14 * * 5'
+    - cron: '0 15 * * 5'
+    - cron: '0 17 * * 5'
   workflow_dispatch:
     inputs:
       tag:
@@ -71,10 +79,23 @@ jobs:
       # A dry run never sends: the submit job doesn't start.
       submit: ${{ !inputs.dry_run && steps.ask.outputs.submit || 'false' }}
     steps:
+      # A scheduled run goes on only on Friday from 10:00 in New York: in winter the 14:00 UTC run is an hour early, and
+      # one GitHub started very late may be past Friday there. Releases and runs by hand go at once.
+      - name: Friday from 10:00 in New York
+        id: when
+        if: github.event_name == 'schedule'
+        run: |
+          read -r day hour < <(TZ=America/New_York date '+%u %H')
+          if [[ "$day" != 5 ]] || (( 10#$hour < 10 )); then
+            echo "It's $(TZ=America/New_York date '+%A %H:%M') in New York. The Store run goes on Fridays from 10:00 there: nothing to do now."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
       # The workflow's own commit: HEI.StoreSubmit, and the changelog.
       - uses: actions/checkout@v5
+        if: steps.when.outputs.skip != 'true'
       - name: Which release
         id: which
+        if: steps.when.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -86,6 +107,7 @@ jobs:
       # Only Heiward's own releases: the tags VDF left (v4.1.1 and the like) are other apps, which aren't in the Store.
       - name: A release of Heiward
         id: heiward
+        if: steps.when.outputs.skip != 'true'
         env:
           TAG: ${{ steps.which.outputs.tag }}
           VERSION: ${{ steps.which.outputs.version }}
@@ -98,7 +120,7 @@ jobs:
           fi
       - name: Set up for the Store
         id: setup
-        if: steps.heiward.outputs.skip != 'true'
+        if: steps.heiward.outcome == 'success' && steps.heiward.outputs.skip != 'true'
         env:
           EVENT: ${{ github.event_name }}
           VERSION: ${{ steps.which.outputs.version }}
