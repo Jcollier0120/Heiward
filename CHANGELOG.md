@@ -2,6 +2,22 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.11
+
+**Folder pages come back sooner after you remove many sets.**
+
+### What changed
+
+- After **Move to Recycle Bin**, **Skip all**, or a set's own **Move** or **Keep**, the folder's page and the folder tree are drawn again in a fraction of the time they took before. The more sets Heiward has found, the bigger the difference.
+- Heiward used to read its whole list of sets again for every folder it showed, one folder after another. Now it keeps the list in memory and reads it again only after a scan has changed it. The page also asks for the folders open in the tree together.
+- The same goes for thumbnails, and for each set as it's moved, so removing many sets takes less time too.
+- On a hard disk, Heiward still looks at the open folders one at a time, so they don't slow each other down. Several drives, and SSDs, are looked at together.
+- Heiward keeps the list in memory only while you use its page. A few minutes after you close the page, it lets go of that memory.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.10
 
 **Brings 3 changes: Scan this drive now reads just that drive; A spinner while Heiward removes sets, from your click until the page is ready again; Take Heiward's tour again from About or Settings.**
