@@ -142,13 +142,7 @@ namespace HEI.Agent {
 				p.ErrorDataReceived += keep;
 				p.Exited += (_, _) => {
 					p.WaitForExit(); // the last lines of output
-					lock (gate) {
-						running = false;
-						failed = p.ExitCode != 0;
-						if (!failed && FirstRun) installedHere = true;
-					}
-					AgentPaths.AppendLog(p.ExitCode == 0 ? "set up from the review page" : $"setup from the review page failed (exit {p.ExitCode})");
-					if (p.ExitCode == 0) setUp();
+					Ended(p.ExitCode, setUp);
 					p.Dispose();
 				};
 				p.Start();
@@ -158,6 +152,23 @@ namespace HEI.Agent {
 			}
 			AgentPaths.AppendLog("setup started from the review page: " + string.Join(' ', args));
 			return null;
+		}
+
+		/// <summary>
+		/// The install has ended. It registered the scheduled tasks in its own process, so what this one's Task Scheduler
+		/// answer says, asked by the page's polls while the setup showed, is out of date: kept, it said the scan task was
+		/// missing for up to half an hour (<see cref="Scheduler.NextRunKept"/>), and the page said scheduled scans weren't running.
+		/// </summary>
+		/// <param name="setUp">Runs once the install succeeded (the review page reloads the settings it wrote).</param>
+		internal static void Ended(int exitCode, Action setUp) {
+			lock (gate) {
+				running = false;
+				failed = exitCode != 0;
+				if (!failed && FirstRun) installedHere = true;
+			}
+			Scheduler.Forget(); // failed or not: it may have registered them before it stopped
+			AgentPaths.AppendLog(exitCode == 0 ? "set up from the review page" : $"setup from the review page failed (exit {exitCode})");
+			if (exitCode == 0) setUp();
 		}
 
 		/// <summary>The install's command line for the page's answers, or null when they aren't valid.</summary>

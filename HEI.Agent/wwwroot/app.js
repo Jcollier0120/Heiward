@@ -460,12 +460,15 @@ function renderAgent(s) {
   setAttr(btn, 'aria-haspopup', a.paused ? 'false' : 'menu');
   setAttr(btn, 'aria-pressed', String(a.paused));
   setDisabled(btn, !!s.setup.needed);
-  if (s.setup.needed) showAgentBanner(null);
+  // The setup's window, its Done too until Open Heiward, and the uninstall's: no banner over them.
+  if (setupShowing(s) || uninstallShowing()) showAgentBanner(null);
   else if (a.paused) {
     showAgentBanner('Scans are paused ' + a.pausedText + ': scheduled scans skip themselves. Scan now still works.', ['Resume scans', resumeScans]);
   } else if (a.firstScanWaits && !s.scan.running) {
-    // A new install scans nothing until the person says (the tour's last step asks the same).
-    showAgentBanner(scansByItself(s)
+    // A new install scans nothing until the person says. The tour's last step asks the same, so while the tour shows, or
+    // is about to open by itself, this waits for its end (tour.js, tourHolds); skipped, or left with Later, it asks here.
+    if (typeof tourHolds === 'function' && tourHolds()) showAgentBanner(null);
+    else showAgentBanner(scansByItself(s)
       ? 'Heiward\'s first scan waits for you. Scan now starts it at full speed; or let it scan by itself: the first runs with the next scheduled scan, ' + s.schedule.text + '.'
       : 'Heiward\'s first scan waits for you: Scan now starts it.',
     scansByItself(s) ? [['Scan now', scanNow], ['Scan by itself', firstScanByItself]] : ['Scan now', scanNow]);
@@ -2198,6 +2201,8 @@ function setupDone(s) {
     trail.replace('#/');
     route = parseRoute();
     renderRoute();
+    // The home page's banners now: the first scan's waits while the tour opens, and asks here if no tour comes.
+    renderAgent(state);
   });
   const actions = el('div', 'setup-actions setup-bar');
   actions.append(open);

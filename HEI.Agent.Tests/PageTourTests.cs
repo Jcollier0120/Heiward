@@ -317,7 +317,8 @@ public sealed class PageTourTests : IDisposable {
 			}
 			// tour.js's hashchange (TheFakesBelow_AreThePagesOwn).
 			function hashChange() { route = parseRoute(); if (isTourHash(location.hash)) startTour(tourFromHash(location.hash)); }
-			var tourStep = null, tourParts = [], tourFrom = null, tourFocus = null, tourTab = null;
+			var tourStep = null, tourParts = [], tourFrom = null, tourFocus = null, tourTab = null, tourLoaded = false;
+			function renderAgent() { } // the first-scan banner (PageFirstScanTests)
 			""");
 		foreach (string name in new[] { "el", "takeTheTour", "renderAboutCard", "renderMoreCard" })
 			js.Execute(ThePage.Function(app, name));
@@ -343,6 +344,7 @@ public sealed class PageTourTests : IDisposable {
 			function post(url) { posted.push(url); return { catch: function () { } }; }
 			function setInterval() { return 1; }
 			function clearInterval() { }
+			var tourLoaded = false;
 			""");
 		foreach (string name in new[] { "tourDue", "markToured", "isTourHash", "tourOnLoad" })
 			js.Execute(ThePage.Function(tour, name));

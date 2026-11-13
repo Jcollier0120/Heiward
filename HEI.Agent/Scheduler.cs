@@ -289,6 +289,12 @@ namespace HEI.Agent {
 		/// <summary>When Task Scheduler was last asked, what it said, and when that next run is, if it was still to come.</summary>
 		static (DateTime At, string? Next, DateTime? DueUtc) cachedQuery;
 
+		/// <summary>An answer is kept (tests: <see cref="Forget"/> was called, or not).</summary>
+		internal static bool Keeps => cachedQuery.At != default;
+
+		/// <summary>Tests: keep <paramref name="next"/> as Task Scheduler's answer, as <see cref="NextRun"/> does.</summary>
+		internal static void Keep(string? next, DateTime askedUtc) => cachedQuery = (askedUtc, next, null);
+
 		/// <summary>How long <see cref="NextRun"/>'s answer is kept, unless the run it names comes first.</summary>
 		internal static readonly TimeSpan NextRunKept = TimeSpan.FromMinutes(30);
 

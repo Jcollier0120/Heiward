@@ -7,9 +7,10 @@
 // before never saw the tour again; nor does an update or a restart show it again. Manor's hire
 // flow opens #/tour?from=<the role's card>, and the last step then offers Back to Manor beside Done. While a new
 // install's first scan waits for the person (FirstScanWait), one more step ends it and asks when that scan runs:
-// Scan now, or Scan by itself (with the next scheduled scan), or Later. Like Manor's welcome, it holds the page while
-// it shows: the page is dimmed and can't be clicked or tabbed to, so the tour is answered, or skipped, first.
-// Loaded after app.js, whose state, el(), icon(), toggleSwitch() and saveSettings() it uses.
+// Scan now, or Scan by itself (with the next scheduled scan), or Later. The page's banner that asks the same waits
+// while the tour shows or is about to (tourHolds), and asks once it ends unanswered. Like Manor's welcome, it holds the
+// page while it shows: the page is dimmed and can't be clicked or tabbed to, so the tour is answered, or skipped, first.
+// Loaded after app.js, whose state, el(), icon(), toggleSwitch(), saveSettings() and renderAgent() it uses.
 'use strict';
 
 /** The parts of the page it walks, by their data-tour; only those showing are walked. */
@@ -35,10 +36,20 @@ let tourParts = [];
 let tourFrom = null;
 let tourFocus = null;
 let tourTab = null; // the home tab showing when the tour began, shown again after it
+let tourLoaded = false; // tourOnLoad has run: the tour it opens by itself, if any, has opened
 
 /** A new install's tour waits to open by itself (the state's tourDue, which the install sets). */
 function tourDue() {
   return !!(state && state.tourDue);
+}
+
+/**
+ * The tour shows, or opens by itself in a moment (the page just opened, or Open Heiward ended the setup): the first-scan
+ * banner (app.js, renderAgent) waits for its end, since its last step asks the same. Never longer: once the page has
+ * opened what it opens by itself, only a tour showing holds it, so a first scan left unanswered is asked about again.
+ */
+function tourHolds() {
+  return tourStep !== null || (!tourLoaded && (tourDue() || isTourHash(location.hash)));
 }
 
 /** Done or skipped: Heiward forgets it was due, so it opens by itself no more, in any browser. Only once: one small write. */
@@ -94,6 +105,7 @@ function startTour(from) {
   route = parseRoute();
   renderRoute();
   drawTour();
+  renderAgent(state); // the first-scan banner waits for the tour's end
 }
 
 /** The page under the tour: inert while it shows (no clicks, no Tab), as Manor's welcome holds its page. */
@@ -110,8 +122,28 @@ function endTour(back) {
   holdPage(false);
   if (tourTab) showTab(tourTab);
   tourTab = null;
+  renderAgent(state); // a first scan still waiting: its banner asks now
   if (back && tourFrom) location.href = tourFrom;
   tourFrom = null;
+}
+
+/**
+ * The last step answered (Scan now, or Scan by itself): the first scan no longer waits, so its banner doesn't flash up
+ * as the tour ends. The poll after the answer says so too, or brings the banner back if the answer didn't go through.
+ */
+function answerFirstScan(run) {
+  state.agent.firstScanWaits = false;
+  endTour(false);
+  run();
+}
+
+/**
+ * Game mode or developer mode, asked by the setup that installed Heiward: the Store version's always asks them where
+ * they're Heiward's own (app.js, setupModes), and the setup window of the copy from GitHub did when this page ran it.
+ * The tour doesn't ask again; Settings has them.
+ */
+function setupAskedMode(name) {
+  return !!(state.about && state.about.store) || setupAnswers[name] != null;
 }
 
 function clearTourFocus() {
@@ -169,18 +201,20 @@ function drawTour() {
     title.textContent = 'Your choices';
     body.append(el('p', null, 'It works as it is: every fixed drive, leaving out Windows, programs, games, app data and code. A few things are yours to decide, now or any time in Settings:'));
     const list = el('div', 'tour-choices');
-    // Game mode: its switch here, unless Manor decides it.
-    const game = el('div', 'auto-row');
-    const gameText = el('div', 'auto-text');
-    gameText.append(el('div', 'auto-title', 'Game mode'));
-    if (state.games.manor) gameText.append(el('div', 'muted small', state.games.manor.note + '.'));
-    else game.append(toggleSwitch(state.games.enabled, 'Game mode', settingsBusy, async (on) => { await saveSettings({ gameMode: on }); tourParts = []; drawTour(); }));
-    gameText.append(el('div', 'muted small', 'For gamers: a Games area with your games by launcher and drive, and what they leave behind, to clean up.'));
-    game.append(gameText);
-    list.append(game);
-    // Developer mode: its switch here, unless Manor's Developer options decide it for every agent. While they turn it off,
-    // nothing of it shows.
-    if (!(state.dev.manor && !state.dev.enabled)) {
+    // Game mode: its switch here, unless Manor decides it, or the setup that installed Heiward just asked it.
+    if (state.games.manor || !setupAskedMode('gameMode')) {
+      const game = el('div', 'auto-row');
+      const gameText = el('div', 'auto-text');
+      gameText.append(el('div', 'auto-title', 'Game mode'));
+      if (state.games.manor) gameText.append(el('div', 'muted small', state.games.manor.note + '.'));
+      else game.append(toggleSwitch(state.games.enabled, 'Game mode', settingsBusy, async (on) => { await saveSettings({ gameMode: on }); tourParts = []; drawTour(); }));
+      gameText.append(el('div', 'muted small', 'For gamers: a Games area with your games by launcher and drive, and what they leave behind, to clean up.'));
+      game.append(gameText);
+      list.append(game);
+    }
+    // Developer mode: its switch here, unless Manor's Developer options decide it for every agent (while they turn it off,
+    // nothing of it shows), or the setup just asked it.
+    if (state.dev.manor ? state.dev.enabled : !setupAskedMode('developerMode')) {
       const dev = el('div', 'auto-row');
       const devText = el('div', 'auto-text');
       devText.append(el('div', 'auto-title', 'Developer mode'));
@@ -242,7 +276,7 @@ function drawTour() {
     buttons.append(later);
     if (scansByItself(state)) {
       const auto = el('button', 'btn secondary', 'Scan by itself');
-      auto.addEventListener('click', () => { endTour(false); firstScanByItself(); });
+      auto.addEventListener('click', () => answerFirstScan(firstScanByItself));
       buttons.append(auto);
     }
   } else if (last && tourFrom) {
@@ -252,7 +286,7 @@ function drawTour() {
   }
   const next = el('button', 'btn', asks ? 'Scan now' : last ? 'Done' : 'Next');
   next.addEventListener('click', () => {
-    if (asks) { endTour(false); scanNow(); }
+    if (asks) answerFirstScan(scanNow);
     else if (last) endTour(false);
     else { tourStep++; drawTour(); }
   });
@@ -279,6 +313,7 @@ window.addEventListener('hashchange', () => {
  */
 function tourOnLoad() {
   if (!state || setupShowing(state) || uninstallShowing()) return false; // the setup (and its Done until Open Heiward), and the uninstall
+  tourLoaded = true;
   if (isTourHash(location.hash)) startTour(tourFromHash(location.hash));
   else if (tourDue()) startTour(null);
   return true;
