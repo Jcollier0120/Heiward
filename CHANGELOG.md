@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.14
+
+**Small fixes and improvements.**
+
+### What changed
+
+- Small fixes and improvements.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.13
 
 **A new install asks about its first scan once you're on the home page, not before.**
