@@ -43,7 +43,7 @@ function trailForward(steps, at) {
 
 /**
  * The trail for a window (win: its history, location and sessionStorage). sync() after every hashchange; replace(hash)
- * instead of history.replaceState, so the step keeps its place; back() and forward() for the command bar's buttons.
+ * instead of history.replaceState, so the step keeps its place; back() and forward() for the title bar's buttons.
  */
 function makeTrail(win) {
   const KEY = 'heiward.trail';

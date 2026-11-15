@@ -13,16 +13,22 @@
   <script src="/tour.js" defer></script>
 </head>
 <body>
+  <!-- One row (the owner, 2026-11-15): Back, Forward, Up, Home and the path on the left; the scan's status, where the AI
+       runs, the buttons and Scan now on the right. The path takes the room left over, up to a limit; as the window narrows
+       it gives way first, then app.js's fitTitlebar folds the rest one part at a time, and fitCrumbs folds the path's
+       middle into "…". -->
   <header class="titlebar">
-    <a class="brand" id="brand" href="#/" title="Home">
-      <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true">
-        <path class="bm-back" d="M12 2.5 20 5.4v6.1c0 4.9-3.3 8.6-8 10-4.7-1.4-8-5.1-8-10V5.4z"/>
-        <path class="bm-front" d="M8.2 16.2c-.4-4.9 2.6-8.2 7.6-8.4.3 5-2.9 8.2-7.6 8.4z"/>
-        <path class="bm-vein" d="M8.2 16.2 13 11.4"/>
-      </svg>
-      <span>Home</span>
-    </a>
+    <nav class="location" aria-label="Location">
+      <div class="navbtns">
+        <button class="icon-btn" id="nav-back" title="Back" aria-label="Back"></button>
+        <button class="icon-btn" id="nav-fwd" title="Forward" aria-label="Forward"></button>
+        <button class="icon-btn" id="nav-up" title="Up one level" aria-label="Up one level"></button>
+        <button class="icon-btn" id="nav-home" title="Home" aria-label="Home"></button>
+      </div>
+      <ol class="crumbs" id="crumbs"></ol>
+    </nav>
     <div class="scanstate" data-tour="controls">
+      <span class="muted small subtitle" id="subtitle">Loading…</span>
       <span class="ai-badge hidden" id="ai-badge" role="status"></span>
       <div class="theme-picker">
         <button class="icon-btn" id="pause-btn" title="Pause scans" aria-label="Pause scans" aria-haspopup="menu" aria-expanded="false" aria-controls="pause-menu"></button>
@@ -37,16 +43,6 @@
       <button class="btn" id="scan-now">Scan now</button>
     </div>
   </header>
-
-  <nav class="commandbar" aria-label="Location">
-    <div class="navbtns">
-      <button class="icon-btn" id="nav-back" title="Back" aria-label="Back"></button>
-      <button class="icon-btn" id="nav-fwd" title="Forward" aria-label="Forward"></button>
-      <button class="icon-btn" id="nav-up" title="Up one level" aria-label="Up one level"></button>
-    </div>
-    <ol class="crumbs" id="crumbs"></ol>
-    <span class="muted small subtitle" id="subtitle">Loading…</span>
-  </nav>
 
   <div class="banners">
     <div class="agent-banner hidden" id="agent-banner" role="status"></div>
@@ -160,8 +156,6 @@
         <div id="done"></div>
       </section>
     </div>
-
-    <footer class="muted small" id="footer"></footer>
   </main>
 
   <!-- Two columns from 1100 px: scanning and cleaning up on the left, the modes and the rest on the right; one column,
