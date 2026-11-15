@@ -95,6 +95,114 @@ public sealed class ExplorerViewTests : IDisposable {
 		Assert.Empty(inside.Children);
 	}
 
+	string Put(string relative) {
+		string p = Path.Combine(root, relative);
+		Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+		System.IO.File.WriteAllBytes(p, new byte[] { 1 });
+		return p;
+	}
+
+	/// <summary>
+	/// The owner's folder page before any scan (2026-11-15, E:\emudeck backup): "0 photos and videos", and its two folders,
+	/// each with photos in it or further down, hidden as "2 folders without photos or videos". There was no index yet, so
+	/// every folder counted none.
+	/// </summary>
+	[Fact]
+	public void Tree_BeforeAnyScan_ListsEveryFolderWithPhotosOrVideosAtAnyDepth_AndHidesOnlyTheEmptyOnes() {
+		string backup = Dir("emudeck backup");
+		Put(@"emudeck backup\Nested\saves\screens\shot.png");   // three levels down
+		Put(@"emudeck backup\Direct\IMG_0001.JPG");             // directly in it, upper case
+		Put(@"emudeck backup\Empty\roms\game.iso");             // no photos or videos at any depth
+		Dir(@"emudeck backup\Bare");
+		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { root } };
+
+		TreeListing listing = ExplorerView.Tree(backup, all: false, cfg, index: null, new())!;
+		Assert.Equal(new[] { "Direct", "Nested" }, listing.Children.Select(c => c.Name));
+		Assert.All(listing.Children, c => Assert.True(c.Unscanned && c.Files == 0 && c.Expandable == (c.Name == "Nested")));
+		Assert.Equal(2, listing.HiddenEmpty); // Bare, Empty
+		// The folder's own header: not "0 photos and videos".
+		Assert.Equal(0, listing.Files);
+		Assert.True(listing.Unscanned);
+
+		// Shown anyway, the empty ones aren't marked.
+		TreeListing everything = ExplorerView.Tree(backup, all: true, cfg, index: null, new())!;
+		Assert.Equal(new[] { "Bare", "Direct", "Empty", "Nested" }, everything.Children.Select(c => c.Name));
+		Assert.Equal(new[] { "Direct", "Nested" }, everything.Children.Where(c => c.Unscanned).Select(c => c.Name));
+
+		// The drive's own page lists its top folders anyway: the one with photos says so.
+		TreeListing top = ExplorerView.Tree(root, all: false, cfg, index: null, new())!;
+		Assert.True(top.Children.Single(c => c.Name == "emudeck backup").Unscanned);
+	}
+
+	[Fact]
+	public void Tree_BeforeAnyScan_PhotosDirectlyInTheFolder_AreNotNone() {
+		string camera = Dir("Camera");
+		Put(@"Camera\IMG_0001.jpeg");
+		Dir(@"Camera\Empty");
+		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { root } };
+		TreeListing listing = ExplorerView.Tree(camera, all: false, cfg, index: null, new())!;
+		Assert.True(listing.Unscanned);
+		Assert.Empty(listing.Children);
+		Assert.Equal(1, listing.HiddenEmpty);
+	}
+
+	[Fact]
+	public void Tree_ATrulyEmptyTree_IsNoneAndHidden() {
+		string saves = Dir("Saves");
+		Put(@"Saves\slot1\save.sav");
+		Dir(@"Saves\slot2\deeper");
+		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { root } };
+		TreeListing listing = ExplorerView.Tree(saves, all: false, cfg, index: null, new())!;
+		Assert.False(listing.Unscanned);
+		Assert.Empty(listing.Children);
+		Assert.Equal(2, listing.HiddenEmpty);
+	}
+
+	[Fact]
+	public void Tree_AfterAScan_ItsCountsStand_AFolderOfPhotosNewSinceIsListed_AndAnUnfinishedLookKeepsTheScansWord() {
+		string photos = Dir("Photos");
+		string counted = Put(@"Photos\2019\a.jpg");
+		Put(@"Photos\New\b.jpg");                 // copied in after the scan
+		Put(@"Photos\Huge\deep\deeper\c.txt");    // too much to look through (with the budget below)
+		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { root } };
+		var index = ScanIndex.Build(DateTime.UtcNow, new[] { root }, new[] { (counted, 1L) },
+			new Dictionary<string, TimeSpan>(), new Dictionary<string, TimeSpan>());
+		var read = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase) { [root] = DateTime.UtcNow };
+
+		TreeListing listing = ExplorerView.Tree(photos, all: false, cfg, index, new(), read)!;
+		Assert.Equal(new[] { "2019", "New" }, listing.Children.Select(c => c.Name));
+		Assert.False(listing.Children.Single(c => c.Name == "2019").Unscanned);
+		Assert.Equal(1, listing.Children.Single(c => c.Name == "2019").Files);
+		Assert.True(listing.Children.Single(c => c.Name == "New").Unscanned);
+		Assert.Equal(1, listing.HiddenEmpty); // Huge: none at any depth
+		Assert.False(listing.Unscanned);      // the scan counted 1 here
+
+		// A check that can't finish: the scan that read the folder whole says none, and that stands.
+		MediaCheck Spent() => new(cfg, ScanScope.ExclusionRules(cfg), maxFolders: 0);
+		TreeListing spent = ExplorerView.Tree(photos, all: false, cfg, index, new(), read, Spent())!;
+		Assert.Equal(new[] { "2019" }, spent.Children.Select(c => c.Name));
+		Assert.Equal(2, spent.HiddenEmpty);
+		// No scan has read it: it may have some, so it's listed, not hidden as empty.
+		var never = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+		TreeListing unread = ExplorerView.Tree(photos, all: false, cfg, index, new(), never, Spent())!;
+		Assert.Equal(new[] { "2019", "Huge", "New" }, unread.Children.Select(c => c.Name));
+		Assert.Equal(0, unread.HiddenEmpty);
+		Assert.True(ExplorerView.Tree(Path.Combine(photos, "Huge"), all: false, cfg, null, new(), never, Spent())!.Unscanned);
+	}
+
+	[Fact]
+	public void Tree_ExemptFolders_AreNotLookedThrough() {
+		string projects = Dir("Projects");
+		Put(@"Projects\site\.git\HEAD");
+		Put(@"Projects\site\logo.png");
+		var cfg = new AgentConfig { ScanAllDrives = false, Folders = { root } };
+		TreeListing listing = ExplorerView.Tree(projects, all: false, cfg, index: null, new())!;
+		TreeNode site = listing.Children.Single();
+		Assert.Equal("Code repository", site.Exempt);
+		Assert.False(site.Unscanned);
+		Assert.False(listing.Unscanned);
+	}
+
 	[Fact]
 	public void Tree_BelowAListedFolderInsideAnExemptOne_IsScanned() {
 		string camera = Dir(".app", "camera");

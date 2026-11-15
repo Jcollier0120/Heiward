@@ -4773,6 +4773,8 @@ function renderFooter(s) {
 // A drive shows its used space, Windows' own figure, until it's opened.
 const SIZE_NOTE = 'Size on disk, as File Explorer counts it: a file kept only online in OneDrive counts as next to nothing until it\'s downloaded. ' +
   'Links to other folders aren\'t followed, so nothing is counted twice.';
+/** A folder the last scan counted no photos or videos in, with some on disk (or perhaps some: the server's MediaCheck). */
+const UNSCANNED_NOTE = 'No scan has counted what\'s in here yet. Scanning it counts its photos and videos and finds their duplicates.';
 const SIZES_AGAIN = 1500;
 let sizesTimer = null;
 let sizesBusy = false;
@@ -4974,7 +4976,8 @@ async function treeItem(node, depth) {
   const li = el('li');
   li.setAttribute('role', 'none');
   // A drive with nothing found yet isn't dimmed: it's scanned like any other (its tag says when).
-  const row = el('button', 'tree-row' + (node.exempt ? ' exempt' : '') + (!node.drive && !node.exempt && !node.files ? ' empty' : ''));
+  // Nor is a folder whose photos and videos no scan has counted yet.
+  const row = el('button', 'tree-row' + (node.exempt ? ' exempt' : '') + (!node.drive && !node.exempt && !node.files && !node.unscanned ? ' empty' : ''));
   row.setAttribute('role', 'treeitem');
   row.dataset.path = node.path;
   row.style.paddingLeft = (6 + depth * 14) + 'px';
@@ -5013,7 +5016,7 @@ async function treeItem(node, depth) {
     row.append(el('span', 'count', node.duplicates.copies.toLocaleString()));
     row.title = node.name + ': ' + count(node.duplicates.copies, 'set of copies', 'sets of copies') + ', ' + bytes(node.duplicates.reclaim) + ' to free';
   } else {
-    row.title = node.name;
+    row.title = node.name + (node.unscanned && !node.files ? ': not scanned yet' : '');
   }
   twisty.addEventListener('click', (e) => {
     if (!node.expandable) return;
@@ -5168,7 +5171,10 @@ function openPathMenu(e, { name, path, folder, more }) {
 function openFolderMenu(e, node) {
   const { items, item } = menuItems();
   item('Open', () => go(node.path));
-  const card = node.drive || state.drives.find((d) => sameFolder(d.root, node.path));
+  // The scanned drive, or folder scanned as a root, that it's on (or is). Only a drive's own row in the tree has it with
+  // the node: a folder's rows come from its listing, and before, every folder below a drive went without Scan now.
+  const on = node.drive || cardFor(node.path);
+  const card = on && on.scanned !== false ? on : null;
   let hint = null;
   const isDrive = card && sameFolder(card.root, node.path) && card.type !== 'folder';
   // A drive opens in File Explorer; a folder can also be shown selected in the folder it's in.
@@ -5194,10 +5200,8 @@ function openFolderMenu(e, node) {
     item('Scan only when I ask', () => setOnRequest(card.root, true));
     hint = 'Auto: Heiward ' + state.schedule.text + '. Scanned only when you ask, scheduled scans, Scan now and the developer check would leave this drive alone, ' +
       'so a disk that sleeps stays asleep. Its sets and developer items stay listed; scan it from its page.';
-  } else if (card && card.type !== 'folder') {
-    item('Scan now', () => scanFolder(node.path), scanFolderWhy());
-    item('Leave out of scans', null, 'Every fixed drive is scanned; leave out folders on it instead.');
   } else {
+    // A folder on a scanned drive or in a scanned folder: just it and the folders in it.
     if (card) item('Scan now', () => scanFolder(node.path), scanFolderWhy());
     item('Leave out of scans', () => overrideFolder(node.path, false));
   }
@@ -5408,7 +5412,14 @@ async function renderContent() {
   if (data.exempt) {
     chips.append(el('span', 'chip quiet', 'Exempt · ' + data.exempt));
   } else {
-    chips.append(el('span', 'chip', count(data.files, 'photo or video', 'photos and videos') + (data.bytes ? ' · ' + bytes(data.bytes) : '')));
+    if (data.unscanned) {
+      // The last scan counted none here, but there are photos or videos on disk (or may be): not "0 photos and videos".
+      const chip = el('span', 'chip', 'Not scanned yet');
+      chip.title = UNSCANNED_NOTE;
+      chips.append(chip);
+    } else {
+      chips.append(el('span', 'chip', count(data.files, 'photo or video', 'photos and videos') + (data.bytes ? ' · ' + bytes(data.bytes) : '')));
+    }
     if (data.duplicates.copies) chips.append(el('span', 'chip accent', count(data.duplicates.copies, 'set of copies', 'sets of copies')));
     if (data.duplicates.reclaim) chips.append(el('span', 'chip good', bytes(data.duplicates.reclaim) + ' to free here'));
     if (data.duplicates.lookalikes) chips.append(el('span', 'chip quiet', count(data.duplicates.lookalikes, 'look-alike set', 'look-alike sets')));
@@ -5476,7 +5487,8 @@ function subfolderTable(path, data) {
   table.append(thead);
 
   const sizeOf = (c) => { const s = folderSizes.get(key(c.path)); return s && s.bytes !== null && s.bytes !== undefined ? s.bytes : -1; };
-  const value = (c) => ({ name: c.name.toLowerCase(), size: sizeOf(c), files: c.files, copies: c.duplicates.copies, reclaim: c.duplicates.reclaim })[sortBy.key];
+  // A folder not scanned yet sorts between the ones with photos and videos counted and the ones with none.
+  const value = (c) => ({ name: c.name.toLowerCase(), size: sizeOf(c), files: c.files || (c.unscanned ? 0.5 : 0), copies: c.duplicates.copies, reclaim: c.duplicates.reclaim })[sortBy.key];
   const rows = [...data.children].sort((a, b) => {
     if (!!a.exempt !== !!b.exempt) return a.exempt ? 1 : -1; // exempt folders last, like a footnote
     const va = value(a), vb = value(b);
@@ -5488,7 +5500,7 @@ function subfolderTable(path, data) {
   const folded = exemptRows.length > FOLD_EXEMPT && !exemptOpen.has(key(path));
   for (const c of rows) {
     if (c.exempt && folded) continue;
-    const row = el('tr', 'row' + (c.exempt ? ' exempt' : !c.files ? ' none' : ''));
+    const row = el('tr', 'row' + (c.exempt ? ' exempt' : !c.files && !c.unscanned ? ' none' : ''));
     row.tabIndex = 0;
     const name = el('td');
     const cell = el('div', 'name-cell');
@@ -5497,7 +5509,12 @@ function subfolderTable(path, data) {
     name.append(cell);
     row.append(name);
     row.append(sizeNode('td', 'num col-size', [c.path]));
-    row.append(el('td', 'num col-files', c.exempt ? '' : c.files ? c.files.toLocaleString() : '–'));
+    const files = el('td', 'num col-files', c.exempt ? '' : c.files ? c.files.toLocaleString() : c.unscanned ? '' : '–');
+    if (!c.exempt && !c.files && c.unscanned) {
+      files.append(el('span', 'muted', 'Not scanned yet'));
+      files.title = UNSCANNED_NOTE;
+    }
+    row.append(files);
     row.append(el('td', 'num', c.exempt ? '' : c.duplicates.copies ? c.duplicates.copies.toLocaleString() : '–'));
     row.append(el('td', 'num', c.exempt ? '' : c.duplicates.reclaim ? bytes(c.duplicates.reclaim) : '–'));
     row.title = c.path + (c.exempt ? ' (not scanned: ' + c.exempt + ')' : '');

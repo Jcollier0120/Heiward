@@ -47,10 +47,10 @@ public sealed class PageFolderMenuTests {
 		// A folder's page: the listing it shows, and the card it's on.
 		var content = makeEl('div'), route = { view: 'folder', path: 'E:\\Development' }, drivesScanned = [];
 		function $(id) { return content; }
-		var showAll = new Set();
+		var showAll = new Set(), SEP = '\\';
 		function key(p) { return trim(p); }
-		function listing(path) { return Promise.resolve({ path: path, files: 3, bytes: 0, duplicates: {}, children: [] }); }
-		function cardFor() { return drive; }
+		var listed = { files: 3 };
+		function listing(path) { return Promise.resolve({ path: path, files: listed.files, unscanned: !!listed.unscanned, bytes: 0, duplicates: {}, children: [] }); }
 		function nameOf(p) { return p; } function count(n) { return String(n); } function bytes() { return ''; } function took() { return ''; }
 		function driveIcon() { return makeEl('svg'); } function folderIcon() { return makeEl('svg'); } function icon() { return makeEl('svg'); }
 		function subfolderTable() { return makeEl('table'); } function duplicatesSection() { return makeEl('section'); }
@@ -60,6 +60,9 @@ public sealed class PageFolderMenuTests {
 		    .map(function (b) { return b.textContent + (b.disabled ? ' (off)' : ''); });
 		}
 		function press(words) { find(content, function (n) { return n.tagName === 'BUTTON' && n.textContent === words; })[0].click(); }
+		function chips() {
+		  return find(content, function (n) { return n.tagName === 'SPAN' && /^chip\b/.test(n.className); }).map(function (c) { return c.textContent; });
+		}
 		function trim(p) { return p.replace(/\\+$/, '').toLowerCase(); }
 		function sameFolder(a, b) { return trim(a) === trim(b); }
 		var drive = { root: 'E:\\', type: 'fixed', onRequest: false, scans: 'auto' };
@@ -82,13 +85,22 @@ public sealed class PageFolderMenuTests {
 	public PageFolderMenuTests() {
 		string script = ThePage.Asset("app.js").ReplaceLineEndings("\n");
 		js.Execute(FakePage);
-		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip", "otherDrivesStay" })
+		// The page's own cardFor: a folder's rows come from its listing, without the drive they're on.
+		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip", "otherDrivesStay", "trimSep", "isUnder", "cardFor" })
 			js.Execute(ThePage.Function(script, name));
+		js.Execute(Line(script, "const UNSCANNED_NOTE = "));
 		int render = script.IndexOf("async function renderContent(", StringComparison.Ordinal);
 		js.Execute(script[render..script.IndexOf("\nfunction subfolderTable(", render, StringComparison.Ordinal)]);
 		// The stubs stand: the slices above bring the page's own of some of them along.
 		js.Execute("function scanFolder(path) { scanned.push(path); } function scanDrive(root) { drivesScanned.push(root); } function overrideFolder() { }" +
 			" function bumpScan() { } function scanTime() { return 'today 09:00'; }");
+	}
+
+	/// <summary>The line of <paramref name="script"/> that starts with <paramref name="start"/> (a constant).</summary>
+	static string Line(string script, string start) {
+		int at = script.IndexOf("\n" + start, StringComparison.Ordinal);
+		Assert.True(at >= 0, start);
+		return script[(at + 1)..script.IndexOf('\n', at + 1)];
 	}
 
 	string[] Menu(string node) => JsonSerializer.Deserialize<string[]>(js.Evaluate($"JSON.stringify(menu({node}))").AsString())!;
@@ -154,11 +166,74 @@ public sealed class PageFolderMenuTests {
 	public void AFolderOnADrive_CanBeScannedByItself() {
 		string[] items = Menu(@"{ name: 'Development', path: 'E:\\Development', drive: drive }");
 		Assert.Contains("Scan now", items);
-		// Before Leave out of scans (greyed out on a fixed drive, which is scanned whole).
-		int leave = Array.FindIndex(items, i => i.StartsWith("Leave out of scans", StringComparison.Ordinal));
-		Assert.InRange(Array.IndexOf(items, "Scan now"), 0, leave - 1);
+		// Before Leave out of scans, which a folder on a fixed drive can be.
+		Assert.InRange(Array.IndexOf(items, "Scan now"), 0, Array.IndexOf(items, "Leave out of scans") - 1);
 		js.Execute("choose('Scan now');");
 		Assert.Equal(@"[""E:\\Development""]", js.Evaluate("JSON.stringify(scanned)").AsString());
+	}
+
+	/// <summary>
+	/// The owner, 2026-11-15, right-clicking D:\Block 0\E Drive in the tree: "I also don't see the scan it now option on
+	/// directories". A folder's rows come from its listing (/api/tree), which doesn't say which drive they're on, and the
+	/// menu only looked for a drive whose root the folder is: no folder below a drive got Scan now.
+	/// </summary>
+	[Fact]
+	public void AFolderAsItsListingHasIt_WithoutItsDrive_CanBeScannedByItself() {
+		const string Row = @"{ name: 'E Drive', path: 'E:\\Block 0\\E Drive', exempt: null, files: 0, bytes: 0, duplicates: { copies: 0, lookalikes: 0, reclaim: 0 }, expandable: true }";
+		string[] items = Menu(Row);
+		Assert.Equal(new[] { "Open", "Open in File Explorer", "Show in File Explorer", "Scan now", "Leave out of scans", "Copy path" }, items);
+		js.Execute("choose('Scan now');");
+		Assert.Equal(@"[""E:\\Block 0\\E Drive""]", Json("scanned"));
+		// On a drive scanned only when asked, and in a folder scanned as a root of its own, too.
+		js.Execute("onRequest();");
+		Assert.Contains("Scan now", Menu(Row));
+		js.Execute(@"state.drives.push({ root: 'C:\\Users\\me\\Pictures', type: 'folder', scanned: true });");
+		Assert.Contains("Scan now", Menu(@"{ name: 'Trip', path: 'C:\\Users\\me\\Pictures\\2019\\Trip', exempt: null }"));
+		// Not on a drive Heiward doesn't scan.
+		js.Execute(@"state.drives.push({ root: 'F:\\', type: 'removable', scanned: false });");
+		Assert.DoesNotContain("Scan now", Menu(@"{ name: 'Elsewhere', path: 'F:\\Elsewhere', exempt: null }"));
+	}
+
+	[Fact]
+	public void AFoldersPage_NotScannedYet_SaysSo_NotZeroPhotosAndVideos() {
+		js.Execute("listed = { files: 0, unscanned: true };");
+		Page(@"E:\emudeck backup");
+		Assert.Equal(new[] { "Not scanned yet" }, Js<string[]>("chips()"));
+		// The count, as before (this page's count() gives the number alone).
+		js.Execute("listed = { files: 0 };");
+		Page(@"E:\Empty");
+		Assert.Equal(new[] { "0" }, Js<string[]>("chips()"));
+		js.Execute("listed = { files: 3 };");
+		Page(@"E:\Development");
+		Assert.Equal(new[] { "3" }, Js<string[]>("chips()"));
+	}
+
+	T Js<T>(string expression) => JsonSerializer.Deserialize<T>(Json(expression))!;
+
+	/// <summary>The Folders table: a folder not scanned yet says so, and isn't greyed out as one with nothing in it.</summary>
+	[Fact]
+	public void TheFoldersTable_SaysNotScannedYet_ForAFolderWithPhotosNoScanCounted() {
+		js.Execute(ThePage.Function(ThePage.Asset("app.js").ReplaceLineEndings("\n"), "subfolderTable"));
+		js.Execute("""
+			var sortBy = { key: 'files', desc: true }, folderSizes = new Map(), FOLD_EXEMPT = 5, exemptOpen = new Set(), expanded = new Map(), SIZE_NOTE = '';
+			function renderRoute() { }
+			function folder(name, files, unscanned) {
+			  return { name: name, path: 'E:\\Backup\\' + name, exempt: null, files: files, unscanned: unscanned, duplicates: { copies: 0, lookalikes: 0, reclaim: 0 } };
+			}
+			var table = subfolderTable('E:\\Backup', { children: [folder('Empty', 0, false), folder('Saves', 0, true), folder('Photos', 4, false)], hiddenEmpty: 2 });
+			function text(n) { return n.textContent + (n.children || []).map(text).join(''); }
+			var shownRows = find(table, function (n) { return n.tagName === 'TR' && /^row\b/.test(n.className); }).map(function (r) {
+			  return [text(r.children[0]), r.className, text(r.children[2]), r.children[2].title];
+			});
+			var showEmpty = find(table, function (n) { return n.tagName === 'BUTTON' && /show-empty/.test(n.className); })[0].textContent;
+			""");
+		string[][] rows = Js<string[][]>("shownRows");
+		// Counted first, then not scanned yet, then none.
+		Assert.Equal(new[] { "Photos", "Saves", "Empty" }, rows.Select(r => r[0]));
+		Assert.Equal(new[] { "row", "row", "row none" }, rows.Select(r => r[1]));
+		Assert.Equal(new[] { "4", "Not scanned yet", "–" }, rows.Select(r => r[2]));
+		Assert.StartsWith("No scan has counted", rows[1][3]);
+		Assert.Equal("Show 2 without photos or videos", Js<string>("showEmpty"));
 	}
 
 	[Fact]

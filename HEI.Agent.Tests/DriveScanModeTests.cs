@@ -90,7 +90,8 @@ public sealed class DriveScanModeTests : IDisposable {
 	public void TheTree_TagsEachDrive_AndDimsNone() {
 		string script = Asset("app.js");
 		string tree = Function(script, "treeItem");
-		Assert.Contains("!node.drive && !node.exempt && !node.files ? ' empty'", tree);
+		// Nor a folder no scan has counted yet (PageListingTests draws it).
+		Assert.Contains("!node.drive && !node.exempt && !node.files && !node.unscanned ? ' empty'", tree);
 		Assert.Contains("'count scan-mode'", tree);
 		Assert.Contains("auto ? 'Auto' : 'Manual'", tree);
 		Assert.Contains("scanModeTitle(node.drive)", tree);

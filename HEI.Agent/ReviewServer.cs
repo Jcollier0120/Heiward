@@ -207,14 +207,16 @@ namespace HEI.Agent {
 				if (seen == true) ScanPace.MarkPageSeen();
 				return Results.Json(Progress(cfg), AgentConfig.Json);
 			});
-			// Folder names only, and only below what the agent scans (a GET from another site can't read
+			// Folder names only, and whether photos or videos are in them where the last scan counted none (MediaCheck, by the
+			// files' names), and only below what the agent scans (a GET from another site can't read
 			// the answer: no CORS, and a foreign Host header is refused above).
 			// The page asks for the open folders' listings at once: one at a time per disk that seeks (DiskListingGate).
 			app.MapGet("/api/tree", async (string path, bool? all, HttpContext ctx) => {
 				var decisions = DecisionStore.Load();
 				var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
 				ScanIndex? index = ScanIndex.Load();
-				TreeListing? listing = await DiskListingGate.RunAsync(path, () => ExplorerView.Tree(path, all == true, cfg, index, pending), ctx.RequestAborted);
+				var lastRead = DriveScans.Load();
+				TreeListing? listing = await DiskListingGate.RunAsync(path, () => ExplorerView.Tree(path, all == true, cfg, index, pending, lastRead), ctx.RequestAborted);
 				return listing == null ? Results.NotFound(new { error = "That folder isn't one Heiward scans." }) : Results.Json(listing, AgentConfig.Json);
 			});
 			// Folder sizes on disk, for the folders the page shows (?path=…, repeated: the tree's open folders, the one shown),

@@ -29,9 +29,16 @@ namespace HEI.Agent {
 
 	sealed record Hotspot(string Folder, int Copies, long Reclaim);
 
-	sealed record TreeNode(string Name, string Path, string? Exempt, int Files, long Bytes, DupStats Duplicates, bool Expandable);
+	/// <param name="Unscanned">
+	/// The last scan counted no photos or videos in it, yet there are some on disk, or may be (<see cref="MediaCheck"/>): no
+	/// scan has read it yet, or they're new since. A scan counts them.
+	/// </param>
+	sealed record TreeNode(string Name, string Path, string? Exempt, int Files, long Bytes, DupStats Duplicates, bool Expandable, bool Unscanned = false);
 
-	sealed record TreeListing(string Path, string? Exempt, int Files, long Bytes, DupStats Duplicates, List<TreeNode> Children, int HiddenEmpty);
+	/// <param name="HiddenEmpty">The subfolders left out of <paramref name="Children"/>: no photos or videos in them at any depth.</param>
+	/// <param name="Unscanned">As <see cref="TreeNode.Unscanned"/>, for the folder itself, its subfolders' included.</param>
+	sealed record TreeListing(string Path, string? Exempt, int Files, long Bytes, DupStats Duplicates, List<TreeNode> Children, int HiddenEmpty,
+		bool Unscanned = false);
 
 	/// <summary>
 	/// The review page's Explorer-like view: drives, the folders that hold the duplicates, and a folder
@@ -67,9 +74,7 @@ namespace HEI.Agent {
 			IReadOnlyDictionary<string, DateTime>? lastRead = null) {
 			bool dev = devBuild ?? DevBuild.Current;
 			lastRead ??= DriveScans.Load();
-			// Before scans kept each drive's time: the last scan's, for each drive it listed.
-			DateTime? ReadAt(string root) => lastRead != null ? DriveScans.Of(lastRead, root)
-				: index != null && index.Drives.ContainsKey(ScanIndex.DriveOf(root)) ? DateTime.SpecifyKind(index.ScannedAtUtc, DateTimeKind.Utc) : null;
+			DateTime? ReadAt(string root) => LastRead(root, index, lastRead);
 			var cards = new List<DriveCard>();
 			var roots = ScanScope.Roots(cfg);
 			foreach (DriveInfo drive in DriveInfo.GetDrives()) {
@@ -122,13 +127,29 @@ namespace HEI.Agent {
 				.Take(count)
 				.ToList();
 
+		/// <summary>When a scan last read <paramref name="root"/> whole (<see cref="DriveScans"/>); null: never.</summary>
+		/// <param name="lastRead">Each root's last read (<see cref="DriveScans.Load"/>); null before scans kept them: the last scan's time, for each drive it listed.</param>
+		internal static DateTime? LastRead(string root, ScanIndex? index, IReadOnlyDictionary<string, DateTime>? lastRead) =>
+			lastRead != null ? DriveScans.Of(lastRead, root)
+			: index != null && index.Drives.ContainsKey(ScanIndex.DriveOf(root)) ? DateTime.SpecifyKind(index.ScannedAtUtc, DateTimeKind.Utc) : null;
+
 		/// <summary>
 		/// The folder's subfolders as they are on disk now, each scanned or exempt by the settings as they
-		/// are now. Below a drive's top level, folders with no photos or videos (and not exempt) are
+		/// are now. Below a drive's top level, folders with no photos or videos at any depth (and not exempt) are
 		/// counted in <see cref="TreeListing.HiddenEmpty"/> unless <paramref name="all"/>. Null when the
 		/// folder is outside what the agent scans, or missing.
+		/// <para>
+		/// The counts are the last scan's (<paramref name="index"/>). Where it counted none, the disk is looked at
+		/// (<see cref="MediaCheck"/>): a folder with a photo or video in it or below it is listed, marked
+		/// <see cref="TreeNode.Unscanned"/>, never hidden as empty. Before any scan there is no index at all, and every folder
+		/// counted none: they were all hidden as empty, photos or not. One the check couldn't finish is listed too, unless a
+		/// scan has read its drive (or scanned folder) whole: that scan's count of none stands then.
+		/// </para>
 		/// </summary>
-		public static TreeListing? Tree(string path, bool all, AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending) {
+		/// <param name="lastRead">When a scan last read each root (<see cref="DriveScans.Load"/>); null: as the index has it (<see cref="LastRead"/>).</param>
+		/// <param name="check">How far to look on disk; null: <see cref="MediaCheck.MaxFolders"/> folders in <see cref="MediaCheck.MaxTime"/>.</param>
+		public static TreeListing? Tree(string path, bool all, AgentConfig cfg, ScanIndex? index, List<ReportGroup> pending,
+			IReadOnlyDictionary<string, DateTime>? lastRead = null, MediaCheck? check = null) {
 			var roots = ScanScope.Roots(cfg);
 			if (Shown(path, roots) is not var (full, root)) return null;
 
@@ -138,6 +159,11 @@ namespace HEI.Agent {
 			var children = new List<TreeNode>();
 			int hidden = 0;
 			bool topLevel = full.TrimEnd(Path.DirectorySeparatorChar).Equals(root.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+			// A scan has read this root whole: what it counted stands where the disk can't say otherwise in time.
+			bool read = LastRead(root, index, lastRead) != null;
+			bool Unscanned(MediaOnDisk onDisk) => onDisk == MediaOnDisk.Found || (onDisk == MediaOnDisk.Unfinished && !read);
+			bool unscannedBelow = false;
+			check ??= new MediaCheck(cfg, rules);
 			if (exempt == null) {
 				IEnumerable<DirectoryInfo> subfolders;
 				try {
@@ -153,15 +179,24 @@ namespace HEI.Agent {
 						? null : ScanScope.ExemptReason(d, rules);
 					var (f, b) = reason == null ? index?.Subtree(d.FullName) ?? (0, 0) : (0, 0);
 					DupStats dup = reason == null ? Stats(d.FullName, pending) : new DupStats(0, 0, 0);
-					if (reason == null && f == 0 && dup.Copies + dup.Lookalikes == 0 && !topLevel && !all) {
-						hidden++;
-						continue;
+					bool unscanned = false;
+					if (reason == null && f == 0 && dup.Copies + dup.Lookalikes == 0) {
+						// Nothing counted: what's on disk says. A root of its own inside it (below a folder scans leave out) isn't
+						// looked through here: its own listing says.
+						unscanned = Unscanned(roots.Any(r => IsUnder(r, d.FullName)) ? MediaOnDisk.Unfinished : check.Below(d.FullName));
+						unscannedBelow |= unscanned;
+						if (!unscanned && !topLevel && !all) {
+							hidden++;
+							continue;
+						}
 					}
 					bool expandable = reason == null && ((index?.HasFilesBelow(d.FullName) ?? false) || HasSubfolders(d));
-					children.Add(new TreeNode(d.Name, d.FullName, reason, f, b, dup, expandable));
+					children.Add(new TreeNode(d.Name, d.FullName, reason, f, b, dup, expandable, unscanned));
 				}
 			}
-			return new TreeListing(full, exempt, files, bytes, Stats(full, pending), children, hidden);
+			// The folder's own: its subfolders' say, or the photos and videos directly in it.
+			bool unscannedHere = exempt == null && files == 0 && (unscannedBelow || Unscanned(check.Own(full)));
+			return new TreeListing(full, exempt, files, bytes, Stats(full, pending), children, hidden, unscannedHere);
 		}
 
 		/// <summary>
@@ -211,6 +246,10 @@ namespace HEI.Agent {
 				return false;
 			}
 		}
+
+		/// <summary>Strictly below: <paramref name="path"/> is inside <paramref name="folder"/>, not the folder itself.</summary>
+		static bool IsUnder(string path, string folder) =>
+			path.TrimEnd(Path.DirectorySeparatorChar).StartsWith(folder.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
 
 		static bool IsSameOrUnder(string path, string root) {
 			string r = root.TrimEnd(Path.DirectorySeparatorChar);
