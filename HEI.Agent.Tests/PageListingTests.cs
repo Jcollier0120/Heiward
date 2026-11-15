@@ -57,6 +57,12 @@ public sealed class PageListingTests {
 		    return label.textContent + (r.attrs['aria-selected'] === 'true' ? ' (selected)' : '');
 		  });
 		}
+		// Each row's name and how it's drawn.
+		function rowClasses() {
+		  return find($('tree'), function (n) { return n.tagName === 'BUTTON' && n.className.indexOf('tree-row') === 0; }).map(function (r) {
+		    return find(r, function (n) { return n.className === 'label'; })[0].textContent + ': ' + r.className;
+		  });
+		}
 		function heading() { var h = find($('content'), function (n) { return n.tagName === 'H1'; })[0]; return h ? h.textContent : null; }
 
 		// The server: each /api/tree answers when the test says.
@@ -77,11 +83,14 @@ public sealed class PageListingTests {
 		  'E:\\Photos': ['2019', '2020'], 'E:\\Photos\\2019': ['Trip'], 'E:\\Photos\\2019\\Trip': [], 'E:\\Photos\\2020': [],
 		  'E:\\Videos': ['Clips'], 'E:\\Videos\\Clips': ['Cut'], 'E:\\Videos\\Clips\\Cut': [],
 		};
+		// What each folder's listing says of its photos and videos: 1 counted, unless a test says otherwise.
+		var counted = {}, unscanned = {};
 		function under(path, name) { return (path.slice(-1) === '\\' ? path : path + '\\') + name; }
 		function answer(a) {
 		  var children = folders[a.path].map(function (n) {
 		    var p = under(a.path, n);
-		    return { name: n, path: p, exempt: null, files: 1, bytes: 10, duplicates: { copies: 0, lookalikes: 0, reclaim: 0 }, expandable: folders[p].length > 0 };
+		    return { name: n, path: p, exempt: null, files: p in counted ? counted[p] : 1, unscanned: !!unscanned[p], bytes: 10,
+		      duplicates: { copies: 0, lookalikes: 0, reclaim: 0 }, expandable: folders[p].length > 0 };
 		  });
 		  a.ok({ ok: true, json: function () { return Promise.resolve({ path: a.path, exempt: null, files: 1, bytes: 10,
 		    duplicates: { copies: 0, lookalikes: 0, reclaim: 0 }, children: children, hiddenEmpty: 0 }); } });
@@ -161,6 +170,17 @@ public sealed class PageListingTests {
 		Assert.Equal(4, Js<int>("asked.length"));
 		Assert.Equal(Drawn, Js<string[]>("rows()"));
 		Assert.Equal("2019", Js<string>("heading()"));
+	}
+
+	/// <summary>A folder whose photos and videos no scan has counted yet isn't greyed out in the tree, as an empty one is.</summary>
+	[Fact]
+	public void AFolderNotScannedYet_IsNotGreyedOutInTheTree_AnEmptyOneIs() {
+		Run(@"counted['E:\\Photos\\2019\\Trip'] = 0; unscanned['E:\\Photos\\2019\\Trip'] = true; counted['E:\\Photos\\2020'] = 0; draw();");
+		AnswerEverything();
+		string[] rows = Js<string[]>("rowClasses()");
+		Assert.Contains("Trip: tree-row", rows);
+		Assert.Contains("2020: tree-row empty", rows);
+		Assert.Contains("2019: tree-row", rows);
 	}
 
 	[Fact]
