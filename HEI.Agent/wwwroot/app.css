@@ -299,22 +299,31 @@ p { margin: 4px 0; }
 .hidden { display: none !important; }
 button { font: inherit; color: inherit; }
 
-/* ---- Title bar and command bar ---- */
+/* ---- The title bar: one row (the owner, 2026-11-15) ----
+   Where you are on the left (Back, Forward, Up, Home, the path), the scan's status and the buttons on the right. The path
+   takes the room left over, up to 560 px; app.js's fitTitlebar folds the rest when it would get narrower than its least:
+   the way back to Manor to its icon, then the AI badge to its dot, then the scan's status (Scan now's tooltip has it), and
+   last the path to a row of its own. */
 .titlebar {
-  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: 10px 16px; background: var(--bg);
+  position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px; background: var(--bg); min-width: 0;
 }
-.brand {
-  display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px;
-  color: inherit; text-decoration: none; padding: 4px 8px; margin: -4px -8px; border-radius: 6px;
-}
-.brand:hover { background: var(--hover); }
-.brand:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .brand-mark { width: 22px; height: 22px; }
 .bm-back { fill: var(--ok-bg); stroke: var(--ok); stroke-width: 1.6; stroke-linejoin: round; }
 .bm-front { fill: var(--ok); }
 .bm-vein { stroke: var(--ok-bg); stroke-width: 1.2; stroke-linecap: round; fill: none; }
-.scanstate { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.location { display: flex; align-items: center; gap: 8px; flex: 1 1 0; min-width: 0; }
+.scanstate { display: flex; align-items: center; gap: 10px; flex: none; margin-left: auto; }
+.titlebar.fold-manor .manor-back { padding: 4px 6px; }
+.titlebar.fold-manor .manor-back span { display: none; }
+/* The badge's dot and where the AI runs in a word ("GPU"): its tooltip still says the rest, and its whole words stay for
+   a screen reader (the short word is hidden from one). */
+.titlebar.fold-badge .ai-badge { font-size: 0; }
+.titlebar.fold-badge .ai-badge::after { content: attr(data-short) / ''; font-size: 12px; }
+.titlebar.fold-status .subtitle { display: none; }
+.titlebar.fold-wrap { flex-wrap: wrap; row-gap: 6px; }
+.titlebar.fold-wrap .location { order: 2; flex-basis: 100%; }
+.titlebar.fold-wrap .scanstate { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
 /* Back to the manor, first in the title bar when Manor is installed: Manor's icon and its name, as on every
    agent's page (the Steward's kit 2.3.0); the icon alone in a narrow window. */
 .manor-back {
@@ -326,18 +335,7 @@ button { font: inherit; color: inherit; }
 .manor-back img { flex: none; }
 .manor-back span { overflow: hidden; text-overflow: ellipsis; }
 .manor-sep { width: 1px; height: 24px; background: var(--line); flex: none; }
-.manor-sep ~ .scanstate { margin-left: auto; }
-@media (max-width: 640px) {
-  .manor-back { padding: 4px 6px; }
-  .manor-back span { display: none; }
-}
 
-.commandbar {
-  display: flex; align-items: center; gap: 10px;
-  margin: 0 12px; padding: 6px 8px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 8px 8px 0 0; border-bottom: 0;
-  min-width: 0;
-}
 .navbtns { display: flex; gap: 2px; flex: none; }
 .icon-btn {
   width: 32px; height: 32px; display: grid; place-items: center;
@@ -389,21 +387,31 @@ button { font: inherit; color: inherit; }
 .swatch span { position: absolute; inset: 0; }
 .swatch .sw-accent { clip-path: polygon(100% 0, 100% 100%, 0 100%); }
 .swatch .sw-fg { inset: 6px 5px auto 5px; height: 3px; border-radius: 2px; }
+/* The path: never wider than 560 px, never two lines. What doesn't fit folds from the middle into "…" (app.js's fitCrumbs),
+   keeping This PC and the folders nearest the one you're in; the last one's name ends in an ellipsis only when even
+   that is too wide. The whole path is the bar's tooltip. */
 .crumbs {
-  list-style: none; margin: 0; padding: 0 8px; display: flex; align-items: center; gap: 2px;
-  flex: 1; min-width: 0; height: 32px; overflow: hidden;
+  list-style: none; margin: 0; padding: 0 6px; display: flex; align-items: center; gap: 2px;
+  flex: 1 1 0; min-width: 0; max-width: 560px; height: 32px; overflow: hidden;
   border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
 }
 .crumbs li { display: flex; align-items: center; gap: 2px; min-width: 0; flex: none; }
 .crumbs li:last-child { flex: 0 1 auto; }
+.crumbs li.folded { display: none; }
+.crumbs.measuring li { flex: none; }
 .crumbs .sep { color: var(--faint); width: 14px; height: 14px; flex: none; }
 .crumb {
   background: none; border: 0; padding: 3px 6px; border-radius: 4px; cursor: pointer;
-  display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px;
+  display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; max-width: 260px; min-width: 0;
 }
+.crumb span { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.crumbs li.bare .crumb span { display: none; }
 .crumb:hover { background: var(--hover); }
+.crumb:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .crumb svg { width: 16px; height: 16px; flex: none; }
-.subtitle { flex: none; white-space: nowrap; }
+.crumb-more { padding: 3px 8px; color: var(--muted); }
+/* The scan's status, beside the AI badge: at most 320 px, and its own tooltip when it's cut. */
+.subtitle { flex: 0 1 auto; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .banners { margin: 0 12px; }
 .error { color: var(--alert); background: var(--alert-bg); padding: 8px 12px; border-radius: 6px; margin: 8px 0 0; }
@@ -413,11 +421,11 @@ button { font: inherit; color: inherit; }
 /* ---- Views ---- */
 .view {
   flex: 1; min-height: 0; margin: 0 12px 12px;
-  background: var(--surface); border: 1px solid var(--line); border-radius: 0 0 8px 8px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
 }
 /* On a wide screen the page stops at 1680 px, centred, as every staff page does (the owner's wide-screen design,
-   2026-10-31): the title bar, the command bar and the view. The setup keeps the whole window. */
-body > .commandbar, body > .banners, body > .view:not(.setup) {
+   2026-10-31): the title bar and the view. The setup keeps the whole window. */
+body > .banners, body > .view:not(.setup) {
   box-sizing: border-box; width: calc(100% - 24px); max-width: 1680px; margin-left: auto; margin-right: auto;
 }
 body > .titlebar { box-sizing: border-box; width: 100%; max-width: 1704px; margin-left: auto; margin-right: auto; }
@@ -649,7 +657,7 @@ body > .titlebar { box-sizing: border-box; width: 100%; max-width: 1704px; margi
    Castellan. The page's own colours are set to match inside it, so the questions' fieldsets and switches fit. */
 html.setup-mode { color-scheme: dark; }
 html.setup-mode body { background: #020617; }
-html.setup-mode .titlebar, html.setup-mode .commandbar { display: none; }
+html.setup-mode .titlebar { display: none; }
 /* The window, top to bottom: the banner, the step (which scrolls by itself, only when it must) and the footer with the
    step's buttons, which stays in reach and never covers the step. The banner slims down in a short window (below), so a
    1366 x 768 screen at 100 % or 125 % shows a whole step. The brand, the step and the footer line up on a column 1320 px
@@ -1295,8 +1303,7 @@ button:has(> .ui-spinner) { display: inline-flex; align-items: center; justify-c
 
 /* ---- Narrow windows: the navigation pane folds above the content ---- */
 @media (max-width: 820px) {
-  .subtitle { display: none; }
-  /* The palette button sits mid-bar here: hang the menu from the title bar's right edge instead. */
+  /* The pause and palette menus hang from the title bar's right edge here, so neither runs off the window's left. */
   .theme-picker { position: static; }
   .theme-menu { right: 16px; top: calc(100% - 4px); width: min(272px, calc(100vw - 32px)); }
   .split { display: flex; flex-direction: column; overflow-y: auto; }

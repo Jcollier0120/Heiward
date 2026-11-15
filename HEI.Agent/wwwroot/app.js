@@ -45,6 +45,7 @@ const ICONS = {
   back: [['path', 'M10 3 5 8l5 5', 'stroke']],
   fwd: [['path', 'M6 3l5 5-5 5', 'stroke']],
   up: [['path', 'M8 13V3M3.5 7.5 8 3l4.5 4.5', 'stroke']],
+  home: [['path', 'M2 7.6 8 2.6l6 5M3.8 6.2v7.2h8.4V6.2M6.6 13.4V9.8h2.8v3.6', 'stroke']],
   chevron: [['path', 'M6 3l5 5-5 5', 'stroke']],
   sep: [['path', 'M6 4l4 4-4 4', 'stroke']],
   check: [['path', 'M3 8.5 6.5 12 13 4.5', 'stroke']],
@@ -254,7 +255,7 @@ function showError(msg) {
 }
 
 let noticeTimer = null;
-/** A short green line under the command bar after an action, with an optional button; it goes after a while. */
+/** A short green line under the title bar after an action, with an optional button; it goes after a while. */
 function showNotice(msg, action) {
   const n = $('notice');
   clearTimeout(noticeTimer);
@@ -593,7 +594,7 @@ window.addEventListener('hashchange', () => {
   $('content').scrollTop = 0;
 });
 
-// ---------------------------------------------------------------- header and command bar
+// ---------------------------------------------------------------- the title bar
 
 /** A scan's AI model ran this recently (scan-status.json's aiRanUtc): it's running now, as the manor's Accelerators card would say. */
 const AI_RUNNING_MS = 10000;
@@ -613,20 +614,22 @@ function renderAiBadge(ai, dev, scan) {
   const badge = $('ai-badge');
   if (!ai) { badge.classList.add('hidden'); return; }
   const npu = ai.npuDisplayName || ai.npuName || 'The NPU';
-  let text, tone, tip;
+  // short: what the badge says when a narrow window folds it (fitTitlebar), beside its dot.
+  let text, tone, tip, short;
   if (ai.device === 'NPU') {
-    tone = 'good';
+    tone = 'good'; short = 'NPU';
     const now = npuRunningNow(scan);
     text = now ? 'Running on the NPU' : 'NPU ready';
     tip = now ? npu + ' is matching pictures and video frames for this scan now.'
       : scan && scan.running ? npu + ' is set up; this scan uses it only while it matches pictures and video frames.'
       : ai.source === 'scan' ? npu + ' ran the last scan; scans run on it.' : npu + ' is set up; scans run on it.';
   } else if (ai.device === 'off') {
-    tone = 'warn';
+    tone = 'warn'; short = 'AI off';
     text = 'AI matching off';
     tip = dev ? 'The AI components are not installed. Run "hei setup".' : 'The AI components aren\'t installed, so AI matching is off. Reinstalling Heiward adds them.';
   } else {
     const on = ai.device;
+    short = on;
     if (ai.npuVendor === 'None') {
       tone = 'quiet'; text = 'No NPU available · ' + on;
       tip = 'This PC has no NPU, so AI matching runs on the ' + on + '.';
@@ -651,6 +654,7 @@ function renderAiBadge(ai, dev, scan) {
   if (ai.fallback && dev) tip += ' It fell back: ' + ai.fallback + '.';
   setText(badge, text);
   setTitle(badge, tip);
+  if (badge.dataset.short !== short) badge.dataset.short = short;
   if (badge.className !== 'ai-badge ' + tone) badge.className = 'ai-badge ' + tone;
 }
 
@@ -682,7 +686,10 @@ function renderHeader(s) {
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
-  setText($('subtitle'), parts.join(' · '));
+  // Beside the AI badge, and Scan now's tooltip too, for when a narrow window folds it away (fitTitlebar).
+  const status = parts.join(' · ');
+  setText($('subtitle'), status);
+  setTitle($('subtitle'), status);
   renderAiBadge(s.ai, s.dev.enabled, s.scan);
 
   const running = s.scan.running;
@@ -691,7 +698,11 @@ function renderHeader(s) {
   const scanBtn = $('scan-now');
   setDisabled(scanBtn, !!(s.setup.needed || s.agent.stopping || starting));
   setText(scanBtn, starting ? 'Starting…' : running ? (s.agent.stopping ? 'Stopping…' : 'Stop scan') : 'Scan now');
+  setTitle(scanBtn, status);
   scanBtn.classList.toggle('secondary', running);
+  // The row's parts take their room again when what they say changes.
+  const fits = [status, $('ai-badge').textContent, $('ai-badge').className, scanBtn.textContent].join('\n');
+  if (fits !== titleFits) { titleFits = fits; fitTitlebar(); }
   renderAgent(s);
   // The scan's step and progress at the top of the page; each drive's card shows how far it has got on it.
   renderScanStatus(s);
@@ -790,11 +801,108 @@ function renderCrumbs() {
       }
     }
   }
+  // The whole path, as the bar's tooltip: a folder's own path, or the crumbs' names.
+  const full = route.view === 'folder' && cardFor(route.path) ? route.path : items.map((li) => li.textContent).join(' › ');
+  // Three crumbs or more: those between This PC and the last can fold into "…" when the bar is too narrow (fitCrumbs).
+  if (items.length > 2) items.splice(1, 0, crumbFold());
   crumbs.replaceChildren(...items);
+  setTitle(crumbs, full);
+  fitCrumbs();
   crumbs.scrollLeft = crumbs.scrollWidth;
   $('nav-up').disabled = route.view === 'home';
   $('nav-back').disabled = !trail.canBack();
   $('nav-fwd').disabled = !trail.canForward();
+}
+
+/** "…" in the path, standing for the crumbs folded into it (fitCrumbs); its menu goes to any of them. */
+function crumbFold() {
+  const li = el('li', 'crumb-fold folded');
+  li.append(icon('sep', 'sep'));
+  const b = el('button', 'crumb crumb-more', '…');
+  b.type = 'button';
+  b.setAttribute('aria-label', 'More of the path');
+  b.setAttribute('aria-haspopup', 'menu');
+  b.addEventListener('click', (e) => {
+    const { items, item } = menuItems();
+    for (const hidden of $('crumbs').querySelectorAll('li.folded:not(.crumb-fold) .crumb')) item(hidden.textContent, () => hidden.click());
+    showMenu(e, 'Path', items);
+  });
+  li.append(b);
+  return li;
+}
+
+/**
+ * How many crumbs after the first fold into "…" so the rest fit: widths are the crumbs' own (with the gap after each),
+ * room the bar's, more the "…" crumb's. The first (This PC) and the last (where you are) never fold; the ones nearest
+ * This PC fold first, so the folders nearest where you are stay longest.
+ */
+function crumbsToFold(widths, room, more) {
+  let total = widths.reduce((a, b) => a + b, 0);
+  if (total <= room) return 0;
+  total += more;
+  let n = 0;
+  while (n < widths.length - 2 && total > room) total -= widths[1 + n++];
+  return n;
+}
+
+/**
+ * Fits the path to its bar: folds its middle into "…" (crumbsToFold), and when even This PC, "…" and the last are too
+ * wide, This PC keeps just its icon and the last one's name ends in an ellipsis (app.css).
+ */
+function fitCrumbs() {
+  const crumbs = $('crumbs');
+  const fold = crumbs.querySelector('.crumb-fold');
+  if (!fold || !crumbs.clientWidth) return;
+  const rest = [...crumbs.children].filter((li) => li !== fold);
+  for (const li of rest) li.classList.remove('folded', 'bare');
+  // Each crumb's own width: none shrunk to fit while it's measured.
+  crumbs.classList.add('measuring');
+  const style = getComputedStyle(crumbs);
+  const gap = parseFloat(style.columnGap) || 0;
+  const width = (li) => li.getBoundingClientRect().width + gap;
+  fold.classList.remove('folded');
+  const more = width(fold);
+  fold.classList.add('folded');
+  const widths = rest.map(width);
+  crumbs.classList.remove('measuring');
+  const room = crumbs.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) + gap;
+  const n = crumbsToFold(widths, room, more);
+  rest.forEach((li, i) => li.classList.toggle('folded', i >= 1 && i <= n));
+  fold.classList.toggle('folded', n === 0);
+  setTitle(fold.querySelector('.crumb'), rest.slice(1, n + 1).map((li) => li.textContent).join(' › '));
+  if (n && widths[0] + more + widths[widths.length - 1] > room) rest[0].classList.add('bare');
+}
+
+// The title bar's one row (index.html): when the path would be narrower than this, the next fold goes on, in this order.
+const CRUMBS_LEAST = 180;
+const TITLE_FOLDS = ['fold-manor', 'fold-badge', 'fold-status', 'fold-wrap'];
+let titleFits = null;
+
+/**
+ * Fits the title bar to the window. The path gives way first (app.css): it takes only the room left over. Below its least,
+ * one fold at a time: the way back to Manor keeps just its icon, the AI badge just its dot and a word, the scan's status
+ * goes (Scan now's tooltip still says it), and last the path takes a row of its own. On that row of their own, the parts
+ * before it unfold again as far as they fit. Then the path folds its middle (fitCrumbs).
+ */
+function fitTitlebar() {
+  const bar = document.querySelector('.titlebar');
+  if (!bar.clientWidth) return; // the setup's window has none
+  const controls = bar.querySelector('.scanstate');
+  bar.classList.remove(...TITLE_FOLDS);
+  for (const fold of TITLE_FOLDS) {
+    if ($('crumbs').clientWidth >= CRUMBS_LEAST && bar.scrollWidth <= bar.clientWidth) break;
+    bar.classList.add(fold);
+  }
+  if (bar.classList.contains('fold-wrap')) {
+    // One row of buttons is Scan now's height; taller, they've wrapped.
+    const oneRow = () => bar.scrollWidth <= bar.clientWidth && controls.offsetHeight <= $('scan-now').offsetHeight + 4;
+    for (const fold of TITLE_FOLDS.slice(0, -1).reverse()) {
+      if (!bar.classList.contains(fold)) continue;
+      bar.classList.remove(fold);
+      if (!oneRow()) bar.classList.add(fold);
+    }
+  }
+  fitCrumbs();
 }
 
 // ---------------------------------------------------------------- home: This PC
@@ -934,7 +1042,6 @@ function renderHome(s) {
   // A tab with nothing in it yet says so once, across the tab, rather than in two small boxes.
   emptyTab('copies', scanned ? null : copiesEmpty(s));
   emptyTab('history', s.done.length || s.totals.recycledBytes ? null : historyEmpty(s, copies));
-  renderFooter(s);
 }
 
 /** Shows a tab's empty panel (its parts, or null for the tab's own parts instead). */
@@ -1531,7 +1638,11 @@ function renderWhereCard(s) {
   $('where-card').replaceChildren(card);
 }
 
-/** What the page has no switch for: where it's set, and what it's set to now. */
+/**
+ * What the page has no switch for: where it's set, and what it's set to now. What the home page's foot said (what's
+ * scanned, skipped file types, the settings file) is here alone since the owner's 2026-11-15 "move the text on this
+ * screen at the bottom to the settings screen".
+ */
 function renderMoreCard(s) {
   const c = s.config;
   // Where each is set (the settings file, its keys) only with developer mode on; plain words otherwise.
@@ -1543,7 +1654,7 @@ function renderMoreCard(s) {
     ['What\'s scanned', c.allDrives
       ? 'Every fixed drive, minus Windows, programs, games, app data and code.' + (extra.length ? ' Also: ' + extra.join('; ') : '')
       : c.folders.join('; ') || (dev ? 'Nothing: add folders in the settings file.' : 'Nothing yet: right-click a folder to include it.'),
-      'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
+      (c.allDrives ? 'The folders left out show greyed out as exempt. ' : '') + 'Right-click a folder in a folder\'s view to include it in scans or leave it out.'],
     ['Skipped file types', c.excludeExtensions.length ? c.excludeExtensions.join(' ') : 'None.', dev ? 'excludeExtensions in the settings file.' : null],
     ['Where AI matching runs', c.aiDevice === 'auto'
       ? 'On the NPU when there is one that works, otherwise on the graphics card once Heiward has checked it, otherwise on the processor.'
@@ -4749,22 +4860,6 @@ function renderManorCard(card) {
   $('manor-card').replaceChildren(box);
 }
 
-/** The foot of the home page: what's scanned, file types left out, and the settings file, only with developer mode on. */
-function renderFooter(s) {
-  const f = $('footer');
-  f.replaceChildren();
-  f.append(el('div', null, s.config.allDrives
-    ? 'Every fixed drive is scanned, except folders that belong to Windows, installed programs, games and code projects (they show greyed out as exempt).'
-    : 'Scanned: ' + s.config.folders.join('; ')));
-  if (s.config.excludeExtensions.length) f.append(el('div', null, 'Skipped file types: ' + s.config.excludeExtensions.join(' ')));
-  // The server gives the settings file's path only with developer mode on: the page shows no file names otherwise.
-  if (s.config.path) {
-    const p = el('div', null, 'Settings: ');
-    p.append(el('code', null, s.config.path));
-    f.append(p);
-  }
-}
-
 // ---------------------------------------------------------------- folder sizes
 
 // Each folder's size on disk, beside it in the tree, in the Folders table and on its own page. This PC measures the folders
@@ -5734,7 +5829,7 @@ function cleanupBar(path, groups) {
       result.textContent = said; // while the page is drawn again, the button still spinning
       result.className = 'result small ' + (failed.length ? 'bad' : 'ok');
       await refresh(true);
-      // This bar has gone with the sets it moved: what it said stays under the command bar.
+      // This bar has gone with the sets it moved: what it said stays under the title bar.
       if (failed.length) showError(said); else showNotice(said);
     } finally {
       done();
@@ -6220,6 +6315,7 @@ setupPauseMenu();
 $('nav-back').append(icon('back'));
 $('nav-fwd').append(icon('fwd'));
 $('nav-up').append(icon('up'));
+$('nav-home').append(icon('home'));
 // Back and Forward go by page (trail.js): the folder view's folders are Up's to climb.
 $('nav-back').addEventListener('click', () => trail.back());
 $('nav-fwd').addEventListener('click', () => trail.forward());
@@ -6230,8 +6326,14 @@ $('nav-up').addEventListener('click', () => {
   else if (route.view === 'games') { if (route.cat || route.drive || route.game) location.hash = '#/games'; else go(null); }
   else if (route.view === 'settings' || route.view === 'about') go(null);
 });
-// Home, by Heiward's icon in the title bar, goes to This PC, wherever the page is.
-$('brand').addEventListener('click', (e) => { e.preventDefault(); go(null); $('home').scrollTop = 0; });
+// Home, beside Up, goes to This PC from wherever the page is, at its top.
+$('nav-home').addEventListener('click', () => { go(null); $('home').scrollTop = 0; });
+// The title bar fits itself again whenever the window's width changes (fitTitlebar); its height changing is its own doing.
+let titleWidth = 0;
+new ResizeObserver(() => {
+  const w = document.querySelector('.titlebar').clientWidth;
+  if (w !== titleWidth) { titleWidth = w; fitTitlebar(); }
+}).observe(document.querySelector('.titlebar'));
 $('settings-btn').append(icon('gear'));
 $('settings-btn').addEventListener('click', () => { location.hash = route.view === 'settings' ? '#/' : '#/settings'; });
 $('about-btn').append(icon('info'));
