@@ -96,8 +96,91 @@ public sealed class GameCoversTests : IDisposable {
 	[InlineData(@"C:\Windows")]
 	public void Steam_AnAppIdIsDigitsOnly(string app) {
 		File(Path.Combine(Cache, "200", "library_600x900.jpg"));
+		File(Path.Combine(Cache, "200", Hash('c'), "library_capsule.jpg"));
 		File(Path.Combine(Cache, "library_600x900.jpg"));
+		File(Path.Combine(Cache, "library_capsule.jpg"));
 		Assert.Null(Steam_(app));
+	}
+
+	// ---- Steam's newer cache names: library_capsule.jpg and library_header.jpg, each in a folder named for its hash
+
+	/// <summary>A folder name like the 40 hex digits Steam names its newer cache folders by.</summary>
+	static string Hash(char c) => new(c, 40);
+
+	[Fact]
+	public void Steam_TheNewLayout_TheCapsuleAFolderDeeper() {
+		// As Steam keeps a newer game's art: each picture in a folder of its own, and none in the app's folder but its logo.
+		string capsule = File(Path.Combine(Cache, "100", Hash('7'), "library_capsule.jpg"));
+		File(Path.Combine(Cache, "100", Hash('9'), "library_header.jpg"), DateTime.UtcNow.AddDays(1));
+		File(Path.Combine(Cache, "100", Hash('3'), "library_hero.jpg"), DateTime.UtcNow.AddDays(1));
+		File(Path.Combine(Cache, "100", Hash('b'), "logo.png"));
+		File(Path.Combine(Cache, "100", Hash('5') + ".jpg"));
+		Assert.Equal(new GameCovers.Cover(capsule, GameCovers.Portrait), Steam_("100"));
+		// The capsule in the app's folder itself, too.
+		string direct = File(Path.Combine(Cache, "200", "library_capsule.jpg"));
+		Assert.Equal(new GameCovers.Cover(direct, GameCovers.Portrait), Steam_("200"));
+	}
+
+	[Fact]
+	public void Steam_TheNewLayout_OnlyTheLibraryHeader_IsWide() {
+		string deeper = File(Path.Combine(Cache, "100", Hash('9'), "library_header.jpg"));
+		File(Path.Combine(Cache, "100", Hash('3'), "library_hero.jpg"));
+		File(Path.Combine(Cache, "100", "logo.png"));
+		Assert.Equal(new GameCovers.Cover(deeper, GameCovers.Wide), Steam_("100"));
+		// In the app's folder itself, as Steam keeps some.
+		string direct = File(Path.Combine(Cache, "200", "library_header.jpg"));
+		Assert.Equal(new GameCovers.Cover(direct, GameCovers.Wide), Steam_("200"));
+		// And the old name a folder deeper.
+		string oldName = File(Path.Combine(Cache, "300", Hash('1'), "header.jpg"));
+		Assert.Equal(new GameCovers.Cover(oldName, GameCovers.Wide), Steam_("300"));
+	}
+
+	[Fact]
+	public void Steam_TheOldFlatLayout_OnlyWhenTheAppsFolderHasNone() {
+		string portrait = File(Path.Combine(Cache, "100_library_600x900.jpg"));
+		File(Path.Combine(Cache, "100_header.jpg"));
+		Assert.Equal(new GameCovers.Cover(portrait, GameCovers.Portrait), Steam_("100"));
+		// A portrait by either name in the app's folders comes before the flat file.
+		string capsule = File(Path.Combine(Cache, "100", Hash('7'), "library_capsule.jpg"), DateTime.UtcNow.AddDays(-30));
+		Assert.Equal(new GameCovers.Cover(capsule, GameCovers.Portrait), Steam_("100"));
+		// The flat header, only when no folder has a header by either name.
+		string flatHeader = File(Path.Combine(Cache, "200_header.jpg"));
+		Assert.Equal(new GameCovers.Cover(flatHeader, GameCovers.Wide), Steam_("200"));
+		string header = File(Path.Combine(Cache, "200", Hash('9'), "library_header.jpg"), DateTime.UtcNow.AddDays(-30));
+		Assert.Equal(new GameCovers.Cover(header, GameCovers.Wide), Steam_("200"));
+	}
+
+	[Fact]
+	public void Steam_BothNames_TheNewestWins() {
+		// A folder deeper: the newest across both names, whichever it is.
+		File(Path.Combine(Cache, "100", Hash('a'), "library_600x900.jpg"), DateTime.UtcNow.AddDays(-3));
+		string capsule = File(Path.Combine(Cache, "100", Hash('b'), "library_capsule.jpg"), DateTime.UtcNow.AddDays(-1));
+		Assert.Equal(new GameCovers.Cover(capsule, GameCovers.Portrait), Steam_("100"));
+		string library = File(Path.Combine(Cache, "100", Hash('c'), "library_600x900.jpg"), DateTime.UtcNow);
+		Assert.Equal(new GameCovers.Cover(library, GameCovers.Portrait), Steam_("100"));
+		// In the app's folder: the newest of the two there, and either comes before a newer one a folder deeper.
+		File(Path.Combine(Cache, "200", "library_600x900.jpg"), DateTime.UtcNow.AddDays(-5));
+		string newer = File(Path.Combine(Cache, "200", "library_capsule.jpg"), DateTime.UtcNow.AddDays(-4));
+		File(Path.Combine(Cache, "200", Hash('d'), "library_capsule.jpg"), DateTime.UtcNow);
+		Assert.Equal(new GameCovers.Cover(newer, GameCovers.Portrait), Steam_("200"));
+		// The wide banner the same way.
+		File(Path.Combine(Cache, "300", Hash('e'), "header.jpg"), DateTime.UtcNow.AddDays(-2));
+		string wide = File(Path.Combine(Cache, "300", Hash('f'), "library_header.jpg"), DateTime.UtcNow.AddDays(-1));
+		Assert.Equal(new GameCovers.Cover(wide, GameCovers.Wide), Steam_("300"));
+		string wideInFolder = File(Path.Combine(Cache, "300", "header.jpg"), DateTime.UtcNow.AddDays(-9));
+		Assert.Equal(new GameCovers.Cover(wideInFolder, GameCovers.Wide), Steam_("300"));
+	}
+
+	[Fact]
+	public void Steam_YourOwnPortrait_BeatsEveryNameAndPlace() {
+		File(Path.Combine(Cache, "100", "library_600x900.jpg"), DateTime.UtcNow);
+		File(Path.Combine(Cache, "100", "library_capsule.jpg"), DateTime.UtcNow);
+		File(Path.Combine(Cache, "100", Hash('7'), "library_capsule.jpg"), DateTime.UtcNow);
+		File(Path.Combine(Cache, "100", Hash('9'), "library_header.jpg"), DateTime.UtcNow);
+		File(Path.Combine(Cache, "100", "header.jpg"), DateTime.UtcNow);
+		File(Path.Combine(Cache, "100_library_600x900.jpg"), DateTime.UtcNow);
+		string yours = File(Path.Combine(Grid("1"), "100p.jpg"), DateTime.UtcNow.AddYears(-1));
+		Assert.Equal(new GameCovers.Cover(yours, GameCovers.Portrait), Steam_("100"));
 	}
 
 	string Xbox(string config) {
