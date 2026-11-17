@@ -43,6 +43,7 @@ public sealed class AcceleratorsTests : IDisposable {
 		GpuChecks.PathOverride = null;
 		NpuChecks.PathOverride = null;
 		Accelerators.FolderOverride = null;
+		GpuChecks.StartedOverride = null;
 		try { Directory.Delete(root, true); } catch { }
 	}
 
@@ -307,6 +308,67 @@ public sealed class AcceleratorsTests : IDisposable {
 		Assert.True(GpuChecks.Passed(Card("Intel(R) UHD Graphics 770")));
 		Assert.NotNull(GpuChecks.Find(card));
 	}
+
+	[Fact]
+	public void ACardThatCantBeUsed_IsKeptSo_AndCheckedAgainOnlyAfterADriverUpdateOrARestart() {
+		DateTime now = DateTime.UtcNow;
+		GpuChecks.StartedOverride = now.AddHours(-2);
+		GpuAdapter card = Card("NVIDIA GeForce RTX 4080 SUPER");
+		GpuChecks.RecordUnusable(card, "opening it ended its check's process (exit 0xC0000005)", now);
+
+		GpuChecks.Check check = GpuChecks.Unusable(card)!;
+		Assert.False(check.Passed);
+		Assert.True(check.Unusable);
+		Assert.Equal("opening it ended its check's process (exit 0xC0000005)", check.Reason);
+		Assert.False(GpuChecks.Passed(card));
+		Assert.Contains("\"unusable\": true", File.ReadAllText(GpuChecks.FilePath));
+		// Not every round, nor a day on, as an ordinary failure is: nothing has changed.
+		Assert.False(GpuChecks.NeedsCheck(card, now.AddMinutes(10)));
+		Assert.False(GpuChecks.NeedsCheck(card, now.AddDays(5)));
+		// A driver update changes that,
+		Assert.True(GpuChecks.NeedsCheck(Card("NVIDIA GeForce RTX 4080 SUPER", driver: "32.0.15.7000"), now));
+		Assert.Null(GpuChecks.Unusable(Card("NVIDIA GeForce RTX 4080 SUPER", driver: "32.0.15.7000")));
+		// and so does a restart.
+		GpuChecks.StartedOverride = now.AddHours(1);
+		Assert.True(GpuChecks.NeedsCheck(card, now.AddHours(1)));
+		Assert.Null(GpuChecks.Unusable(card));
+
+		// A check that passes afterwards is a card that works.
+		GpuChecks.Record(card, passed: true, nowUtc: now.AddHours(1));
+		Assert.Null(GpuChecks.Unusable(card));
+		Assert.DoesNotContain("unusable", File.ReadAllText(GpuChecks.FilePath));
+		Assert.Equal("the NVIDIA GeForce RTX 4080 SUPER can't be used on this PC", GpuChecks.UnusableText(card));
+	}
+
+	[Fact]
+	public void AnUnusableCard_IsNoCardForAuto_Quietly() {
+		GpuAdapter card = Card();
+		GpuChecks.RecordUnusable(card, "DirectML found no device on it (0x887A0004)");
+		AcceleratorPlan plan = AcceleratorPlan.ChooseAuto(false, null, true, card, GpuChecks.Passed(card), Accelerators.FailureOf(card.AcceleratorId));
+		Assert.Equal(AiDevice.Cpu, plan.Device);
+		Assert.Null(plan.FellBackFrom); // nothing was meant for the card: no fallback to report
+		Assert.Null(Accelerators.FailureOf(card.AcceleratorId));
+	}
+
+	[Theory]
+	// ONNX Runtime's DirectML provider when Direct3D 12 can't make a device on the card.
+	[InlineData(@"D:\a\_work\1\s\onnxruntime\core\providers\dml\dml_provider_factory.cc(175)\onnxruntime.dll!00007FFB5A1E0B4C: (caller: 00007FFB5A1DFB7A) Exception(1) tid(5e8) 887A0004 The specified device interface or feature level is not supported on this system.", "0x887A0004")]
+	[InlineData("EnumAdapters1 returned DXGI_ERROR_NOT_FOUND", "0x887A0002")]
+	[InlineData("D3D12CreateDevice: DXGI_ERROR_UNSUPPORTED", "0x887A0004")]
+	[InlineData("HRESULT 0x887a0002", "0x887A0002")]
+	public void NoDevice_IsReadFromDirectMLsMessage_InPlainWords(string message, string code) {
+		string said = GpuChecks.NoDevice(message)!;
+		Assert.Equal($"DirectML found no device on it ({code})", said);
+		Assert.DoesNotContain("Exception", said);
+	}
+
+	[Theory]
+	[InlineData(null)]
+	[InlineData("")]
+	[InlineData("887A0005 The GPU device instance has been suspended (device removed)")] // a card that works, failing: shown as a failure
+	[InlineData("DirectML could not open the model: out of memory")]
+	[InlineData("0x1887A00040")]
+	public void NoDevice_IsNotEveryFailure(string? message) => Assert.Null(GpuChecks.NoDevice(message));
 
 	static readonly Accelerators.Failure Failed = new(DateTime.UtcNow.AddMinutes(-2), "the Qualcomm Hexagon NPU pack failed to load (LoadLibrary failed)", "heiward");
 

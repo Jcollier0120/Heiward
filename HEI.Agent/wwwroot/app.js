@@ -1553,8 +1553,9 @@ function renderHistoryCard(s) {
 
 /**
  * Where AI matching last ran, as the manor's programs name it (npu, cpu, gpu-…: they take turns on each through
- * its lock), why it fell back, and the devices that failed for Heiward lately, which its Auto leaves alone for
- * 10 minutes (Heiward's own marks: other programs' failures, of their model servers, don't count here).
+ * its lock), why it fell back, the devices that failed for Heiward lately, which its Auto leaves alone for
+ * 10 minutes (Heiward's own marks: other programs' failures, of their model servers, don't count here), and the
+ * graphics cards that can't be used on this PC at all (GpuChecks.Unusable), which aren't failures.
  */
 function acceleratorNotes(a, dev) {
   const notes = [];
@@ -1569,6 +1570,12 @@ function acceleratorNotes(a, dev) {
   for (const f of a.failed || []) {
     notes.push(el('div', 'small gpu-note', (f.name.startsWith('the ') ? 'The ' + f.name.slice(4) : f.name) + (dev ? ' (' + f.id + ')' : '') + ' failed at ' +
       until(f.sinceUtc) + ', so Heiward leaves it until ' + until(f.untilUtc) + (dev ? ': ' + f.reason : '.')));
+  }
+  // A graphics card Windows lists that nothing can use (a Windows Sandbox lists the host's): no fault, one plain line.
+  for (const u of a.unusable || []) {
+    const on = a.inUse === 'npu' ? 'the NPU' : a.card && a.card !== u.name ? 'the ' + a.card : 'the processor';
+    notes.push(el('div', 'muted small', 'The ' + u.name + ' can\'t be used for AI matching on this PC, so it runs on ' + on +
+      '; Heiward checks the card again after a driver update or a restart' + (dev ? ' (' + u.id + ': ' + u.reason + ').' : '.')));
   }
   return notes;
 }

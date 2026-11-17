@@ -175,7 +175,16 @@ namespace HEI.Core.AI {
 						return embedder;
 					}
 					catch (Exception e) {
-						Fell("GPU", Failure(e, id, $"DirectML could not open the model on {name}"));
+						// DirectML found no device on a card that hasn't run the model with this driver: it can't be used on this PC
+						// (Windows lists it, nothing can use it), which isn't a failure of a card that works. Recorded as such for
+						// Auto, and not marked failed. One that has run it fails as any card does, and shows.
+						if (card != null && GpuChecks.NoDevice(e.Message) is { } none && !GpuChecks.Passed(card)) {
+							GpuChecks.RecordUnusable(card, none);
+							Logger.Instance.Info($"The {card.Key} can't be used on this PC: {none}.");
+							Fell("GPU", GpuChecks.UnusableText(card));
+						}
+						else
+							Fell("GPU", Failure(e, id, $"DirectML could not open the model on {name}"));
 					}
 				}
 				else

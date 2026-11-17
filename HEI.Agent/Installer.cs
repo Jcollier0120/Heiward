@@ -180,9 +180,12 @@ namespace HEI.Agent {
 				: NpuComponents.IsSupportedPlatform ? $"The {NpuComponents.NpuName} could not run the model here."
 				: $"This build does not support this PC's NPU yet ({NpuHardware.Name}).");
 			var cfg = File.Exists(AgentPaths.Config) ? AgentConfig.Load() : new AgentConfig();
-			// An update on the GPU or the processor keeps its schedule; one that loses its NPU gets the GPU's and CPU's.
-			bool keepSchedule = keepSettings && cfg.AiDevice.ToLowerInvariant() is "gpu" or "cpu";
+			// An update on the GPU or the processor keeps its schedule; one that loses its NPU gets the GPU's and CPU's. Auto
+			// on a PC with no NPU this build drives was on them already (its graphics card couldn't be used at install).
+			bool keepSchedule = keepSettings && (cfg.AiDevice.ToLowerInvariant() is "gpu" or "cpu"
+				|| cfg.AiDevice.Equals("auto", StringComparison.OrdinalIgnoreCase) && !npu && !NpuComponents.IsSupportedPlatform);
 			cfg.AiDevice = "auto";
+			bool cardUnusable = false;
 			// With more than one graphics card, which one does the GPU work: asked once, before the GPU check, which runs on it.
 			bool gpuPicked = false;
 			void PickGpu(bool forAi) {
@@ -204,22 +207,32 @@ namespace HEI.Agent {
 					if (dryRun && ComponentReuse.Find(ComponentReuse.GpuPack, sources) is string gpuFrom)
 						Console.WriteLine($"  would be copied from {gpuFrom}");
 					if (!dryRun) {
-						// A process loads one ONNX Runtime, so the GPU check runs in its own process.
+						// A process loads one ONNX Runtime, so the GPU check runs in its own process. A card that can't be used on
+						// this PC isn't the copy's fault: the copy stays, as a download would only meet the same card.
+						GpuProbe found = GpuProbe.Failed;
 						string? from = GpuComponents.IsInstalled ? null : await ComponentReuse.TryCopyAsync(ComponentReuse.GpuPack, sources, CoreUtils.StateFolder,
-							async () => GpuComponents.IsInstalled && await ProbeDeviceAsync("gpu", ct, cfg.Gpu));
+							async () => GpuComponents.IsInstalled && (found = await GpuCheck.ProbeAsync(cfg.Gpu, null, ct)) != GpuProbe.Failed);
 						if (from != null)
 							Console.WriteLine($"  copied from {from}");
 						else {
 							Console.WriteLine("  downloading (~215 MB)...");
 							await GpuComponents.DownloadAsync(null, ct);
-							if (!await ProbeDeviceAsync("gpu", ct, cfg.Gpu)) {
-								Console.WriteLine("  The GPU could not run the model here; using the CPU instead.");
-								choice = AiDevice.Cpu;
-							}
+							found = await GpuCheck.ProbeAsync(cfg.Gpu, null, ct);
+						}
+						if (found == GpuProbe.Unusable) {
+							Console.WriteLine("  This PC's graphics card can't be used here: AI matching runs on the processor, and the card is checked again after a driver update or a restart.");
+							choice = AiDevice.Cpu;
+							cardUnusable = true;
+						}
+						else if (found == GpuProbe.Failed) {
+							Console.WriteLine("  The GPU could not run the model here; using the CPU instead.");
+							choice = AiDevice.Cpu;
 						}
 					}
 				}
-				cfg.AiDevice = choice == AiDevice.Gpu ? "gpu" : "cpu";
+				// A card that can't be used on this PC leaves AI matching on Auto: on the processor until a scan's check finds
+				// the card works, after a driver update or a restart (GpuCheck), rather than on the processor for good.
+				cfg.AiDevice = cardUnusable ? "auto" : choice == AiDevice.Gpu ? "gpu" : "cpu";
 				// An update keeps a schedule of one's own: battery and interval as they were, unless they were on demand.
 				if (!keepSchedule || cfg.ScanEveryMinutes == 0 || onDemand == true) {
 					cfg.ScanOnBattery = false;
@@ -823,28 +836,28 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
-		/// Runs "hei probe --device {device}" in its own process: true when the model runs there. A GPU probe records the
-		/// card's check (<see cref="GpuChecks"/>), and a failing one marks the card failed (Heiward's own marker).
-		/// </summary>
-		/// <param name="gpu">The graphics card to check, by name; null or empty: Windows' default.</param>
-		/// <param name="say">Where the probe's answer goes; null: this window.</param>
-		internal static async Task<bool> ProbeDeviceAsync(string device, CancellationToken ct, string? gpu = null, Action<string>? say = null) =>
-			(await ProbeAsync(device, ct, gpu, say)).ExitCode == 0;
-
-		/// <summary>
 		/// What a probe's process did: its exit code (0 the model ran there, 1 it didn't, <see cref="ProbeWrongEmbeddings"/>
-		/// it ran on the NPU and gave wrong embeddings; anything else, the process was ended under it, as a plugin's native
-		/// failure does), its id, to find a lock it may have left, and whether it hung past <see cref="ProbeTimeout"/> and was ended.
+		/// it ran on the NPU and gave wrong embeddings, <see cref="ProbeUnusable"/> the graphics card can't be used on this PC;
+		/// anything else, the process was ended under it, as a plugin's native failure does), its id, to find a lock it may
+		/// have left, and whether it hung past <see cref="ProbeTimeout"/> and was ended.
 		/// </summary>
 		internal readonly record struct ProbeResult(int ExitCode, int Pid, bool TimedOut = false) {
 			/// <summary>The process didn't end by returning: a native failure past any catch, or a hang.</summary>
-			public bool Crashed => TimedOut || ExitCode is not (0 or 1 or ProbeWrongEmbeddings);
+			public bool Crashed => TimedOut || ExitCode is not (0 or 1 or ProbeWrongEmbeddings or ProbeUnusable);
 			/// <summary>The model ran on the NPU, and its embeddings didn't match the processor's (<see cref="EmbeddingCheck"/>).</summary>
 			public bool WrongEmbeddings => !TimedOut && ExitCode == ProbeWrongEmbeddings;
+			/// <summary>DirectML found no device on the graphics card, or it was found unusable since the PC started: the probe recorded it so.</summary>
+			public bool Unusable => !TimedOut && ExitCode == ProbeUnusable;
 		}
 
 		/// <summary>The probe's exit code when the NPU ran the model and its embeddings were wrong: it recorded the failed check itself.</summary>
 		internal const int ProbeWrongEmbeddings = 2;
+
+		/// <summary>The probe's exit code when the graphics card can't be used on this PC (<see cref="GpuChecks.Unusable"/>): it recorded that itself.</summary>
+		internal const int ProbeUnusable = 3;
+
+		/// <summary>Tests start a stand-in for the probe: this program, with these arguments before the probe's own.</summary>
+		internal static (string Exe, string[] Args)? ProbeOverride;
 
 		/// <summary>
 		/// How long a probe may take. An NPU's first compile is about a minute and a half on a Ryzen AI 7 350 and minutes on
@@ -878,9 +891,16 @@ namespace HEI.Agent {
 			return lines.Length <= keep ? said : $"({lines.Length - keep} lines of output before these)\n" + string.Join('\n', lines[^keep..]);
 		}
 
-		/// <summary>Runs "hei probe --device {device}" in its own process, as <see cref="ProbeDeviceAsync"/>, and says how it ended.</summary>
+		/// <summary>
+		/// Runs "hei probe --device {device}" in its own process, and says how it ended. A GPU probe records the card's check
+		/// (<see cref="GpuChecks"/>), and a failing one marks the card failed (Heiward's own marker); one that ends its process
+		/// recorded nothing, which <see cref="GpuCheck.ProbeAsync"/> records.
+		/// </summary>
+		/// <param name="gpu">The graphics card to check, by name; null or empty: Windows' default.</param>
+		/// <param name="say">Where the probe's answer goes; null: this window.</param>
 		internal static async Task<ProbeResult> ProbeAsync(string device, CancellationToken ct, string? gpu = null, Action<string>? say = null) {
-			var psi = new ProcessStartInfo(CurrentExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			var psi = new ProcessStartInfo(ProbeOverride?.Exe ?? CurrentExe) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+			foreach (string arg in ProbeOverride?.Args ?? []) psi.ArgumentList.Add(arg);
 			psi.ArgumentList.Add("probe");
 			psi.ArgumentList.Add("--device");
 			psi.ArgumentList.Add(device);
@@ -897,9 +917,13 @@ namespace HEI.Agent {
 			string output = await reading;
 			if (output.Trim() is { Length: > 0 } said) (say ?? (line => Console.WriteLine("  " + line)))(Tail(said));
 			string probe = $"probe --device {device}{(string.IsNullOrEmpty(gpu) ? "" : $" --gpu \"{gpu}\"")}";
+			var result = new ProbeResult(p.ExitCode, p.Id, timedOut);
 			if (timedOut) AgentPaths.AppendLog($"{probe} gave no answer in {ProbeTimeout.TotalMinutes:0} minutes: ended it");
+			// A graphics card that can't be used on this PC isn't a failure: GpuCheck.ProbeAsync says so in plain words. Its
+			// process's last words (.NET's "Fatal error.") would read as a fault to whoever reads the log.
+			else if (device == "gpu" && (result.Unusable || result.Crashed)) { }
 			else if (p.ExitCode != 0) AgentPaths.AppendLog($"{probe} failed (exit 0x{p.ExitCode:X8}): {(await errors).Trim()}");
-			return new ProbeResult(p.ExitCode, p.Id, timedOut);
+			return result;
 		}
 
 		/// <summary>

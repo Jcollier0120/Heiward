@@ -180,19 +180,38 @@ namespace HEI.Core.AI {
 	/// Which graphics cards have run the AI model in a check: <c>hei probe --device gpu</c> (the installer's, or the one a scan
 	/// runs first), or a scan that ran on the card. Auto takes a card only once it has passed one with its current driver and
 	/// the GPU pack in use. Kept in <c>{ai}\gpu-checks.json</c>, one entry per card.
+	/// <para>
+	/// A card its check found can't be used on this PC at all (<see cref="Check.Unusable"/>) is no card for AI matching: the
+	/// check's process ended under it (a Windows Sandbox lists the host's card, and DirectML ends the process that opens it,
+	/// 0xC0000005, 2026-11-17), or DirectML found no device on it (<see cref="NoDevice"/>). That isn't a failure of a card that
+	/// works: Auto runs on what does, quietly, and the card is checked again only once something changes, its driver, the GPU
+	/// pack, or a restart of the PC; not every scan, nor every day.
+	/// </para>
 	/// </summary>
-	public static class GpuChecks {
+	public static partial class GpuChecks {
 		/// <summary>A failed check is tried again after this long (a driver update makes a new check at once).</summary>
 		public static readonly TimeSpan RetryFailedAfter = TimeSpan.FromDays(1);
 
 		/// <param name="Card">The card's <see cref="GpuAdapter.Key"/>.</param>
 		/// <param name="Driver">Its driver version when checked ("" when DXGI didn't say).</param>
 		/// <param name="Pack">The GPU pack's ONNX Runtime DirectML version.</param>
-		public sealed record Check(string Card, string Driver, string Pack, bool Passed, DateTime AtUtc, string? Reason);
+		/// <param name="Unusable">
+		/// Failed because the card can't be used on this PC (its check's process ended, or DirectML found no device on it),
+		/// not as a working card fails: checked again after a driver or pack change, or a restart.
+		/// </param>
+		public sealed record Check(string Card, string Driver, string Pack, bool Passed, DateTime AtUtc, string? Reason, bool Unusable = false);
 
 		public static string FilePath => PathOverride ?? Path.Combine(AiComponents.AiFolder, "gpu-checks.json");
 		/// <summary>Tests keep their checks elsewhere.</summary>
 		internal static string? PathOverride;
+
+		/// <summary>When this PC last started (UTC): a card found unusable before it is checked again.</summary>
+		public static DateTime StartedUtc => StartedOverride ?? DateTime.UtcNow - TimeSpan.FromMilliseconds(Environment.TickCount64);
+		/// <summary>Tests start the PC when they like.</summary>
+		internal static DateTime? StartedOverride;
+
+		/// <summary>The checks' times are kept to the second, and the boot time is worked out from the clock: a restart takes far longer.</summary>
+		static readonly TimeSpan StartedSlack = TimeSpan.FromSeconds(5);
 
 		/// <summary>The card's check with its current driver and pack, or null when it has none.</summary>
 		public static Check? Find(GpuAdapter card) =>
@@ -200,16 +219,50 @@ namespace HEI.Core.AI {
 
 		public static bool Passed(GpuAdapter card) => Find(card) is { Passed: true };
 
-		/// <summary>Not checked with this driver and pack, or failed over a day ago.</summary>
+		/// <summary>
+		/// The card's check that found it can't be used on this PC, while that counts: with its current driver and pack, and
+		/// since the PC last started. Null otherwise.
+		/// </summary>
+		public static Check? Unusable(GpuAdapter card) => Find(card) is { Unusable: true } c && SinceStart(c) ? c : null;
+
+		static bool SinceStart(Check c) => c.AtUtc + StartedSlack >= StartedUtc;
+
+		/// <summary>
+		/// Not checked with this driver and pack; or failed over a day ago; or found unusable before the PC last started
+		/// (an unusable card waits for a change, not a day).
+		/// </summary>
 		public static bool NeedsCheck(GpuAdapter card, DateTime nowUtc) =>
-			Find(card) is not { } c || !c.Passed && nowUtc - c.AtUtc >= RetryFailedAfter;
+			Find(card) is not { } c || !c.Passed && (c.Unusable ? !SinceStart(c) : nowUtc - c.AtUtc >= RetryFailedAfter);
+
+		/// <summary>The card in plain words, for the logs and the page: "the NVIDIA GeForce RTX 4080 SUPER can't be used on this PC".</summary>
+		public static string UnusableText(GpuAdapter card) => $"the {card.Key} can't be used on this PC";
+
+		/// <summary>
+		/// When <paramref name="message"/> says DirectML found no device on the card, that in plain words with its code
+		/// ("DirectML found no device on it (0x887A0004)"); otherwise null. Direct3D 12 can't make a device on it
+		/// (DXGI_ERROR_UNSUPPORTED, 0x887A0004), or DXGI has no adapter at its number (DXGI_ERROR_NOT_FOUND, 0x887A0002).
+		/// The words leave ONNX Runtime's own out: its "Exception(1)" reads as an alarm to whoever reads the log.
+		/// </summary>
+		public static string? NoDevice(string? message) {
+			if (message == null || NoDeviceCode().Match(message) is not { Success: true } m) return null;
+			string code = m.Groups[1].Success ? m.Groups[1].Value.ToUpperInvariant()
+				: m.Groups[2].Value.Equals("UNSUPPORTED", StringComparison.OrdinalIgnoreCase) ? "887A0004" : "887A0002";
+			return $"DirectML found no device on it (0x{code})";
+		}
+
+		[GeneratedRegex(@"\b(?:0x)?(887A000[24])\b|\bDXGI_ERROR_(UNSUPPORTED|NOT_FOUND)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)]
+		private static partial Regex NoDeviceCode();
+
+		/// <summary>Records that <paramref name="card"/> can't be used on this PC (<see cref="Check.Unusable"/>), replacing its last check. Never throws.</summary>
+		public static void RecordUnusable(GpuAdapter card, string reason, DateTime? nowUtc = null) =>
+			Record(card, passed: false, reason, nowUtc, unusable: true);
 
 		/// <summary>Records a check of <paramref name="card"/>, replacing its last one. Never throws.</summary>
-		public static void Record(GpuAdapter card, bool passed, string? reason = null, DateTime? nowUtc = null) {
+		public static void Record(GpuAdapter card, bool passed, string? reason = null, DateTime? nowUtc = null, bool unusable = false) {
 			try {
 				List<Check> checks = Load().Where(c => !string.Equals(c.Card, card.Key, StringComparison.OrdinalIgnoreCase)).ToList();
 				checks.Add(new Check(card.Key, card.Driver, GpuComponents.PackVersion, passed, (nowUtc ?? DateTime.UtcNow).ToUniversalTime(),
-					passed ? null : Accelerators.OneLine(reason)));
+					passed ? null : Accelerators.OneLine(reason), !passed && unusable));
 				var json = new MemoryStream();
 				using (var w = new Utf8JsonWriter(json, new JsonWriterOptions { Indented = true })) {
 					w.WriteStartObject();
@@ -222,6 +275,7 @@ namespace HEI.Core.AI {
 						w.WriteString("checkedAt", c.AtUtc.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", CultureInfo.InvariantCulture));
 						if (c.Reason != null) w.WriteString("reason", c.Reason);
 						else w.WriteNull("reason");
+						if (c.Unusable) w.WriteBoolean("unusable", true);
 						w.WriteEndObject();
 					}
 					w.WriteEndObject();
@@ -247,7 +301,8 @@ namespace HEI.Core.AI {
 					bool passed = c.TryGetProperty("passed", out JsonElement p) && p.ValueKind == JsonValueKind.True;
 					DateTime at = DateTime.TryParse(Text("checkedAt"), CultureInfo.InvariantCulture,
 						DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out DateTime t) ? DateTime.SpecifyKind(t, DateTimeKind.Utc) : DateTime.MinValue;
-					checks.Add(new Check(card.Name, Text("driver"), Text("pack"), passed, at, Text("reason") is { Length: > 0 } r ? r : null));
+					bool unusable = !passed && c.TryGetProperty("unusable", out JsonElement u) && u.ValueKind == JsonValueKind.True;
+					checks.Add(new Check(card.Name, Text("driver"), Text("pack"), passed, at, Text("reason") is { Length: > 0 } r ? r : null, unusable));
 				}
 			}
 			catch { /* unreadable: nothing checked */ }
@@ -362,11 +417,14 @@ namespace HEI.Core.AI {
 				case AiDevice.Cpu:
 					return new(AiDevice.Cpu, null, null, null);
 				case AiDevice.Gpu: {
-					// Asked for: tried whatever Heiward's markers say (a success clears them).
+					// Asked for: tried whatever Heiward's markers say (a success clears them), unless its check found the card can't
+					// be used on this PC since it started: the scan's process would end just as the check's did.
 					GpuAdapter? card = GpuComponents.IsSupportedPlatform ? GpuAdapters.InUseNow() : null;
-					return GpuComponents.IsInstalled
-						? new(AiDevice.Gpu, card, null, null)
-						: new(AiDevice.Cpu, null, "GPU", GpuComponents.IsSupportedPlatform ? "the GPU pack is not installed" : "this PC can't run the GPU pack");
+					return !GpuComponents.IsInstalled
+						? new(AiDevice.Cpu, null, "GPU", GpuComponents.IsSupportedPlatform ? "the GPU pack is not installed" : "this PC can't run the GPU pack")
+						: card != null && GpuChecks.Unusable(card) != null
+							? new(AiDevice.Cpu, null, "GPU", GpuChecks.UnusableText(card))
+							: new(AiDevice.Gpu, card, null, null);
 				}
 				case AiDevice.Npu:
 					if (!NpuCandidate)

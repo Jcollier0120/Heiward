@@ -90,6 +90,18 @@ namespace HEI.Agent {
 			return failed;
 		}
 
+		/// <summary>
+		/// This PC's graphics cards Heiward found can't be used on this PC (<see cref="GpuChecks.Unusable"/>), while that
+		/// counts: for "hei status" and the page, in one plain line each, never as a failure.
+		/// </summary>
+		internal static List<(GpuAdapter Card, GpuChecks.Check Check)> Unusable(IReadOnlyList<GpuAdapter> cards) {
+			var unusable = new List<(GpuAdapter, GpuChecks.Check)>();
+			if (!GpuComponents.IsInstalled) return unusable;
+			foreach (GpuAdapter card in cards)
+				if (GpuChecks.Unusable(card) is { } check) unusable.Add((card, check));
+			return unusable;
+		}
+
 		public static AiStatus? Load() {
 			try { return File.Exists(FilePath) ? JsonSerializer.Deserialize<AiStatus>(File.ReadAllText(FilePath), AgentConfig.Json) : null; }
 			catch { return null; }

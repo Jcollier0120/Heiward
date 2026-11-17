@@ -777,13 +777,15 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// For the page's Settings: the accelerator AI matching last ran on (as the manor names it), the card, why it fell
-		/// back, and the accelerators that failed for Heiward lately (its own markers), which Auto skips until their 10 minutes are up.
+		/// back, the accelerators that failed for Heiward lately (its own markers), which Auto skips until their 10 minutes are up,
+		/// and the graphics cards that can't be used on this PC (no failure: one plain line each).
 		/// </summary>
 		static object AcceleratorView(AiStatus? ai) => new {
 			inUse = ai?.Kind == null ? null : ai.Accelerator,
 			card = ai?.Kind == "gpu" ? ai.Card : null,
 			fallback = ai?.Kind == null ? null : ai.Fallback,
 			failed = AiStatus.Failures(Gpus()).Select(f => new { id = f.Id, name = f.Name, sinceUtc = f.SinceUtc, untilUtc = f.UntilUtc, reason = f.Reason, by = f.By }),
+			unusable = AiStatus.Unusable(Gpus()).Select(u => new { id = u.Card.AcceleratorId, name = u.Card.Key, sinceUtc = u.Check.AtUtc, reason = u.Check.Reason }),
 		};
 
 		/// <summary>A scan holds scan.lock, or one this page started is still starting.</summary>

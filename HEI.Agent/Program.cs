@@ -232,7 +232,9 @@ install.SetAction((r, ct) => Installer.InstallAsync(r.GetValue(dryRun), r.GetVal
 // Opens a session on one device and reports where the model actually runs (the installer's GPU
 // check runs this in its own process: a process can only load one ONNX Runtime). A GPU check is
 // recorded for the card (GpuChecks: Auto takes a card that passed one), and a card that fails it gets
-// Heiward's own failure marker, which its Auto skips for 10 minutes. An NPU check that runs is recorded
+// Heiward's own failure marker, which its Auto skips for 10 minutes. A card DirectML finds no device on
+// can't be used on this PC: recorded so, and the probe ends with ProbeUnusable (one that ends this
+// process is recorded so by whoever started it: GpuCheck.ProbeAsync). An NPU check that runs is recorded
 // (NpuChecks); one whose plugin ends this process is recorded by whoever started it (NpuCheck). On the NPU,
 // the pictures' embeddings are compared with the FP32 model's on the processor (EmbeddingCheck): a plugin
 // can run the model and still get it wrong, which fails the check as a crash does.
@@ -252,6 +254,12 @@ probe.SetAction(r => {
 		embedder.YieldAccelerator();
 		Console.WriteLine($"The AI model runs on the {embedder.DeviceName}{(embedder.Card != null ? $" ({embedder.Card.Key})" : "")}.");
 		bool ran = wanted is AiDevice.Auto || string.Equals(embedder.DeviceName, wanted.ToString(), StringComparison.OrdinalIgnoreCase);
+		// A card DirectML found no device on now, or one found unusable since the PC started (not tried again): recorded
+		// as such already, and no failure.
+		if (card != null && !ran && GpuChecks.Unusable(card) is { } unusable) {
+			Console.WriteLine($"The {card.Key} can't be used on this PC: {unusable.Reason}.");
+			return Installer.ProbeUnusable;
+		}
 		if (card != null) GpuChecks.Record(card, ran, embedder.FallbackReason);
 		if (wanted == AiDevice.Npu && ran) {
 			float[][]? processor = null;
@@ -315,6 +323,8 @@ status.SetAction(async (r, _) => {
 	IReadOnlyList<GpuAdapter> cards = GpuAdapters.List();
 	foreach (var f in AiStatus.Failures(cards))
 		Console.WriteLine($"Failed for Heiward: {f.Name} ({f.Id}) at {f.SinceUtc.ToLocalTime():t}, skipped until {f.UntilUtc.ToLocalTime():t}: {f.Reason}");
+	foreach (var (card, check) in AiStatus.Unusable(cards))
+		Console.WriteLine($"Not used: {GpuChecks.UnusableText(card)} ({check.Reason}); checked again after a driver update or a restart.");
 	bool gpuSet = !string.IsNullOrWhiteSpace(cfg.Gpu);
 	if (cards.Count > 1 || gpuSet)
 		Console.WriteLine($"Graphics card: {(gpuSet ? cfg.Gpu : "Windows' default")}" +
