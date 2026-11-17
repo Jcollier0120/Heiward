@@ -18,17 +18,26 @@ using HEI.Core.AI;
 using HEI.Core.Utils;
 
 namespace HEI.Agent {
+	/// <summary>What a GPU check found: the card runs the model, it can't be used on this PC, or it failed as a working card can.</summary>
+	enum GpuProbe { Runs, Unusable, Failed }
+
 	/// <summary>
 	/// Auto, with no working NPU, runs AI matching on the graphics card in use once that card has passed a check
 	/// (<see cref="GpuChecks"/>). A card the GPU pack hasn't been checked on yet, with its current driver, is checked
 	/// before a scan or by setup: <c>hei probe --device gpu</c> in its own process (a process loads one ONNX Runtime),
 	/// which records what it found, and marks the card failed (Heiward's own marker) when it can't.
+	/// <para>
+	/// A card the check finds can't be used on this PC (<see cref="GpuChecks.Unusable"/>) is no card: its check's process
+	/// ended under it (a Windows Sandbox lists the host's card, and opening it ends the process, 0xC0000005, 2026-11-17),
+	/// or DirectML found no device on it. AI matching runs on what works, quietly: no failure marker, no failure in the
+	/// log, one plain line on the page; and the card is checked again only after a driver or pack change, or a restart.
+	/// </para>
 	/// </summary>
 	static class GpuCheck {
 		/// <summary>
 		/// The card to check now, or null: Auto would leave the NPU (none this build drives, its pack missing, or it
 		/// failed in the last 10 minutes or failed its check), the GPU pack is here, and the card in use has no check with
-		/// its driver (or failed one over a day ago) and hasn't failed lately.
+		/// its driver (or failed one over a day ago, or was found unusable before the PC last started) and hasn't failed lately.
 		/// </summary>
 		internal static GpuAdapter? Due(AgentConfig cfg, DateTime nowUtc) {
 			if (!GpuComponents.IsInstalled) return null;
@@ -52,15 +61,49 @@ namespace HEI.Agent {
 			}
 			if (card == null) return;
 			say($"AI matching: no working NPU, so checking the {card.Key} ({card.AcceleratorId}{(card.Driver.Length > 0 ? ", driver " + card.Driver : "")}) before using it");
-			bool passed;
-			try { passed = await Installer.ProbeDeviceAsync("gpu", ct, card.Key, line => say("  " + line)); }
+			GpuProbe found;
+			try { found = await ProbeAsync(card.Key, card, ct, line => say("  " + line)); }
 			catch (Exception e) when (e is not OperationCanceledException) {
 				// The probe couldn't even start: nothing learned about the card, so no record; the CPU it is.
 				say($"  the check couldn't run ({e.Message}): AI matching stays on the CPU");
 				return;
 			}
-			say(passed ? $"  the {card.Key} runs the AI model: scans use it while there's no working NPU"
-				: $"  the {card.Key} couldn't run the AI model: AI matching stays on the CPU (checked again after a driver update, or in a day)");
+			say("  " + Said(found, card.Key));
+		}
+
+		/// <summary>What the scan's log says of a check, in one line.</summary>
+		internal static string Said(GpuProbe found, string cardKey) => found switch {
+			GpuProbe.Runs => $"the {cardKey} runs the AI model: scans use it while there's no working NPU",
+			GpuProbe.Unusable => $"the {cardKey} can't be used on this PC: AI matching runs on the processor (the card is checked again after a driver update or a restart)",
+			_ => $"the {cardKey} couldn't run the AI model: AI matching stays on the CPU (checked again after a driver update, or in a day)",
+		};
+
+		/// <summary>
+		/// Runs the GPU probe in its own process (<see cref="Installer.ProbeAsync"/>) on the card <paramref name="gpu"/> names
+		/// (null or empty: Windows' default), and says what it found (<see cref="Found"/>).
+		/// </summary>
+		/// <param name="card">That card as this process finds it; null: looked up, when the GPU pack is here (the probe checks no card without it).</param>
+		internal static async Task<GpuProbe> ProbeAsync(string? gpu, GpuAdapter? card, CancellationToken ct, Action<string>? say = null) {
+			Installer.ProbeResult probe = await Installer.ProbeAsync("gpu", ct, gpu, say);
+			card ??= GpuComponents.IsInstalled ? GpuAdapters.InUse(gpu, GpuAdapters.List()) : null;
+			return Found(probe, card);
+		}
+
+		/// <summary>
+		/// What a GPU probe found. One whose process ended under it (past any catch, so it recorded nothing) or hung found
+		/// the card can't be used on this PC, which is recorded here; one that said so itself recorded it already. Any other
+		/// failure was recorded and marked by the probe, as a working card's failure is.
+		/// </summary>
+		internal static GpuProbe Found(Installer.ProbeResult probe, GpuAdapter? card, DateTime? nowUtc = null) {
+			if (probe.Unusable) return GpuProbe.Unusable;
+			if (probe.Crashed) {
+				if (card != null)
+					GpuChecks.RecordUnusable(card, probe.TimedOut
+						? $"its check gave no answer in {Installer.ProbeTimeout.TotalMinutes:0} minutes"
+						: $"opening it ended its check's process (exit 0x{probe.ExitCode:X8})", nowUtc);
+				return GpuProbe.Unusable;
+			}
+			return probe.ExitCode == 0 ? GpuProbe.Runs : GpuProbe.Failed;
 		}
 	}
 }
