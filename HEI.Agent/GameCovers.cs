@@ -21,8 +21,9 @@ namespace HEI.Agent {
 	/// Each game's cover: the picture its launcher already keeps on this PC. Nothing is downloaded, copied or resized.
 	/// <list type="bullet">
 	/// <item>Steam: the person's own portrait (userdata\&lt;account&gt;\config\grid\&lt;app id&gt;p.png or .jpg), else the library
-	/// portrait Steam keeps in appcache\librarycache (in the app's folder, a folder deeper, or the old flat file), else the
-	/// app's header.jpg, a wide 460×215 banner.</item>
+	/// portrait Steam keeps in appcache\librarycache (library_600x900.jpg, or the newer library_capsule.jpg: in the app's folder,
+	/// else a folder deeper, the newest of either name, else the old flat file), else the app's wide 460×215 banner the same way
+	/// (header.jpg or the newer library_header.jpg, else the old flat &lt;app id&gt;_header.jpg).</item>
 	/// <item>Xbox: the square logo the game's MicrosoftGame.config names, when it's a file in the game's Content folder.</item>
 	/// <item>Epic, GOG GALAXY, the EA app, Ubisoft Connect and Battle.net keep no plain picture file per game: their games have none.</item>
 	/// </list>
@@ -65,8 +66,18 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
+		/// Steam's 300×450 library portrait, by both the names its cache has used: library_600x900.jpg, and the newer
+		/// library_capsule.jpg, which Steam keeps a folder deeper, in a folder named for the picture's hash.
+		/// </summary>
+		static readonly string[] SteamPortraits = ["library_600x900.jpg", "library_capsule.jpg"];
+
+		/// <summary>Steam's wide 460×215 banner, by both its names: header.jpg, and the newer library_header.jpg.</summary>
+		static readonly string[] SteamHeaders = ["header.jpg", "library_header.jpg"];
+
+		/// <summary>
 		/// A Steam game's cover, in Steam's own order: the person's custom portrait (the newest, with more than one account), Steam's
-		/// library portrait in the app's folder, then a folder deeper (the newest), then the old flat file, and only then the wide header.
+		/// library portrait (<see cref="SteamPortraits"/>) in the app's folder, then a folder deeper (the newest), then the old flat
+		/// file, and only then the wide header (<see cref="SteamHeaders"/>) the same way, then its old flat file.
 		/// </summary>
 		/// <param name="grids">The accounts' custom art folders (<see cref="SteamGridFolders"/>).</param>
 		internal static Cover? Steam(string steamRoot, string appId, IReadOnlyList<string> grids) {
@@ -75,14 +86,21 @@ namespace HEI.Agent {
 			if (Newest(grids.SelectMany(g => new[] { appId + "p.png", appId + "p.jpg" }.Select(f => System.IO.Path.Combine(g, f)))) is { } custom)
 				return new(custom, Portrait);
 			string cache = System.IO.Path.Combine(steamRoot, "appcache", "librarycache"), app = System.IO.Path.Combine(cache, appId);
-			const string Library = "library_600x900.jpg";
-			if (Exists(System.IO.Path.Combine(app, Library)) is { } direct) return new(direct, Portrait);
-			if (Newest(SubFolders(app).Select(f => System.IO.Path.Combine(f, Library))) is { } deeper) return new(deeper, Portrait);
-			if (Exists(System.IO.Path.Combine(cache, appId + "_" + Library)) is { } flat) return new(flat, Portrait);
-			if ((Exists(System.IO.Path.Combine(app, "header.jpg")) ?? Exists(System.IO.Path.Combine(cache, appId + "_header.jpg"))) is { } header)
+			IReadOnlyList<string> deeper = SubFolders(app);
+			if ((InFolderOrDeeper(app, deeper, SteamPortraits) ?? Exists(System.IO.Path.Combine(cache, appId + "_library_600x900.jpg"))) is { } portrait)
+				return new(portrait, Portrait);
+			if ((InFolderOrDeeper(app, deeper, SteamHeaders) ?? Exists(System.IO.Path.Combine(cache, appId + "_header.jpg"))) is { } header)
 				return new(header, Wide);
 			return null;
 		}
+
+		/// <summary>
+		/// The newest file by any of <paramref name="names"/> in <paramref name="folder"/>; when there's none, the newest by any of them
+		/// in one of its <paramref name="subFolders"/>.
+		/// </summary>
+		static string? InFolderOrDeeper(string folder, IReadOnlyList<string> subFolders, string[] names) =>
+			Newest(names.Select(n => System.IO.Path.Combine(folder, n)))
+			?? Newest(subFolders.SelectMany(f => names.Select(n => System.IO.Path.Combine(f, n))));
 
 		// ------------------------------------------------------------------ Xbox
 
@@ -130,7 +148,7 @@ namespace HEI.Agent {
 			return newest;
 		}
 
-		static IEnumerable<string> SubFolders(string folder) {
+		static IReadOnlyList<string> SubFolders(string folder) {
 			try { return Directory.Exists(folder) ? Directory.EnumerateDirectories(folder).ToList() : []; }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.Security.SecurityException) { return []; }
 		}
