@@ -93,12 +93,34 @@ namespace HEI.Agent {
 			// How it ended, written before scan.lock is let go: /api/ping's last run (RunTimes).
 			int? code = null;
 			Exception? error = null;
-			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, folders, only, started, firstTurn != null, ct)).Value; }
+			// What it was asked for and what it found there: the page that started it says how it went.
+			ScanAsk ask = ScanAsk.For(folders, only);
+			try { return (code = await ScanAsync(cfg, notify, scheduled, drives, folders, only, started, firstTurn != null, ask, ct)).Value; }
 			catch (Exception e) { error = e; throw; }
 			finally {
-				AfterScan(LastScan.Record(started, DateTime.UtcNow, code, error), bumpedSlotUtc, cfg.ScanEveryMinutes,
+				AfterScan(LastScan.Record(started, DateTime.UtcNow, code, error, ask), bumpedSlotUtc, cfg.ScanEveryMinutes,
 					folderScan: folders is { Count: > 0 }, driveScan: only is { Count: > 0 });
 			}
+		}
+
+		/// <summary>
+		/// After a scan of a folder or of one drive, while a new install's first scan waits for the person (<see cref="FirstScanWait"/>):
+		/// such a scan isn't the first scan, and leaves it waiting, unless every drive and folder Heiward scans has now been read
+		/// whole (Scan this drive now on each), when there's nothing left for it to read.
+		/// </summary>
+		internal static bool FirstScanDone(IEnumerable<string> roots, IReadOnlyDictionary<string, DateTime>? lastRead) {
+			var all = roots.ToList();
+			return all.Count > 0 && all.All(r => DriveScans.Of(lastRead, r) != null);
+		}
+
+		/// <summary>
+		/// Once a folder's or a drive's scan (<paramref name="ask"/>) has recorded what it read: a new install's first scan, which
+		/// it leaves waiting (<see cref="FirstScanWait.AnsweredBy"/>), stops waiting only when <paramref name="everyDrive"/> (what a
+		/// scan of every drive reads) has all been read whole by now.
+		/// </summary>
+		internal static void AfterScopedScan(ScanAsk ask, IEnumerable<string> everyDrive) {
+			if (ask.Scope != null && FirstScanWait.Waiting && FirstScanDone(everyDrive, DriveScans.Load()))
+				FirstScanWait.End("every drive Heiward scans has been scanned from its page");
 		}
 
 		/// <summary>
@@ -155,12 +177,13 @@ namespace HEI.Agent {
 		/// has it make way.
 		/// </summary>
 		static async Task<int> ScanAsync(AgentConfig cfg, bool notify, bool scheduled, IReadOnlyCollection<string>? drives, IReadOnlyCollection<string>? folders,
-			IReadOnlyCollection<string>? only, DateTime started, bool firstTurn, CancellationToken ct) {
+			IReadOnlyCollection<string>? only, DateTime started, bool firstTurn, ScanAsk ask, CancellationToken ct) {
 			var timer = Stopwatch.StartNew();
 			var notes = new List<string>();
 			bool fullSpeed = firstTurn || ScanPace.FullSpeed(cfg, scheduled);
 			var settings = BuildSettings(cfg, notes, fullSpeed);
 			if (settings.IncludeList.Count == 0) {
+				ask.Why = "none of the drives and folders Heiward scans is there now";
 				Console.Error.WriteLine("None of the configured folders exist. Edit " + AgentPaths.Config);
 				return 2;
 			}
@@ -174,6 +197,7 @@ namespace HEI.Agent {
 			catch (Exception e) when (e is not OperationCanceledException && (folders is { Count: > 0 } || only is { Count: > 0 })) {
 				// Asked for one folder or drive: walking every drive instead would be a far longer scan than the one asked for.
 				string asked = string.Join(", ", folders is { Count: > 0 } ? folders : only!);
+				ask.Why = "Heiward couldn't read what its last scan listed (" + e.Message.TrimEnd('.') + ")";
 				AgentPaths.AppendLog($"scan of {asked} not started, the last listing not read: " + e.Message);
 				Console.Error.WriteLine($"The scan of {asked} couldn't start: " + e.Message);
 				return 1;
@@ -186,12 +210,14 @@ namespace HEI.Agent {
 			}
 			// None of the folders asked for is there now, or each is left out of scans: there's nothing to read.
 			if (folders is { Count: > 0 } && plan != null && plan.Roots.All(r => r.Mode == ListingMode.Resting)) {
+				ask.Why = folders.Count == 1 ? "that folder isn't there now, or scans leave it out" : "none of those folders is there now, or scans leave them out";
 				AgentPaths.AppendLog($"scan of {string.Join(", ", folders)} not started: no such folder among the scanned ones now");
 				Console.Error.WriteLine("None of those folders is scanned: " + string.Join(", ", folders));
 				return 1;
 			}
 			// Scan this drive now, and Heiward doesn't scan that drive (any more): there's nothing to read.
 			if (only is { Count: > 0 } && plan != null && plan.Roots.All(r => r.Mode == ListingMode.Resting)) {
+				ask.Why = "Heiward doesn't scan that drive now";
 				AgentPaths.AppendLog($"scan of {string.Join(", ", only)} not started: Heiward doesn't scan it now");
 				Console.Error.WriteLine("Heiward doesn't scan " + string.Join(", ", only));
 				return 1;
@@ -311,13 +337,21 @@ namespace HEI.Agent {
 				report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files,
 					settings.IncludeList.ToList(), settings.ExcludedExtensions.OrderBy(e => e).ToList(), notes, groups, AppBuild.Current);
 				report.Save();
-				ScanIndex.Build(started, settings.IncludeList, media, engine.ListingTimes, engine.AnalysisTimes).Save();
+				// Each drive timed only where this scan read it whole: a folder's scan doesn't make "Last scan took under a second" of its drive.
+				List<string> whole = ScannedWhole(plan, reading);
+				ScanIndex.Build(started, settings.IncludeList, media, engine.ListingTimes, engine.AnalysisTimes, whole, ScanIndex.Load()).Save();
 				// This listing, and where the journal was read up to: the next scan starts from them.
 				try { plan?.Save(engine.FoundFiles, fingerprints.ModifiedUtc, started); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the listing failed: " + e.Message); }
 				// Each drive this scan read, for its page's "Last scanned"; one left alone keeps its time. Whole roots only: a scan
 				// that reads just some folders of a drive doesn't make the drive's "Last scanned", so it records nothing here.
-				DriveScans.Record(ScannedWhole(plan, reading), started, shownBefore);
+				DriveScans.Record(whole, started, shownBefore);
+				// What it found in what it was asked for, for the page that started it.
+				ask.Ran(media, ask.Scope == ScanAsk.Folder ? plan?.Roots.Where(r => r.Mode == ListingMode.Folder).SelectMany(r => r.Only).ToList()
+					: ask.Scope == ScanAsk.Drive ? whole : null, ScanScope.ExclusionRules(cfg));
+				// A folder's or a drive's scan isn't a new install's first scan: that still waits for the person, unless there's
+				// nothing left for it to read.
+				AfterScopedScan(ask, settings.IncludeList.Where(r => !cfg.IsOnRequest(r)));
 				// The report stands from here: Stop now leaves out what's still to come after it.
 				try { auto = Housekeeping(cfg, stopped.Token, DevDrives(cfg, drives, only), stage => Finish(stage)); }
 				catch (OperationCanceledException) when (!ct.IsCancellationRequested) {

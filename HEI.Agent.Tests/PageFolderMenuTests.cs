@@ -86,9 +86,11 @@ public sealed class PageFolderMenuTests {
 		string script = ThePage.Asset("app.js").ReplaceLineEndings("\n");
 		js.Execute(FakePage);
 		// The page's own cardFor: a folder's rows come from its listing, without the drive they're on.
-		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip", "otherDrivesStay", "trimSep", "isUnder", "cardFor" })
+		foreach (string name in new[] { "el", "menuItems", "openFolderMenu", "scanFolderWhy", "scanStrip", "otherDrivesStay", "trimSep", "isUnder", "cardFor",
+			"overlaps", "scanReads" })
 			js.Execute(ThePage.Function(script, name));
 		js.Execute(Line(script, "const UNSCANNED_NOTE = "));
+		js.Execute(Line(script, "const normRoot = "));
 		int render = script.IndexOf("async function renderContent(", StringComparison.Ordinal);
 		js.Execute(script[render..script.IndexOf("\nfunction subfolderTable(", render, StringComparison.Ordinal)]);
 		// The stubs stand: the slices above bring the page's own of some of them along.
@@ -194,6 +196,61 @@ public sealed class PageFolderMenuTests {
 		Assert.DoesNotContain("Scan now", Menu(@"{ name: 'Elsewhere', path: 'F:\\Elsewhere', exempt: null }"));
 	}
 
+	/// <summary>The strip's line under a drive's title: when it's scanned next, or why not.</summary>
+	string Next() => js.Evaluate("find(content, function (n) { return n.className === 'scan-next'; })[0].textContent").AsString();
+
+	/// <summary>
+	/// The owner's E:\ on a new install, 2026-11-17: "Last scanned: never. Next scheduled scan: today 08:13 PM", and Scan now
+	/// instead of at 08:13 PM. But no scheduled scan runs before the first scan: it waits for the person.
+	/// </summary>
+	[Fact]
+	public void ADrivesPage_WhileTheFirstScanWaits_NamesNoScheduledScan_AndScansNow() {
+		js.Execute("state.schedule.nextUtc = '2026-11-18T01:13:00Z'; state.agent.firstScanWaits = true; var everyDrive = 0; function scanNow() { everyDrive++; }");
+		Assert.Equal(new[] { "Scan this drive now", "Scan every drive now" }, Page(@"E:\"));
+		Assert.Equal("Heiward's first scan waits for you: no drive is scanned on a schedule until it has run.", Next());
+		js.Execute("press('Scan this drive now');");
+		Assert.Equal(@"[""E:\\""]", Json("drivesScanned"));
+		js.Execute("press('Scan every drive now');");
+		Assert.Equal(1, js.Evaluate("everyDrive").AsNumber());
+	}
+
+	[Fact]
+	public void ADrivesPage_WithAScheduledScanDue_ScanThisDriveNowScansIt_NotTheScheduledScan() {
+		js.Execute("state.schedule.nextUtc = '2026-11-18T01:13:00Z'; var bumped = []; function bumpScan(slot) { bumped.push(slot); }");
+		string[] buttons = Page(@"E:\");
+		Assert.Equal("Scan this drive now", buttons[0]);
+		Assert.StartsWith("Scan now instead of at ", buttons[1]);
+		Assert.Equal("Next scheduled scan: today 09:00.", Next());
+		js.Execute("press('Scan this drive now');");
+		Assert.Equal(@"[""E:\\""]", Json("drivesScanned"));
+		Assert.Equal("[]", Json("bumped"));
+	}
+
+	[Fact]
+	public void ADrivesPage_WhileAnotherDrivesScanRuns_SaysItWaitsForThatScan() {
+		js.Execute("state.scan.running = true; state.scan.status = { roots: ['C:\\\\'] };");
+		Assert.Equal(new[] { "Scanning… (off)" }, Page(@"E:\"));
+		Assert.EndsWith(" Another scan is running now: once it has finished, this drive can be scanned.", Next());
+		// Its own scan running: nothing to wait for.
+		js.Execute("state.scan.status = { roots: ['E:\\\\'] };");
+		Page(@"E:\");
+		Assert.DoesNotContain("Another scan", Next());
+	}
+
+	/// <summary>
+	/// "Last scan took under a second" beside "Not scanned yet", of the owner's E:\: a folder's scan, which read nothing on it
+	/// whole, had timed the drive. Only a scan that read it whole says how long it took.
+	/// </summary>
+	[Fact]
+	public void ADriveNeverScannedWhole_SaysNotScannedYet_NotHowLongItsLastScanTook() {
+		js.Execute("function took() { return 'under a second'; } drive.scan = { listingSec: 0.4, analysisSec: 0 }; listed = { files: 0, unscanned: true };");
+		Page(@"E:\");
+		Assert.Equal(new[] { "Not scanned yet" }, Js<string[]>("chips()"));
+		js.Execute("drive.lastScanUtc = '2026-11-17T22:20:00Z'; listed = { files: 3 };");
+		Page(@"E:\");
+		Assert.Equal(new[] { "3", "Last scan took under a second" }, Js<string[]>("chips()"));
+	}
+
 	[Fact]
 	public void AFoldersPage_NotScannedYet_SaysSo_NotZeroPhotosAndVideos() {
 		js.Execute("listed = { files: 0, unscanned: true };");
@@ -247,7 +304,7 @@ public sealed class PageFolderMenuTests {
 	[Fact]
 	public void WhileAScanRuns_ScanNowWaits() {
 		js.Execute("state.scan.running = true;");
-		Assert.Contains("Scan now (A scan is running now.)", Menu(@"{ name: 'Development', path: 'E:\\Development', drive: drive }"));
+		Assert.Contains("Scan now (A scan is running now: once it has finished, this folder can be scanned.)", Menu(@"{ name: 'Development', path: 'E:\\Development', drive: drive }"));
 	}
 
 	[Fact]

@@ -91,12 +91,13 @@ scan.SetAction(async (r, ct) => {
 		}
 	}
 	if (FirstScanWait.Waiting) {
-		// The install's own scan (an older setup's) waits too; a scan the person starts ends the wait.
+		// The install's own scan (an older setup's) waits too; a scan the person starts of every drive ends the wait, and one of
+		// a folder or of one drive leaves it (FirstScanWait.AnsweredBy).
 		if (r.GetValue(waitTurn)) {
 			AgentPaths.AppendLog("install's scan skipped: the first scan waits for the person");
 			return 0;
 		}
-		FirstScanWait.End("hei scan");
+		if (FirstScanWait.AnsweredBy(r.GetValue(folder), r.GetValue(only))) FirstScanWait.End("hei scan");
 	}
 	if (r.GetValue(open)) {
 		// Open first: the page shows the scan's progress, and the first scan of a library takes a while.

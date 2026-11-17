@@ -364,12 +364,13 @@ namespace HEI.Agent {
 				return Results.Ok();
 			});
 			// "Scan this drive now", on a drive's page (DriveScanNow): that drive alone, whether scheduled scans read it or it's
-			// scanned only when asked. It brings no scheduled scan forward: they keep their times.
+			// scanned only when asked. It brings no scheduled scan forward: they keep their times. Nor is it a new install's first
+			// scan, which still waits for the person (AgentScanner.FirstScanDone): ending that wait put the first scan of every
+			// other drive off until the next scheduled scan, hours later.
 			app.MapPost("/api/scan/drive", (DriveRequest request) => {
-				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
+				if (ScanBusy()) return Results.Conflict(new { error = BusyText("this drive") });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				if (DriveScanNow(request.Root, ScanScope.Roots(AgentConfig.Load()), out string? error) is not { } scan) return Results.BadRequest(new { error });
-				FirstScanWait.End("Scan this drive now, on the review page");
 				ScanLaunch.Started(StartDetached(scan.Args), DateTime.UtcNow, scan.Reads);
 				return Results.Accepted();
 			});
@@ -387,14 +388,14 @@ namespace HEI.Agent {
 			});
 			// "Scan now" on a folder (its right-click menu, or "Scan this folder now" on its page): that folder and the
 			// folders in it are read, and nothing else is, whatever drive it's on. It isn't the drive's scan, nor a scheduled
-			// one brought forward: the drive's "Last scanned" and the next scheduled scan stay as they were.
+			// one brought forward: the drive's "Last scanned" and the next scheduled scan stay as they were. Nor is it a new
+			// install's first scan, which still waits for the person, as Scan this drive now leaves it.
 			app.MapPost("/api/scan/folder", (FolderScanRequest request) => {
-				if (ScanBusy()) return Results.Conflict(new { error = "A scan is already running." });
+				if (ScanBusy()) return Results.Conflict(new { error = BusyText("this folder") });
 				if (StoreSetup.Needed) return Results.Conflict(new { error = "Set Heiward up first: the setup starts the first scan." });
 				if (FolderOverride.ScanTarget(AgentConfig.Load(), request.Path ?? "", out string? error) is not { } target)
 					return Results.BadRequest(new { error });
 				var (folder, root) = target;
-				FirstScanWait.End("Scan now on a folder, on the review page");
 				ScanLaunch.Started(StartDetached("scan", "--folder", folder), DateTime.UtcNow, [root]);
 				return Results.Accepted();
 			});
@@ -656,11 +657,12 @@ namespace HEI.Agent {
 		/// by the schedule (<see cref="ScanWhenDue"/>): the last scan plus the interval between scans. A new
 		/// build of Heiward sets the last report aside, since its sets were judged by the old build's rules,
 		/// but no longer rescans at every start until one finishes: the next due scan, or Scan now, finds
-		/// them again. Not while scans are paused, and not before the Store version's setup, which starts its
-		/// own first scan.
+		/// them again. Not while scans are paused, not before the Store version's setup, which starts its
+		/// own first scan, and not while a new install's first scan waits for the person (<see cref="FirstScanWait"/>): a folder's
+		/// scan since doesn't make a scan of every drive due.
 		/// </summary>
 		static void ScanIfDue(AgentConfig cfg) {
-			if (ScanBusy() || StoreSetup.Needed || AgentPause.Load() != null) return;
+			if (ScanBusy() || StoreSetup.Needed || AgentPause.Load() != null || FirstScanWait.Waiting) return;
 			Report? last = Report.LoadAny();
 			bool setAside = last != null && last.Build != AppBuild.Current;
 			if (ScanWhenDue.Due(last?.ScannedAtUtc, AgentScanner.LastStartedUtc(), ScanEveryMinutes(cfg), DateTime.UtcNow) is not { } why) {
@@ -787,6 +789,13 @@ namespace HEI.Agent {
 			failed = AiStatus.Failures(Gpus()).Select(f => new { id = f.Id, name = f.Name, sinceUtc = f.SinceUtc, untilUtc = f.UntilUtc, reason = f.Reason, by = f.By }),
 			unusable = AiStatus.Unusable(Gpus()).Select(u => new { id = u.Card.AcceleratorId, name = u.Card.Key, sinceUtc = u.Check.AtUtc, reason = u.Check.Reason }),
 		};
+
+		/// <summary>
+		/// Why Scan now on <paramref name="what"/> ("this folder", "this drive") didn't start, and when it can: only one scan runs
+		/// at a time, and this one isn't put off to a later time by itself.
+		/// </summary>
+		internal static string BusyText(string what) =>
+			$"Another scan is running now, so {what} wasn't scanned. Once that scan has finished, scan {what} again.";
 
 		/// <summary>A scan holds scan.lock, or one this page started is still starting.</summary>
 		static bool ScanBusy() {
@@ -1196,6 +1205,8 @@ namespace HEI.Agent {
 		/// The scan for the page. A scan this page has just started counts as running from the moment it's
 		/// started (<c>starting</c>), so the page shows it at once; its status file is the last scan's until
 		/// it writes its own, so none is given, and <c>roots</c> says what it will read when that isn't every drive.
+		/// <c>last</c>: how the last scan ended (<see cref="LastScan"/>), so the page that started one says how it went, what it
+		/// found in the folder or drive it was asked for, or why it read nothing.
 		/// </summary>
 		static object ScanView() {
 			bool locked = AgentScanner.IsRunning();
@@ -1205,6 +1216,7 @@ namespace HEI.Agent {
 				starting,
 				roots = starting ? ScanLaunch.Roots : null,
 				status = starting ? null : AgentScanner.ReadStatus(),
+				last = LastScan.Load(),
 			};
 		}
 
