@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.18
+
+**Small fixes and improvements.**
+
+### What changed
+
+- Small fixes and improvements.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.17
 
 **A graphics card Heiward can't use is no longer treated as broken.**
