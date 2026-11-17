@@ -101,7 +101,7 @@ public sealed class PageRemovalTests {
 		function showNotice(m) { notice = m; } function showError(m) { error = m; }
 		function askDialog() { return Promise.resolve(true); }
 		var uninstall = { gone: false }, listings = new Map(), location = { reload: function () { } };
-		function setupShowing() { return false; } function renderHeader() { } function showAgentBanner() { }
+		function setupShowing() { return false; } function renderHeader() { } function showAgentBanner() { } function sayScanEnded() { }
 		var checks = new Map(), groupsShown = 0, PAGE = 24, SEP = '\\';
 		function checked(g) {
 		  if (!checks.has(g.key)) checks.set(g.key, new Set(g.items.filter(function (i) { return i.suggested; }).map(function (i) { return i.path; })));

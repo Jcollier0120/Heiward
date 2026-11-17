@@ -210,6 +210,7 @@ namespace HEI.Agent {
 			only = only.Where(s => !only.Any(o => !comparer.Equals(o, s) && IsUnder(s, o))).ToList();
 			if (only.Count == 0) {
 				r.Mode = ListingMode.Resting;
+				r.Why = OnlyAFolder;
 				r.Listing = new ScanEngine.RootListing(Array.Empty<FileInfo>(), kept?.PathsOutside(new HashSet<string>()) ?? new());
 				return;
 			}
@@ -242,6 +243,9 @@ namespace HEI.Agent {
 
 		/// <summary>Why a scanned folder rests in a scan of one drive alone (Scan this drive now): it isn't on that drive.</summary>
 		internal const string OnlyAnother = "only another drive is scanned now";
+
+		/// <summary>Why a scanned drive or folder rests in a scan of folders alone (Scan now on a folder): none of them is on it.</summary>
+		internal const string OnlyAFolder = "only a folder elsewhere is scanned now";
 
 		static void Decide(RootPlan r, StoredRoot? last, string key, Volume volume, Settings settings, IReadOnlyList<ScanScope.Rule> rules,
 			Dictionary<string, bool> scanned, DateTime nowUtc, CancellationToken ct) {

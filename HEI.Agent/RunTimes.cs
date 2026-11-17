@@ -29,11 +29,17 @@ namespace HEI.Agent {
 	/// </param>
 	/// <param name="ExitCode">The scan's: 0 when it went through, 130 when stopped, 2 when none of its folders exist; null when it failed with an error.</param>
 	/// <param name="Error">That error's message.</param>
-	sealed record LastScan(DateTime StartedUtc, DateTime EndedUtc, bool Ok, int? ExitCode, string? Error = null) {
-		public static LastScan Record(DateTime startedUtc, DateTime endedUtc, int? exitCode, Exception? error) {
+	/// <param name="Scope">What it was asked to read (<see cref="ScanAsk"/>): "folder" (Scan now on a folder), "drive" (Scan this drive now); null: every drive.</param>
+	/// <param name="Asked">The folders or the drive it was asked for, with <paramref name="Scope"/>.</param>
+	/// <param name="Found">The photos and videos in what it was asked to read, once it went through.</param>
+	/// <param name="LeftOut">A folder's scan that found none: the folders in it that scans leave out, and why (a game library).</param>
+	/// <param name="Why">Why it read nothing, in the page's words: the folder isn't there now, the drive isn't scanned.</param>
+	sealed record LastScan(DateTime StartedUtc, DateTime EndedUtc, bool Ok, int? ExitCode, string? Error = null, string? Scope = null,
+		List<string>? Asked = null, int? Found = null, List<LeftOutFolder>? LeftOut = null, string? Why = null) {
+		public static LastScan Record(DateTime startedUtc, DateTime endedUtc, int? exitCode, Exception? error, ScanAsk? ask = null) {
 			bool stopped = exitCode == 130 || error is OperationCanceledException;
 			var scan = new LastScan(startedUtc, endedUtc, exitCode == 0 && error == null, stopped ? 130 : exitCode,
-				error == null || stopped ? null : error.Message);
+				error == null || stopped ? null : error.Message, ask?.Scope, ask?.Paths, ask?.Found, ask?.LeftOut, ask?.Why);
 			try { AgentPaths.WriteAtomic(AgentPaths.LastScan, JsonSerializer.Serialize(scan, AgentConfig.Json)); }
 			catch (Exception e) { AgentPaths.AppendLog("last-scan.json not written: " + e.Message); }
 			return scan;
@@ -42,6 +48,64 @@ namespace HEI.Agent {
 		public static LastScan? Load() {
 			try { return File.Exists(AgentPaths.LastScan) ? JsonSerializer.Deserialize<LastScan>(File.ReadAllText(AgentPaths.LastScan), AgentConfig.Json) : null; }
 			catch { return null; }
+		}
+	}
+
+	/// <summary>A folder in the one Scan now was asked for that scans leave out (<see cref="ScanScope.ExemptReason"/>): steamapps, a game library.</summary>
+	sealed record LeftOutFolder(string Name, string Why);
+
+	/// <summary>
+	/// What a scan someone started was asked to read, and, once it has run, what it found there or why it read nothing: kept in
+	/// <see cref="LastScan"/>, so the page that started it says how it went. A folder's scan that ends in a second said nothing
+	/// before: the page went back to "Last scanned: never. Next scheduled scan: 20:13", as if the scan had been put off.
+	/// </summary>
+	sealed class ScanAsk {
+		/// <summary>"folder", "drive", or null for every drive (<see cref="LastScan.Scope"/>).</summary>
+		public string? Scope { get; init; }
+		public List<string>? Paths { get; init; }
+		public int? Found { get; set; }
+		public List<LeftOutFolder>? LeftOut { get; set; }
+		public string? Why { get; set; }
+
+		public const string Folder = "folder", Drive = "drive";
+
+		/// <summary>From <c>hei scan</c>'s <c>--folder</c> or <c>--only</c>; neither: a scan of every drive.</summary>
+		public static ScanAsk For(IReadOnlyCollection<string>? folders, IReadOnlyCollection<string>? only) =>
+			folders is { Count: > 0 } ? new ScanAsk { Scope = Folder, Paths = [.. folders] }
+			: only is { Count: > 0 } ? new ScanAsk { Scope = Drive, Paths = [.. only] }
+			: new ScanAsk();
+
+		/// <summary>At most this many left-out folders are named.</summary>
+		internal const int MaxLeftOut = 5;
+
+		/// <summary>
+		/// Once it has run: the photos and videos <paramref name="media"/> holds in what it was asked to read (<paramref name="read"/>:
+		/// the folders a folder's scan read, the roots a drive's scan read; every file for a scan of every drive). For a folder's
+		/// scan that found none, the folders in the ones asked for that scans leave out (<paramref name="rules"/>), so the page can
+		/// say why: Steam's steamapps is a game library, and a Steam folder holds little else.
+		/// </summary>
+		public void Ran(IEnumerable<(string Path, long Size)> media, IReadOnlyCollection<string>? read, IReadOnlyList<ScanScope.Rule> rules) {
+			Found = read == null ? media.Count() : media.Count(m => read.Any(r => ListingPlan.IsUnder(m.Path, r)));
+			LeftOut = Scope == Folder && Found == 0 ? LeftOutIn(Paths ?? [], rules) : null;
+		}
+
+		/// <summary>The folders directly in <paramref name="folders"/> that a scan doesn't walk into, by name, and why; null for none.</summary>
+		internal static List<LeftOutFolder>? LeftOutIn(IEnumerable<string> folders, IReadOnlyList<ScanScope.Rule> rules) {
+			var left = new List<LeftOutFolder>();
+			foreach (string folder in folders) {
+				IEnumerable<DirectoryInfo> inside;
+				try {
+					inside = new DirectoryInfo(folder).EnumerateDirectories("*", new EnumerationOptions { IgnoreInaccessible = true, AttributesToSkip = 0 })
+						.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { continue; }
+				foreach (DirectoryInfo d in inside) {
+					if (ScanScope.ExemptReason(d, rules) is not { } why) continue;
+					left.Add(new LeftOutFolder(d.Name, why));
+					if (left.Count == MaxLeftOut) return left;
+				}
+			}
+			return left.Count > 0 ? left : null;
 		}
 	}
 

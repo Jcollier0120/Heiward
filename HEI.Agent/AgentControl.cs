@@ -85,6 +85,15 @@ namespace HEI.Agent {
 			AgentPaths.AppendLog("first scan: waits for the person (Scan now, or Scan by itself, on the review page)");
 		}
 
+		/// <summary>
+		/// Whether a scan someone starts is the first scan the wait is for: one of every drive (Scan now, Scan now instead of at
+		/// 18:00, <c>hei scan</c>). One of a folder (Scan now on a folder, <c>--folder</c>) or of one drive (Scan this drive now,
+		/// <c>--only</c>) isn't, and leaves it waiting. Ending the wait made the first scan of every drive start by itself with the
+		/// next scheduled scan, hours later, so the scan asked for looked put off to then (<see cref="AgentScanner.AfterScopedScan"/>).
+		/// </summary>
+		public static bool AnsweredBy(IReadOnlyCollection<string>? folders, IReadOnlyCollection<string>? only) =>
+			folders is not { Count: > 0 } && only is not { Count: > 0 };
+
 		/// <param name="how">What ended the wait, for the log.</param>
 		public static void End(string how) {
 			try {

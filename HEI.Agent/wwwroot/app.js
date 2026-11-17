@@ -683,6 +683,7 @@ function renderHeader(s) {
   }
   if (s.agent.paused) parts.push('scans paused ' + s.agent.pausedText);
   else if (s.scan.running) { /* the next is counted from this one's end */ }
+  else if (s.agent.firstScanWaits && s.schedule.everyMinutes) parts.push('first scan waits for you');
   else if (s.schedule.next) parts.push('next ' + s.schedule.next);
   else if (s.schedule.everyMinutes === 0) parts.push('scans when you press Scan now');
   else if (scanDueIn(s.schedule)) parts.push('next scan ' + scanDueIn(s.schedule));
@@ -975,7 +976,8 @@ function renderHome(s) {
 
   const g = s.glance;
   const copies = s.totals.groups - s.totals.similar;
-  const scanned = s.drives.some((d) => d.scan);
+  // A drive read whole, or sets a folder's scan found: a folder's scan alone doesn't say there's nothing to free anywhere.
+  const scanned = s.drives.some((d) => d.scan && d.lastScanUtc) || copies > 0;
   const autoCopies = s.auto.settings.duplicates ? s.auto.upcoming.groups.count : 0;
   const last = s.done.find((d) => d.recycledBytes > 0);
   const tiles = [];
@@ -1756,7 +1758,8 @@ function renderScanCard(s) {
   const gpu = gpuSetting(s);
   if (gpu) card.append(gpu);
   const foot = el('div', 'auto-foot');
-  foot.append(el('div', 'muted small', s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
+  foot.append(el('div', 'muted small', s.schedule.everyMinutes && s.agent.firstScanWaits ? 'Heiward\'s first scan waits for you: no drive is scanned on a schedule until it has run.'
+    : s.schedule.next ? 'Next scheduled scan: ' + s.schedule.next + '.'
     : s.schedule.everyMinutes === 0 ? 'No scheduled scans: scans run when you press Scan now.'
       : s.dev.enabled ? 'Scheduled scans aren\'t set up on this PC: run "hei install".' : 'Scheduled scans aren\'t set up on this PC: reinstall Heiward to set them up.'));
   card.append(foot);
@@ -4685,7 +4688,8 @@ function driveCard(d) {
     box.dataset.root = d.root;
     fillDriveProgress(box, d, state.scan.status);
     scan.append(box);
-  } else if (d.scanned && d.scan) {
+  } else if (d.scanned && d.scan && d.lastScanUtc) {
+    // A scan has read it whole (a folder's scan on it doesn't count): what it found there.
     const line = el('div', 'scan-line small');
     line.append(icon('check'));
     line.append(el('span', null, count(d.scan.files, 'photo or video', 'photos and videos') + ' · last scan took ' + took(d.scan.listingSec + d.scan.analysisSec)));
@@ -4977,7 +4981,9 @@ function scanModeTitle(d) {
   const s = state.schedule;
   const it = d.type === 'folder' ? 'this folder' : 'this drive';
   if (d.scans === 'auto') {
-    const next = s.nextUtc ? ' Next scheduled scan: ' + scanTime(s.nextUtc) + '.' : s.next ? ' Next scheduled scan: ' + s.next + '.'
+    // Until a new install's first scan has run, the scheduled scans skip themselves: none is next.
+    const next = state.agent.firstScanWaits ? ' Its first scan waits for you: no drive is scanned on a schedule until it has run.'
+      : s.nextUtc ? ' Next scheduled scan: ' + scanTime(s.nextUtc) + '.' : s.next ? ' Next scheduled scan: ' + s.next + '.'
       : scanDueIn(s) ? ' Next scan ' + scanDueIn(s) + '.' : '';
     return 'Auto: scheduled scans read ' + it + '. Heiward ' + s.text + '.' + next +
       ' Right-click the ' + (d.type === 'folder' ? 'folder' : 'drive') + ' to scan it only when you ask.';
@@ -5347,8 +5353,10 @@ async function setOnRequest(root, onRequest) {
  * others stay as their last scans found them.
  */
 async function scanDrive(root) {
+  const since = Date.now();
   try {
     await post('/api/scan/drive', { root });
+    scanAsked = { name: nameOf(root), since };
     showNotice('Scanning ' + nameOf(root) + ' only. ' + otherDrivesStay(cardFor(root)));
     refresh(true);
   } catch (e) { showError(e.message); }
@@ -5364,16 +5372,53 @@ function otherDrivesStay(d) {
  * of every drive stays as its last scan found it. It isn't the drive's scan: the drive's "Last scanned" stays as it was.
  */
 async function scanFolder(path) {
+  const since = Date.now();
   try {
     await post('/api/scan/folder', { path });
+    scanAsked = { name: nameOf(path), since };
     showNotice('Scanning ' + nameOf(path) + ' and the folders in it.');
     refresh(true);
   } catch (e) { showError(e.message); }
 }
 
-/** Why Scan now on a folder can't start now (the menu greys it out), or null. */
+/** Why Scan now on a folder can't start now (the menu greys it out), and when it can, or null. */
 function scanFolderWhy() {
-  return state.scan.running ? 'A scan is running now.' : null;
+  return state.scan.running ? 'A scan is running now: once it has finished, this folder can be scanned.' : null;
+}
+
+/**
+ * The scan this page has just started from a folder's or a drive's page, until it has ended: { name, since }, `since` the
+ * page's clock when it was asked for. Then the notice says how it went (sayScanEnded): a folder's scan that took a second
+ * otherwise left the drive's page as it was, "Last scanned: never. Next scheduled scan: 20:13", as if it had been put off.
+ */
+let scanAsked = null;
+
+/** Once the scan this page started has ended (`s`, the state just drawn): what it found, or why it read nothing. */
+function sayScanEnded(s) {
+  if (!scanAsked || s.scan.running) return;
+  const asked = scanAsked;
+  scanAsked = null;
+  const last = s.scan.last;
+  // Its own end, not the scan's before it: it started after it was asked for (the page and the scan share this PC's clock).
+  if (last && Date.parse(last.startedUtc) >= asked.since - 2000) showNotice(scanEndedText(last, asked.name));
+  else showError('The scan of ' + asked.name + ' didn\'t start. Try again: it starts at once when no other scan is running.');
+}
+
+/** How a scan someone started ended, in a line: what it found in the folder or drive it was asked for, or why it read nothing. */
+function scanEndedText(last, name) {
+  if (last.exitCode === 130) return 'The scan of ' + name + ' was stopped.';
+  if (!last.ok) return 'The scan of ' + name + ' didn\'t go through: ' + (last.why || last.error || 'it ended with code ' + last.exitCode) + '.';
+  const where = last.scope === 'drive' ? ' on it' : last.scope ? ' in it' : ' on the drives Heiward scans';
+  const found = last.found == null ? '' : last.found ? count(last.found, 'photo or video', 'photos and videos') + where : 'no photos or videos' + where;
+  let text = (last.scope ? name + ' scanned' : 'Scan done') + (found ? ': ' + found : '') + '.';
+  // Nothing found, and scans leave out what's in it: a Steam folder holds its game library, steamapps, and little else.
+  const out = last.leftOut || [];
+  if (out.length) {
+    const named = out.map((f) => f.name + ' (' + f.why.toLowerCase() + ')');
+    text += ' Scans leave out ' + (named.length === 1 ? 'its folder ' + named[0] : 'its folders ' + named.join(', ')) +
+      ', where pictures and videos belong to something else. Right-click one to include it in scans.';
+  }
+  return text;
 }
 
 /**
@@ -5381,8 +5426,10 @@ function scanFolderWhy() {
  * has gone through, the scheduled one skips itself; the one after runs as usual. One that fails or is stopped skips nothing.
  */
 async function bumpScan(slotUtc) {
+  const since = Date.now();
   try {
     await post('/api/scan/bump', { slotUtc });
+    scanAsked = { name: 'every drive', since };
     showNotice('Scanning now. Once it has gone through, the scheduled scan at ' + scanTime(slotUtc) + ' is skipped.');
     refresh(true);
   } catch (e) { showError(e.message); }
@@ -5411,8 +5458,12 @@ function scanStrip(d, folder) {
   const strip = el('div', 'rest-strip scan-strip');
   const text = el('span');
   text.append(el('span', 'scan-last', d.lastScanUtc ? 'Last scanned ' + ago(d.lastScanUtc) + ' (' + scanTime(d.lastScanUtc) + ').' : 'Last scanned: never.'));
+  // A new install's first scan waits for the person: until it has run, the scheduled scans skip themselves.
+  const firstWaits = !!state.agent.firstScanWaits;
   let next;
-  if (d.scans === 'auto') {
+  if (d.scans === 'auto' && firstWaits) {
+    next = 'Heiward\'s first scan waits for you: no drive is scanned on a schedule until it has run.';
+  } else if (d.scans === 'auto') {
     next = s.nextUtc ? 'Next scheduled scan: ' + scanTime(s.nextUtc) + '.'
       : state.agent.paused ? 'Scheduled scans are paused ' + state.agent.pausedText + '.'
       : 'Heiward ' + s.text + '.';
@@ -5428,6 +5479,8 @@ function scanStrip(d, folder) {
     next = 'No scheduled scans: ' + (d.manualWhy === 'devBuild' ? 'a development build has none' : 'Heiward scans only when you press Scan now') + '.';
   }
   if (folder) next += ' Scan this folder now reads only this folder and the folders in it.';
+  // Another scan is running: these wait for it, and say so rather than only greying out.
+  if (state.scan.running && !scanReads(d)) next += ' Another scan is running now: once it has finished, ' + it + ' can be scanned.';
   text.append(' ', el('span', 'scan-next', next));
   strip.append(text);
   const busy = !!(state.scan.running || state.setup.needed);
@@ -5444,7 +5497,14 @@ function scanStrip(d, folder) {
   now.title = 'Reads only ' + it + '. ' + otherDrivesStay(d);
   now.addEventListener('click', () => scanDrive(d.root));
   strip.append(now);
-  if (!folder && d.scans === 'auto' && s.nextUtc) {
+  if (!folder && d.scans === 'auto' && firstWaits) {
+    // The first scan, of every drive, as the banner's Scan now starts it: no scheduled scan to bring forward yet.
+    const all = el('button', 'btn secondary', 'Scan every drive now');
+    all.disabled = busy;
+    all.title = 'Heiward\'s first scan: every drive, now.';
+    all.addEventListener('click', () => scanNow());
+    strip.append(all);
+  } else if (!folder && d.scans === 'auto' && s.nextUtc) {
     const time = new Date(s.nextUtc).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const bump = el('button', 'btn secondary', 'Scan now instead of at ' + time);
     bump.disabled = busy;
@@ -5525,7 +5585,8 @@ async function renderContent() {
     if (data.duplicates.copies) chips.append(el('span', 'chip accent', count(data.duplicates.copies, 'set of copies', 'sets of copies')));
     if (data.duplicates.reclaim) chips.append(el('span', 'chip good', bytes(data.duplicates.reclaim) + ' to free here'));
     if (data.duplicates.lookalikes) chips.append(el('span', 'chip quiet', count(data.duplicates.lookalikes, 'look-alike set', 'look-alike sets')));
-    if (isDrive && d.scan) chips.append(el('span', 'chip quiet', 'Last scan took ' + took(d.scan.listingSec + d.scan.analysisSec)));
+    // Only of a scan that read the drive whole: a folder's scan on it isn't one, and before any the drive was "never" scanned.
+    if (isDrive && d.scan && d.lastScanUtc) chips.append(el('span', 'chip quiet', 'Last scan took ' + took(d.scan.listingSec + d.scan.analysisSec)));
   }
   title.append(chips);
   head.append(title);
@@ -6099,6 +6160,7 @@ async function refresh(force) {
     state = s;
     showError('');
     renderHeader(s);
+    sayScanEnded(s);
     if (changed) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();

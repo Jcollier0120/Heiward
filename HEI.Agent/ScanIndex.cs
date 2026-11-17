@@ -45,9 +45,19 @@ namespace HEI.Agent {
 		/// <summary>
 		/// From a finished scan: the files it listed, each listed folder's listing time, and each drive's
 		/// analysis time (keyed by drive root). A folder root's listing time counts toward its drive.
+		/// <para>
+		/// A drive is timed only by a scan that read it whole (<paramref name="whole"/>): its page says "Last scan took …" of it.
+		/// One this scan didn't (a folder's scan on it, Scan this drive now on another, a drive scanned only when asked) keeps
+		/// the time of the last scan that did (<paramref name="previous"/>), with this scan's count of what's on it. One no scan
+		/// has read whole has no entry: a folder's scan that took a second didn't make "Last scan took under a second" of a
+		/// drive that was never scanned.
+		/// </para>
 		/// </summary>
+		/// <param name="whole">The roots this scan read whole (<see cref="ListingPlan.ReadWhole"/>); null: every root.</param>
+		/// <param name="previous">The index of the scan before (<see cref="Load"/>), whose drives' times stand where this one didn't read whole.</param>
 		public static ScanIndex Build(DateTime scannedAtUtc, IEnumerable<string> roots, IEnumerable<(string Path, long Size)> files,
-			IReadOnlyDictionary<string, TimeSpan> listing, IReadOnlyDictionary<string, TimeSpan> analysis) {
+			IReadOnlyDictionary<string, TimeSpan> listing, IReadOnlyDictionary<string, TimeSpan> analysis,
+			IReadOnlyCollection<string>? whole = null, ScanIndex? previous = null) {
 			var index = new ScanIndex { ScannedAtUtc = scannedAtUtc, Roots = roots.ToList() };
 			var perDrive = new Dictionary<string, (int Files, long Bytes)>(StringComparer.OrdinalIgnoreCase);
 			foreach ((string path, long size) in files) {
@@ -64,10 +74,17 @@ namespace HEI.Agent {
 			}
 			var driveRoots = index.Roots.Select(DriveOf).Concat(perDrive.Keys).Concat(analysis.Keys.Select(DriveOf))
 				.Distinct(StringComparer.OrdinalIgnoreCase);
+			var readWhole = whole?.Select(DriveOf).ToHashSet(StringComparer.OrdinalIgnoreCase);
 			foreach (string drive in driveRoots) {
+				perDrive.TryGetValue(drive, out var d);
+				if (readWhole != null && !readWhole.Contains(drive)) {
+					// Not read whole now: the last whole read's time stands, with what's on the drive now; never read whole, no entry.
+					if (previous?.Drives.GetValueOrDefault(drive) is { } before)
+						index.Drives[drive] = before with { Files = d.Files, Bytes = d.Bytes };
+					continue;
+				}
 				double listingSec = listing.Where(kv => DriveOf(kv.Key).Equals(drive, StringComparison.OrdinalIgnoreCase)).Sum(kv => kv.Value.TotalSeconds);
 				double analysisSec = analysis.Where(kv => DriveOf(kv.Key).Equals(drive, StringComparison.OrdinalIgnoreCase)).Sum(kv => kv.Value.TotalSeconds);
-				perDrive.TryGetValue(drive, out var d);
 				index.Drives[drive] = new DriveScan(Math.Round(listingSec, 2), Math.Round(analysisSec, 2), d.Files, d.Bytes);
 			}
 			return index;
