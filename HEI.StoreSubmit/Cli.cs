@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Globalization;
 using System.Text.Json.Nodes;
 
 namespace HEI.StoreSubmit;
@@ -52,6 +53,9 @@ public sealed class Actions(Func<string, string?> env, TextWriter output) {
 /// The Microsoft Store workflow's steps (.github/workflows/store.yml), with the Entra app's credentials in
 /// PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID and PARTNER_CENTER_CLIENT_SECRET, and the app in STORE_ID:
 /// <list type="bullet">
+/// <item><c>when [--at 2026-11-17T19:00:00Z]</c>: whether a scheduled run goes on now (or at that time): on Tuesdays
+/// from 14:00 and Fridays from 10:00 in New York (<see cref="Schedule"/>). Step output skip (true when it doesn't). It
+/// asks Partner Center nothing and needs no secrets.</item>
 /// <item><c>check --target 1.9.137</c>: whether that release goes to the Store now (<see cref="Rules"/>). Step outputs
 /// submit (true or false) and pending (the id of the submission in progress, empty when none), and a notice that says
 /// why. It fails only when Partner Center can't be asked.</item>
@@ -77,7 +81,7 @@ public static class Cli {
 		var gh = new Actions(env, output);
 		wait ??= Task.Delay;
 		if (args.Length == 0) {
-			gh.Error("Say what to do: check, finish, abandon or notes.");
+			gh.Error("Say what to do: when, check, finish, abandon or notes.");
 			return 2;
 		}
 		Func<PartnerCenter, Task<int>> step;
@@ -85,6 +89,15 @@ public static class Cli {
 			Dictionary<string, string> options = Options(args[1..]);
 			string before = options.GetValueOrDefault("before", "");
 			switch (args[0]) {
+				case "when": {
+					// A scheduled run's first question (Schedule): no Partner Center, no secrets. --at asks about another time.
+					DateTimeOffset at = !options.TryGetValue("at", out string? t) ? DateTimeOffset.UtcNow
+						: DateTimeOffset.TryParse(t, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out DateTimeOffset parsed) ? parsed
+						: throw new ArgumentException($"--at {t} isn't a time.");
+					output.WriteLine(Schedule.Says(at));
+					gh.Output("skip", Schedule.Goes(at) ? "false" : "true");
+					return 0;
+				}
 				case "check": {
 					Version target = Target(options);
 					step = store => Check(store, gh, target, ct);
@@ -113,7 +126,7 @@ public static class Cli {
 					return 0;
 				}
 				default:
-					throw new ArgumentException($"There's no \"{args[0]}\": check, finish, abandon or notes.");
+					throw new ArgumentException($"There's no \"{args[0]}\": when, check, finish, abandon or notes.");
 			}
 		}
 		catch (ArgumentException e) {

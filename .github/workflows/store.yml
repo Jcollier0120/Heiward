@@ -5,22 +5,24 @@ name: Microsoft Store
 # Every release of Heiward (a v1.x tag whose version is VersionPrefix in HEI.Agent/HEI.Agent.csproj) builds it, as an
 # early check that it builds, and keeps it as the run's artifact. A release sends nothing to the Store.
 #
-# Once a week, on Fridays at 10:00 New York time, the newest release goes to the Microsoft Store when the Store has an
-# older one. That needs the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID, PARTNER_CENTER_CLIENT_SECRET and
-# PARTNER_CENTER_SELLER_ID, which hold the Microsoft Entra app that reaches Partner Center's API, and a published
-# submission (the first one goes through Partner Center by hand). The repository variable STORE_SUBMIT set to "false"
-# switches the sending off. Without the secrets, nothing is sent, and the run passes with a notice.
+# Twice a week, on Tuesdays at 14:00 and on Fridays at 10:00 New York time, the newest release goes to the Microsoft
+# Store when the Store has an older one. That needs the secrets PARTNER_CENTER_TENANT_ID, PARTNER_CENTER_CLIENT_ID,
+# PARTNER_CENTER_CLIENT_SECRET and PARTNER_CENTER_SELLER_ID, which hold the Microsoft Entra app that reaches Partner
+# Center's API, and a published submission (the first one goes through Partner Center by hand). The repository variable
+# STORE_SUBMIT set to "false" switches the sending off. Without the secrets, nothing is sent, and the run passes with a
+# notice.
 #
 # Partner Center keeps one submission in progress per app. So the release goes only when nothing is in progress, or
 # when what is in progress is a submission whose commit failed (HEI.StoreSubmit, Rules). It never replaces one in
-# certification, nor a draft. Otherwise it waits for the next Friday, with a notice that says what holds it, and the
-# run passes. Its What's new covers every release since the Store's last one.
+# certification, nor a draft: a release Tuesday's run sent that's still in certification on Friday holds Friday's run.
+# Otherwise it waits for the next scheduled run, with a notice that says what holds it, and the run passes. Its What's
+# new covers every release since the Store's last one.
 #
-# GitHub's schedule is in UTC, and on a busy day GitHub starts a scheduled run late or not at all. So Friday's run has
-# three times (on: schedule, below), and each goes on only when it's Friday from 10:00 in New York (the check job's
-# first step). Two or three of them go each Friday, one at a time (concurrency, below). Each asks Partner Center
-# afresh: once one has sent the release, the later ones find it on its way to the Store and pass with nothing sent. If
-# one was dropped or failed, the next one does its work.
+# GitHub's schedule is in UTC, and on a busy day GitHub starts a scheduled run late or not at all. So Tuesday's run and
+# Friday's each have three times (on: schedule, below), and each goes on only when it's Tuesday from 14:00 or Friday
+# from 10:00 in New York (the check job's when step). Two or three of them go each Tuesday and each Friday, one at a
+# time (concurrency, below). Each asks Partner Center afresh: once one has sent the release, the later ones find it on
+# its way to the Store and pass with nothing sent. If one was dropped or failed, the next one does its work.
 #
 # Started by hand (Actions > Microsoft Store > Run workflow), it does the same at once for a release's tag (empty: the
 # newest), and it can leave the submission as a draft in Partner Center instead of sending it to certification. A dry
@@ -29,10 +31,14 @@ name: Microsoft Store
 on:
   release:
     types: [published]
-  # Fridays at 10:00 in New York, in UTC: 14:00 is 10:00 there in summer (9:00 in winter, so the check job's first step
-  # stops that one), 15:00 is 10:00 there in winter (11:00 in summer), and 17:00 is the backup, in case GitHub dropped
-  # the others. The check runs on Linux and builds nothing unless there's a release to send.
+  # Tuesdays at 14:00 in New York, in UTC: 18:00 is 14:00 there in summer (13:00 in winter, so the check job's when step
+  # stops that one), 19:00 is 14:00 there in winter (15:00 in summer), and 21:00 is the backup, in case GitHub dropped
+  # the others. Fridays at 10:00 in New York the same way: 14:00 UTC in summer, 15:00 in winter, and 17:00 the backup.
+  # The check runs on Linux and builds no bundle unless there's a release to send.
   schedule:
+    - cron: '0 18 * * 2'
+    - cron: '0 19 * * 2'
+    - cron: '0 21 * * 2'
     - cron: '0 14 * * 5'
     - cron: '0 15 * * 5'
     - cron: '0 17 * * 5'
@@ -50,9 +56,10 @@ on:
         type: boolean
         default: false
 
-# One run at a time among those that ask Partner Center (Friday's and those started by hand): Partner Center takes one
-# submission in progress per app, and every run asks it afresh. A release's run only builds, so it stays out of that
-# group: a group keeps one run waiting and cancels any other, and a busy day of releases mustn't cancel Friday's run.
+# One run at a time among those that ask Partner Center (the scheduled ones and those started by hand): Partner Center
+# takes one submission in progress per app, and every run asks it afresh. A release's run only builds, so it stays out
+# of that group: a group keeps one run waiting and cancels any other, and a busy day of releases mustn't cancel a
+# scheduled run.
 concurrency:
   group: ${{ github.event_name == 'release' && format('store-build-{0}', github.run_id) || 'store' }}
   cancel-in-progress: false
@@ -79,20 +86,21 @@ jobs:
       # A dry run never sends: the submit job doesn't start.
       submit: ${{ !inputs.dry_run && steps.ask.outputs.submit || 'false' }}
     steps:
-      # A scheduled run goes on only on Friday from 10:00 in New York: in winter the 14:00 UTC run is an hour early, and
-      # one GitHub started very late may be past Friday there. Releases and runs by hand go at once.
-      - name: Friday from 10:00 in New York
-        id: when
-        if: github.event_name == 'schedule'
-        run: |
-          read -r day hour < <(TZ=America/New_York date '+%u %H')
-          if [[ "$day" != 5 ]] || (( 10#$hour < 10 )); then
-            echo "It's $(TZ=America/New_York date '+%A %H:%M') in New York. The Store run goes on Fridays from 10:00 there: nothing to do now."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          fi
       # The workflow's own commit: HEI.StoreSubmit, and the changelog.
       - uses: actions/checkout@v5
-        if: steps.when.outputs.skip != 'true'
+      # HEI.StoreSubmit's, for every run but a release's, which asks Partner Center nothing.
+      - name: Setup .NET
+        if: github.event_name != 'release'
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      # A scheduled run goes on only on Tuesday from 14:00 or Friday from 10:00 in New York (HEI.StoreSubmit, Schedule):
+      # in winter the 18:00 and 14:00 UTC runs are an hour early, and one GitHub started very late may be the next day
+      # there. It asks Partner Center nothing. Releases and runs by hand go at once.
+      - name: Tuesday from 14:00 or Friday from 10:00 in New York
+        id: when
+        if: github.event_name == 'schedule'
+        run: dotnet run --project HEI.StoreSubmit -c Release -- when
       - name: Which release
         id: which
         if: steps.when.outputs.skip != 'true'
@@ -130,9 +138,9 @@ jobs:
           PARTNER_CENTER_CLIENT_SECRET: ${{ secrets.PARTNER_CENTER_CLIENT_SECRET }}
           PARTNER_CENTER_SELLER_ID: ${{ secrets.PARTNER_CENTER_SELLER_ID }}
         run: |
-          # A release only builds: the Store gets the newest release once a week.
+          # A release only builds: the Store gets the newest release twice a week.
           if [[ "$EVENT" == "release" ]]; then
-            echo "::notice title=Microsoft Store::Heiward $VERSION is built here as a check and kept as this run's artifact. Nothing goes to the Microsoft Store now: on Fridays at 10:00 New York time, the newest release goes there."
+            echo "::notice title=Microsoft Store::Heiward $VERSION is built here as a check and kept as this run's artifact. Nothing goes to the Microsoft Store now: on Tuesdays at 14:00 and Fridays at 10:00 New York time, the newest release goes there."
             exit 0
           fi
           if [[ "${STORE_SUBMIT,,}" == "false" ]]; then
@@ -151,11 +159,6 @@ jobs:
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Setup .NET
-        if: steps.setup.outputs.ready == 'true'
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '10.0.x'
       - name: Ask Partner Center
         id: ask
         if: steps.setup.outputs.ready == 'true'

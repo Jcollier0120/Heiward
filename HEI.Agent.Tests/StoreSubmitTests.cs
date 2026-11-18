@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Globalization;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
@@ -100,7 +101,7 @@ public sealed class StoreSubmitTests : IDisposable {
 		Assert.Equal(Verdict.Hold, d.Verdict);
 		Assert.False(d.Warn);
 		Assert.StartsWith("Heiward 1.9.137 waits: Heiward 1.9.135 is " + words + " in the Microsoft Store.", d.Message);
-		Assert.Contains("the next Friday run sends the newest release", d.Message);
+		Assert.Contains("the next scheduled run (Tuesday afternoon or Friday morning) sends the newest release", d.Message);
 	}
 
 	[Fact]
@@ -398,6 +399,7 @@ public sealed class StoreSubmitTests : IDisposable {
 		NeverShowsTheCredentials(ran);
 	}
 
+	// One submission at a time: a release Tuesday's run sent, still in certification on Friday, holds Friday's run.
 	[Fact]
 	public async Task Check_InCertification_SendsNothing_AndPasses() {
 		var pc = new FakePartnerCenter();
@@ -406,18 +408,19 @@ public sealed class StoreSubmitTests : IDisposable {
 		Assert.Equal(0, ran.Code);
 		Assert.Equal("false", ran.Outputs["submit"]);
 		Assert.Equal(FakePartnerCenter.PendingId, ran.Outputs["pending"]);
-		Assert.Contains("::notice title=Microsoft Store::Heiward 1.9.137 waits: Heiward 1.9.135 is in certification", ran.Log);
+		Assert.Contains("::notice title=Microsoft Store::Heiward 1.9.137 waits: Heiward 1.9.135 is in certification in the Microsoft Store. " +
+			"Once it's published, the next scheduled run (Tuesday afternoon or Friday morning) sends the newest release.", ran.Log);
 		Assert.DoesNotContain(pc.Calls, c => c.Method != "GET" && c.Method != "POST");
 	}
 
-	// Friday's later runs (store.yml's 15:00 and 17:00 UTC) come after one that sent the release: they find it on its
-	// way, or in the Store, and pass, sending nothing.
+	// A scheduled day's later runs (store.yml's 19:00 and 21:00 UTC on Tuesdays, 15:00 and 17:00 UTC on Fridays) come
+	// after one that sent the release: they find it on its way, or in the Store, and pass, sending nothing.
 	[Theory]
 	[InlineData("CommitStarted", "Heiward 1.9.137 is being committed in the Microsoft Store already: nothing to send.")]
 	[InlineData("PreProcessing", "Heiward 1.9.137 is being checked in the Microsoft Store already: nothing to send.")]
 	[InlineData("Certification", "Heiward 1.9.137 is in certification in the Microsoft Store already: nothing to send.")]
 	[InlineData("Published", "Heiward 1.9.137 is in the Microsoft Store already: nothing to send.")]
-	public async Task Check_AFridayRunAfterOneThatSentIt_SendsNothing_AndPasses(string status, string notice) {
+	public async Task Check_ALaterRunAfterOneThatSentIt_SendsNothing_AndPasses(string status, string notice) {
 		var pc = new FakePartnerCenter();
 		if (status == "Published") {
 			pc.NoPending();
@@ -613,27 +616,118 @@ public sealed class StoreSubmitTests : IDisposable {
 		Assert.DoesNotContain(pc.Calls, c => c.Method == "DELETE");
 	}
 
-	// ---- The workflow ----
+	// ---- When a scheduled run goes on ----
+
+	// Tuesdays from 14:00 and Fridays from 10:00 in New York: in summer (EDT, UTC-4), in winter (EST, UTC-5), and on
+	// both sides of the clocks' changes (8 March and 1 November 2026).
+	[Theory]
+	// Summer: Tuesday 14 and Friday 17 July 2026.
+	[InlineData("2026-07-14T17:59:00Z", false, "Tuesday 13:59")]
+	[InlineData("2026-07-14T18:00:00Z", true, "Tuesday 14:00")]
+	[InlineData("2026-07-17T13:59:00Z", false, "Friday 09:59")]
+	[InlineData("2026-07-17T14:00:00Z", true, "Friday 10:00")]
+	// Winter: Tuesday 17 and Friday 20 November 2026.
+	[InlineData("2026-11-17T18:59:00Z", false, "Tuesday 13:59")]
+	[InlineData("2026-11-17T19:00:00Z", true, "Tuesday 14:00")]
+	[InlineData("2026-11-20T14:59:00Z", false, "Friday 09:59")]
+	[InlineData("2026-11-20T15:00:00Z", true, "Friday 10:00")]
+	// The last Friday of winter time and the first Tuesday of summer time; then the last Friday of summer time and the
+	// first Tuesday of winter time.
+	[InlineData("2026-03-06T14:00:00Z", false, "Friday 09:00")]
+	[InlineData("2026-03-06T15:00:00Z", true, "Friday 10:00")]
+	[InlineData("2026-03-10T18:00:00Z", true, "Tuesday 14:00")]
+	[InlineData("2026-10-30T14:00:00Z", true, "Friday 10:00")]
+	[InlineData("2026-11-03T18:00:00Z", false, "Tuesday 13:00")]
+	[InlineData("2026-11-03T19:00:00Z", true, "Tuesday 14:00")]
+	// A run GitHub started late goes on until midnight in New York, and not after.
+	[InlineData("2026-11-18T04:59:00Z", true, "Tuesday 23:59")]
+	[InlineData("2026-11-18T05:00:00Z", false, "Wednesday 00:00")]
+	[InlineData("2026-11-21T05:30:00Z", false, "Saturday 00:30")]
+	// The other days, at the runs' hours.
+	[InlineData("2026-11-16T19:00:00Z", false, "Monday 14:00")]
+	[InlineData("2026-11-18T19:00:00Z", false, "Wednesday 14:00")]
+	[InlineData("2026-11-19T15:00:00Z", false, "Thursday 10:00")]
+	[InlineData("2026-11-21T15:00:00Z", false, "Saturday 10:00")]
+	[InlineData("2026-11-22T19:00:00Z", false, "Sunday 14:00")]
+	// Each day has its own hour: Friday's isn't Tuesday's.
+	[InlineData("2026-11-17T15:00:00Z", false, "Tuesday 10:00")]
+	[InlineData("2026-11-20T19:00:00Z", true, "Friday 14:00")]
+	public void AScheduledRun_GoesOnTuesdaysFrom14AndFridaysFrom10_NewYorkTime(string utc, bool goes, string there) {
+		var at = DateTimeOffset.Parse(utc, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal);
+		Assert.Equal(there, Schedule.InNewYork(at).ToString("dddd HH:mm", CultureInfo.InvariantCulture));
+		Assert.Equal(goes, Schedule.Goes(at));
+	}
+
+	// Each of store.yml's times in a summer week and a winter week: all go on in summer; in winter, the summer hour
+	// (an hour early there) doesn't, and the other two do. So each Tuesday and each Friday has a run from its hour on.
+	[Fact]
+	public void TheWorkflowsTimes_GoOnFromTheirHour_InSummerAndWinter() {
+		var crons = Regex.Matches(Workflow(), @"^    - cron: '0 (\d+) \* \* (\d)'$", RegexOptions.Multiline)
+			.Select(m => ((DayOfWeek)int.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture), int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture)))
+			.ToList();
+		var expected = new (DayOfWeek Day, int Hour, bool Summer, bool Winter)[] {
+			(DayOfWeek.Tuesday, 18, true, false), (DayOfWeek.Tuesday, 19, true, true), (DayOfWeek.Tuesday, 21, true, true),
+			(DayOfWeek.Friday, 14, true, false), (DayOfWeek.Friday, 15, true, true), (DayOfWeek.Friday, 17, true, true),
+		};
+		Assert.Equal(expected.Select(e => (e.Day, e.Hour)), crons);
+		// The weeks of Monday 13 July and Monday 16 November 2026.
+		foreach (var (day, hour, summer, winter) in expected) {
+			Assert.Equal(summer, Schedule.Goes(new DateTimeOffset(2026, 7, 13 + (int)day - 1, hour, 0, 0, TimeSpan.Zero)));
+			Assert.Equal(winter, Schedule.Goes(new DateTimeOffset(2026, 11, 16 + (int)day - 1, hour, 0, 0, TimeSpan.Zero)));
+		}
+	}
+
+	// The check job's when step: skip, and a line in the log that says why, without Partner Center or its secrets.
+	[Theory]
+	[InlineData("2026-11-17T19:00:00Z", "false", "It's Tuesday 14:00 in New York: the Store run goes on.")]
+	[InlineData("2026-07-17T14:00:00Z", "false", "It's Friday 10:00 in New York: the Store run goes on.")]
+	[InlineData("2026-11-17T18:00:00Z", "true", "It's Tuesday 13:00 in New York. The Store run goes on Tuesdays from 14:00 and Fridays from 10:00 there: nothing to do now.")]
+	[InlineData("2026-11-20T14:00:00Z", "true", "It's Friday 09:00 in New York. The Store run goes on Tuesdays from 14:00 and Fridays from 10:00 there: nothing to do now.")]
+	[InlineData("2026-11-18T19:00:00Z", "true", "It's Wednesday 14:00 in New York. The Store run goes on Tuesdays from 14:00 and Fridays from 10:00 there: nothing to do now.")]
+	public async Task When_SaysWhetherAScheduledRunGoesOn_AsksPartnerCenterNothing(string at, string skip, string says) {
+		var pc = new FakePartnerCenter();
+		Ran ran = await Run(pc, ["when", "--at", at], new() { [Credentials.TenantVar] = null, [Credentials.ClientVar] = null, [Credentials.SecretVar] = null });
+		Assert.Equal(0, ran.Code);
+		Assert.Equal(skip, ran.Outputs["skip"]);
+		Assert.Contains(says + "\n", ran.Log.ReplaceLineEndings("\n"));
+		Assert.DoesNotContain("::", ran.Log);
+		Assert.Empty(pc.Calls);
+	}
 
 	[Fact]
-	public void TheWorkflow_SendsOnFridaysAt10NewYorkTime_OneRunAtATime_AndKeepsTheSecretsInTheEnvironment() {
-		string yml = File.ReadAllText(Path.Combine(Repo(), ".github", "workflows", "store.yml")).ReplaceLineEndings("\n");
-		// Plain UTC times (with GitHub's timezone key, no scheduled run ever started): 10:00 in New York in summer (14:00)
-		// and in winter (15:00), and a backup in case GitHub drops those on a busy day.
-		Assert.Matches(new Regex(@"^  schedule:\n    - cron: '0 14 \* \* 5'\n    - cron: '0 15 \* \* 5'\n    - cron: '0 17 \* \* 5'\n  workflow_dispatch:", RegexOptions.Multiline), yml);
+	public async Task When_ATimeThatIsntOne_FailsTheStep() {
+		var pc = new FakePartnerCenter();
+		Ran ran = await Run(pc, ["when", "--at", "Tuesday afternoon"]);
+		Assert.Equal(2, ran.Code);
+		Assert.Contains("::error title=Microsoft Store::--at Tuesday afternoon isn't a time.", ran.Log);
+		Assert.False(ran.Outputs.ContainsKey("skip"));
+		Assert.Empty(pc.Calls);
+	}
+
+	// ---- The workflow ----
+
+	static string Workflow() => File.ReadAllText(Path.Combine(Repo(), ".github", "workflows", "store.yml")).ReplaceLineEndings("\n");
+
+	[Fact]
+	public void TheWorkflow_SendsOnTuesdaysAndFridaysNewYorkTime_OneRunAtATime_AndKeepsTheSecretsInTheEnvironment() {
+		string yml = Workflow();
+		// Plain UTC times (with GitHub's timezone key, no scheduled run ever started): Tuesday's 14:00 in New York in
+		// summer (18:00) and in winter (19:00), and a backup in case GitHub drops those on a busy day; Friday's 10:00 the
+		// same way.
+		Assert.Matches(new Regex(@"^  schedule:\n    - cron: '0 18 \* \* 2'\n    - cron: '0 19 \* \* 2'\n    - cron: '0 21 \* \* 2'\n    - cron: '0 14 \* \* 5'\n    - cron: '0 15 \* \* 5'\n    - cron: '0 17 \* \* 5'\n  workflow_dispatch:", RegexOptions.Multiline), yml);
 		Assert.DoesNotContain("timezone:", yml);
-		// The check job's first step lets a scheduled run go on only on Friday from 10:00 in New York, and nothing that
-		// leads to Partner Center goes when it says no.
+		// The check job asks HEI.StoreSubmit first, once it has the checkout and .NET that needs, whether a scheduled run
+		// goes on (Schedule), and nothing that leads to Partner Center goes when it says no.
 		int steps = yml.IndexOf("  check:\n", StringComparison.Ordinal);
 		steps = yml.IndexOf("    steps:\n", steps, StringComparison.Ordinal) + "    steps:\n".Length;
-		Assert.Matches(new Regex(@"^(      #.*\n)*      - name: Friday from 10:00 in New York\n        id: when\n        if: github\.event_name == 'schedule'\n"), yml[steps..]);
-		Assert.Contains("TZ=America/New_York date '+%u %H'", yml);
-		Assert.Contains("if [[ \"$day\" != 5 ]] || (( 10#$hour < 10 )); then", yml);
+		Assert.Matches(new Regex(@"^(      #.*\n)*      - uses: actions/checkout@v5\n(      #.*\n)*      - name: Setup \.NET\n        if: github\.event_name != 'release'\n        uses: actions/setup-dotnet@v5\n        with:\n          dotnet-version: '10\.0\.x'\n" +
+			@"(      #.*\n)*      - name: Tuesday from 14:00 or Friday from 10:00 in New York\n        id: when\n        if: github\.event_name == 'schedule'\n        run: dotnet run --project HEI\.StoreSubmit -c Release -- when\n"), yml[steps..]);
+		Assert.DoesNotContain("TZ=America/New_York", yml);
 		Assert.Contains("      - name: Which release\n        id: which\n        if: steps.when.outputs.skip != 'true'\n", yml);
 		Assert.Contains("      - name: A release of Heiward\n        id: heiward\n        if: steps.when.outputs.skip != 'true'\n", yml);
 		Assert.Contains("        id: setup\n        if: steps.heiward.outcome == 'success' && steps.heiward.outputs.skip != 'true'\n", yml);
-		// Friday's run and runs by hand queue in one group; a release's run, which only builds, is kept out of it, so a
-		// release can't cancel Friday's run waiting there.
+		// The scheduled runs and runs by hand queue in one group; a release's run, which only builds, is kept out of it, so
+		// a release can't cancel a scheduled run waiting there.
 		Assert.Matches(new Regex(@"^concurrency:\n  group: \$\{\{ github\.event_name == 'release' && format\('store-build-\{0\}', github\.run_id\) \|\| 'store' \}\}\n  cancel-in-progress: false$", RegexOptions.Multiline), yml);
 		// A release sends nothing: its run stops before Partner Center, and the submit job won't run for one anyway.
 		int release = yml.IndexOf("if [[ \"$EVENT\" == \"release\" ]]; then", StringComparison.Ordinal);
