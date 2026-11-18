@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.10.20
+
+**Small fixes and improvements.**
+
+### What changed
+
+- Small fixes and improvements.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.10.19
 
 **Brings 2 changes: Scan now on a folder or a drive scans now, and says what it found; More Steam games show their cover.**
