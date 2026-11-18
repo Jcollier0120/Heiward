@@ -43,6 +43,8 @@ sealed class FakeGamePC : IDisposable {
 	public readonly FakeRegistry Registry = new();
 	public readonly List<RunningProgram> Running = new();
 	public readonly DateTime Now = DateTime.UtcNow;
+	/// <summary>What Call of Duty's security check looks at, as a test says: by default a PC that meets all of it.</summary>
+	public Func<AttestationSignals> Attestation = () => CodAttestationTests.AllMet;
 
 	public string P(params string[] parts) => Path.Combine([Root, .. parts]);
 	public string Steam => P("PF86", "Steam");
@@ -52,7 +54,7 @@ sealed class FakeGamePC : IDisposable {
 	public GamePlaces Places => new() {
 		LocalAppData = P("Local"), LocalLow = P("LocalLow"), ProgramData = P("ProgramData"), ProgramFiles = P("PF"), ProgramFilesX86 = P("PF86"),
 		Temp = P("Temp"), Profile = P("Profile"), Documents = P("Profile", "Documents"), Drives = [Drive],
-		Registry = Registry, Running = () => Running,
+		Registry = Registry, Running = () => Running, Attestation = () => Attestation(),
 	};
 
 	/// <summary>A file of <paramref name="bytes"/> (2 MB unless said: over the 1 MB a row needs).</summary>

@@ -33,8 +33,11 @@ namespace HEI.Agent {
 	/// <param name="CoverShape">The cover's shape: "portrait" (2:3), "wide" (Steam's header banner) or "square" (an Xbox game's logo); null without one.</param>
 	/// <param name="Uninstall">How its page's Uninstall opens its launcher's uninstaller, as the check found it (<see cref="GameUninstall"/>'s
 	/// ways: steam, entry, settings); null when it can't from here, and the button is greyed.</param>
+	/// <param name="Warning">For a Call of Duty title that runs the game's security check, what this PC doesn't meet of it and what
+	/// couldn't be checked (<see cref="CodAttestation"/>), shown on the game's page; null for every other game, and when all is met.</param>
 	sealed record GameInstall(string Id, string Launcher, string AppId, string Name, string Folder, string? Library, long Bytes,
-		DateTime? LastPlayedUtc, DateTime? UpdatedUtc, string? Cover = null, string? CoverShape = null, string? Uninstall = null) {
+		DateTime? LastPlayedUtc, DateTime? UpdatedUtc, string? Cover = null, string? CoverShape = null, string? Uninstall = null,
+		GameWarning? Warning = null) {
 		/// <summary>How to move it to another drive or free its space, with its launcher (for the page's game page).</summary>
 		public string Advice => GameLaunchers.MoveAdvice(Launcher);
 
@@ -157,6 +160,8 @@ namespace HEI.Agent {
 		public required IReadOnlyList<string> Drives { get; init; }
 		public required IGameRegistry Registry { get; init; }
 		public required Func<IReadOnlyList<RunningProgram>> Running { get; init; }
+		/// <summary>What Call of Duty's security check looks at, read only when such a game is installed (<see cref="CodAttestation.Mark"/>).</summary>
+		public Func<AttestationSignals> Attestation { get; init; } = PlatformReads.Read;
 
 		public static GamePlaces Current(AgentConfig cfg) {
 			string profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
@@ -640,6 +645,8 @@ namespace HEI.Agent {
 			games = GameCovers.Add(games, found.SteamRoot);
 			// How each game's page can open its launcher's uninstaller, from Windows' uninstall entries (read again when it's pressed).
 			games = GameUninstall.Mark(games, env.Registry);
+			// A Call of Duty title that runs the game's security check: what this PC doesn't meet of it, on its page. Only read.
+			games = CodAttestation.Mark(games, env.Attestation);
 			var report = new GameReport { ScannedAtUtc = now, Build = AppBuild.Current, Games = games, Launchers = found.Launchers };
 
 			report.Categories.Add(new GameCategory(Leftovers, "Leftovers of uninstalled games",

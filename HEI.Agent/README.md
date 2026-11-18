@@ -252,6 +252,16 @@ Only Steam records when a game was last played.
 
 The last two are only pointed to: Heiward never moves or deletes a game itself. Each game's page says how its launcher does it (Steam: right-click the game › Properties › Installed Files › **Move install folder**; the Xbox app: **Manage › Files › Move**).
 
+**Call of Duty's security check.** Black Ops 7, Warzone and Modern Warfare 4 check the PC's security setup before online play, and a PC that doesn't pass gets "Failed Attestation Status" and loses some or all online modes. When the games check finds one of them installed (or the Call of Duty launcher that holds them, "Call of Duty" or "Call of Duty HQ"; older titles don't check), that game's page and its tile in the Overview say which of the check's requirements this PC doesn't meet, and what to do about each:
+- Windows 10 version 22H2 (build 19045) or later, or Windows 11: Windows' build number;
+- a TPM 2.0, turned on: Windows' TPM service (`Tbsi_GetDeviceInfo`); none found means it's missing or off in the firmware settings (fTPM on AMD, PTT on Intel);
+- the TPM's firmware: its maker and Manufacturer Version as tpm.msc shows them (`TPM2_GetCapability` through the TPM service). AMD `3.*.0.*` doesn't pass and Intel `302.12.*.*` or `303.12.*.*` may need an update, as Activision's support article says; both need a BIOS update from the board's maker;
+- the Windows disk is GPT, not MBR: the Windows volume's partition style (`IOCTL_DISK_GET_PARTITION_INFO_EX`, which opens nothing for reading). Converting with MBR2GPT can't be undone, so the page says to back up first; Heiward never converts a disk;
+- Windows starts in UEFI mode, not Legacy (CSM): `GetFirmwareType`;
+- Secure Boot is on: `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State`, `UEFISecureBootEnabled`.
+
+Each is read without administrator rights (Get-Tpm, Win32_Tpm and Confirm-SecureBootUEFI need them), only when such a game is installed, and nothing is written. One that can't be read is shown as not checked, with how to look for yourself, never taken as met. With every one checked and met, nothing is shown. `hei games` lists the same.
+
 **Uninstall.** Each game's page has an **Uninstall** button beside its cover. It opens the uninstaller of the launcher the game came from, which asks before it removes anything; Heiward itself deletes nothing, and the next games check shows whether the game is gone. The page sends only the game's id: Heiward looks the game up in its last check and reads Windows' uninstall entries again (HKLM's 64-bit and 32-bit views, and HKCU), never running anything the request names.
 - **Steam:** with the game's entry `Steam App <app id>` there, it opens `steam://uninstall/<app id>`, and Steam asks in its own window.
 - **GOG GALAXY, the EA app, Ubisoft Connect, Battle.net:** the game's own entry (`<id>_is1`, `Uplay Install <id>`, the Blizzard entry it was found by, else the entry whose `InstallLocation` is the game's folder), whose `UninstallString` runs exactly as registered, never its `QuietUninstallString` and never with a flag added. One that would run without asking (`/S`, `/SILENT`, `/quiet`, `/qn`…), or that doesn't name its program by its full path, isn't used. It opens only from Heiward's own dialog, which shows the game, its size, launcher and folder, with **Cancel** first.
