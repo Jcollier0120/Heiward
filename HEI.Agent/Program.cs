@@ -453,6 +453,12 @@ gamesCmd.SetAction(r => {
 		$"in {(report.Launchers.Count == 0 ? "no launcher" : string.Join(", ", report.Launchers.Select(GameLaunchers.Name)))}.");
 	foreach (GameInstall g in report.Games.Take(10))
 		Console.WriteLine($"  {Format.Bytes(g.Bytes),9}  {g.Name} ({GameLaunchers.Name(g.Launcher)}){(g.LastPlayedUtc is { } p ? $", last played {p.ToLocalTime():d}" : "")}");
+	// A Call of Duty title's security check: what this PC doesn't meet, or what couldn't be checked, and what to do.
+	foreach (GameInstall g in report.Games.Where(g => g.Warning != null)) {
+		Console.WriteLine($"{g.Name}: {g.Warning!.Title}.");
+		foreach (GameWarningLine l in g.Warning.Lines)
+			Console.WriteLine($"  {(l.State == CodAttestation.Unmet ? "not met" : l.State == CodAttestation.Advised ? "update advised" : "not checked"),-14}  {l.Name}: {l.Fix}");
+	}
 	foreach (GameCategory c in report.Categories) {
 		Console.WriteLine($"{c.Title}: {Format.Bytes(c.Items.Sum(i => i.Bytes))}, {Format.Bytes(c.Items.Where(i => i.Suggested).Sum(i => i.Bytes))} checked");
 		foreach (GameItem i in c.Items.Take(8))

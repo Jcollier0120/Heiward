@@ -3843,6 +3843,13 @@ const GAME_META = {
   twice: { short: 'Installed twice', icon: 'stack' },
   idle: { short: 'Not played in months', icon: 'clock' },
 };
+// A game's warning lines (GameWarningLine.State): a requirement not met, an update its makers say may be needed, or one Heiward
+// couldn't read, which is never taken as met.
+const WARNING_TAGS = {
+  unmet: { cls: 'tag unmet', text: 'Not met' },
+  advised: { cls: 'tag advised', text: 'Update advised' },
+  unchecked: { cls: 'tag', text: 'Not checked' },
+};
 const LAUNCHERS = {
   steam: 'Steam', epic: 'Epic Games', gog: 'GOG GALAXY', ea: 'EA app', ubisoft: 'Ubisoft Connect', battlenet: 'Battle.net', xbox: 'Xbox',
 };
@@ -4137,6 +4144,13 @@ function gameTile(game) {
   tile.title = game.name;
   tile.append(gameArt(game, game.name), el('span', 'game-tile-name', game.name),
     el('span', 'game-tile-meta muted small', bytes(game.bytes) + (game.lastPlayedUtc ? ' · ' + playedText(game.lastPlayedUtc) : '')));
+  // A requirement of its security check this PC doesn't meet: said under it, the rest on its page.
+  const warn = gameTileWarning(game.warning);
+  if (warn) {
+    const line = el('span', 'game-tile-warn small', warn);
+    line.title = game.warning.title;
+    tile.append(line);
+  }
   tile.addEventListener('click', () => { location.hash = '#/games/g/' + encodeURIComponent(game.id); });
   tile.addEventListener('contextmenu', (e) => openPathMenu(e, { name: game.name, path: game.folder, folder: true }));
   return tile;
@@ -4318,6 +4332,7 @@ function gamePage(game) {
   if (gameUninstallAnswer && gameUninstallAnswer[0] === game.id)
     actions.append(el('div', 'result small game-uninstall-answer ' + (gameUninstallAnswer[1] ? 'ok' : 'bad'), gameUninstallAnswer[2]));
   const out = [devHeader(glyph, game.name, intro, chips, actions)];
+  if (game.warning) out.push(gameWarningSection(game.warning));
   const mine = gameItems().filter((i) => i.game === game.id || (i.kind === 'twice' && (i.paths || []).some((p) => p.toLowerCase() === game.folder.toLowerCase())));
   for (const c of gameReport.categories) {
     const here = mine.filter((i) => c.items.includes(i));
@@ -4325,6 +4340,43 @@ function gamePage(game) {
   }
   if (!mine.length) out.push(el('p', 'muted small', 'Nothing else of it to look at: no shader cache, crash dumps or second copy found.'));
   return out;
+}
+
+/** The line under a game's tile when its warning has a requirement not met, or an update advised; null otherwise. */
+function gameTileWarning(w) {
+  const lines = (w && w.lines) || [];
+  if (lines.some((l) => l.state === 'unmet')) return 'Fails its security check';
+  if (lines.some((l) => l.state === 'advised')) return 'TPM update advised';
+  return null;
+}
+
+/**
+ * A game's warning (GameWarning), first on its page: for a Call of Duty title, each security requirement this PC doesn't meet,
+ * or that Heiward couldn't read, with what to do or how to look. Heiward only reads them: nothing here changes the PC.
+ */
+function gameWarningSection(w) {
+  const box = el('section', 'dev-section game-warning');
+  const head = el('div', 'dev-section-head');
+  const glyph = el('span', 'cat-icon');
+  glyph.append(icon('alert'));
+  head.append(glyph);
+  const title = el('div', 'dev-section-title');
+  title.append(el('span', null, w.title));
+  head.append(title);
+  box.append(head, el('p', 'muted small', w.intro));
+  const list = el('div', 'dev-list');
+  for (const line of w.lines) {
+    const tag = WARNING_TAGS[line.state] || WARNING_TAGS.unchecked;
+    const row = el('div', 'dev-item game-item info');
+    const main = el('div', 'dev-item-main');
+    const name = el('div', 'dev-item-name');
+    name.append(el('span', null, line.name), el('span', tag.cls, tag.text));
+    main.append(name, el('div', 'muted small', line.detail + '.'), el('div', 'small game-removing', line.fix));
+    row.append(main);
+    list.append(row);
+  }
+  box.append(list, el('p', 'muted small', w.outro));
+  return box;
 }
 
 /**
