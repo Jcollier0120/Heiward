@@ -477,15 +477,19 @@ namespace HEI.Agent {
 		/// <param name="known">The files the scan listed: a resting drive's folders are known from it, not listed again.</param>
 		/// <param name="progress">How many of the sets' files are sorted, of how many, after each of the scan's sets.</param>
 		/// <param name="ct">Stop scan: a set of thousands takes a while, so it's heard between rounds.</param>
+		/// <param name="datesKnown">Photos already known to have an EXIF capture date or not (a scan of another PC takes it while
+		/// a photo's bytes are here): not opened again for it.</param>
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null,
-			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null, Action<int, int>? progress = null, CancellationToken ct = default) {
+			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null, Action<int, int>? progress = null, CancellationToken ct = default,
+			IReadOnlyDictionary<string, bool>? datesKnown = null) {
 			Func<string, bool>? before = readable;
 			ILookup<string, string>? knownBefore = knownByFolder;
 			Dictionary<string, bool>? datesBefore = datesTaken;
 			readable = mayRead;
 			knownByFolder = mayRead == null ? null : (known ?? Array.Empty<string>()).Where(p => !mayRead(p))
 				.ToLookup(p => Path.GetDirectoryName(p) ?? "", StringComparer.OrdinalIgnoreCase);
-			datesTaken = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			datesTaken = datesKnown == null ? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+				: new Dictionary<string, bool>(datesKnown, StringComparer.OrdinalIgnoreCase);
 			try { return BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes(), progress, ct); }
 			finally { readable = before; knownByFolder = knownBefore; datesTaken = datesBefore; }
 		}
@@ -1202,6 +1206,14 @@ namespace HEI.Agent {
 			public bool Same(string a, string b) {
 				string? ha = Get(a), hb = Get(b);
 				return ha != null && ha == hb;
+			}
+
+			/// <summary>
+			/// A file's hash taken by its reader while it had the bytes (a scan of another PC, which doesn't keep them): used
+			/// as one kept from an earlier scan is, while the file stays that size and time.
+			/// </summary>
+			public void Keep(string path, long size, DateTime modifiedUtc, string hash) {
+				lock (earlier) earlier[path] = new Stored(size, modifiedUtc, hash);
 			}
 
 			public string? Get(string path) {

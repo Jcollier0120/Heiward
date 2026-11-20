@@ -6279,6 +6279,8 @@ async function refresh(force) {
     showError('');
     renderHeader(s);
     sayScanEnded(s);
+    // Another of your PCs and this one: who can scan it, and the scan's progress, as they come (its card only).
+    renderRemoteCard(s);
     if (changed) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
@@ -6287,6 +6289,7 @@ async function refresh(force) {
     // alone in between (pollProgress); the developer and games checks draw from the whole state.
     if (s.setup.running || s.scan.starting) schedule(refresh, 1000);
     else if (s.dev.running || s.games.running) schedule(refresh, 2000);
+    else if (s.remote && s.remote.asked && !s.remote.asked.finished) schedule(refresh, 2000);
     else if (s.scan.running && !s.setup.needed) schedule(pollProgress, PROGRESS_EVERY);
     else schedule(refresh, 15000);
   } catch (e) {

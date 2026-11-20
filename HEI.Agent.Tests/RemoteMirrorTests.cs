@@ -115,6 +115,29 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 	}
 
 	[Fact]
+	public void WhatSortingTheSetsReadsOfAPhoto_IsTakenWhileItsHere_SoItIsntFetchedAgain() {
+		string a = Make("a.jpg", 300_000);
+		var (mirror, bytes) = Mirror(paths: [a]);
+		using (mirror) {
+			string stand = RemotePath.Mirrored(mirror.Folder, a);
+			var hashes = new ReportBuilder.ContentHashes();
+			mirror.WhileHeld = path => {
+				var file = new FileInfo(path);
+				hashes.Keep(path, file.Length, file.LastWriteTimeUtc, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+			};
+			var entry = new Core.FileEntry(stand);
+			Assert.True(mirror.Before(entry));
+			mirror.After(entry);
+			Assert.Equal(0, mirror.Held); // emptied, as before
+
+			// The set's check for plain copies: the photo's own hash, from the stand-in that holds none of it now.
+			Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(a))), hashes.Get(stand));
+			Assert.Equal(300_000, bytes.Bytes);
+			Assert.Equal(1, bytes.Asks);
+		}
+	}
+
+	[Fact]
 	public void AVideo_IsReadThroughTheStream_OnlyThePartsAsked_NothingWrittenHere() {
 		string v = Make("v.mp4", 6_000_000, 3);
 		byte[] original = File.ReadAllBytes(v);

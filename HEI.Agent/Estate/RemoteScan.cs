@@ -14,7 +14,9 @@
 // */
 //
 
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text.Json;
 using HEI.Core;
 using HEI.Core.AI;
@@ -103,14 +105,27 @@ namespace HEI.Agent.Estate {
 			int done = 0, total = 0;
 			string? waiting = null;
 			EstateBytes? bytes = null;
+			object gate = new();
+			bool ended = false;
+			string? last = null;
+			// Read by the page here every 2 s (RemoteJob), and sent to the other PC for its page: written as it changes, and
+			// never again once it's finished.
 			void Write(bool finished = false, int? code = null, string? error = null) {
-				try {
-					AgentPaths.WriteAtomic(RemoteStatus.FilePath(home), JsonSerializer.Serialize(
-						new RemoteStatus(Environment.ProcessId, started, stage, done, total, bytes?.Fetched ?? 0, waiting, finished, code, error), AgentConfig.Json));
+				lock (gate) {
+					if (ended) return;
+					ended = finished;
+					string json = JsonSerializer.Serialize(
+						new RemoteStatus(Environment.ProcessId, started, stage, done, total, bytes?.Fetched ?? 0, waiting, finished, code, error), AgentConfig.Json);
+					if (json == last) return;
+					try {
+						AgentPaths.WriteAtomic(RemoteStatus.FilePath(home), json);
+						last = json;
+					}
+					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 				}
-				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 			}
 			Write();
+			using var ticker = new Timer(_ => Write(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
 			try {
 				int code = await ScanAsync(pc, name, home, cfg, started, timer, ct, s => stage = s, (d, t) => (done, total) = (d, t), w => waiting = w, b => bytes = b);
 				stage = code == 0 ? "Done" : stage;
@@ -221,6 +236,16 @@ namespace HEI.Agent.Estate {
 				$"{settings.MaxDegreeOfParallelism} at once, at most {CpuCap(Environment.ProcessorCount):0.#}% of the processor");
 			if (settings.UseAiMatching) await NpuCheck.EnsureAsync(settings.AiDevice, AgentPaths.AppendLog, ct);
 
+			// What sorting the sets reads of a photo, taken while the scan has all of it here: its hash (for plain copies) and
+			// whether it has a capture date (for which to keep). Without, every photo in a set was fetched a second time.
+			var hashes = ReportBuilder.ContentHashes.Load();
+			var dates = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			mirror.WhileHeld = path => {
+				dates[path] = ExifReader.TryGetDateTaken(path, out _);
+				var file = new FileInfo(path);
+				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16);
+				hashes.Keep(path, file.Length, file.LastWriteTimeUtc, Convert.ToHexString(SHA256.HashData(fs)));
+			};
 			RemoteMedia.Use(mirror.IsRemote, mirror.Open);
 			RemoteFiles.Fetch = mirror.Fetch;
 			var engine = new ScanEngine { Settings = settings, ListRoot = ListFor, BeforeRead = mirror.Before, AfterRead = mirror.After };
@@ -248,10 +273,9 @@ namespace HEI.Agent.Estate {
 				device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 				string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
 				var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, stopping.Token) { TextDevice = settings.AiDevice };
-				var hashes = ReportBuilder.ContentHashes.Load();
 				stage(AgentScanner.SortingSets);
 				try {
-					groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, null, null, progress, stopping.Token);
+					groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, null, null, progress, stopping.Token, dates);
 				}
 				finally {
 					if (fingerprints.FinishReading() is { } read) AgentPaths.AppendLog(read);

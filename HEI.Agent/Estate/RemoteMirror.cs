@@ -285,8 +285,19 @@ namespace HEI.Agent.Estate {
 		/// <summary><see cref="Core.ScanEngine.AfterRead"/>: the scan is done with the file, so what was fetched of it goes.</summary>
 		public void After(FileEntry entry) {
 			if (!stands.TryGetValue(entry.Path, out Stand? s)) return;
-			if (Interlocked.Decrement(ref s.Readers) <= 0) Empty(s);
+			if (Interlocked.Decrement(ref s.Readers) > 0) return;
+			if (s.IsPhoto && WhileHeld is { } take && IsFilled(s, 0, s.File.Size)) {
+				try { take(s.Path); }
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+			}
+			Empty(s);
 		}
+
+		/// <summary>
+		/// Called with a photo's stand-in while all of it is here, just before it's emptied: what a later step would fetch it
+		/// again for is taken now (<see cref="RemoteScanner"/>: its hash, and whether it has a capture date, for the sets).
+		/// </summary>
+		public Action<string>? WhileHeld { get; set; }
 
 		/// <summary>
 		/// <see cref="RemoteFiles.Fetch"/>: bytes <paramref name="offset"/> to <paramref name="offset"/> + <paramref name="count"/>
