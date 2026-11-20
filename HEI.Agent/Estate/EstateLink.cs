@@ -15,6 +15,7 @@
 //
 
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -35,8 +36,11 @@ namespace HEI.Agent.Estate {
 	/// </summary>
 	static partial class EstateLink {
 		public const string PeerHeader = "x-castellan-peer";
-		const string PeerNameHeader = "x-castellan-peer-name";
+		internal const string PeerNameHeader = "x-castellan-peer-name";
+		/// <summary>Heiward's id on every PC, as Manor knows its staff.</summary>
 		public const string Agent = "heiward";
+		/// <summary>Its name, for the kit's words (the spec's <c>&lt;Who&gt;</c>).</summary>
+		public const string Who = "Heiward";
 
 		/// <summary>
 		/// One client for every ask: Manor answers on this PC, and a stream may stay open as long as a scan runs, so no
@@ -70,19 +74,58 @@ namespace HEI.Agent.Estate {
 		[GeneratedRegex("^[0-9A-Za-z_-]{16,200}$")]
 		private static partial Regex TokenShape();
 
-		[GeneratedRegex("^[0-9A-Za-z-]{1,64}$")]
+		[GeneratedRegex(@"^[0-9A-Za-z-]{1,64}\z")]
 		private static partial Regex PcId();
 
 		/// <summary>The PC asking, as the other PC's Manor names it; null when a request didn't come over the link.</summary>
-		public static Pc? AskerOf(HttpRequest request) {
-			string? id = request.Headers[PeerHeader];
+		public static Pc? AskerOf(HttpRequest request) => AskerOf(request.Headers[PeerHeader], request.Headers[PeerNameHeader]);
+
+		/// <summary>
+		/// The PC asking, from Manor's two headers: its device id, and its name percent-encoded as UTF-8, decoded, trimmed
+		/// and cut to 80 characters. A name that doesn't decode, or is blank, is "Another of your PCs".
+		/// </summary>
+		internal static Pc? AskerOf(string? id, string? name) {
 			if (id == null || !PcId().IsMatch(id)) return null;
-			string name = "";
-			try { name = Uri.UnescapeDataString(request.Headers[PeerNameHeader].ToString()).Trim(); }
-			catch (UriFormatException) { }
-			if (name.Length > 80) name = name[..80];
-			return new Pc(id, name.Length > 0 ? name : "Another of your PCs");
+			string named = name != null && DecodeUriComponent(name) is string decoded ? decoded.Trim(JsSpace) : "";
+			if (named.Length > 80) named = named[..80];
+			return new Pc(id, named.Length > 0 ? named : "Another of your PCs");
 		}
+
+		/// <summary>What JavaScript's trim() takes off: its white space and line ends.</summary>
+		static readonly char[] JsSpace = [
+			'\t', '\n', '\v', '\f', '\r', ' ', (char)0x00A0, (char)0x1680, (char)0x2000, (char)0x2001, (char)0x2002, (char)0x2003, (char)0x2004, (char)0x2005,
+			(char)0x2006, (char)0x2007, (char)0x2008, (char)0x2009, (char)0x200A, (char)0x2028, (char)0x2029, (char)0x202F, (char)0x205F, (char)0x3000, (char)0xFEFF,
+		];
+
+		static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+		/// <summary>
+		/// JavaScript's decodeURIComponent: every <c>%XX</c> decoded, each run of them as UTF-8; null where it would throw (a
+		/// <c>%</c> without two hex digits, or bytes that aren't UTF-8). .NET's own unescaping leaves those as they are.
+		/// </summary>
+		internal static string? DecodeUriComponent(string s) {
+			if (!s.Contains('%')) return s;
+			var text = new StringBuilder(s.Length);
+			var bytes = new List<byte>();
+			for (int i = 0; i < s.Length;) {
+				if (s[i] != '%') {
+					text.Append(s[i++]);
+					continue;
+				}
+				bytes.Clear();
+				while (i < s.Length && s[i] == '%') {
+					int hi = i + 2 < s.Length ? Hex(s[i + 1]) : -1, lo = hi >= 0 ? Hex(s[i + 2]) : -1;
+					if (lo < 0) return null;
+					bytes.Add((byte)(hi * 16 + lo));
+					i += 3;
+				}
+				try { text.Append(StrictUtf8.GetString(bytes.ToArray())); }
+				catch (DecoderFallbackException) { return null; }
+			}
+			return text.ToString();
+		}
+
+		static int Hex(char c) => c is >= '0' and <= '9' ? c - '0' : c is >= 'a' and <= 'f' ? c - 'a' + 10 : c is >= 'A' and <= 'F' ? c - 'A' + 10 : -1;
 
 		/// <summary>The path on this PC's Manor for <paramref name="route"/> of Heiward on <paramref name="pc"/>.</summary>
 		public static string PeerPath(string pc, string route) => $"/api/peers/{Uri.EscapeDataString(pc)}/agents/{Agent}/{route.TrimStart('/')}";
@@ -147,32 +190,44 @@ namespace HEI.Agent.Estate {
 		/// <summary>The Estate as Manor here sees it: on or not (null: Castellan couldn't say), its PCs, and why none can be reached.</summary>
 		public sealed record EstateView(bool? On, List<EstatePc> Pcs, string? Problem);
 
-		/// <summary>Manor's GET /api/peers: the PCs Heiward could ask. Null when Castellan isn't on this PC (free Heiward).</summary>
-		public static async Task<EstateView?> ReadEstateAsync(CancellationToken ct) {
-			if (SendOverride == null && ManorServer() == null) return null;
+		/// <summary>
+		/// Manor's GET /api/peers: the PCs Heiward could ask, in the kit's words (its NPU loan's <c>estates</c>). With no
+		/// Castellan on this PC (free Heiward), none, and why.
+		/// </summary>
+		public static async Task<EstateView> ReadEstateAsync(CancellationToken ct) {
+			if (SendOverride == null && ManorServer() == null) return new EstateView(null, new(), $"Castellan isn't set up on this PC, so {Who} can't reach your other PCs.");
 			try {
 				var (status, json) = await GetJsonAsync("/api/peers", TimeSpan.FromSeconds(5), ct, limit: 1024 * 1024);
-				using (json) {
-					if (status == 404) return new EstateView(null, new(), "This Castellan is too old for the Estate: it updates itself soon.");
-					if (status != 200 || json?.RootElement is not { ValueKind: JsonValueKind.Object } root) return new EstateView(null, new(), "Castellan didn't answer.");
-					var pcs = new List<EstatePc>();
-					if (root.TryGetProperty("peers", out JsonElement peers) && peers.ValueKind == JsonValueKind.Array)
-						foreach (JsonElement p in peers.EnumerateArray()) {
-							if (p.ValueKind != JsonValueKind.Object || Str(p, "id") is not string id || Str(p, "name") is not string name) continue;
-							bool here = p.TryGetProperty("here", out JsonElement h) && h.ValueKind == JsonValueKind.True;
-							bool? has = Str(p, "version") == null ? null
-								: p.TryGetProperty("agents", out JsonElement agents) && agents.ValueKind == JsonValueKind.Array && agents.EnumerateArray().Any(a => a.ValueKind == JsonValueKind.Object && Str(a, "id") == Agent);
-							pcs.Add(new EstatePc(id, name.Length > 80 ? name[..80] : name, here, has));
-						}
-					bool on = root.TryGetProperty("on", out JsonElement o) ? o.ValueKind == JsonValueKind.True : pcs.Count > 0 || root.TryGetProperty("self", out _);
-					string? problem = Str(root, "problem");
-					if (!on) return new EstateView(false, pcs, "The Estate is off on this PC: turn on Other PCs under The estate in Castellan.");
-					return new EstateView(true, pcs, problem is { Length: > 0 } ? "The Estate isn't working on this PC: " + problem : null);
-				}
+				using (json) return EstateFrom(Agent, Who, status, json?.RootElement);
 			}
 			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing && !ct.IsCancellationRequested) {
-				return new EstateView(null, new(), "Castellan didn't answer.");
+				return EstateFrom(Agent, Who, null, null);
 			}
+		}
+
+		/// <summary>
+		/// What Manor's answer to GET /api/peers says (<paramref name="status"/> null: it didn't answer), for the staff member
+		/// <paramref name="agent"/>, named <paramref name="who"/> in the words.
+		/// </summary>
+		internal static EstateView EstateFrom(string agent, string who, int? status, JsonElement? said) {
+			if (status == 404) return new EstateView(null, new(), "This Castellan is too old for the Estate: it updates itself soon.");
+			// Refused (401: not signed in), failing or not answering: no word on the Estate, so never "turn it on".
+			if (status is not (>= 200 and <= 299) || said is not { ValueKind: JsonValueKind.Object } root)
+				return new EstateView(null, new(), $"Castellan didn't answer, so {who} can't reach your other PCs now.");
+			var pcs = new List<EstatePc>();
+			if (root.TryGetProperty("peers", out JsonElement peers) && peers.ValueKind == JsonValueKind.Array)
+				foreach (JsonElement p in peers.EnumerateArray()) {
+					if (p.ValueKind != JsonValueKind.Object || Str(p, "id") is not string id || Str(p, "name") is not string name) continue;
+					bool here = p.TryGetProperty("here", out JsonElement h) && h.ValueKind == JsonValueKind.True;
+					// Its staff come with its hello, which Manor asks for when it first hears the PC: until then, not known.
+					bool? has = Str(p, "version") == null ? null
+						: p.TryGetProperty("agents", out JsonElement agents) && agents.ValueKind == JsonValueKind.Array && agents.EnumerateArray().Any(a => a.ValueKind == JsonValueKind.Object && Str(a, "id") == agent);
+					pcs.Add(new EstatePc(id, name.Length > 80 ? name[..80] : name, here, has));
+				}
+			if (!(root.TryGetProperty("on", out JsonElement on) && on.ValueKind == JsonValueKind.True))
+				return new EstateView(false, pcs, "The Estate is off on this PC: turn on Other PCs under The estate in Castellan, here and on the PC whose NPU to use.");
+			if (Str(root, "problem") is { Length: > 0 } problem) return new EstateView(true, pcs, $"The Estate isn't working on this PC: {problem}");
+			return new EstateView(true, pcs, null);
 		}
 
 		internal static string? Str(JsonElement o, string name) => o.TryGetProperty(name, out JsonElement v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
