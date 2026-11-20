@@ -45,8 +45,13 @@ namespace HEI.Agent {
 	/// byte-for-byte the same), <c>copies</c> (some files are plain copies of the kept one and are
 	/// pre-checked), <c>similar</c> (only edited versions and look-alikes: nothing is pre-checked).
 	/// </summary>
+	/// <param name="FoundOn">
+	/// Found by another of the person's PCs, which scanned this one's files for it (<see cref="Estate.ForeignFindings"/>): that
+	/// PC's name. Null for this PC's own scans, and then not written: their report.json is as it was.
+	/// </param>
 	sealed record ReportGroup(string Key, string Kind, string Media, string KeepPath, string KeepReason,
-		long ReclaimBytes, float MinSimilarity, List<ReportItem> Items);
+		long ReclaimBytes, float MinSimilarity, List<ReportItem> Items,
+		[property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? FoundOn = null);
 
 	/// <summary>
 	/// This build of Heiward: its version and the commit it was built from ("1.3.0+87802c8…"). A report

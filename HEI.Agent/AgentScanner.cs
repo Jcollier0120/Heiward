@@ -579,7 +579,7 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>Search, then compare, as two awaited steps (the CLI's pattern: chaining them ran the compare twice, #803).</summary>
-		static async Task RunEngineAsync(ScanEngine engine, Action onCompare, CancellationToken ct) {
+		internal static async Task RunEngineAsync(ScanEngine engine, Action onCompare, CancellationToken ct) {
 			var searched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 			void SearchDone(object? s, EventArgs e) => searched.TrySetResult();
 			void Aborted(object? s, EventArgs e) => searched.TrySetCanceled();

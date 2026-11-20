@@ -178,7 +178,7 @@ namespace HEI.Agent {
 		internal static bool FromThePage(PathString path) =>
 			path.StartsWithSegments("/api") && !NotThePages.Any(p => path.StartsWithSegments(p, StringComparison.OrdinalIgnoreCase));
 
-		static readonly string[] NotThePages = ["/api/ping", "/api/glance", "/api/disk", "/api/pictures", "/api/quit"];
+		static readonly string[] NotThePages = ["/api/ping", "/api/glance", "/api/disk", "/api/pictures", "/api/quit", "/api/peer"];
 
 		/// <summary>Lets go of every file kept, when the page isn't in use at <paramref name="now"/>. True if anything was kept.</summary>
 		internal static bool DropIfIdle(DateTime now) {

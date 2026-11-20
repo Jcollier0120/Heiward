@@ -1282,6 +1282,7 @@ button:has(> .ui-spinner) { display: inline-flex; align-items: center; justify-c
 .badge.identical { background: var(--ok-bg); color: var(--ok); }
 .badge.same { background: var(--new-bg); color: var(--new); }
 .badge.similar { background: var(--warn-bg); color: var(--warn); }
+.badge.found { background: var(--new-bg); color: var(--new); }
 .badge.keep { background: var(--ok-bg); color: var(--ok); white-space: normal; border-radius: 6px; display: inline-block; margin-top: 2px; }
 .items { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; margin-top: 12px; }
 .item { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; background: var(--surface-2); }
