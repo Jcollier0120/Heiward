@@ -23,7 +23,7 @@ namespace HEI.Agent.Estate {
 	/// <summary>
 	/// Another of the person's PCs scans this one's photos and videos for it, over the Estate: a PC whose NPU can, for one
 	/// that has none (or a slow one). This PC starts it, from its page; it only lists its files and hands over their bytes,
-	/// gently (<see cref="ByteRoute"/>), and the other PC does the rest and sends back what it found, which this PC's page
+	/// gently (<see cref="PeerFiles"/>), and the other PC does the rest and sends back what it found, which this PC's page
 	/// shows and cleans up with its own buttons. Both PCs run the same build: another build's rules judge sets otherwise.
 	/// <para>The routes, each under <c>/api/peer</c> (only through Castellan, naming the asking PC):</para>
 	/// <list type="bullet">
@@ -37,18 +37,34 @@ namespace HEI.Agent.Estate {
 		public const string Route = "scan";
 		const int Version = 1;
 
-		// ---- A game here: neither side's work goes on while one is played (looked at once every 5 s at most).
+		// ---- A game here: neither side's work goes on while one is played. As the kit's game check (PEER-FILES.md, Gently):
+		// its answer stands for 30 s, one check at a time is asked behind it however many ask, and a failed reading says no game.
 		static readonly object gameGate = new();
 		static ThreeDWatch? games;
-		static (long At, string? Game) lastGame = (long.MinValue, null);
+		static (long At, string? Game)? lastGame;
+		static int checkingGame;
 
 		internal static string? GameNow() {
+			var last = lastGame;
+			if (last is { } l && Environment.TickCount64 - l.At < PeerFiles.GameKeepMs) return l.Game;
+			if (last == null) {
+				CheckGame(); // the first answer is waited for
+				return lastGame?.Game;
+			}
+			if (Interlocked.Exchange(ref checkingGame, 1) == 0)
+				_ = Task.Run(() => {
+					try { CheckGame(); }
+					finally { Volatile.Write(ref checkingGame, 0); }
+				});
+			return last.Value.Game; // the last answer, until the next is in
+		}
+
+		static void CheckGame() {
 			lock (gameGate) {
-				long now = Environment.TickCount64;
-				if (now - lastGame.At < 5000) return lastGame.Game;
-				try { lastGame = (now, (games ??= new ThreeDWatch()).Busy()); }
-				catch (Exception e) when (e is InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { lastGame = (now, null); }
-				return lastGame.Game;
+				string? playing;
+				try { playing = (games ??= new ThreeDWatch()).Busy(); }
+				catch (Exception e) when (e is InvalidOperationException or UnauthorizedAccessException or System.ComponentModel.Win32Exception) { playing = null; }
+				lastGame = (Environment.TickCount64, playing);
 			}
 		}
 
@@ -133,7 +149,7 @@ namespace HEI.Agent.Estate {
 		static RemoteListing? sent;
 		static byte[]? sentJson;
 		static Dictionary<string, ListedFile>? sentFiles;
-		static ByteRoute? serving;
+		static PeerFiles? serving;
 		static TimeSpan listCpu;
 
 		/// <summary>The scan asked for now (or last), for the page.</summary>
@@ -210,7 +226,10 @@ namespace HEI.Agent.Estate {
 					sent = listing;
 					sentJson = listing.ToJson();
 					sentFiles = listing.Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase);
-					serving = new ByteRoute(GameNow);
+					// Its files, for that PC alone, while it scans this one (the kit's PeerFiles).
+					Pc lender = a.Lender;
+					serving = new PeerFiles(GameNow) { May = pc => pc.Id == lender.Id && borrowing?.Lender?.Id == lender.Id };
+					serving.Replace(sentFiles.Keys);
 					a.Stage = $"Waiting for {a.Lender.Name}";
 					a.Total = files;
 					Borrow.Start(a.Lender);
@@ -259,8 +278,11 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
+		/// <summary>The loan is over: its files aren't offered any more, and what handing them over cost is logged (once).</summary>
 		static void Released() {
-			if (serving is { } s && s.Served > 0)
+			if (serving is not { Count: > 0 } s) return;
+			s.Clear();
+			if (s.Served > 0)
 				AgentPaths.AppendLog($"handed {Format.Bytes(s.Served)} over for another PC's scan, {(listCpu + s.Cpu).TotalSeconds:N1} s of the processor in all " +
 					$"({(listCpu + s.Cpu).TotalSeconds / Math.Max(1.0, s.Served / 1e9):N1} s per GB)");
 		}
@@ -323,16 +345,10 @@ namespace HEI.Agent.Estate {
 			await ctx.Response.Body.WriteAsync(sentJson!, ctx.RequestAborted);
 		}
 
-		/// <summary>GET /api/peer/scan/bytes?path=…: a listed file's bytes, gently (<see cref="ByteRoute"/>).</summary>
-		internal static async Task BytesRouteAsync(HttpContext ctx) {
-			if (!IsLender(ctx) || serving is not { } route) {
-				await NpuLoan.Json(410, new { error = "This PC isn't asking that PC to scan it now.", code = "over" }).ExecuteAsync(ctx);
-				return;
-			}
-			string? path = ctx.Request.Query["path"];
-			ListedFile? file = path != null && sentFiles!.TryGetValue(path, out ListedFile? f) ? f : null;
-			await route.ServeAsync(ctx, file?.Path, file);
-		}
+		/// <summary>GET /api/peer/scan/bytes?path=…: a listed file's bytes, gently, as the kit's PeerFiles answers (none offered when no PC scans this one).</summary>
+		internal static Task BytesRouteAsync(HttpContext ctx) => (serving ?? NoneOffered).ServeAsync(ctx);
+
+		static readonly PeerFiles NoneOffered = new(() => null);
 
 		// ================= This PC scans another's files =================
 

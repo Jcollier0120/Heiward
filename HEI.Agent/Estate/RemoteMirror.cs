@@ -32,15 +32,22 @@ namespace HEI.Agent.Estate {
 	/// <summary>Where another PC's bytes come from: its Heiward over the Estate (<see cref="EstateBytes"/>), or, in tests, this PC's own files.</summary>
 	interface IRemoteBytes {
 		/// <summary>
-		/// Reads <paramref name="count"/> bytes of <paramref name="path"/> (its path on that PC) from <paramref name="offset"/>
-		/// into <paramref name="buffer"/>: all of them, fewer only where the file ends. Throws <see cref="RemoteReadFailed"/>.
+		/// Reads <paramref name="count"/> bytes of <paramref name="file"/> (as that PC listed it) from <paramref name="offset"/>
+		/// into <paramref name="buffer"/>: all of them, fewer only where the file ends. Throws <see cref="RemoteReadFailed"/>,
+		/// with code "changed" when the file there isn't as it was listed.
 		/// </summary>
-		int Read(string path, long offset, byte[] buffer, int count, CancellationToken ct);
+		int Read(ListedFile file, long offset, byte[] buffer, int count, CancellationToken ct);
 	}
 
 	/// <summary>
-	/// Another PC's bytes over the Estate: <c>GET /api/peer/scan/bytes?path=…</c> on that PC's Heiward, one range at a time.
-	/// While a game is played there, it waits as asked (Retry-After); a link that drops is tried again, three times.
+	/// Another PC's bytes over the Estate: <c>GET /api/peer/scan/bytes?path=…</c> on that PC's Heiward (the kit's PeerFiles,
+	/// <see cref="PeerFiles"/>), one range at a time, as the spec's asking side does:
+	/// <list type="bullet">
+	/// <item>Its ETag must be the listing's (size and time): a file changed since it was listed isn't read, and waits for the next scan.</item>
+	/// <item>While a game is played there, it's told 503 and waits <c>retryMs</c>; a reply cut short (a game started) is asked
+	/// again from the byte after the last that came.</item>
+	/// <item>A link that drops, or a Manor that can't reach the other PC just now, is tried again, three times in a row.</item>
+	/// </list>
 	/// </summary>
 	sealed class EstateBytes(string pc, Action<string?>? waiting = null) : IRemoteBytes {
 		long fetched;
@@ -51,36 +58,60 @@ namespace HEI.Agent.Estate {
 		/// <summary>Ranges asked for so far.</summary>
 		public int Asks => Volatile.Read(ref asks);
 
-		public int Read(string path, long offset, byte[] buffer, int count, CancellationToken ct) {
+		public int Read(ListedFile file, long offset, byte[] buffer, int count, CancellationToken ct) {
 			if (count <= 0) return 0;
-			string route = EstateLink.PeerPath(pc, "scan/bytes?path=" + Uri.EscapeDataString(path));
-			int tries = 0;
-			while (true) {
+			string route = EstateLink.PeerPath(pc, "scan/bytes?path=" + Uri.EscapeDataString(file.Path));
+			string tag = PeerFiles.Tag(file.Size, PeerFiles.MsOf(file.ModifiedUtc));
+			int got = 0, tries = 0;
+			while (got < count) {
 				ct.ThrowIfCancellationRequested();
 				try {
-					using HttpResponseMessage r = EstateLink.Ask(route, ct, new RangeHeaderValue(offset, offset + count - 1));
+					long from = offset + got;
+					using HttpResponseMessage r = EstateLink.Ask(route, ct, new RangeHeaderValue(from, offset + count - 1));
 					int status = (int)r.StatusCode;
 					if (status is 200 or 206) {
 						waiting?.Invoke(null);
 						Interlocked.Increment(ref asks);
+						if (r.Headers.ETag?.Tag is string etag && etag != tag) throw new RemoteReadFailed("it changed since it was listed", "changed");
+						long expected = r.Content.Headers.ContentLength ?? -1;
 						using Stream body = r.Content.ReadAsStream(ct);
-						if (status == 200 && offset > 0) Skip(body, offset); // the whole file, from its start
-						int n = body.ReadAtLeast(buffer.AsSpan(0, count), count, throwOnEndOfStream: false);
+						if (status == 200 && from > 0) Skip(body, from); // the whole file, from its start
+						int n = 0;
+						bool cut = false;
+						try {
+							while (got + n < count) {
+								int k = body.Read(buffer, got + n, count - got - n);
+								if (k <= 0) break;
+								n += k;
+							}
+						}
+						catch (IOException) when (!ct.IsCancellationRequested) {
+							cut = true; // the reply ended short of its Content-Length
+						}
+						got += n;
 						Interlocked.Add(ref fetched, n);
-						return n;
+						if (n > 0) tries = 0;
+						if (!cut && status == 206 && expected >= 0 && n >= expected && got < count) return got; // the file ends there
+						if (!cut && got >= count) return got;
+						if (!cut && status == 200) return got;
+						if (++tries >= 6) throw new RemoteReadFailed("its replies kept ending short", null);
+						continue; // asked again from the byte after the last that came
 					}
-					string? code = CodeOf(r, ct);
+					string? code = CodeOf(r, ct, out long? retryMs);
 					if (status == 503 && code == "game") {
 						waiting?.Invoke("game");
-						TimeSpan wait = r.Headers.RetryAfter?.Delta ?? TimeSpan.FromSeconds(30);
-						ct.WaitHandle.WaitOne(wait < TimeSpan.FromSeconds(5) ? TimeSpan.FromSeconds(5) : wait > TimeSpan.FromMinutes(2) ? TimeSpan.FromMinutes(2) : wait);
+						TimeSpan wait = TimeSpan.FromMilliseconds(Math.Clamp(retryMs ?? PeerFiles.GameKeepMs, 5_000, 120_000));
+						ct.WaitHandle.WaitOne(wait);
 						continue;
 					}
+					if (status == 416) return got; // past its end
+					if (status == 404) throw new RemoteReadFailed("it isn't there any more", "gone");
+					if (status is 403 or 410) throw new RemoteReadFailed("that PC isn't offering its files to this one now", "over");
 					if (status >= 500 && ++tries < 4) { // Manor couldn't reach it just now
 						ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(Math.Pow(3, tries - 1)));
 						continue;
 					}
-					throw new RemoteReadFailed($"the other PC answered {status}", code ?? (status is 403 or 410 ? "over" : null));
+					throw new RemoteReadFailed($"the other PC answered {status}", code);
 				}
 				catch (EstateMissing e) {
 					throw new RemoteReadFailed(e.Message, "over", e);
@@ -90,6 +121,7 @@ namespace HEI.Agent.Estate {
 					ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(Math.Pow(3, tries - 1)));
 				}
 			}
+			return got;
 		}
 
 		static void Skip(Stream body, long bytes) {
@@ -101,14 +133,17 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
-		/// <summary>The <c>code</c> of a refusal's JSON (<c>{"error":…,"code":…}</c>), or null.</summary>
-		static string? CodeOf(HttpResponseMessage r, CancellationToken ct) {
+		/// <summary>The <c>code</c> of a refusal's JSON (<c>{"error":…,"code":…}</c>), or null; and a game's <c>retryMs</c>.</summary>
+		static string? CodeOf(HttpResponseMessage r, CancellationToken ct, out long? retryMs) {
+			retryMs = null;
 			try {
 				using Stream body = r.Content.ReadAsStream(ct);
 				byte[] head = new byte[4096];
 				int n = body.ReadAtLeast(head, head.Length, throwOnEndOfStream: false);
 				using JsonDocument doc = JsonDocument.Parse(head.AsMemory(0, n));
-				return doc.RootElement.ValueKind == JsonValueKind.Object ? EstateLink.Str(doc.RootElement, "code") : null;
+				if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
+				if (doc.RootElement.TryGetProperty("retryMs", out JsonElement ms) && ms.TryGetInt64(out long wait)) retryMs = wait;
+				return EstateLink.Str(doc.RootElement, "code");
 			}
 			catch (Exception e) when (e is JsonException or IOException or HttpRequestException) {
 				return null;
@@ -333,7 +368,7 @@ namespace HEI.Agent.Estate {
 			using (var fs = new FileStream(s.Path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 1)) {
 				for (long at = a; at < b;) {
 					int want = (int)Math.Min(buffer.Length, b - at);
-					int n = source.Read(s.File.Path, at, buffer, want, Stopping);
+					int n = source.Read(s.File, at, buffer, want, Stopping);
 					if (n < want) throw new RemoteReadFailed("it ended early", "changed");
 					fs.Position = at;
 					fs.Write(buffer, 0, n);
@@ -520,7 +555,7 @@ namespace HEI.Agent.Estate {
 				int length = (int)Math.Min(Piece, stand.File.Size - at);
 				byte[] data = new byte[length];
 				try {
-					int got = mirror.source.Read(stand.File.Path, at, data, length, mirror.Stopping);
+					int got = mirror.source.Read(stand.File, at, data, length, mirror.Stopping);
 					if (got < length) throw new RemoteReadFailed("it ended early", "changed");
 				}
 				catch (RemoteReadFailed e) {

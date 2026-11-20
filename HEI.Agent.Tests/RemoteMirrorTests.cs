@@ -47,9 +47,9 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 		public int Asks;
 		public string? Refuse;
 
-		public int Read(string path, long offset, byte[] buffer, int count, CancellationToken ct) {
+		public int Read(ListedFile file, long offset, byte[] buffer, int count, CancellationToken ct) {
 			if (Refuse != null) throw new RemoteReadFailed("refused", Refuse);
-			using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+			using var fs = new FileStream(file.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 			fs.Position = offset;
 			int n = fs.ReadAtLeast(buffer.AsSpan(0, count), count, throwOnEndOfStream: false);
 			Interlocked.Add(ref Bytes, n);
