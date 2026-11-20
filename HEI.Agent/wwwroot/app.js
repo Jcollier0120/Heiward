@@ -1721,10 +1721,22 @@ async function saveSettings(next) {
  * Your other PCs (Castellan's Estate): have one whose NPU can scan this PC's photos and videos for it, how that's going,
  * and what it found here. Only where Castellan links PCs that hold the same license: hidden otherwise, free Heiward too.
  */
+// The card as last drawn (all but the scan's progress), and how to write new progress into it in place: it's drawn again
+// only when what it offers changes, so a poll never swaps a button out from under a click.
+let remoteShape = null;
+let remoteProgress = null;
+
 function renderRemoteCard(s) {
   const r = s.remote;
   $('remote-section').classList.toggle('hidden', !r);
-  if (!r) { $('remote-card').replaceChildren(); return; }
+  if (!r) { remoteShape = null; $('remote-card').replaceChildren(); return; }
+  const shape = JSON.stringify({ ...r, asked: r.asked && { pc: r.asked.pc, finished: r.asked.finished, problem: r.asked.problem, waiting: r.asked.waiting, fetching: !!r.asked.fetchedBytes } });
+  if (shape === remoteShape && $('remote-card').firstChild) {
+    if (remoteProgress && r.asked && !r.asked.finished) remoteProgress(r.asked);
+    return;
+  }
+  remoteShape = shape;
+  remoteProgress = null;
   const card = el('div', 'auto-card');
   const line = (title, ...notes) => {
     const row = el('div', 'auto-row');
@@ -1738,10 +1750,16 @@ function renderRemoteCard(s) {
   if (a && !a.finished) {
     const meter = el('div', 'meter');
     const fill = el('div', 'fill');
-    fill.style.width = (a.total ? Math.max(2, (100 * a.done) / a.total) : 2) + '%';
     meter.append(fill);
-    const row = line(a.name + ' is scanning this PC', a.stage + (a.total ? ': ' + a.done.toLocaleString() + ' of ' + count(a.total, 'file', 'files') : ''),
-      a.fetchedBytes ? bytes(a.fetchedBytes) + ' handed over so far, gently: at very low priority, and never while a game is played here.' : null,
+    const stage = el('div', 'muted small');
+    const handed = a.fetchedBytes ? el('div', 'muted small') : null;
+    remoteProgress = (p) => {
+      fill.style.width = (p.total ? Math.max(2, (100 * p.done) / p.total) : 2) + '%';
+      stage.textContent = p.stage + (p.total ? ': ' + p.done.toLocaleString() + ' of ' + count(p.total, 'file', 'files') : '');
+      if (handed) handed.textContent = bytes(p.fetchedBytes) + ' handed over so far, gently: at very low priority, and never while a game is played here.';
+    };
+    remoteProgress(a);
+    const row = line(a.name + ' is scanning this PC', stage, handed,
       a.waiting === 'game' ? 'Waiting: a game is running on this PC.' : null, meter);
     const stop = el('button', 'btn secondary', 'Stop');
     stop.addEventListener('click', async () => { stop.disabled = true; await post('/api/remote/stop', {}); refresh(); });

@@ -267,6 +267,15 @@ namespace HEI.Agent.Estate {
 			List<ReportGroup> groups;
 			string device;
 			int files;
+			// The other PC ended it (its Stop), or this PC stopped it: nothing is saved as found, and what was read stays in the
+			// database for the next scan, but for the files that couldn't be read.
+			int Stopped() {
+				if (!mirror.Failed.IsEmpty) DatabaseUtils.Database.RemoveWhere(e => mirror.Failed.ContainsKey(e.Path));
+				DatabaseUtils.SaveDatabase();
+				stage("Stopped");
+				AgentPaths.AppendLog($"scan for {name} stopped{(mirror.Over ? " by that PC" : "")}, {Format.Bytes(bytes.Fetched)} fetched: what was read is kept for its next scan");
+				return 130;
+			}
 			try {
 				await AgentScanner.RunEngineAsync(engine, () => stage("Comparing"), stopping.Token);
 				files = engine.FoundMedia().Count;
@@ -283,11 +292,16 @@ namespace HEI.Agent.Estate {
 				try { hashes.Save(); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }
 			}
+			catch (OperationCanceledException) when (stopping.IsCancellationRequested) {
+				return Stopped();
+			}
 			finally {
 				RemoteFiles.Fetch = null;
 				RemoteMedia.Stop();
 				mirror.EmptyAll();
 			}
+			// Sorting the sets stops between rounds without saying so: what it made of part of them isn't what was found.
+			if (stopping.IsCancellationRequested) return Stopped();
 			stage("Saving what it found");
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files, settings.IncludeList.ToList(), [], notes, groups, AppBuild.Current);
 			report.Save();
