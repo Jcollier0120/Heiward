@@ -173,16 +173,16 @@ namespace HEI.Agent.Estate {
 			try {
 				var (status, json) = await EstateLink.GetJsonAsync(EstateLink.PeerPath(pc, Route), TimeSpan.FromSeconds(15), ct, limit: 64 * 1024);
 				using (json) {
-					string? why = status == 404 ? $"Heiward on {name} is too old for this: update Heiward there."
-						: status != 200 || json?.RootElement is not { ValueKind: JsonValueKind.Object } offer ? $"{name} didn't answer."
-						: EstateLink.Str(offer, "build") is string build && build != AppBuild.Current ? Versions(name, build)
-						: offer.TryGetProperty("can", out JsonElement can) && can.ValueKind == JsonValueKind.True ? null
-						: $"{name} can't now: {EstateLink.Str(offer, "why") ?? "it didn't say why"}.";
+					// Another build can't scan for this one (its rules judge sets otherwise); else the offer read in the kit's words.
+					JsonElement? said = json?.RootElement;
+					string? why = status == 200 && said is { ValueKind: JsonValueKind.Object } offer && EstateLink.Str(offer, "build") is string build && build != AppBuild.Current
+						? Versions(name, build)
+						: NpuLoan.OfferFrom("Heiward", a.Lender, status, said) is { Can: false } no ? no.Why : null;
 					if (why != null) return Fail(a, why);
 				}
 			}
 			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing && !ct.IsCancellationRequested) {
-				return Fail(a, e is EstateMissing ? "Castellan isn't running on this PC." : $"{name} didn't answer.");
+				return Fail(a, e is EstateMissing ? "Castellan isn't running on this PC." : NpuLoan.OfferFrom("Heiward", a.Lender, null, null).Why!);
 			}
 			_ = Task.Run(() => ListAndLendAsync(a));
 			return null;
@@ -376,13 +376,7 @@ namespace HEI.Agent.Estate {
 		}
 
 		/// <summary>GET /api/peer/scan: whether this PC can scan the asking PC's files now, with its build (which must be the asker's).</summary>
-		internal static async Task OfferRouteAsync(HttpContext ctx) {
-			if (EstateLink.AskerOf(ctx.Request) is not { } asker) {
-				await NpuLoan.Json(403, new { error = "Only another of your PCs, through Castellan, can ask." }).ExecuteAsync(ctx);
-				return;
-			}
-			await Results.Json(Lend.Offer(asker, new { v = Version, build = AppBuild.Current })).ExecuteAsync(ctx);
-		}
+		internal static Task OfferRouteAsync(HttpContext ctx) => Lend.OfferRouteAsync(ctx, new { v = Version, build = AppBuild.Current });
 
 		/// <summary>GET /api/peer/scan/out?loan=…: the PC to scan asks for the results, which starts its scan here.</summary>
 		internal static Task OutRouteAsync(HttpContext ctx) => Lend.OutRouteAsync(ctx);
