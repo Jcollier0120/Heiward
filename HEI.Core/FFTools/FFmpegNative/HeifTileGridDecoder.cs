@@ -82,6 +82,10 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		/// missing tiles); callers then fall back to the FFmpeg process.
 		/// </summary>
 		internal static bool TryDecode(string path, bool wantRgb, out Result result, int timeoutMs = 15_000) {
+			if (!Utils.RemoteFiles.Ready(path)) { // opened by its path: another PC's photo whole first
+				result = default;
+				return false;
+			}
 			long started = System.Diagnostics.Stopwatch.GetTimestamp();
 			if (HeifHardwareLane.TryEnter(path)) {
 				Exception failure;

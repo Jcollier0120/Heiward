@@ -198,6 +198,20 @@ namespace HEI.Core {
 		/// </summary>
 		public Func<string, bool>? MayRead { get; set; }
 
+		/// <summary>
+		/// Called once a file is to be read (its fingerprint, header and frames), before anything reads it, on the thread
+		/// that reads it: a file whose bytes are on another PC has what the scan reads of it fetched first (a photo whole, a
+		/// video's first and last 64 KB). False: it couldn't be, and the file is compared as the database has it, as one
+		/// <see cref="MayRead"/> refuses. Null: every file is read from the disk as it is.
+		/// </summary>
+		public Func<FileEntry, bool>? BeforeRead { get; set; }
+
+		/// <summary>
+		/// Called once the scan is done reading a file <see cref="BeforeRead"/> fetched (whatever came of it): what was
+		/// fetched of it can go. Null: nothing to do.
+		/// </summary>
+		public Action<FileEntry>? AfterRead { get; set; }
+
 		/// <param name="Listed">Files listed now, as the walk would have (their sizes and dates came with the listing).</param>
 		/// <param name="Unchanged">Paths of files known to be exactly as the database has them.</param>
 		public sealed record RootListing(IReadOnlyList<FileInfo> Listed, IReadOnlyCollection<string> Unchanged);
@@ -267,6 +281,12 @@ namespace HEI.Core {
 		/// under older rules are then recomputed once instead of silently mismatching new ones.
 		/// </summary>
 		const EntryFlags CurrentImageGrayVersion = EntryFlags.GrayFromRgb224V1;
+
+		/// <summary>
+		/// Whether a search decodes this photo again: it has no gray frame, or one made under older rules. For
+		/// <see cref="BeforeRead"/>, which fetches a photo on another PC only when it's read.
+		/// </summary>
+		public static bool ImageNeedsDecode(FileEntry entry) => entry.grayBytes is not { Count: > 0 } || !entry.Flags.Has(CurrentImageGrayVersion);
 
 		// The pHash quorum's requiredMatches is identical for every pair in a scan
 		// (sampleCount always equals positionList.Count), so the compare phase precomputes
@@ -499,6 +519,25 @@ namespace HEI.Core {
 			}
 			catch (Exception ex) {
 				AbortScanOnError(ex);
+			}
+		}
+
+		/// <summary>
+		/// The search's listing alone: the included folders listed (<see cref="ListRoot"/>, or walked) and their files put
+		/// in the database as a search finds them, <see cref="FoundFiles"/> filled, and nothing read, decoded or compared.
+		/// For a PC whose files another PC scans: it lists them, and the other PC reads what it needs.
+		/// </summary>
+		public async Task ListOnlyAsync() {
+			try {
+				PrepareSearch();
+				await BuildFileList(cancelationTokenSource.Token);
+				FilesEnumerated?.Invoke(this, EventArgs.Empty);
+				if (!cancelationTokenSource.IsCancellationRequested)
+					lock (checkpointLock)
+						DatabaseUtils.SaveDatabase();
+			}
+			finally {
+				isScanning = false;
 			}
 		}
 
@@ -1299,6 +1338,7 @@ namespace HEI.Core {
 					if (!pauseTokenSource.TryWaitWhilePaused(token))
 						return ValueTask.CompletedTask; // canceled while paused — the loop token ends the iteration
 
+					bool fetched = false;
 					try {
 						entry.invalid = InvalidEntry(entry, out bool reportProgress, out string? invalidReason);
 						if (entry.invalid && invalidReason != null)
@@ -1334,11 +1374,12 @@ namespace HEI.Core {
 						// A file this search mustn't read (MayRead): compared as the database has it, with
 						// nothing backfilled or sampled; one with too little data waits for its drive's scan
 						// (the compare leaves out entries without a usable snapshot).
-						if (MayRead?.Invoke(entry.Path) == false) {
+						if (MayRead?.Invoke(entry.Path) == false || BeforeRead?.Invoke(entry) == false) {
 							if (reportProgress)
 								CompleteEntry(entry, driveCounter);
 							return ValueTask.CompletedTask;
 						}
+						fetched = BeforeRead != null;
 
 						// Cache a cheap content fingerprint so a future scan can detect this file was
 						// MOVED (same OsHash, old path gone) and relink it without re-decoding. Runs once
@@ -1510,6 +1551,9 @@ namespace HEI.Core {
 						entry.Flags.Set(EntryFlags.ThumbnailError);
 						CompleteEntry(entry, driveCounter);
 						return ValueTask.CompletedTask;
+					}
+					finally {
+						if (fetched) AfterRead?.Invoke(entry);
 					}
 				}
 

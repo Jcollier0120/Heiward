@@ -37,6 +37,7 @@ namespace HEI.Core.Utils {
 		/// </summary>
 		internal static bool TryGetDateTaken(string path, out DateTime dateTaken) {
 			dateTaken = default;
+			if (!RemoteFiles.Ready(path)) return false;
 			try {
 				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
 				byte[]? tiff = ExtractTiffBlob(fs);
@@ -57,6 +58,7 @@ namespace HEI.Core.Utils {
 		/// file has no EXIF.
 		/// </summary>
 		internal static List<(bool IsGps, string Name, string Value)> ReadAllTags(string path) {
+			if (!RemoteFiles.Ready(path)) return new();
 			try {
 				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, FileOptions.SequentialScan);
 				byte[]? tiff = ExtractTiffBlob(fs);

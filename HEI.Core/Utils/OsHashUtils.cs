@@ -34,6 +34,8 @@ namespace HEI.Core.Utils {
 				long size = fs.Length;
 				if (size < ChunkSize)
 					return null;
+				if (!RemoteFiles.Ready(path, 0, ChunkSize) || !RemoteFiles.Ready(path, size - ChunkSize, ChunkSize))
+					return null;
 
 				Span<byte> buf = stackalloc byte[ChunkSize];
 				ulong sum = (ulong)size;

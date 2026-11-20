@@ -79,6 +79,9 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			// avformat_open_input frees the context and nulls the local on failure.
 			// Sync the field with the local before checking the result so the finalizer
 			// does not later see a dangling pointer if the open fails.
+			// Another PC's video (RemoteMedia): its soundtrack would mean fetching all of it, and its stand-in here holds none.
+			if (RemoteMedia.Handles(url))
+				throw new FFInvalidExitCodeException("The other PC's videos aren't listened to.");
 			var pFormatContext = _pFormatContext;
 			int openRet = ffmpeg.avformat_open_input(&pFormatContext, url, null, null);
 			_pFormatContext = pFormatContext;

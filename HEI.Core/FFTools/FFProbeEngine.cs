@@ -41,6 +41,9 @@ namespace HEI.Core.FFTools {
 		/// be opened (another program holding it), which the next try may not repeat.
 		/// </param>
 		public static MediaInfo? GetMediaInfo(string file, bool extendedLogging, out bool noMedia) {
+			// A video on another PC: its header is read through a stream (ffprobe, a process, can't).
+			if (FFmpegNative.RemoteMedia.Handles(file))
+				return FFmpegNative.RemoteMedia.Probe(file, out noMedia);
 			noMedia = false;
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
@@ -134,6 +137,7 @@ namespace HEI.Core.FFTools {
 		/// stream's index and type), for the metadata comparison (#926). Null when ffprobe fails.
 		/// </summary>
 		public static byte[]? GetTagsJson(string file) {
+			if (FFmpegNative.RemoteMedia.Handles(file)) return null; // on another PC: not read by a process
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
 				CreateNoWindow = ChildConsole.OwnConsole,
@@ -171,6 +175,7 @@ namespace HEI.Core.FFTools {
 		/// thumbnails. Returns <c>null</c> when the tag is absent, empty or unparseable.
 		/// </summary>
 		public static DateTime? GetCreationTime(string file) {
+			if (FFmpegNative.RemoteMedia.Handles(file)) return null; // on another PC: not read by a process
 			var psi = new ProcessStartInfo {
 				FileName = FFprobePath,
 				CreateNoWindow = ChildConsole.OwnConsole,

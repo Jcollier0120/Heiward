@@ -1236,7 +1236,11 @@ namespace HEI.Agent {
 			static string? Compute(string path) {
 				const long Full = FullHashBytes, Chunk = 4L << 20;
 				try {
-					using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20);
+					// Another PC's file (a scan for it): read over the link as it's hashed, nothing of it kept here.
+					// Never its stand-in here, whose bytes aren't fetched: no stream to it now, no hash.
+					using Stream? fs = HEI.Core.FFTools.FFmpegNative.RemoteMedia.Handles(path) ? HEI.Core.FFTools.FFmpegNative.RemoteMedia.Open(path)
+						: new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 1 << 20);
+					if (fs == null) return null;
 					if (fs.Length <= Full)
 						return Convert.ToHexString(SHA256.HashData(fs));
 					using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
