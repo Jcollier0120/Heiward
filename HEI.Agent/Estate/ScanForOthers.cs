@@ -421,7 +421,7 @@ namespace HEI.Agent.Estate {
 			string? lastStatus;
 			bool ended;
 
-			public void Line(JsonObject line, int? n) {
+			public void Line(JsonObject line, long? n) {
 				if (line["scan"] is not JsonObject scan) return;
 				lock (gate) {
 					if (child != null || ended) return; // the head again, after a dropped link
