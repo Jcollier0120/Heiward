@@ -300,8 +300,9 @@ namespace HEI.Agent.Estate {
 				RemoteMedia.Stop();
 				mirror.EmptyAll();
 			}
-			// Sorting the sets stops between rounds without saying so: what it made of part of them isn't what was found.
-			if (stopping.IsCancellationRequested) return Stopped();
+			// Sorting the sets stops between rounds without saying so, and once the other PC ends it every read left fails at
+			// once, so the scan can get to the end first: what it made of part of the files isn't what was found.
+			if (stopping.IsCancellationRequested || mirror.Over) return Stopped();
 			stage("Saving what it found");
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files, settings.IncludeList.ToList(), [], notes, groups, AppBuild.Current);
 			report.Save();

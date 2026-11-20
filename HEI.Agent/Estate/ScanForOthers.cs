@@ -302,15 +302,14 @@ namespace HEI.Agent.Estate {
 						return;
 					}
 					Dictionary<string, ListedFile> listed = sentFiles ?? new(StringComparer.OrdinalIgnoreCase);
+					// Nothing new here since its last scan: the same findings as those kept, and nothing was fetched for them this time.
+					bool again = ForeignFindings.LoadAny() is { } before && before.FromId == a.Lender.Id && before.ScannedAtUtc == found.ScannedAtUtc;
 					ForeignFindings kept = ForeignFindings.From(a.Lender, found, listed);
 					kept.Save();
 					a.Sets = kept.Groups.Count;
 					a.Stage = kept.Groups.Count == 0 ? "Done: no copies found" : $"Done: {kept.Groups.Count:N0} set(s) of copies found";
 					a.Done = a.Total;
 					a.Finished = true;
-					// Nothing new here since its last scan: those findings stand, and nothing was fetched for them this time (made
-					// before this ask, by that PC's clock, with a margin for the two clocks' difference).
-					bool again = found.ScannedAtUtc < a.StartedUtc - TimeSpan.FromMinutes(2);
 					AgentPaths.AppendLog(again ? $"{a.Lender.Name} found nothing new here since its scan of {found.ScannedAtUtc.ToLocalTime():g}: its {kept.Groups.Count:N0} set(s) stand"
 						: $"{a.Lender.Name} scanned this PC: {kept.Groups.Count:N0} set(s)" + (found.Cost is { } c
 							? $"; it fetched {Format.Bytes(c.FetchedBytes)} in {c.Asks:N0} asks and took {c.Seconds:N0} s" : ""));
