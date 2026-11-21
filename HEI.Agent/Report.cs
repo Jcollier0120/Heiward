@@ -478,18 +478,17 @@ namespace HEI.Agent {
 		/// <param name="progress">How many of the sets' files are sorted, of how many, after each of the scan's sets.</param>
 		/// <param name="ct">Stop scan: a set of thousands takes a while, so it's heard between rounds.</param>
 		/// <param name="datesKnown">Photos already known to have an EXIF capture date or not (a scan of another PC takes it while
-		/// a photo's bytes are here): not opened again for it.</param>
+		/// a photo's bytes are here, and keeps it for its next scan): not opened again for it, and those opened here are added.</param>
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null,
 			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null, Action<int, int>? progress = null, CancellationToken ct = default,
-			IReadOnlyDictionary<string, bool>? datesKnown = null) {
+			IDictionary<string, bool>? datesKnown = null) {
 			Func<string, bool>? before = readable;
 			ILookup<string, string>? knownBefore = knownByFolder;
-			Dictionary<string, bool>? datesBefore = datesTaken;
+			IDictionary<string, bool>? datesBefore = datesTaken;
 			readable = mayRead;
 			knownByFolder = mayRead == null ? null : (known ?? Array.Empty<string>()).Where(p => !mayRead(p))
 				.ToLookup(p => Path.GetDirectoryName(p) ?? "", StringComparer.OrdinalIgnoreCase);
-			datesTaken = datesKnown == null ? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
-				: new Dictionary<string, bool>(datesKnown, StringComparer.OrdinalIgnoreCase);
+			datesTaken = datesKnown ?? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
 			try { return BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes(), progress, ct); }
 			finally { readable = before; knownByFolder = knownBefore; datesTaken = datesBefore; }
 		}
@@ -505,7 +504,7 @@ namespace HEI.Agent {
 
 		/// <summary>This report's photos with an EXIF capture date, each file read once: a set's kept file is picked again
 		/// every round from what's left, and reading them all every round made a set of 15,000 screenshots take hours.</summary>
-		[ThreadStatic] static Dictionary<string, bool>? datesTaken;
+		[ThreadStatic] static IDictionary<string, bool>? datesTaken;
 		/// <summary>How many files this thread has opened for their capture date (tests).</summary>
 		[ThreadStatic] internal static int DatesRead;
 
@@ -1032,6 +1031,24 @@ namespace HEI.Agent {
 				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(now, AgentConfig.Json));
 				AgentPaths.WriteAtomic(LooksPath, JsonSerializer.Serialize(looksNow, AgentConfig.Json));
 				AgentPaths.WriteAtomic(TextsPath, JsonSerializer.Serialize(wordsNow, AgentConfig.Json));
+			}
+
+			/// <summary>
+			/// A stopped scan's: the hashes, close looks and words kept before and those taken since (<see cref="Keep"/>), none
+			/// dropped, since its sets weren't all sorted to tell which are needed.
+			/// </summary>
+			public void SaveTaken() {
+				Dictionary<string, Stored> hashes;
+				lock (earlier) hashes = Both(earlier, now);
+				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(hashes, AgentConfig.Json));
+				AgentPaths.WriteAtomic(LooksPath, JsonSerializer.Serialize(Both(looksEarlier, looksNow), AgentConfig.Json));
+				AgentPaths.WriteAtomic(TextsPath, JsonSerializer.Serialize(Both(wordsEarlier, wordsNow), AgentConfig.Json));
+			}
+
+			static Dictionary<string, T> Both<T>(Dictionary<string, T> before, Dictionary<string, T> since) {
+				var all = new Dictionary<string, T>(before, StringComparer.OrdinalIgnoreCase);
+				foreach (var (key, value) in since) all[key] = value;
+				return all;
 			}
 
 			/// <summary>

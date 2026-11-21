@@ -86,6 +86,10 @@ namespace HEI.Agent.Estate {
 
 		static string MirrorIn(string home) => Path.Combine(home, "mirror");
 		static string ListingIn(string home) => Path.Combine(home, "listing.json");
+		static string DatesIn(string home) => Path.Combine(home, "dates.json");
+
+		/// <summary>Whether a photo there has a capture date, read while its bytes were here, with its size and time then.</summary>
+		internal sealed record DateKept(long Size, long ModifiedTicks, bool Has);
 
 		/// <summary>The processor's share for work for another PC, in percent of the whole: <see cref="MostCores"/> cores' worth.</summary>
 		public static double CpuCap(int processors) => Math.Min(100, MostCores * 100.0 / Math.Max(1, processors));
@@ -217,7 +221,8 @@ namespace HEI.Agent.Estate {
 			if (!settings.UseAiMatching) notes.Add("AI matching is off on this PC: run 'hei setup' there.");
 			// Files listed as at the last scan aren't listed again: the engine knows them as they are.
 			Dictionary<string, ListedFile>? before = keptHolds ? kept!.Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase) : null;
-			int unchangedFiles = 0;
+			int unchangedFiles = before == null ? 0
+				: listing.Roots.SelectMany(r => r.Files).Count(f => before.TryGetValue(f.Path, out ListedFile? was) && was == f);
 			ScanEngine.RootListing? ListFor(string root) {
 				if (!roots.TryGetValue(Path.TrimEndingDirectorySeparator(root), out ListedRoot? r)) return null;
 				var files = new List<FileInfo>();
@@ -227,7 +232,6 @@ namespace HEI.Agent.Estate {
 					if (before != null && before.TryGetValue(f.Path, out ListedFile? was) && was == f) unchanged.Add(p);
 					else files.Add(new FileInfo(p));
 				}
-				Interlocked.Add(ref unchangedFiles, unchanged.Count);
 				return new ScanEngine.RootListing(files, unchanged);
 			}
 
@@ -237,9 +241,25 @@ namespace HEI.Agent.Estate {
 			if (settings.UseAiMatching) await NpuCheck.EnsureAsync(settings.AiDevice, AgentPaths.AppendLog, ct);
 
 			// What sorting the sets reads of a photo, taken while the scan has all of it here: its hash (for plain copies) and
-			// whether it has a capture date (for which to keep). Without, every photo in a set was fetched a second time.
+			// whether it has a capture date (for which to keep). Without, every photo in a set was fetched a second time. Both are
+			// kept for the next scan, for photos as they were: the hashes as this PC's own scans keep theirs, the dates here.
 			var hashes = ReportBuilder.ContentHashes.Load();
+			var byStandIn = listing.Roots.SelectMany(r => r.Files)
+				.ToDictionary(f => RemotePath.Mirrored(mirrorDir, f.Path), StringComparer.OrdinalIgnoreCase);
 			var dates = new ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+			foreach (var (path, k) in ReadDates(DatesIn(home)))
+				if (byStandIn.TryGetValue(path, out ListedFile? f) && f.Size == k.Size && f.ModifiedTicks == k.ModifiedTicks) dates[path] = k.Has;
+			void KeepTaken(bool sorted) {
+				try {
+					if (sorted) hashes.Save();
+					else hashes.SaveTaken();
+					var keepDates = new Dictionary<string, DateKept>(StringComparer.OrdinalIgnoreCase);
+					foreach (var (path, has) in dates)
+						if (byStandIn.TryGetValue(path, out ListedFile? f) && !mirror.Failed.ContainsKey(path)) keepDates[path] = new DateKept(f.Size, f.ModifiedTicks, has);
+					AgentPaths.WriteAtomic(DatesIn(home), JsonSerializer.Serialize(keepDates, AgentConfig.Json));
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving what was read of its photos failed: " + e.Message); }
+			}
 			mirror.WhileHeld = path => {
 				dates[path] = ExifReader.TryGetDateTaken(path, out _);
 				var file = new FileInfo(path);
@@ -268,10 +288,11 @@ namespace HEI.Agent.Estate {
 			string device;
 			int files;
 			// The other PC ended it (its Stop), or this PC stopped it: nothing is saved as found, and what was read stays in the
-			// database for the next scan, but for the files that couldn't be read.
+			// database for the next scan, but for the files that couldn't be read, and so do its photos' hashes and dates.
 			int Stopped() {
 				if (!mirror.Failed.IsEmpty) DatabaseUtils.Database.RemoveWhere(e => mirror.Failed.ContainsKey(e.Path));
 				DatabaseUtils.SaveDatabase();
+				KeepTaken(sorted: false);
 				stage("Stopped");
 				AgentPaths.AppendLog($"scan for {name} stopped{(mirror.Over ? " by that PC" : "")}, {Format.Bytes(bytes.Fetched)} fetched: what was read is kept for its next scan");
 				return 130;
@@ -289,8 +310,6 @@ namespace HEI.Agent.Estate {
 				finally {
 					if (fingerprints.FinishReading() is { } read) AgentPaths.AppendLog(read);
 				}
-				try { hashes.Save(); }
-				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving the content hashes failed: " + e.Message); }
 			}
 			catch (OperationCanceledException) when (stopping.IsCancellationRequested) {
 				return Stopped();
@@ -304,6 +323,7 @@ namespace HEI.Agent.Estate {
 			// once, so the scan can get to the end first: what it made of part of the files isn't what was found.
 			if (stopping.IsCancellationRequested || mirror.Over) return Stopped();
 			stage("Saving what it found");
+			KeepTaken(sorted: true);
 			var report = new Report(Report.CurrentVersion, started, timer.Elapsed.TotalSeconds, device, files, settings.IncludeList.ToList(), [], notes, groups, AppBuild.Current);
 			report.Save();
 			// Files whose bytes didn't come wait for the next scan: out of the database, and of the listing kept, so it reads them then.
@@ -354,6 +374,15 @@ namespace HEI.Agent.Estate {
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
 				return null;
 			}
+		}
+
+		internal static Dictionary<string, DateKept> ReadDates(string path) {
+			try {
+				if (File.Exists(path) && JsonSerializer.Deserialize<Dictionary<string, DateKept>>(File.ReadAllText(path), AgentConfig.Json) is { } kept)
+					return kept;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) { }
+			return new Dictionary<string, DateKept>(StringComparer.OrdinalIgnoreCase);
 		}
 	}
 }

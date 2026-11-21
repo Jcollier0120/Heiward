@@ -50,6 +50,41 @@ public sealed class RemoteScanTests : IDisposable {
 		Assert.Equal(When, got.Roots[0].Files[0].ModifiedUtc);
 	}
 
+	// A stopped scan's sets aren't sorted, so it can't tell which of its photos' hashes are needed: it keeps those it had
+	// and those it took, and its capture dates, so the next scan doesn't fetch those photos again for them.
+	[Fact]
+	public void A_stopped_scan_keeps_the_hashes_it_had_and_those_it_took_and_its_dates() {
+		string? home = Environment.GetEnvironmentVariable("HEIWARD_HOME");
+		string dir = Directory.CreateTempSubdirectory("hei-remote-kept-").FullName;
+		Environment.SetEnvironmentVariable("HEIWARD_HOME", dir);
+		try {
+			string a = Path.Combine(dir, "a.jpg"), b = Path.Combine(dir, "b.jpg");
+			File.WriteAllBytes(a, new byte[100]);
+			File.WriteAllBytes(b, new byte[200]);
+			void Take(string path, string hash) {
+				var h = ReportBuilder.ContentHashes.Load();
+				var f = new FileInfo(path);
+				h.Keep(path, f.Length, f.LastWriteTimeUtc, hash);
+				h.SaveTaken();
+			}
+			Take(a, "AA"); // the first scan, stopped
+			Take(b, "BB"); // the next, stopped too
+			var kept = ReportBuilder.ContentHashes.Load();
+			Assert.Equal("AA", kept.Get(a)); // as kept, not hashed again
+			Assert.Equal("BB", kept.Get(b));
+
+			string dates = Path.Combine(dir, "dates.json");
+			File.WriteAllText(dates, JsonSerializer.Serialize(new Dictionary<string, RemoteScanner.DateKept> { [a] = new(100, When.Ticks, true) }, AgentConfig.Json));
+			Assert.Equal(new RemoteScanner.DateKept(100, When.Ticks, true), RemoteScanner.ReadDates(dates)[a]);
+			File.WriteAllText(dates, "not json");
+			Assert.Empty(RemoteScanner.ReadDates(dates));
+		}
+		finally {
+			Environment.SetEnvironmentVariable("HEIWARD_HOME", home);
+			try { Directory.Delete(dir, true); } catch (IOException) { }
+		}
+	}
+
 	[Fact]
 	public void The_stamp_changes_only_when_the_files_do() {
 		Assert.Equal(Listing().Stamp, Listing().Stamp);

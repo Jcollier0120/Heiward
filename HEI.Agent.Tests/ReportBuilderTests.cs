@@ -796,6 +796,19 @@ public sealed class ReportBuilderTests : IDisposable {
 		Assert.Equal(300, ReportBuilder.DatesRead);
 	}
 
+	// A scan of another PC keeps what it knows of its photos' capture dates for the next scan: those given aren't
+	// opened again, and those opened are added, so the next scan doesn't fetch a photo over the link for its date.
+	[Fact]
+	public void TheCaptureDatesGiven_AreNotReadAgain_AndThoseRead_AreAdded() {
+		DuplicateItem[] shots = Screenshots(10);
+		var known = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+		foreach (DuplicateItem s in shots.Take(4)) known[s.Path] = false;
+		ReportBuilder.DatesRead = 0;
+		Assert.Single(ReportBuilder.Build(shots, fingerprints, datesKnown: known));
+		Assert.Equal(6, ReportBuilder.DatesRead);
+		Assert.Equal(shots.Select(s => s.Path).Order(StringComparer.OrdinalIgnoreCase), known.Keys.Order(StringComparer.OrdinalIgnoreCase));
+	}
+
 	// Stop scan is heard while the report is made, and the page sees how far it is.
 	[Fact]
 	public void TheReport_SaysHowFarItIs_AndStopsWhenAsked() {
