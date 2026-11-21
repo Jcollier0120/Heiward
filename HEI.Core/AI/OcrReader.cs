@@ -466,6 +466,9 @@ namespace HEI.Core.AI {
 
 		/// <summary>The picture's lines, top to bottom, each its boxes left to right (what the detector found as one stretch of text), each its words.</summary>
 		public List<List<List<TextWord>>> Read(TextPicture pic) {
+			// On the NPU, a picture's reading is a turn in the NPU's line, as the embedder's batches are: two programs' work on
+			// the NPU at once has bugchecked a Snapdragon driver, and work lent to another PC gives way here (NpuLending).
+			using IDisposable? turn = npu ? NpuLock.Acquire() : null;
 			Time.Start();
 			try {
 				var rows = Rows(Boxes(pic)).Select(r => r.Select(b => Prepare(pic, b)).ToList()).ToList();

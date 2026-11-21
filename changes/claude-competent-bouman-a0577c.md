@@ -10,6 +10,11 @@ minor: true
 - The card shows the scan's progress here as it goes, and it can be stopped.
 - What the other PC finds shows here with this PC's own sets, marked **Found by <PC>**. Nothing is removed without you: you clean up with the usual buttons, with the usual checks before anything goes to the Recycle Bin, and automatic cleanup leaves these sets alone. **Let go of them** clears them.
 - The PC doing the scan uses at most 8 of its processor's cores, in the background, and the AI on its NPU, and pauses while a game runs there.
+- Its NPU's more urgent work goes first: while that PC's NPU captions a call, or does work someone is waiting on, the scan waits, and then goes on where it was. The card here says so meanwhile.
+
+### What changed
+
+- Reading the words in photos on the NPU now takes turns with the other programs that use the NPU, as finding look-alikes already did.
 
 ### Before you update
 

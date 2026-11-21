@@ -181,9 +181,21 @@ namespace HEI.Agent.Estate {
 				stage("Heiward's folder on this PC is on a drive that can't hold the other PC's files");
 				return 4;
 			}
-			var bytes = new EstateBytes(pc, waiting);
+			// What the scan waits for, for the other PC's page: a game there (the link), or this PC's NPU giving way.
+			object waits = new();
+			string? onLink = null;
+			bool givingWay = false;
+			void Say() => waiting(givingWay ? "npu" : onLink);
+			var bytes = new EstateBytes(pc, w => { lock (waits) { onLink = w; Say(); } });
 			fetcher(bytes);
 			using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct);
+			// This PC's NPU lent to that PC as background work, on the PC-wide record (the kit's LENDING.md): while a call is
+			// captioned for another PC, or work someone waits on is lent, the scan takes no new NPU turn, and goes on after.
+			using var lending = NpuLending.Join(NpuLending.Background, "heiward", name, $"scanning {name}'s photos and videos for it", stopping.Token, giving => {
+				lock (waits) { givingWay = giving; Say(); }
+				AgentPaths.AppendLog(giving ? $"scan for {name}: this PC's NPU is lent to something more urgent, so the scan waits for it"
+					: $"scan for {name}: the NPU is free of it again");
+			});
 			using var mirror = new RemoteMirror(mirrorDir, bytes) { Stopping = stopping.Token };
 			stage("Making room for its files");
 			var (added, changed, gone) = mirror.Sync(listing);

@@ -119,9 +119,13 @@ namespace HEI.Core.AI {
 		internal static IDisposable Acquire(TimeSpan? wait, bool interactive) => Acquire(Accelerators.Npu, wait, interactive);
 
 		internal static IDisposable Acquire(string accelerator, TimeSpan? wait, bool interactive) {
+			// Lending this PC's NPU to another PC: no new turn while something that matters more is lent (kit\spec\LENDING.md).
+			// Giving way isn't waiting in line, so it doesn't count against wait.
+			bool npu = accelerator == Accelerators.Npu;
+			if (npu) NpuLending.WaitTurn();
 			string? dir = LockDirectoryFor(accelerator);
 			if (dir == null) return NoLock.Instance;
-			return AcquireAt(dir, accelerator == Accelerators.Npu ? "NPU" : accelerator, wait, interactive, Stale);
+			return AcquireAt(dir, npu ? "NPU" : accelerator, wait, interactive, Stale, lent: npu);
 		}
 
 		/// <summary>
@@ -144,18 +148,26 @@ namespace HEI.Core.AI {
 		public static IDisposable AcquireFirstRound(TimeSpan wait) =>
 			FirstRoundDirectory is string dir ? AcquireAt(dir, "first-round", wait, interactive: false, FirstRoundHold) : NoLock.Instance;
 
-		/// <summary>A lock folder and its line (any of them: an accelerator's, the first-round line), as above; <paramref name="stale"/> evicts an overstayed holder.</summary>
-		internal static IDisposable AcquireAt(string dir, string what, TimeSpan? wait, bool interactive, TimeSpan stale) {
+		/// <summary>
+		/// A lock folder and its line (any of them: an accelerator's, the first-round line), as above; <paramref name="stale"/>
+		/// evicts an overstayed holder. <paramref name="lent"/>: the NPU's, which a lending of it to another PC asks for
+		/// (<see cref="NpuLending"/>): at the head of the line it looks at the record again before taking the turn.
+		/// </summary>
+		internal static IDisposable AcquireAt(string dir, string what, TimeSpan? wait, bool interactive, TimeSpan stale, bool lent = false) {
 			string queueDir = QueueDirectoryFor(dir);
 			Directory.CreateDirectory(queueDir);
 			var deadline = Stopwatch.StartNew();
 			TimeSpan limit = wait ?? TimeSpan.FromMinutes(5);
 
-			long us = NowUs();
-			string name = $"{(interactive ? 0 : 1)}-{us:D17}-{Environment.ProcessId}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}.ticket";
-			string ticket = Path.Combine(queueDir, name);
-			string body = $$"""{"pid":{{Environment.ProcessId}},"since":{{us / 1000}},"lane":"{{(interactive ? "interactive" : "background")}}","who":"heiward"}""";
-			File.WriteAllText(ticket, body);
+			string name = "", ticket = "", body = "";
+			void Join() {
+				long us = NowUs();
+				name = $"{(interactive ? 0 : 1)}-{us:D17}-{Environment.ProcessId}-{Convert.ToHexString(RandomNumberGenerator.GetBytes(4)).ToLowerInvariant()}.ticket";
+				ticket = Path.Combine(queueDir, name);
+				body = $$"""{"pid":{{Environment.ProcessId}},"since":{{us / 1000}},"lane":"{{(interactive ? "interactive" : "background")}}","who":"heiward"}""";
+				WriteTicket(ticket, body);
+			}
+			Join();
 
 			var beat = Stopwatch.StartNew();
 			bool logged = false;
@@ -173,6 +185,17 @@ namespace HEI.Core.AI {
 						continue;
 					}
 					bool head = line[0] == name;
+					if (head && lent && NpuLending.MustGiveWay()) {
+						// Something lent came while this waited, and matters more: out of the line meanwhile, so nobody waits
+						// behind this ticket, and back in at its end after. Giving way isn't waiting in line: not counted.
+						try { File.Delete(ticket); } catch { }
+						deadline.Stop();
+						NpuLending.WaitTurn();
+						deadline.Start();
+						Join();
+						beat.Restart();
+						continue;
+					}
 					if (head && TryLock(dir, what, stale) is { } held)
 						return held;
 					if (deadline.Elapsed > limit)
@@ -269,7 +292,7 @@ namespace HEI.Core.AI {
 		static long lastUs;
 
 		/// <summary>Wall-clock microseconds since the Unix epoch, strictly increasing within this process.</summary>
-		static long NowUs() {
+		internal static long NowUs() {
 			long t = (DateTime.UtcNow.Ticks - DateTime.UnixEpoch.Ticks) / 10;
 			while (true) {
 				long last = Interlocked.Read(ref lastUs);
@@ -278,7 +301,7 @@ namespace HEI.Core.AI {
 			}
 		}
 
-		static bool PidAlive(int pid) {
+		internal static bool PidAlive(int pid) {
 			try {
 				using var p = Process.GetProcessById(pid);
 				return !p.HasExited;

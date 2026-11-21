@@ -1760,7 +1760,9 @@ function renderRemoteCard(s) {
     };
     remoteProgress(a);
     const row = line(a.name + ' is scanning this PC', stage, handed,
-      a.waiting === 'game' ? 'Waiting: a game is running on this PC.' : null, meter);
+      a.waiting === 'game' ? 'Waiting: a game is running on this PC.'
+        : a.waiting === 'npu' ? 'Waiting: ' + a.name + '\'s NPU is busy with something more urgent, such as captioning a call. The scan goes on after.'
+        : null, meter);
     const stop = el('button', 'btn secondary', 'Stop');
     stop.addEventListener('click', async () => { stop.disabled = true; await post('/api/remote/stop', {}); refresh(); });
     row.append(stop);
