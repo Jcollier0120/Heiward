@@ -29,13 +29,15 @@ namespace HEI.Agent.Estate {
 	/// <list type="bullet">
 	/// <item>The PC that scans: <c>scan</c> (whether it can now, its build and NPU), <c>scan/out</c> (the loan's results:
 	/// how the scan is getting on, then that it's done), <c>findings</c> (what it found, for the PC asking only).</item>
-	/// <item>The PC scanned: <c>scan/in</c> (the work: which listing), <c>scan/listing</c> (its files), <c>scan/bytes</c>
-	/// (their bytes), each only for the PC it asked, while it asks.</item>
+	/// <item>The PC scanned: <c>scan/in</c> (the work: which listing), <c>scan/pages</c> (its files, a page at a time:
+	/// <see cref="ListingPages"/>), <c>scan/bytes</c> (their bytes), each only for the PC it asked, while it asks; and
+	/// <c>scan/listing</c>, its files in one answer, as version 1 asked for them.</item>
 	/// </list>
 	/// </summary>
 	static class ScanForOthers {
 		public const string Route = "scan";
-		const int Version = 1;
+		/// <summary>2: the listing comes in pages (<c>scan/pages</c>).</summary>
+		const int Version = 2;
 
 		// ---- A game here: neither side's work goes on while one is played. As the kit's game check (PEER-FILES.md, Gently):
 		// its answer stands for 30 s, one check at a time is asked behind it however many ask, and a failed reading says no game.
@@ -70,8 +72,11 @@ namespace HEI.Agent.Estate {
 
 		// ================= What the page shows =================
 
-		/// <summary>The other PCs on the Estate that can scan this one now (same build), and those that could once Heiward there is updated.</summary>
-		static (long At, List<object> Can, List<string> Update)? offers;
+		/// <summary>
+		/// The other PCs on the Estate that can scan this one now (same build), those that could once Heiward there is
+		/// updated (an older one), and those that could once Heiward here is (a newer one there).
+		/// </summary>
+		static (long At, List<object> Can, List<string> Update, List<string> UpdateHere)? offers;
 		static int refreshing;
 
 		/// <summary>
@@ -85,10 +90,11 @@ namespace HEI.Agent.Estate {
 			Asked? a = asked;
 			ForeignFindings? found = ForeignFindings.LoadAny();
 			var lent = ScanningFor;
-			if (known is not { Can.Count: > 0 } && known is not { Update.Count: > 0 } && a == null && found == null && lent == null) return null;
+			if (known is not { Can.Count: > 0 } && known is not { Update.Count: > 0 } && known is not { UpdateHere.Count: > 0 } && a == null && found == null && lent == null) return null;
 			return new {
 				others = known?.Can ?? [],
 				updateOn = known?.Update ?? [],
+				newerOn = known?.UpdateHere ?? [],
 				asked = a == null ? null : new {
 					pc = a.Lender.Id, name = a.Lender.Name, stage = a.Stage, done = a.Done, total = a.Total, fetchedBytes = a.Fetched,
 					waiting = a.Waiting, finished = a.Finished, problem = a.Problem, sets = a.Sets, startedUtc = a.StartedUtc,
@@ -103,6 +109,7 @@ namespace HEI.Agent.Estate {
 			try {
 				var can = new List<object>();
 				var update = new List<string>();
+				var updateHere = new List<string>();
 				if (await EstateLink.ReadEstateAsync(CancellationToken.None) is { On: true } estate)
 					foreach (EstateLink.EstatePc pc in estate.Pcs.Where(p => p.Here && p.HasHeiward != false)) {
 						try {
@@ -112,15 +119,15 @@ namespace HEI.Agent.Estate {
 								bool able = r.TryGetProperty("can", out JsonElement c) && c.ValueKind == JsonValueKind.True;
 								string? build = EstateLink.Str(r, "build");
 								if (able && build == AppBuild.Current) can.Add(new { id = pc.Id, name = pc.Name, npu = EstateLink.Str(r, "npu") });
-								else if (able && build != null) update.Add(pc.Name);
+								else if (able && build != null) (Newer(build, AppBuild.Current) ? updateHere : update).Add(pc.Name);
 							}
 						}
 						catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing) { }
 					}
-				offers = (Environment.TickCount64, can, update);
+				offers = (Environment.TickCount64, can, update, updateHere);
 			}
 			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing or IOException) {
-				offers = (Environment.TickCount64, [], []);
+				offers = (Environment.TickCount64, [], [], []);
 			}
 			finally {
 				Volatile.Write(ref refreshing, 0);
@@ -146,9 +153,10 @@ namespace HEI.Agent.Estate {
 		static readonly object gate = new();
 		static Borrowing? borrowing;
 		static Asked? asked;
-		static RemoteListing? sent;
-		static byte[]? sentJson;
-		static Dictionary<string, ListedFile>? sentFiles;
+		/// <summary>What this PC listed to the PC scanning it, on disk while it scans (none after: the files it found are checked against it first).</summary>
+		static LentListing? lentListing;
+		/// <summary>The findings are being checked against the listing: it's kept until they are.</summary>
+		static bool pulling;
 		static PeerFiles? serving;
 		static TimeSpan listCpu;
 
@@ -188,8 +196,20 @@ namespace HEI.Agent.Estate {
 			return null;
 		}
 
-		static string Versions(string name, string theirs) =>
-			$"Heiward on {name} is another version ({Short(theirs)}, this PC has {Short(AppBuild.Current)}): update Heiward on both PCs.";
+		/// <summary>
+		/// Why <paramref name="name"/> can't scan this PC, or be scanned by it, in words for this PC's page: it runs Heiward
+		/// <paramref name="theirs"/>, this PC <paramref name="mine"/>, and the older one is the one to update.
+		/// </summary>
+		internal static string Versions(string name, string theirs, string? mine = null) {
+			mine ??= AppBuild.Current;
+			return Newer(theirs, mine) ? $"Heiward on {name} is newer ({Short(theirs)}; this PC has {Short(mine)}): update Heiward on this PC."
+				: Newer(mine, theirs) ? $"Heiward on {name} is older ({Short(theirs)}; this PC has {Short(mine)}): update Heiward there."
+				: $"Heiward on {name} is another version ({Short(theirs)}; this PC has {Short(mine)}): update Heiward on both PCs.";
+		}
+
+		/// <summary>Whether build <paramref name="a"/> is a later version than <paramref name="b"/> (false when either isn't one).</summary>
+		internal static bool Newer(string a, string b) =>
+			System.Version.TryParse(Short(a), out System.Version? x) && System.Version.TryParse(Short(b), out System.Version? y) && x > y;
 
 		static string Short(string build) => build.Split('+')[0];
 
@@ -218,23 +238,33 @@ namespace HEI.Agent.Estate {
 				}
 				if (a != asked || a.Finished) return;
 				var notes = new List<string>();
-				var roots = AgentScanner.BuildSettings(AgentConfig.Load(), notes).IncludeList.ToList();
-				RemoteListing listing = RemoteListing.FromKept(ListingPlan.Kept(roots), AppBuild.Current);
-				int files = listing.Roots.Sum(r => r.Files.Count);
-				AgentPaths.AppendLog($"listed {files:N0} photos and videos for {a.Lender.Name}'s scan in {timer.Elapsed.TotalSeconds:N1} s ({listCpu.TotalSeconds:N1} s of the processor)");
+				var roots = AgentScanner.BuildSettings(AgentConfig.Load(), notes).IncludeList.Order(StringComparer.Ordinal).ToList();
+				LentListing listing = LentListing.Write(ListingPlan.Kept(roots), AppBuild.Current);
+				int files = listing.Files;
+				AgentPaths.AppendLog($"listed {files:N0} photos and videos for {a.Lender.Name}'s scan in {timer.Elapsed.TotalSeconds:N1} s ({listCpu.TotalSeconds:N1} s of the processor), " +
+					$"in {listing.Pages.Count:N0} page(s)");
 				lock (gate) {
-					sent = listing;
-					sentJson = listing.ToJson();
-					sentFiles = listing.Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase);
-					// Its files, for that PC alone, while it scans this one (the kit's PeerFiles).
+					if (a != asked || a.Finished) {
+						listing.Dispose();
+						return;
+					}
+					lentListing?.Dispose();
+					lentListing = listing;
+					// Its files, for that PC alone, while it scans this one (the kit's PeerFiles), looked up in the listing on disk.
 					Pc lender = a.Lender;
 					serving = new PeerFiles(GameNow) { May = pc => pc.Id == lender.Id && borrowing?.Lender?.Id == lender.Id };
-					serving.Replace(sentFiles.Keys);
+					serving.ReplaceWith(key => {
+						try { return listing.PathOf(key); }
+						catch (Exception e) when (e is ObjectDisposedException or IOException) { return null; } // the loan just ended
+					}, files);
 					a.Stage = $"Waiting for {a.Lender.Name}";
 					a.Total = files;
 					Borrow.Start(a.Lender);
 					Borrow.Offer(new JsonObject { ["scan"] = new JsonObject { ["v"] = Version, ["build"] = AppBuild.Current, ["stamp"] = listing.Stamp, ["files"] = files } }, head: true);
 				}
+				// Reading what this PC keeps of a big library took memory for a moment: it goes back to Windows now, not
+				// once the scan ends, hours later.
+				GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
 			}
 			catch (Exception e) {
 				AgentPaths.AppendLog("listing for another PC's scan failed: " + e);
@@ -255,7 +285,8 @@ namespace HEI.Agent.Estate {
 			}
 			else if (line["done"] is JsonObject d) {
 				if ((int?)d["code"] is int code && code != 0) {
-					Stop(Fail(a, $"{a.Lender.Name}'s scan of this PC didn't finish: {(string?)d["error"] ?? (string?)d["stage"] ?? "code " + code}."));
+					string why = ((string?)d["error"] ?? (string?)d["stage"] ?? "it ended early").TrimEnd('.');
+					Stop(Fail(a, $"{a.Lender.Name}'s scan of this PC didn't finish: {why}."));
 					return;
 				}
 				a.Stage = "Fetching what it found";
@@ -278,8 +309,17 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
-		/// <summary>The loan is over: its files aren't offered any more, and what handing them over cost is logged (once).</summary>
+		/// <summary>
+		/// The loan is over: its files aren't offered any more, the listing on disk goes (once the findings are checked
+		/// against it, while they are), and what handing them over cost is logged (once).
+		/// </summary>
 		static void Released() {
+			lock (gate) {
+				if (!pulling) {
+					lentListing?.Dispose();
+					lentListing = null;
+				}
+			}
 			if (serving is not { Count: > 0 } s) return;
 			s.Clear();
 			if (s.Served > 0)
@@ -289,6 +329,7 @@ namespace HEI.Agent.Estate {
 
 		/// <summary>The other PC's findings fetched, checked against what was listed to it, and kept for the page (<see cref="ForeignFindings"/>).</summary>
 		static async Task PullFindingsAsync(Asked a) {
+			lock (gate) pulling = true;
 			try {
 				var (status, json) = await EstateLink.GetJsonAsync(EstateLink.PeerPath(a.Lender.Id, "findings"), TimeSpan.FromMinutes(2), CancellationToken.None);
 				using (json) {
@@ -301,7 +342,7 @@ namespace HEI.Agent.Estate {
 						Stop(Fail(a, Versions(a.Lender.Name, found.Build)));
 						return;
 					}
-					Dictionary<string, ListedFile> listed = sentFiles ?? new(StringComparer.OrdinalIgnoreCase);
+					Dictionary<string, ListedFile> listed = ListedOf(found);
 					// Nothing new here since its last scan: the same findings as those kept, and nothing was fetched for them this time.
 					bool again = ForeignFindings.LoadAny() is { } before && before.FromId == a.Lender.Id && before.ScannedAtUtc == found.ScannedAtUtc;
 					ForeignFindings kept = ForeignFindings.From(a.Lender, found, listed);
@@ -320,32 +361,92 @@ namespace HEI.Agent.Estate {
 			}
 			finally {
 				lock (gate) {
+					pulling = false;
 					borrowing?.Stop();
 					Released();
 				}
 			}
 		}
 
+		/// <summary>The files the findings name, as this PC listed them to that PC (those it didn't aren't there): looked up in the listing on disk.</summary>
+		static Dictionary<string, ListedFile> ListedOf(RemoteFindings found) {
+			var listed = new Dictionary<string, ListedFile>(StringComparer.OrdinalIgnoreCase);
+			if (lentListing is not { } listing) return listed;
+			foreach (ReportGroup g in found.Groups ?? [])
+				foreach (string path in (g.Items ?? []).Select(i => i.Path).Append(g.KeepPath))
+					if (path != null && !listed.ContainsKey(path) && listing.Find(path) is { } f) listed[path] = f;
+			return listed;
+		}
+
 		/// <summary>GET /api/peer/scan/in: the PC scanning this one pulls the work.</summary>
 		internal static Task InRouteAsync(HttpContext ctx) => Borrow.InRouteAsync(ctx);
 
-		/// <summary>Only the PC this one asked to scan it, while it does.</summary>
-		static bool IsLender(HttpContext ctx) => EstateLink.AskerOf(ctx.Request) is { } asker && borrowing?.Lender?.Id == asker.Id && sent != null;
+		/// <summary>The listing, for the PC this one asked to scan it, while it does; null for any other ask.</summary>
+		static LentListing? ListingFor(HttpContext ctx) =>
+			EstateLink.AskerOf(ctx.Request) is { } asker && borrowing?.Lender?.Id == asker.Id ? lentListing : null;
 
-		/// <summary>GET /api/peer/scan/listing?have=…: this PC's files, or word that they're as listed at the stamp the other PC has.</summary>
+		static Task NotAsking(HttpContext ctx) => NpuLoan.Json(410, new { error = "This PC isn't asking that PC to scan it now.", code = "none" }).ExecuteAsync(ctx);
+
+		/// <summary>
+		/// GET /api/peer/scan/listing?have=…: this PC's files in one answer, as version 1 asked for them, or word that they're
+		/// as listed at the stamp the other PC has. Written from the listing on disk as it's read, never held whole.
+		/// </summary>
 		internal static async Task ListingRouteAsync(HttpContext ctx) {
-			if (!IsLender(ctx)) {
-				await NpuLoan.Json(410, new { error = "This PC isn't asking that PC to scan it now." }).ExecuteAsync(ctx);
+			if (ListingFor(ctx) is not { } listing) {
+				await NotAsking(ctx);
 				return;
 			}
-			RemoteListing listing = sent!;
 			if (ctx.Request.Query["have"] == listing.Stamp) {
 				await NpuLoan.Json(200, new { v = RemoteListing.Version, same = true, stamp = listing.Stamp }).ExecuteAsync(ctx);
 				return;
 			}
 			ctx.Response.ContentType = "application/json";
 			ctx.Response.Headers.CacheControl = "no-store";
-			await ctx.Response.Body.WriteAsync(sentJson!, ctx.RequestAborted);
+			try { await listing.WriteWholeAsync(ctx.Response.Body, ctx.RequestAborted); }
+			catch (Exception e) when (e is ObjectDisposedException or IOException) { ctx.Abort(); } // the loan ended as it went
+		}
+
+		/// <summary>
+		/// GET /api/peer/scan/pages?n=…&amp;have=…&amp;stamp=…: page n of this PC's files (<see cref="ListingPages"/>); word that
+		/// they're as listed at the stamp the other PC has (have, on the first page); or 409 when the stamp it pages through
+		/// isn't this listing's any more, so it asks again from the first page.
+		/// </summary>
+		internal static async Task PagesRouteAsync(HttpContext ctx) {
+			if (ListingFor(ctx) is not { } listing) {
+				await NotAsking(ctx);
+				return;
+			}
+			await PageAsync(ctx, listing);
+		}
+
+		/// <summary>The pages route's answer from <paramref name="listing"/> (tests: a listing of their own).</summary>
+		internal static async Task PageAsync(HttpContext ctx, LentListing listing) {
+			ctx.Response.Headers.CacheControl = "no-store";
+			if (!int.TryParse(ctx.Request.Query["n"], System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out int n)) {
+				await NpuLoan.Json(400, new { error = "Ask for a page by its number (n).", code = "page" }).ExecuteAsync(ctx);
+				return;
+			}
+			if (n == 0 && ctx.Request.Query["have"] == listing.Stamp) {
+				await NpuLoan.Json(200, new { v = ListingPages.Version, same = true, stamp = listing.Stamp }).ExecuteAsync(ctx);
+				return;
+			}
+			if (ctx.Request.Query["stamp"] is { Count: > 0 } stamp && stamp != listing.Stamp) {
+				await NpuLoan.Json(409, new { error = "This PC's list of files changed since: ask for it again from its first page.", code = "changed", stamp = listing.Stamp })
+					.ExecuteAsync(ctx);
+				return;
+			}
+			if (n >= listing.Pages.Count) {
+				await NpuLoan.Json(404, new { error = $"This PC's list of files has {listing.Pages.Count} page(s).", code = "page" }).ExecuteAsync(ctx);
+				return;
+			}
+			var page = new System.Buffers.ArrayBufferWriter<byte>(LentListing.PageBytes + 64 * 1024);
+			try { listing.WritePage(n, page); }
+			catch (Exception e) when (e is ObjectDisposedException or IOException) {
+				await NotAsking(ctx); // the loan ended as it was asked
+				return;
+			}
+			ctx.Response.ContentType = "application/json";
+			await ctx.Response.Body.WriteAsync(page.WrittenMemory, ctx.RequestAborted);
 		}
 
 		/// <summary>GET /api/peer/scan/bytes?path=…: a listed file's bytes, gently, as the kit's PeerFiles answers (none offered when no PC scans this one).</summary>
@@ -420,7 +521,9 @@ namespace HEI.Agent.Estate {
 					if (child != null || ended) return; // the head again, after a dropped link
 					string? build = (string?)scan["build"];
 					if ((int?)scan["v"] != Version || build != AppBuild.Current) {
-						loan.End(build == null ? "that PC's Heiward is another version: update Heiward on both PCs" : Versions(Environment.MachineName, build));
+						// In words for that PC's page: this PC is the other one there.
+						loan.End(build == null ? $"Heiward on {Environment.MachineName} is another version: update Heiward on both PCs"
+							: Versions(Environment.MachineName, AppBuild.Current, build));
 						return;
 					}
 					string home = RemoteScanner.HomeFor(loan.From.Id);

@@ -501,15 +501,14 @@ namespace HEI.Agent {
 
 		/// <summary>
 		/// Each scanned folder's listing as the last scan (or listing) left it: its root, and its photos and videos with their
-		/// sizes and last-modified times. For another PC that scans this one's files (<see cref="Estate.RemoteListing"/>).
+		/// sizes and last-modified times. For another PC that scans this one's files (<see cref="Estate.LentListing"/>): read
+		/// a root at a time, as it's asked for, so only one root's files are in memory at once.
 		/// </summary>
-		internal static List<(string Root, List<(string Path, long Size, DateTime ModifiedUtc)> Files)> Kept(IEnumerable<string> roots) {
+		internal static IEnumerable<(string Root, List<(string Path, long Size, DateTime ModifiedUtc)> Files)> Kept(IEnumerable<string> roots) {
 			Stored stored = Stored.Load();
-			var kept = new List<(string, List<(string, long, DateTime)>)>();
 			foreach (string root in roots)
 				if (stored.Roots.TryGetValue(root, out StoredRoot? r) && StoredListing.Load(r.File) is { } listing)
-					kept.Add((root, listing.Files.ToList()));
-			return kept;
+					yield return (root, listing.Files.ToList());
 		}
 
 		/// <summary>After a scan that didn't run: the journal was read this far, and nothing in it mattered.</summary>
