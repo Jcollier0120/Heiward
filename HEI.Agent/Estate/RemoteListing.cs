@@ -58,9 +58,15 @@ namespace HEI.Agent.Estate {
 			return Hash(text.ToString());
 		}
 
-		static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)))[..32].ToLowerInvariant();
+		internal static string Hash(string text) => Hex(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
-		/// <summary>The listing's JSON, as the route sends it (each file an array).</summary>
+		/// <summary>A stamp from its SHA-256: the first 32 hex digits, in lower case.</summary>
+		internal static string Hex(byte[] sha256) => Convert.ToHexString(sha256)[..32].ToLowerInvariant();
+
+		/// <summary>
+		/// The listing's JSON, as version 1's route sent it whole (each file an array): what the lent listing's
+		/// <see cref="LentListing.WriteWholeAsync"/> writes, byte for byte, a megabyte at a time.
+		/// </summary>
 		public byte[] ToJson() {
 			using var ms = new MemoryStream();
 			using (var w = new Utf8JsonWriter(ms)) {

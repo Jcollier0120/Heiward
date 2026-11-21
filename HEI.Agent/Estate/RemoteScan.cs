@@ -70,7 +70,8 @@ namespace HEI.Agent.Estate {
 	/// report, content hashes and stand-ins, apart from this PC's own scans. Started by this PC's page when the other PC
 	/// asks (<see cref="ScanForOthers"/>).
 	/// <list type="number">
-	/// <item>The other PC's listing, unless it's the same as at the last scan (<c>?have=</c>): then nothing is read at all.</item>
+	/// <item>The other PC's listing, a page at a time (<see cref="ListingPages"/>), unless it's the same as at the last
+	/// scan (<c>?have=</c>): then nothing is read at all.</item>
 	/// <item>A stand-in for each file listed (<see cref="RemoteMirror"/>); files listed as at the last scan aren't read again.</item>
 	/// <item>The engine as for this PC's own scans, its readers fetching what they read; at most <see cref="MostCores"/>
 	/// cores' worth of the processor, in the background, the NPU for the AI where this PC has one.</item>
@@ -85,7 +86,8 @@ namespace HEI.Agent.Estate {
 		public static string HomeFor(string pc) => Path.Combine(AgentPaths.Home, "remote", pc);
 
 		static string MirrorIn(string home) => Path.Combine(home, "mirror");
-		static string ListingIn(string home) => Path.Combine(home, "listing.json");
+		/// <summary>The listing as at the last scan (<see cref="ListingPages.Save"/>), for the next.</summary>
+		static string ListingIn(string home) => Path.Combine(home, "listing.tsv");
 		static string DatesIn(string home) => Path.Combine(home, "dates.json");
 
 		/// <summary>Whether a photo there has a capture date, read while its bytes were here, with its size and time then.</summary>
@@ -136,49 +138,60 @@ namespace HEI.Agent.Estate {
 				Write(finished: true, code: code);
 				return code;
 			}
-			catch (OperationCanceledException) {
+			catch (OperationCanceledException) when (ct.IsCancellationRequested) {
 				AgentPaths.AppendLog($"scan for {name} stopped");
 				Write(finished: true, code: 130, error: "stopped");
 				return 130;
 			}
 			catch (Exception e) {
 				AgentPaths.AppendLog($"scan for {name} failed: {e}");
-				Write(finished: true, code: 1, error: e.Message);
+				Write(finished: true, code: 1, error: Plain(e));
 				return 1;
 			}
 		}
 
+		/// <summary>
+		/// Why a scan for another PC failed, in words for that PC's page, where it shows (this PC is "the other
+		/// PC" there, so it's named): never an exception's own message, but for this PC's disk's, which Windows words.
+		/// </summary>
+		internal static string Plain(Exception e) {
+			string me = Environment.MachineName;
+			return e switch {
+				EstateMissing => $"Castellan isn't running on {me}",
+				HttpRequestException or OperationCanceledException or IOException { InnerException: System.Net.Sockets.SocketException } or HttpIOException =>
+					$"The link between {me} and this PC broke off. Try again; Castellan must be running on both PCs",
+				InvalidDataException or JsonException => $"This PC sent something Heiward on {me} doesn't read: update Heiward on both PCs",
+				IOException or UnauthorizedAccessException => $"{me} couldn't use its own disk for the scan: {e.Message.TrimEnd('.')}",
+				_ => $"Something went wrong on {me}: Heiward's log there says what",
+			};
+		}
+
 		static async Task<int> ScanAsync(string pc, string name, string home, AgentConfig cfg, DateTime started, Stopwatch timer, CancellationToken ct,
 			Action<string> stage, Action<int, int> progress, Action<string?> waiting, Action<EstateBytes> fetcher) {
-			// 1. Its listing, or word that it's as it was.
-			RemoteListing? kept = LoadListing(ListingIn(home));
+			// 1. Its listing, a page at a time, or word that it's as it was. (Version 1's listing.json, read whole, goes: the
+			// first scan after it asks for all of the listing again.)
+			TryDelete(Path.Combine(home, "listing.json"));
+			RemoteListing? kept = ListingPages.Load(ListingIn(home));
 			bool keptHolds = kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath);
-			string route = "scan/listing" + (keptHolds ? "?have=" + Uri.EscapeDataString(kept!.Stamp) : "");
-			RemoteListing listing;
-			var (status, json) = await EstateLink.GetJsonAsync(EstateLink.PeerPath(pc, route), TimeSpan.FromMinutes(5), ct);
-			using (json) {
-				if (status != 200 || json?.RootElement is not { ValueKind: JsonValueKind.Object } root) {
-					AgentPaths.AppendLog($"scan for {name}: its list of files didn't come ({status})");
-					stage("Its list of files didn't come");
-					return 3;
-				}
-				if (root.TryGetProperty("same", out JsonElement same) && same.ValueKind == JsonValueKind.True) {
-					AgentPaths.AppendLog($"scan for {name}: nothing new there since the last scan, nothing read");
-					return 0;
-				}
-				if (RemoteListing.Parse(root) is not { } parsed) {
-					AgentPaths.AppendLog($"scan for {name}: its list of files isn't one this build reads");
-					stage("Its Heiward is another version: update Heiward on both PCs");
-					return 3;
-				}
-				listing = parsed;
+			var listingTimer = Stopwatch.StartNew();
+			ListingPages.Fetched fetched = await ListingPages.FetchAsync(pc, name, keptHolds ? kept!.Stamp : null, progress, ct);
+			if (fetched.Problem is string problem) {
+				AgentPaths.AppendLog($"scan for {name}: {problem}");
+				stage(problem);
+				return 3;
 			}
+			if (fetched.Same) {
+				AgentPaths.AppendLog($"scan for {name}: nothing new there since the last scan, nothing read");
+				return 0;
+			}
+			RemoteListing listing = fetched.Listing!;
 			int listed = listing.Roots.Sum(r => r.Files.Count);
+			AgentPaths.AppendLog($"scan for {name}: its list of {listed:N0} files came in {listingTimer.Elapsed.TotalSeconds:N1} s");
 			// 2. The stand-ins.
 			string mirrorDir = MirrorIn(home);
 			if (!RemoteMirror.CanHold(mirrorDir)) {
 				AgentPaths.AppendLog($"scan for {name}: Heiward's folder is on a drive that can't hold the stand-ins (not NTFS)");
-				stage("Heiward's folder on this PC is on a drive that can't hold the other PC's files");
+				stage($"Heiward's folder on {Environment.MachineName} is on a drive that can't hold this PC's files");
 				return 4;
 			}
 			// What the scan waits for, for the other PC's page: a game there (the link), or this PC's NPU giving way.
@@ -233,6 +246,7 @@ namespace HEI.Agent.Estate {
 			if (!settings.UseAiMatching) notes.Add("AI matching is off on this PC: run 'hei setup' there.");
 			// Files listed as at the last scan aren't listed again: the engine knows them as they are.
 			Dictionary<string, ListedFile>? before = keptHolds ? kept!.Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase) : null;
+			kept = null; // its files are in before now
 			int unchangedFiles = before == null ? 0
 				: listing.Roots.SelectMany(r => r.Files).Count(f => before.TryGetValue(f.Path, out ListedFile? was) && was == f);
 			ScanEngine.RootListing? ListFor(string root) {
@@ -291,7 +305,7 @@ namespace HEI.Agent.Estate {
 			bool paused = false;
 			using var gameTimer = new Timer(_ => {
 				try {
-					if (games.Busy() != null) { free = 0; if (++busy >= 2 && !paused) { paused = true; engine.Pause(); stage("Paused while a game runs on this PC"); } }
+					if (games.Busy() != null) { free = 0; if (++busy >= 2 && !paused) { paused = true; engine.Pause(); stage($"Paused while a game runs on {Environment.MachineName}"); } }
 					else { busy = 0; if (paused && ++free >= 2) { paused = false; engine.Resume(); stage("Checking its files"); } }
 				}
 				catch (Exception e) when (e is InvalidOperationException or ObjectDisposedException) { }
@@ -349,7 +363,7 @@ namespace HEI.Agent.Estate {
 				}).ToList(),
 			};
 			if (!mirror.Failed.IsEmpty) keep = keep with { Stamp = "" }; // asked whole next time
-			File.WriteAllBytes(ListingIn(home), keep.ToJson());
+			ListingPages.Save(keep, ListingIn(home));
 
 			var cost = new RemoteCost(bytes.Fetched, bytes.Asks, mirror.MostHeld, timer.Elapsed.TotalSeconds, mirror.Failed.Count);
 			var findings = new RemoteFindings(RemoteFindings.Version, AppBuild.Current, listing.Stamp, started, timer.Elapsed.TotalSeconds, files, device,
@@ -377,15 +391,9 @@ namespace HEI.Agent.Estate {
 			return mapped;
 		}
 
-		static RemoteListing? LoadListing(string path) {
-			try {
-				if (!File.Exists(path)) return null;
-				using JsonDocument doc = JsonDocument.Parse(File.ReadAllBytes(path));
-				return RemoteListing.Parse(doc.RootElement);
-			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
-				return null;
-			}
+		static void TryDelete(string path) {
+			try { File.Delete(path); }
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 		}
 
 		internal static Dictionary<string, DateKept> ReadDates(string path) {

@@ -30,7 +30,8 @@ namespace HEI.Agent.Estate {
 	/// only, gently: read at very low disk priority, on threads in Windows' efficiency mode, at <see cref="BytesPerSec"/> in
 	/// all, and never while a game is played (a reply under way is cut short when one starts; the other PC asks again from
 	/// where it got to). A file in the cloud and not on this PC (OneDrive's online-only) is "not there": reading it would
-	/// download it. The list lives in memory only.
+	/// download it. The list lives in memory only, or, a long one, where the staff member keeps it while it lends
+	/// (<see cref="ReplaceWith"/>: Heiward's listing for another PC's scan, on disk until the loan ends).
 	/// </summary>
 	sealed partial class PeerFiles {
 		public const long DefaultBytesPerSec = 20L * 1024 * 1024;
@@ -69,19 +70,41 @@ namespace HEI.Agent.Estate {
 		public long Served => Interlocked.Read(ref served);
 		public TimeSpan Cpu => TimeSpan.FromTicks(Interlocked.Read(ref cpuTicks));
 
+		/// <summary>The list kept elsewhere (<see cref="ReplaceWith"/>): a key's file as it was given, or null.</summary>
+		volatile Func<string, string?>? kept;
+		int keptCount;
+
 		/// <summary>The list, all of it at once: only these files are served, as they're given here.</summary>
 		public void Replace(IEnumerable<string> paths) {
+			kept = null;
 			list.Clear();
 			foreach (string p in paths) Add(p);
+		}
+
+		/// <summary>
+		/// The list, all of it at once, kept elsewhere: a long one, on disk rather than in memory (<see cref="LentListing.PathOf"/>).
+		/// <paramref name="pathOf"/> gives a key's file as it's listed (one whose key is that one), or null for a key not on it.
+		/// </summary>
+		public void ReplaceWith(Func<string, string?> pathOf, int count) {
+			list.Clear();
+			keptCount = count;
+			kept = pathOf;
 		}
 
 		public void Add(string path) {
 			if (KeyOf(path) is string key) list[key] = path;
 		}
 
-		public void Clear() => list.Clear();
+		public void Clear() {
+			kept = null;
+			keptCount = 0;
+			list.Clear();
+		}
 
-		public int Count => list.Count;
+		public int Count => kept != null ? keptCount : list.Count;
+
+		/// <summary>The file on the list by that key, as it was given; null for one not on it.</summary>
+		string? Listed(string key) => kept is { } pathOf ? pathOf(key) : list.TryGetValue(key, out string? path) ? path : null;
 
 		// ---- The readings (PEER-FILES.md: paths, tags, ranges, noneMatch, contentRanges)
 
@@ -218,7 +241,7 @@ namespace HEI.Agent.Estate {
 				await Refuse(400, "Ask for a file by its full path (path).", "path").ExecuteAsync(ctx);
 				return;
 			}
-			if (!list.TryGetValue(key, out string? path)) {
+			if (Listed(key) is not string path) {
 				await Refuse(403, "That file isn't offered to other PCs.", "not-offered").ExecuteAsync(ctx);
 				return;
 			}

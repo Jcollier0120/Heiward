@@ -1786,6 +1786,8 @@ function renderRemoteCard(s) {
       row.append(go);
     }
     if (r.updateOn.length) line('Update Heiward on ' + r.updateOn.join(' and '), 'It runs another version than this PC\'s, so it can\'t scan this one\'s files until both run the same one.');
+    // Older here than there: this PC is the one to update (Castellan does, under Updates).
+    if (r.newerOn && r.newerOn.length) line('Update Heiward on this PC', r.newerOn.join(' and ') + ' runs a newer version of Heiward, so it can\'t scan this PC\'s files until both run the same one. Castellan updates it under Updates.');
   }
   if (r.scanningFor) line('Scanning ' + r.scanningFor.name + '\'s files for it', 'Its photos and videos are read over the link and none of them is kept here. ' +
     'At most 8 of this PC\'s cores, in the background, and paused while a game runs here.');

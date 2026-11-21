@@ -93,26 +93,37 @@ public class PeerFilesVectorTests {
 		}
 	}
 
-	[Fact]
-	public async Task Answers() {
+	// The list kept in memory, as given; and kept elsewhere, looked up by key (Heiward's listing for another PC's scan,
+	// on disk: PeerFiles.ReplaceWith): the route answers every case the same either way.
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public async Task Answers(bool keptElsewhere) {
 		JsonObject defaults = Vectors.Value["defaults"]!.AsObject();
 		var failed = new List<string>();
 		foreach (JsonNode c in Cases("answers")) {
-			string? why = await AnswerDiffers(c.AsObject(), defaults);
+			string? why = await AnswerDiffers(c.AsObject(), defaults, keptElsewhere);
 			if (why != null) failed.Add($"{Case(c)}: {why}");
 		}
 		Assert.True(failed.Count == 0, string.Join('\n', failed));
 	}
 
 	/// <summary>What's wrong with the route's answer to one case, or null when it answers exactly as listed.</summary>
-	static async Task<string?> AnswerDiffers(JsonObject c, JsonObject defaults) {
+	static async Task<string?> AnswerDiffers(JsonObject c, JsonObject defaults, bool keptElsewhere) {
 		JsonNode? Given(string key) => c.ContainsKey(key) ? c[key] : defaults[key];
 
 		var files = new MadeUpFiles(Given("files")!.AsObject());
 		string? game = (string?)Given("game");
 		bool may = (bool)Given("may")!;
 		var route = new PeerFiles(() => game, files) { May = _ => may };
-		route.Replace(Given("offered")!.AsArray().Select(p => (string)p!));
+		var offered = Given("offered")!.AsArray().Select(p => (string)p!).ToList();
+		if (!keptElsewhere) route.Replace(offered);
+		else {
+			var byKey = new Dictionary<string, string>();
+			foreach (string p in offered)
+				if (PeerFiles.KeyOf(p) is string key) byKey[key] = p;
+			route.ReplaceWith(key => byKey.GetValueOrDefault(key), byKey.Count);
+		}
 
 		var ctx = new DefaultHttpContext {
 			RequestServices = new ServiceCollection().AddLogging().BuildServiceProvider(),
