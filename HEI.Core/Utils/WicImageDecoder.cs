@@ -93,6 +93,7 @@ namespace HEI.Core.Utils {
 		internal static bool TryThumbnailJpeg(string path, int maxSide, out byte[]? jpeg) {
 			jpeg = null;
 			if (!IsAvailable) return false;
+			if (!RemoteFiles.Ready(path)) return false;
 			nint factory = GetFactory();
 			if (factory == 0) return false;
 			nint decoder = 0, frame = 0, bitmap = 0, scaler = 0, rotator = 0, stream = 0, encoder = 0, frameEncode = 0, props = 0;
@@ -185,6 +186,7 @@ namespace HEI.Core.Utils {
 		internal static bool TryGetSize(string path, out int width, out int height) {
 			width = height = 0;
 			if (!IsAvailable) return false;
+			if (!RemoteFiles.Ready(path)) return false;
 			nint factory = GetFactory();
 			if (factory == 0) return false;
 			nint decoder = 0, frame = 0;
@@ -218,6 +220,7 @@ namespace HEI.Core.Utils {
 			gray = null; rgb = null; width = height = 0;
 			lastFailure = null;
 			if (!IsAvailable) return Fail("not Windows");
+			if (!RemoteFiles.Ready(path)) return Fail("not fetched from the other PC");
 			nint factory = GetFactory();
 			if (factory == 0) return Fail("no WIC factory");
 			nint decoder = 0;
@@ -268,6 +271,7 @@ namespace HEI.Core.Utils {
 			width = height = 0;
 			lastFailure = null;
 			if (!IsAvailable) return Fail("not Windows");
+			if (!RemoteFiles.Ready(path)) return Fail("not fetched from the other PC");
 			nint factory = GetFactory();
 			if (factory == 0) return Fail("no WIC factory");
 			nint decoder = 0, frame = 0, bitmap = 0;
@@ -465,6 +469,7 @@ namespace HEI.Core.Utils {
 			bgr = null; width = height = 0;
 			lastFailure = null;
 			if (!IsAvailable) return Fail("not Windows");
+			if (!RemoteFiles.Ready(path)) return Fail("not fetched from the other PC");
 			nint factory = GetFactory();
 			if (factory == 0) return Fail("no WIC factory");
 			nint decoder = 0;

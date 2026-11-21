@@ -26,6 +26,8 @@ namespace HEI.Agent {
 	sealed record RecycleRequest(List<string> Paths, string? Batch = null, string? Folder = null);
 	sealed record SkipRequest(List<string> Keys, string? Batch, string? Folder);
 	sealed record BatchRequest(string Batch);
+	/// <summary>"Have &lt;PC&gt; scan this PC": the other PC on the Estate, by its id, and its name.</summary>
+	sealed record RemoteScanRequest(string Pc, string Name);
 	/// <param name="Gpu">The graphics card for GPU work, by name (<see cref="AgentConfig.Gpu"/>); "" for Windows' default.</param>
 	/// <param name="GameMode">Heiward's own game mode switch (<see cref="AgentConfig.GameMode"/>), unless Manor decides it.</param>
 	/// <param name="AutoUpdate">Update by itself (<see cref="AgentConfig.AutoUpdate"/>): the copy from GitHub, when nothing else updates it.</param>
@@ -213,7 +215,7 @@ namespace HEI.Agent {
 			// The page asks for the open folders' listings at once: one at a time per disk that seeks (DiskListingGate).
 			app.MapGet("/api/tree", async (string path, bool? all, HttpContext ctx) => {
 				var decisions = DecisionStore.Load();
-				var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
+				var pending = Estate.PageSets.Groups().Where(g => !decisions.ContainsKey(g.Key)).ToList();
 				ScanIndex? index = ScanIndex.Load();
 				var lastRead = DriveScans.Load();
 				TreeListing? listing = await DiskListingGate.RunAsync(path, () => ExplorerView.Tree(path, all == true, cfg, index, pending, lastRead), ctx.RequestAborted);
@@ -228,7 +230,7 @@ namespace HEI.Agent {
 			});
 
 			app.MapGet("/api/thumb/{key}/{index:int}", (string key, int index, HttpContext ctx) => {
-				ReportGroup? g = Report.Load()?.Groups.FirstOrDefault(x => x.Key == key);
+				ReportGroup? g = Estate.PageSets.Groups().FirstOrDefault(x => x.Key == key);
 				if (g == null || index < 0 || index >= g.Items.Count) return Results.NotFound();
 				byte[]? jpeg = Thumbnails.Get(g.Items[index], g.Media == "image");
 				if (jpeg == null) return Results.NotFound();
@@ -236,8 +238,29 @@ namespace HEI.Agent {
 				return Results.Bytes(jpeg, "image/jpeg");
 			});
 
+			// Another of the person's PCs, through Castellan's Estate (Estate.ScanForOthers): only GET, each naming the asking PC.
+			app.MapGet("/api/peer/scan", Estate.ScanForOthers.OfferRouteAsync);
+			app.MapGet("/api/peer/scan/out", Estate.ScanForOthers.OutRouteAsync);
+			app.MapGet("/api/peer/scan/in", Estate.ScanForOthers.InRouteAsync);
+			app.MapGet("/api/peer/scan/listing", Estate.ScanForOthers.ListingRouteAsync);
+			app.MapGet("/api/peer/scan/bytes", Estate.ScanForOthers.BytesRouteAsync);
+			app.MapGet("/api/peer/findings", Estate.ScanForOthers.FindingsRouteAsync);
+			// This page: have another PC scan this one, stop it, or let go of what it found.
+			app.MapPost("/api/remote/scan", async (RemoteScanRequest request, HttpContext ctx) =>
+				await Estate.ScanForOthers.AskAsync(request.Pc, request.Name, ctx.RequestAborted) is string why
+					? Results.Json(new { error = why }, statusCode: 409) : Results.Accepted());
+			app.MapPost("/api/remote/stop", () => {
+				Estate.ScanForOthers.Stop();
+				return Results.Ok();
+			});
+			app.MapPost("/api/remote/clear", () => Guarded(() => {
+				using (CleanLock.Acquire()) Estate.ForeignFindings.Clear();
+				return Results.Ok();
+			}));
+
 			app.MapPost("/api/groups/{key}/recycle", (string key, RecycleRequest request) => {
-				ReportGroup? g = Report.Load()?.Groups.FirstOrDefault(x => x.Key == key);
+				// A set another PC found here too (PageSets): its files are this PC's, removed with the same checks.
+				ReportGroup? g = Estate.PageSets.Groups().FirstOrDefault(x => x.Key == key);
 				if (g == null) return Results.NotFound(new { error = "That group is no longer in the report; scan again." });
 				if (!ValidBatch(request.Batch, request.Folder)) return Results.BadRequest(new { error = "Unknown batch." });
 				return Guarded(() => Results.Json(actions.Recycle(g, request.Paths ?? new(), request.Batch, request.Folder), AgentConfig.Json));
@@ -253,7 +276,7 @@ namespace HEI.Agent {
 			// "Skip all" on a folder's look-alikes: every set kept as it is, as one History row.
 			app.MapPost("/api/groups/skip", (SkipRequest request) => Guarded(() => {
 				if (!ValidBatch(request.Batch, request.Folder)) return Results.BadRequest(new { error = "Unknown batch." });
-				var inReport = (Report.Load()?.Groups ?? new()).Select(g => g.Key).ToHashSet();
+				var inReport = Estate.PageSets.Groups().Select(g => g.Key).ToHashSet();
 				var now = DateTime.UtcNow;
 				int skipped;
 				using (CleanLock.Acquire()) {
@@ -587,6 +610,8 @@ namespace HEI.Agent {
 			// The Store version's tasks of an older Heiward's names move to this account's folder, once.
 			_ = Task.Run(() => Installer.MoveStoreTasks(cfg, ScanBusy()));
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
+			// A scan for another PC, or of this one by another, ends with the page: the other PC hears why.
+			app.Lifetime.ApplicationStopping.Register(Estate.ScanForOthers.Shutdown);
 			// A clean stop folds the listings' journals in, so a build from before them reads every drive's listing as it is.
 			app.Lifetime.ApplicationStopping.Register(() => StoredListing.FoldAll(AgentPaths.AppendLog));
 			ScanIfDue(cfg);
@@ -823,7 +848,7 @@ namespace HEI.Agent {
 		static DiskGlance Glance(AgentConfig cfg) {
 			ScanIndex? index = ScanIndex.Load();
 			var decisions = DecisionStore.Load();
-			var pending = (Report.Load()?.Groups ?? new()).Where(g => !decisions.ContainsKey(g.Key)).ToList();
+			var pending = Estate.PageSets.Groups().Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			Manor? manor = Manor.Load();
 			DevReport? devReport = DevMode.Of(cfg, manor).On ? ManorRoles.Now().View(DevReport.Load()) : null;
 			GameReport? gameReport = GameMode.Of(cfg, manor).On ? GameReport.Load() : null;
@@ -856,7 +881,8 @@ namespace HEI.Agent {
 			// Game mode the same way: Heiward's own switch, or Manor once its settings say.
 			GameMode gameMode = GameMode.Of(cfg, manor);
 			GameReport? gameReport = gameMode.On ? GameReport.Load() : null;
-			var groups = report?.Groups ?? new();
+			// This PC's own sets, then those another PC found here (Estate.ForeignFindings), each marked with that PC's name.
+			var groups = Estate.PageSets.With(report?.Groups);
 			var pending = groups.Where(g => !decisions.ContainsKey(g.Key)).ToList();
 			var byKey = groups.DistinctBy(g => g.Key).ToDictionary(g => g.Key);
 			var drives = ExplorerView.Drives(cfg, index, pending);
@@ -907,6 +933,8 @@ namespace HEI.Agent {
 				glance,
 				hotspots = ExplorerView.Hotspots(pending, 6),
 				scan = ScanView(),
+				// Another of the person's PCs scanning this one, or this one scanning another's (Estate.ScanForOthers); null without the Estate.
+				remote = Estate.ScanForOthers.View(),
 				setup = StoreSetup.View(cfg.Port),
 				// A new install's tour opens by itself once the setup is done (PageTour): the install says so, not the browser.
 				tourDue = PageTour.Due,

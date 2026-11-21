@@ -104,6 +104,43 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>
+		/// <c>hei scan --list-only</c>: the listing of a scan alone, for another PC that scans this one's files over the Estate
+		/// (<see cref="Estate.ScanForOthers"/>). What changed on each drive since the last listing comes from its change
+		/// journal, as for any scan; the listing is saved where a scan saves it, and nothing is read, decoded or compared. In
+		/// the background, at very low disk priority. 1 when a scan holds scan.lock.
+		/// </summary>
+		public static async Task<int> ListOnlyAsync(AgentConfig cfg, CancellationToken ct) {
+			Directory.CreateDirectory(AgentPaths.Home);
+			using FileStream? scanLock = TryLock();
+			if (scanLock == null) {
+				Console.Error.WriteLine("A scan is already running.");
+				return 1;
+			}
+			var started = DateTime.UtcNow;
+			var notes = new List<string>();
+			Settings settings = BuildSettings(cfg, notes);
+			settings.UseAiMatching = false; // nothing is compared here
+			if (settings.IncludeList.Count == 0) {
+				Console.Error.WriteLine("None of the configured folders exist.");
+				return 2;
+			}
+			Power.SetPace(false, cfg.BackgroundCpuCap(Environment.ProcessorCount));
+			ListingPlan? plan = null;
+			try { plan = ListingPlan.Make(settings, cfg, started, ct); }
+			catch (Exception e) when (e is not OperationCanceledException) { AgentPaths.AppendLog("change journal not read, walking every folder: " + e.Message); }
+			var engine = new ScanEngine { Settings = settings, ListRoot = plan == null ? null : plan.ListingFor, MayRead = plan?.MayRead };
+			using (ct.Register(engine.Stop))
+				await engine.ListOnlyAsync();
+			ct.ThrowIfCancellationRequested();
+			var modified = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
+			foreach (FileEntry e in DatabaseUtils.Database) modified[e.Path] = e.DateModified;
+			plan?.Save(engine.FoundFiles, p => modified.TryGetValue(p, out DateTime m) ? m : null, started);
+			AgentPaths.AppendLog($"listed for another PC's scan: {engine.FoundMedia().Count:N0} photos and videos in {(DateTime.UtcNow - started).TotalSeconds:N0} s" +
+				(plan != null ? " (" + plan.Describe() + ")" : ""));
+			return 0;
+		}
+
+		/// <summary>
 		/// After a scan of a folder or of one drive, while a new install's first scan waits for the person (<see cref="FirstScanWait"/>):
 		/// such a scan isn't the first scan, and leaves it waiting, unless every drive and folder Heiward scans has now been read
 		/// whole (Scan this drive now on each), when there's nothing left for it to read.
@@ -542,7 +579,7 @@ namespace HEI.Agent {
 		}
 
 		/// <summary>Search, then compare, as two awaited steps (the CLI's pattern: chaining them ran the compare twice, #803).</summary>
-		static async Task RunEngineAsync(ScanEngine engine, Action onCompare, CancellationToken ct) {
+		internal static async Task RunEngineAsync(ScanEngine engine, Action onCompare, CancellationToken ct) {
 			var searched = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 			void SearchDone(object? s, EventArgs e) => searched.TrySetResult();
 			void Aborted(object? s, EventArgs e) => searched.TrySetCanceled();

@@ -28,6 +28,8 @@ namespace HEI.Core.FFTools.FFmpegNative {
 		readonly ProgressDeadline _deadline;
 		/// <summary>The video holds a slot of <see cref="HardwareVideoDecode"/>, given back on dispose.</summary>
 		string? _gpuSlotFor;
+		/// <summary>A video on another PC (<see cref="RemoteMedia"/>): read through this, freed after the format context.</summary>
+		StreamIo? _io;
 
 		/// <param name="gpuLane">
 		/// Decode on the GPU when <see cref="HardwareVideoDecode"/> has a slot free and a hardware path for the
@@ -58,8 +60,17 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			// avformat_open_input frees the context and nulls the local on failure.
 			// Sync the field with the local before checking the result so the finalizer
 			// does not later see a dangling pointer if the open fails.
+			// A video on another PC is read through a stream that fetches the parts asked for (RemoteMedia).
+			string? openUrl = url;
+			if (RemoteMedia.Open(url) is Stream remote) {
+				_io = new StreamIo(remote);
+				_io.Attach(_pFormatContext);
+				openUrl = null;
+			}
+			else if (RemoteMedia.Handles(url)) // never its stand-in here, which holds none of its frames
+				throw new FFInvalidExitCodeException("The other PC's video couldn't be fetched.");
 			var pFormatContext = _pFormatContext;
-			int openRet = ffmpeg.avformat_open_input(&pFormatContext, url, null, null);
+			int openRet = ffmpeg.avformat_open_input(&pFormatContext, openUrl, null, null);
 			_pFormatContext = pFormatContext;
 			openRet.ThrowExceptionIfError();
 			// The probe decodes a frame or so with no step of ours in between, so its time does count
@@ -204,6 +215,8 @@ namespace HEI.Core.FFTools.FFmpegNative {
 				ffmpeg.avformat_close_input(&pFormatContext);
 				_pFormatContext = null;
 			}
+			_io?.Dispose();
+			_io = null;
 		}
 
 		public bool TryDecodeFrame(out AVFrame frame, TimeSpan position) {

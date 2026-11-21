@@ -641,6 +641,9 @@ namespace HEI.Core.FFTools {
 			catch (Exception e) {
 				Logger.Instance.Warn($"Failed using native FFmpeg binding on '{settings.File}', try switching to process mode. Exception: {e}{BuildNativeFailureDetail(e)}");
 			}
+			// A video on another PC: the FFmpeg process would read the empty file here, not the other PC's bytes.
+			if (RemoteMedia.Handles(settings.File))
+				return null;
 
 			// Parse CustomFFArguments up front so we can detect a user-supplied -vf and merge it
 			// into our own filter chain rather than letting a second -vf silently override the
@@ -880,6 +883,7 @@ namespace HEI.Core.FFTools {
 		/// custom args are ambiguous with two outputs — those scans keep the two-call path.
 		/// </summary>
 		internal static (byte[]? GrayBytes, byte[]? Rgb224) GetGrayAndRgb224Cli(string file, TimeSpan position, bool softwareDecodeOnly, bool extendedLogging) {
+			if (!RemoteFiles.Ready(file)) return (null, null); // ffmpeg reads it by its path: another PC's file whole first
 			const int N = 32;
 			const int grayExpectedBytes = N * N;
 			int rgbExpectedBytes = AI.OnnxEmbedder.InputSide * AI.OnnxEmbedder.InputSide * 3;
@@ -1087,6 +1091,14 @@ namespace HEI.Core.FFTools {
 						"(and future scans, unless 'Always retry failed sampling' is enabled).");
 					return false;
 				}
+			}
+
+			// A video on another PC: the FFmpeg process would read the empty file here, not the other PC's bytes.
+			if (RemoteMedia.Handles(videoFile.Path)) {
+				if (CountMissingGrayBytePositions(videoFile, positions, maxSamplingDurationSeconds) == 0)
+					return true;
+				videoFile.Flags.Set(EntryFlags.ThumbnailError);
+				return false;
 			}
 
 			// Re-count: the batch path may have populated some positions before throwing.

@@ -28,6 +28,7 @@ namespace HEI.Core.Utils {
 		internal static bool TryGetDimensions(string path, out int width, out int height) {
 			width = 0;
 			height = 0;
+			if (!RemoteFiles.Ready(path)) return false;
 			try {
 				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
 				Span<byte> head = stackalloc byte[32];

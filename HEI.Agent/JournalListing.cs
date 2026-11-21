@@ -499,6 +499,19 @@ namespace HEI.Agent {
 			stored.Save();
 		}
 
+		/// <summary>
+		/// Each scanned folder's listing as the last scan (or listing) left it: its root, and its photos and videos with their
+		/// sizes and last-modified times. For another PC that scans this one's files (<see cref="Estate.RemoteListing"/>).
+		/// </summary>
+		internal static List<(string Root, List<(string Path, long Size, DateTime ModifiedUtc)> Files)> Kept(IEnumerable<string> roots) {
+			Stored stored = Stored.Load();
+			var kept = new List<(string, List<(string, long, DateTime)>)>();
+			foreach (string root in roots)
+				if (stored.Roots.TryGetValue(root, out StoredRoot? r) && StoredListing.Load(r.File) is { } listing)
+					kept.Add((root, listing.Files.ToList()));
+			return kept;
+		}
+
 		/// <summary>After a scan that didn't run: the journal was read this far, and nothing in it mattered.</summary>
 		public void SaveSkipped() {
 			Stored stored = Stored.Load();
@@ -759,6 +772,9 @@ namespace HEI.Agent {
 		public static string NewFile() => Guid.NewGuid().ToString("N")[..12] + ".tsv";
 
 		public static StoredListing? Load(string file) => Read(Path.Combine(Folder, file));
+
+		/// <summary>Every file listed, as the listing holds it now (its journal applied).</summary>
+		public IEnumerable<(string Path, long Size, DateTime ModifiedUtc)> Files => files.Select(f => (f.Key, f.Value.Size, f.Value.ModifiedUtc));
 
 		/// <summary>The listing in <paramref name="path"/>, its journal applied; null when it's missing or isn't a listing.</summary>
 		static StoredListing? Read(string path) {

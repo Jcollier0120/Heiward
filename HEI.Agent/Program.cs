@@ -62,9 +62,11 @@ var waitTurn = new Option<bool>("--wait-turn") { Description = "A first scan the
 var bump = new Option<DateTime?>("--bump") { Description = "Brought forward from the scheduled scan at this time (UTC, as 2026-11-12T23:00:00Z), from a drive's page: once this scan goes through, that scheduled scan skips itself." };
 var folder = new Option<string[]>("--folder") { Description = "Read only this folder and the folders in it (on any scanned drive, one scanned only when you ask too), e.g. --folder \"E:\\Photos\\2019\". The rest of every drive stays as its last scan listed it." };
 var only = new Option<string[]>("--only") { Description = "Read only this drive (or scanned folder), whole, e.g. --only D:\\. Every other drive stays as its last scan listed it, and keeps its \"Last scanned\"." };
-var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, bump, folder, only };
+var listOnly = new Option<bool>("--list-only") { Description = "Only list the photos and videos, as a scan would see them, for another of your PCs that scans this one's files (Castellan's Estate). Nothing is read or compared." };
+var scan = new Command("scan", "Scan the configured folders now and update the report.") { notify, open, scheduled, drive, waitTurn, bump, folder, only, listOnly };
 scan.SetAction(async (r, ct) => {
 	var cfg = AgentConfig.Load();
+	if (r.GetValue(listOnly)) return await AgentScanner.ListOnlyAsync(cfg, ct);
 	if (r.GetValue(scheduled)) {
 		// The page stays up, paused or not: should it have gone (a crash, a stopped install), it's back within a
 		// scan's interval. Before the scan sets its pace, so the page doesn't start capped or at a low priority.
@@ -119,6 +121,22 @@ scan.SetAction(async (r, ct) => {
 	return await AgentScanner.RunAsync(cfg, r.GetValue(notify), r.GetValue(scheduled), ct, r.GetValue(drive), r.GetValue(waitTurn), bumpedSlot, folders, onlyDrives);
 });
 root.Subcommands.Add(scan);
+
+// Started by the review page when another of your PCs asks this one to scan its files (Castellan's Estate), with
+// HEIWARD_HOME set to that PC's home here: never by hand.
+var remotePc = new Option<string>("--pc") { Description = "The other PC, by its id on the Estate.", Required = true };
+var remoteName = new Option<string>("--name") { Description = "Its name, for the log." };
+var remoteScan = new Command("remote-scan", "Scan another of your PCs' photos and videos for it, over Castellan's Estate (started by the review page when it asks).") { remotePc, remoteName };
+remoteScan.Hidden = true;
+remoteScan.SetAction(async (r, ct) => {
+	string pc = r.GetValue(remotePc)!;
+	if (!System.Text.RegularExpressions.Regex.IsMatch(pc, "^[0-9A-Za-z-]{1,64}$") || string.IsNullOrEmpty(Environment.GetEnvironmentVariable("HEIWARD_HOME"))) {
+		Console.Error.WriteLine("remote-scan is started by the review page.");
+		return 2;
+	}
+	return await HEI.Agent.Estate.RemoteScanner.RunAsync(pc, r.GetValue(remoteName) is { Length: > 0 } n ? n : pc, ct);
+});
+root.Subcommands.Add(remoteScan);
 
 var pauseMinutes = new Option<int?>("--minutes") { Description = $"How long, 1 to {AgentPause.MaxMinutes}. Without it: until 'hei resume'." };
 var pauseCmd = new Command("pause", "Pause scheduled scans and stop the one running: for --minutes, or until 'hei resume'. Scan now still works.") { pauseMinutes };

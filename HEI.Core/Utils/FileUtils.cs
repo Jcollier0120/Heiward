@@ -73,6 +73,7 @@ namespace HEI.Core.Utils {
 		/// holds no video; false when it may be a video, which is left to ffprobe; null when it couldn't be read.
 		/// </summary>
 		internal static bool? IsTextNotVideo(string path) {
+			if (!RemoteFiles.Ready(path, 0, SniffBytes)) return null;
 			byte[] head = new byte[SniffBytes];
 			int read;
 			try {

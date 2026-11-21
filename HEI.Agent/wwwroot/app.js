@@ -1372,6 +1372,7 @@ function renderTypes(g) {
 // rest of settings.json (folders, file types, the AI device) is listed with where to change it.
 function renderSettings(s) {
   renderScanCard(s);
+  renderRemoteCard(s);
   renderAutoCard(s);
   renderHistoryCard(s);
   renderGameModeCard(s);
@@ -1716,6 +1717,89 @@ async function saveSettings(next) {
  * How hard scans work (ScanPace): always in the background, at full speed while someone waits for them,
  * or always at full speed.
  */
+/**
+ * Your other PCs (Castellan's Estate): have one whose NPU can scan this PC's photos and videos for it, how that's going,
+ * and what it found here. Only where Castellan links PCs that hold the same license: hidden otherwise, free Heiward too.
+ */
+// The card as last drawn (all but the scan's progress), and how to write new progress into it in place: it's drawn again
+// only when what it offers changes, so a poll never swaps a button out from under a click.
+let remoteShape = null;
+let remoteProgress = null;
+
+function renderRemoteCard(s) {
+  const r = s.remote;
+  $('remote-section').classList.toggle('hidden', !r);
+  if (!r) { remoteShape = null; $('remote-card').replaceChildren(); return; }
+  const shape = JSON.stringify({ ...r, asked: r.asked && { pc: r.asked.pc, finished: r.asked.finished, problem: r.asked.problem, waiting: r.asked.waiting, fetching: !!r.asked.fetchedBytes } });
+  if (shape === remoteShape && $('remote-card').firstChild) {
+    if (remoteProgress && r.asked && !r.asked.finished) remoteProgress(r.asked);
+    return;
+  }
+  remoteShape = shape;
+  remoteProgress = null;
+  const card = el('div', 'auto-card');
+  const line = (title, ...notes) => {
+    const row = el('div', 'auto-row');
+    const text = el('div', 'auto-text');
+    text.append(el('div', 'auto-title', title), ...notes.filter(Boolean).map((n) => (typeof n === 'string' ? el('div', 'muted small', n) : n)));
+    row.append(text);
+    card.append(row);
+    return row;
+  };
+  const a = r.asked;
+  if (a && !a.finished) {
+    const meter = el('div', 'meter');
+    const fill = el('div', 'fill');
+    meter.append(fill);
+    const stage = el('div', 'muted small');
+    const handed = a.fetchedBytes ? el('div', 'muted small') : null;
+    remoteProgress = (p) => {
+      fill.style.width = (p.total ? Math.max(2, (100 * p.done) / p.total) : 2) + '%';
+      stage.textContent = p.stage + (p.total ? ': ' + p.done.toLocaleString() + ' of ' + count(p.total, 'file', 'files') : '');
+      if (handed) handed.textContent = bytes(p.fetchedBytes) + ' handed over so far, gently: at very low priority, and never while a game is played here.';
+    };
+    remoteProgress(a);
+    const row = line(a.name + ' is scanning this PC', stage, handed,
+      a.waiting === 'game' ? 'Waiting: a game is running on this PC.'
+        : a.waiting === 'npu' ? 'Waiting: ' + a.name + '\'s NPU is busy with something more urgent, such as captioning a call. The scan goes on after.'
+        : null, meter);
+    const stop = el('button', 'btn secondary', 'Stop');
+    stop.addEventListener('click', async () => { stop.disabled = true; await post('/api/remote/stop', {}); refresh(); });
+    row.append(stop);
+  } else if (a && a.problem) {
+    line(a.name + ' didn\'t scan this PC', a.problem);
+  }
+  if (!a || a.finished) {
+    for (const pc of r.others) {
+      const row = line('Have ' + pc.name + ' scan this PC',
+        (pc.npu ? pc.name + '\'s ' + pc.npu : pc.name) + ' finds the copies among this PC\'s photos and videos for it. This PC only lists its files and hands them over, ' +
+        'gently: at very low priority, about 20 MB a second, and never while a game is played. Later scans read only what\'s new.',
+        'What it finds shows here, marked with its name, and nothing is removed without you.');
+      const go = el('button', 'btn', 'Scan this PC');
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        // Why it couldn't start shows in this card (the state's asked.problem).
+        try { await post('/api/remote/scan', { pc: pc.id, name: pc.name }); }
+        catch { /* shown above, on the next poll */ }
+        refresh(true);
+      });
+      row.append(go);
+    }
+    if (r.updateOn.length) line('Update Heiward on ' + r.updateOn.join(' and '), 'It runs another version than this PC\'s, so it can\'t scan this one\'s files until both run the same one.');
+  }
+  if (r.scanningFor) line('Scanning ' + r.scanningFor.name + '\'s files for it', 'Its photos and videos are read over the link and none of them is kept here. ' +
+    'At most 8 of this PC\'s cores, in the background, and paused while a game runs here.');
+  const f = r.found;
+  if (f) {
+    const row = line(f.setAside ? f.from + '\'s findings are set aside' : f.from + ' found ' + count(f.sets, 'set', 'sets') + ' of copies here',
+      f.setAside ? 'They\'re from another version of Heiward: have ' + f.from + ' scan this PC again.' : 'Scanned ' + ago(f.atUtc) + '. They show with this PC\'s own sets, marked "Found by ' + f.from + '".');
+    const clear = el('button', 'btn secondary', 'Let go of them');
+    clear.addEventListener('click', async () => { clear.disabled = true; await post('/api/remote/clear', {}); refresh(); });
+    row.append(clear);
+  }
+  $('remote-card').replaceChildren(card);
+}
+
 function renderScanCard(s) {
   const c = s.config;
   const speed = c.scanSpeed === 'background' || c.scanSpeed === 'full' ? c.scanSpeed : 'auto';
@@ -6006,6 +6090,8 @@ function groupCard(g, folder) {
   const left = el('div', 'left');
   const [cls, label] = KIND[g.kind] || ['same', g.kind];
   left.append(el('span', 'badge ' + cls, label));
+  // Found by another of your PCs, which scanned this one's files for it: removed here as any other set, with your say.
+  if (g.foundOn) left.append(el('span', 'badge found', 'Found by ' + g.foundOn));
   left.append(el('span', 'muted small', g.items.length + ' files' + (g.media === 'video' ? ' (video)' : '')));
   head.append(left);
   const set = checked(g);
@@ -6213,6 +6299,8 @@ async function refresh(force) {
     showError('');
     renderHeader(s);
     sayScanEnded(s);
+    // Another of your PCs and this one: who can scan it, and the scan's progress, as they come (its card only).
+    renderRemoteCard(s);
     if (changed) {
       listings.clear(); // counts in the tree follow the report
       await renderRoute();
@@ -6221,6 +6309,7 @@ async function refresh(force) {
     // alone in between (pollProgress); the developer and games checks draw from the whole state.
     if (s.setup.running || s.scan.starting) schedule(refresh, 1000);
     else if (s.dev.running || s.games.running) schedule(refresh, 2000);
+    else if (s.remote && s.remote.asked && !s.remote.asked.finished) schedule(refresh, 2000);
     else if (s.scan.running && !s.setup.needed) schedule(pollProgress, PROGRESS_EVERY);
     else schedule(refresh, 15000);
   } catch (e) {
