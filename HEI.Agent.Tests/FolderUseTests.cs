@@ -46,7 +46,8 @@ public sealed class FolderUseTests : IDisposable {
 
 	/// <summary>
 	/// The working folder of a process just started: Windows writes a new process's parameters as it starts it, so a read
-	/// in its first moments can find nothing yet. Null when it's still unreadable after 5 seconds.
+	/// in its first moments can find nothing yet, or junk (which <see cref="ProcessFolders.CurrentDirectoryOf"/> reads as
+	/// nothing). Null when it's still unreadable after 5 seconds.
 	/// </summary>
 	internal static string? WorkingFolderOnceStarted(Process p) {
 		var waited = Stopwatch.StartNew();
@@ -190,4 +191,52 @@ public sealed class FolderUseTests : IDisposable {
 			p.WaitForExit();
 		}
 	}
+
+	[Theory]
+	[InlineData(@"C:\Users\me\repo\.claude\worktrees\cranky-allen-d2b163\", @"C:\Users\me\repo\.claude\worktrees\cranky-allen-d2b163")]
+	[InlineData(@"C:\", @"C:\")]
+	[InlineData(@"e:\worktrees\x", @"e:\worktrees\x")]
+	[InlineData(@"\\server\share\work\", @"\\server\share\work")]
+	[InlineData(@"\\?\C:\a very\long\folder\", @"\\?\C:\a very\long\folder")]
+	[InlineData("C:\\Users\\me\\caf\u00e9 \u4e2d\u6587 \u007f\\", "C:\\Users\\me\\caf\u00e9 \u4e2d\u6587 \u007f")] // any character Windows lets a name have
+	public void AFoldersPath_IsReadAsIt(string read, string folder) => Assert.Equal(folder, ProcessFolders.PlausibleFolder(read));
+
+	[Theory]
+	[InlineData("\0\0\0\u4e2d\ufffd\u0003")] // what a process just started gave CI: NULs and junk
+	[InlineData("C:\\Users\\runneradmin\\AppData\0\0\0\0")] // its parameters half written
+	[InlineData("C:\\Users\\me\u0007\\repo")]
+	[InlineData("")]
+	[InlineData("C:")]
+	[InlineData(@"C:repo")]
+	[InlineData(@"repo\src")]
+	[InlineData(@"\repo")]
+	[InlineData(@"\\server")]
+	[InlineData(@"\\server\")]
+	[InlineData(@"\\\share")]
+	[InlineData("C:\\a|b")]
+	[InlineData("C:\\a\"b")]
+	[InlineData("C:\\a<b>")]
+	[InlineData("C:\\a*")]
+	[InlineData("\u4e2d:\\repo")]
+	public void WhatIsntAFoldersPath_IsReadAsNothing(string read) => Assert.Null(ProcessFolders.PlausibleFolder(read));
+
+	[Fact]
+	public void AFolderLongerThanWindowsTakes_IsReadAsNothing() {
+		string longest = @"C:\" + new string('a', 32767 - 3);
+		Assert.Equal(longest, ProcessFolders.PlausibleFolder(longest));
+		Assert.Null(ProcessFolders.PlausibleFolder(longest + "a"));
+	}
+
+	[Theory]
+	[InlineData(40, 520, true)]
+	[InlineData(520, 520, true)]
+	[InlineData(65534, 65534, true)] // Windows' longest path, 32,767 characters
+	[InlineData(0, 520, false)] // nothing written yet
+	[InlineData(41, 520, false)] // half a character
+	[InlineData(522, 520, false)] // more than its buffer holds
+	[InlineData(40, 0, false)]
+	[InlineData(65535, 65535, false)]
+	[InlineData(65536, 65536, false)]
+	public void AStringsLengths_ArePlausibleForAFolder_OnlyWhenWhole(int length, int maximumLength, bool plausible) =>
+		Assert.Equal(plausible, ProcessFolders.PlausibleLength(length, maximumLength));
 }
