@@ -65,11 +65,36 @@ namespace HEI.Agent.Estate {
 		public static string Folder => Path.Combine(AgentPaths.Home, "lent");
 
 		/// <summary>
+		/// What <c>hei scan --list-only</c> found, for the page that started it, beside the lent listings: how long listing took
+		/// and how (the change journals, or folders walked), and the files it found that its database knows aren't photos or
+		/// videos (<see cref="Core.ScanEngine.FoundNotMedia"/>), which aren't lent. Taken once: read, then gone.
+		/// </summary>
+		public sealed record Listed(double Seconds, string? How, List<string> NotMedia) {
+			static string FilePath => Path.Combine(Folder, "listed.json");
+
+			public static void Save(Listed listed) {
+				Directory.CreateDirectory(Folder);
+				AgentPaths.WriteAtomic(FilePath, JsonSerializer.Serialize(listed, AgentConfig.Json));
+			}
+
+			public static Listed? Take() {
+				try {
+					return File.Exists(FilePath) ? JsonSerializer.Deserialize<Listed>(File.ReadAllText(FilePath), AgentConfig.Json) : null;
+				}
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
+					return null;
+				}
+				finally { TryDelete(FilePath); }
+			}
+		}
+
+		/// <summary>
 		/// The listing written from what this PC keeps for its own scans (<see cref="ListingPlan.Kept"/>), a root at a time,
 		/// the roots in ordinal order: one root's files are in memory while they're written, and none after.
 		/// </summary>
+		/// <param name="leaveOut">True for a file not to lend (one this PC knows isn't a photo or video); null: none.</param>
 		public static LentListing Write(IEnumerable<(string Root, List<(string Path, long Size, DateTime ModifiedUtc)> Files)> kept, string build,
-			int pageFiles = PageFiles, int pageBytes = PageBytes) {
+			int pageFiles = PageFiles, int pageBytes = PageBytes, Func<string, bool>? leaveOut = null) {
 			Directory.CreateDirectory(Folder);
 			string file = Path.Combine(Folder, $"listing-{Guid.NewGuid():N}.tsv");
 			foreach (string old in Directory.EnumerateFiles(Folder, "listing-*.tsv"))
@@ -85,7 +110,7 @@ namespace HEI.Agent.Estate {
 					foreach (var (root, files) in kept) {
 						if (roots.Count > 0 && string.CompareOrdinal(roots[^1].Path, root) > 0)
 							throw new ArgumentException("The roots must come in ordinal order.", nameof(kept));
-						List<(string Path, long Size, long Ticks)> listed = OnceInOrder(root, files);
+						List<(string Path, long Size, long Ticks)> listed = OnceInOrder(root, files, leaveOut);
 						using var stamp = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
 						long rootAt = at;
 						int pageFilesNow = 0;
@@ -98,7 +123,7 @@ namespace HEI.Agent.Estate {
 							}
 							output.Write(buffer, 0, n);
 							stamp.AppendData(buffer, 0, n); // the line is version 1's stamp's text for the file
-							hashes.Add(KeyHash(KeyFor(path)));
+							hashes.Add(ListedKeyHash(path));
 							lines.Add(at);
 							at += n;
 							pageFilesNow++;
@@ -121,11 +146,11 @@ namespace HEI.Agent.Estate {
 		}
 
 		/// <summary>A root's files once each, ignoring case (the first as listed), that another PC can stand in for, in ordinal order.</summary>
-		static List<(string Path, long Size, long Ticks)> OnceInOrder(string root, List<(string Path, long Size, DateTime ModifiedUtc)> files) {
+		static List<(string Path, long Size, long Ticks)> OnceInOrder(string root, List<(string Path, long Size, DateTime ModifiedUtc)> files, Func<string, bool>? leaveOut) {
 			var seen = new HashSet<string>(files.Count, StringComparer.OrdinalIgnoreCase);
 			var listed = new List<(string Path, long Size, long Ticks)>(files.Count);
 			foreach (var (path, size, modified) in files)
-				if (seen.Add(path) && ListingLine.Holds(path) && RemotePath.Valid(path, root)) listed.Add((path, size, modified.Ticks));
+				if (seen.Add(path) && ListingLine.Holds(path) && RemotePath.Valid(path, root) && leaveOut?.Invoke(path) != true) listed.Add((path, size, modified.Ticks));
 			// Distinct ignoring case is distinct as ordinal, so the order is version 1's (a stable sort's) too.
 			listed.Sort((a, b) => string.CompareOrdinal(a.Path, b.Path));
 			return listed;
@@ -133,6 +158,23 @@ namespace HEI.Agent.Estate {
 
 		/// <summary>A path's key, as the kit's PeerFiles knows a file (<see cref="PeerFiles.KeyOf"/>); lower case for any other path.</summary>
 		static string KeyFor(string path) => PeerFiles.KeyOf(path) ?? path.ToLowerInvariant();
+
+		/// <summary>
+		/// <see cref="KeyHash"/> of a listed path's <see cref="KeyFor">key</see>, with nothing made on the way (half a million
+		/// keys made and dropped took hundreds of MB for a moment): a path the listing holds (<see cref="RemotePath.Valid"/>:
+		/// a drive's, with no empty, "." or ".." part) is its own key in lower case, so it's lowered a letter at a time here.
+		/// </summary>
+		internal static ulong ListedKeyHash(string path) {
+			if (path.Length > 1024) return KeyHash(KeyFor(path));
+			Span<char> lower = stackalloc char[path.Length];
+			path.AsSpan().ToLowerInvariant(lower);
+			ulong h = 14695981039346656037UL;
+			foreach (char c in lower) {
+				h ^= c;
+				h *= 1099511628211UL;
+			}
+			return h;
+		}
 
 		/// <summary>FNV-1a, 64 bits: where a key's line is looked for. Two keys may share one; each line found is checked.</summary>
 		static ulong KeyHash(string key) {

@@ -199,7 +199,8 @@ namespace HEI.Agent.Estate {
 			string? onLink = null;
 			bool givingWay = false;
 			void Say() => waiting(givingWay ? "npu" : onLink);
-			var bytes = new EstateBytes(pc, w => { lock (waits) { onLink = w; Say(); } });
+			var timings = new RemoteTimings();
+			var bytes = new EstateBytes(pc, w => { lock (waits) { onLink = w; Say(); } }, timings);
 			fetcher(bytes);
 			using var stopping = CancellationTokenSource.CreateLinkedTokenSource(ct);
 			// This PC's NPU lent to that PC as background work, on the PC-wide record (the kit's LENDING.md): while a call is
@@ -209,9 +210,13 @@ namespace HEI.Agent.Estate {
 				AgentPaths.AppendLog(giving ? $"scan for {name}: this PC's NPU is lent to something more urgent, so the scan waits for it"
 					: $"scan for {name}: the NPU is free of it again");
 			});
-			using var mirror = new RemoteMirror(mirrorDir, bytes) { Stopping = stopping.Token };
+			using var mirror = new RemoteMirror(mirrorDir, bytes) { Stopping = stopping.Token, Timings = timings };
+			// The card counts the stand-ins as they're made, from none (not the listing's count, done).
+			progress(0, listed);
 			stage("Making room for its files");
-			var (added, changed, gone) = mirror.Sync(listing);
+			var roomTimer = Stopwatch.StartNew();
+			var (added, changed, gone) = mirror.Sync(listing, progress);
+			AgentPaths.AppendLog($"scan for {name}: room made for its {listed:N0} files in {roomTimer.Elapsed.TotalSeconds:N1} s");
 
 			// 3. The engine, as for this PC's own scans, reading through the stand-ins.
 			var notes = new List<string>();
@@ -261,9 +266,11 @@ namespace HEI.Agent.Estate {
 				return new ScanEngine.RootListing(files, unchanged);
 			}
 
-			Power.SetPace(false, CpuCap(Environment.ProcessorCount));
+			// The cap is a share of the whole PC, so of all its processors: 8 cores' worth of the X2's 18 is 44%.
+			int processors = Power.MachineProcessors;
+			Power.SetPace(false, CpuCap(processors));
 			AgentPaths.AppendLog($"scan for {name} started: {listed:N0} files listed there ({added:N0} new, {changed:N0} changed, {gone:N0} gone since the last scan), " +
-				$"{settings.MaxDegreeOfParallelism} at once, at most {CpuCap(Environment.ProcessorCount):0.#}% of the processor");
+				$"{settings.MaxDegreeOfParallelism} at once, at most {CpuCap(processors):0.#}% of the processor ({Math.Min(MostCores, processors)} of its {processors} cores' worth), {RemoteMirror.AheadAsksDefault} asks under way at once for the files just ahead");
 			if (settings.UseAiMatching) await NpuCheck.EnsureAsync(settings.AiDevice, AgentPaths.AppendLog, ct);
 
 			// What sorting the sets reads of a photo, taken while the scan has all of it here: its hash (for plain copies) and
@@ -294,9 +301,43 @@ namespace HEI.Agent.Estate {
 			};
 			RemoteMedia.Use(mirror.IsRemote, mirror.Open);
 			RemoteFiles.Fetch = mirror.Fetch;
-			var engine = new ScanEngine { Settings = settings, ListRoot = ListFor, BeforeRead = mirror.Before, AfterRead = mirror.After };
-			engine.Progress += (_, e) => progress(e.CurrentPosition, e.MaxPosition);
+			// Planned: the files it reads next are fetched just ahead of it (RemoteMirror.Plan), several asks at once.
+			var engine = new ScanEngine { Settings = settings, ListRoot = ListFor, BeforeRead = mirror.Before, AfterRead = mirror.After, Planned = mirror.Plan };
+			int checkedNow = 0, checkedOf = -1;
+			bool checking = true;
+			engine.Progress += (_, e) => {
+				// The files checked of all to check: the first count's whole, not a step's of its own on the way (its own 1 of 1).
+				if (checking && (checkedOf < 0 || e.MaxPosition == checkedOf)) (checkedNow, checkedOf) = (e.CurrentPosition, e.MaxPosition);
+				progress(e.CurrentPosition, e.MaxPosition);
+			};
+			// Where the time goes, in the log: a summary every 1,000 files checked, or every 5 minutes while some are.
+			int summarizedAt = 0, summarizing = 0;
+			long summarizedTicks = Stopwatch.GetTimestamp();
+			ScanEngine.ReadCost costsBefore = default;
+			RemoteTimings.Target? targetBefore = await TargetTimingAsync(pc, ct);
+			async Task SummarizeAsync() {
+				if (Interlocked.Exchange(ref summarizing, 1) == 1) return;
+				try {
+					int now = checkedNow, before = summarizedAt;
+					summarizedAt = now;
+					summarizedTicks = Stopwatch.GetTimestamp();
+					ScanEngine.ReadCost costs = engine.ReadCosts, step = costs.Minus(costsBefore);
+					costsBefore = costs;
+					RemoteTimings.Target? target = await TargetTimingAsync(pc, stopping.Token);
+					RemoteTimings.Target? since = target?.Minus(targetBefore);
+					targetBefore = target ?? targetBefore;
+					AgentPaths.AppendLog(timings.Summary(name, before, now, Math.Max(checkedOf, now), Steps(step), since));
+				}
+				catch (Exception e) when (e is OperationCanceledException or IOException or HttpRequestException or JsonException) { }
+				finally { Volatile.Write(ref summarizing, 0); }
+			}
+			using var summaries = new Timer(_ => {
+				int now = checkedNow;
+				if (now - summarizedAt >= 1_000 || now > summarizedAt && Stopwatch.GetElapsedTime(summarizedTicks).TotalMinutes >= 5) _ = SummarizeAsync();
+			}, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+			progress(0, listed);
 			stage("Checking its files");
+			var checkTimer = Stopwatch.StartNew();
 			// The other PC ended its scan, or Castellan stopped: nothing more can be fetched.
 			using var over = new Timer(_ => { if (mirror.Over) stopping.Cancel(); }, null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
 			// A game here: the scan pauses until it's gone (two checks in a row either way).
@@ -324,17 +365,30 @@ namespace HEI.Agent.Estate {
 				return 130;
 			}
 			try {
-				await AgentScanner.RunEngineAsync(engine, () => stage("Comparing"), stopping.Token);
+				await AgentScanner.RunEngineAsync(engine, () => {
+					checking = false; // the compare's own progress from here
+					checkedNow = Math.Max(checkedNow, checkedOf);
+					summaries.Change(Timeout.Infinite, Timeout.Infinite);
+					AgentPaths.AppendLog($"scan for {name}: its {checkedNow:N0} files checked in {checkTimer.Elapsed.TotalSeconds:N0} s, {Format.Bytes(bytes.Fetched)} fetched in {bytes.Asks:N0} asks");
+					_ = SummarizeAsync();
+					stage("Comparing");
+				}, stopping.Token);
 				files = engine.FoundMedia().Count;
 				device = !settings.UseAiMatching ? "off" : engine.AiDeviceUsed ?? NpuComponents.DeviceFor(settings.AiDevice);
 				string? cacheKey = engine.AiDeviceUsed != null ? engine.AiCacheKeyUsed : NpuComponents.CacheKeyFor(settings.AiDevice);
 				var fingerprints = new ScanFingerprints(cacheKey, settings.UseAiMatching, stopping.Token) { TextDevice = settings.AiDevice };
 				stage(AgentScanner.SortingSets);
+				// Photos alike but not the same bytes are looked at up close and their words read: fetched again, for the log.
+				long fetchedBefore = bytes.Fetched;
+				int asksBefore = bytes.Asks;
+				var sortTimer = Stopwatch.StartNew();
 				try {
 					groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, null, null, progress, stopping.Token, dates);
 				}
 				finally {
 					if (fingerprints.FinishReading() is { } read) AgentPaths.AppendLog(read);
+					AgentPaths.AppendLog($"scan for {name}: its sets sorted in {sortTimer.Elapsed.TotalSeconds:N0} s, {Format.Bytes(bytes.Fetched - fetchedBefore)} fetched again for it " +
+						$"in {bytes.Asks - asksBefore:N0} asks (photos alike looked at up close, and their words read)");
 				}
 			}
 			catch (OperationCanceledException) when (stopping.IsCancellationRequested) {
@@ -374,6 +428,30 @@ namespace HEI.Agent.Estate {
 				$"{mirror.Failed.Count:N0} not fetched; {timer.Elapsed.TotalSeconds:N0} s, AI on {device}");
 			foreach (var (path, why) in mirror.Failed.Take(20)) AgentPaths.AppendLog($"  not fetched: {mirror.Original(path)} ({why})");
 			return 0;
+		}
+
+		/// <summary>The other PC's reading for this one so far (<c>GET /api/peer/scan/timing</c>); null when it doesn't say (an older Heiward there).</summary>
+		static async Task<RemoteTimings.Target?> TargetTimingAsync(string pc, CancellationToken ct) {
+			try {
+				var (status, json) = await EstateLink.GetJsonAsync(EstateLink.PeerPath(pc, "scan/timing"), TimeSpan.FromSeconds(10), ct, limit: 64 * 1024);
+				using (json) return status == 200 && json != null ? RemoteTimings.Target.Parse(json.RootElement) : null;
+			}
+			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or JsonException or EstateMissing && !ct.IsCancellationRequested) {
+				return null;
+			}
+		}
+
+		/// <summary>The engine's steps since the last summary, each with the workers' time on it (waits for the other PC's bytes included).</summary>
+		internal static string? Steps(ScanEngine.ReadCost c) {
+			var parts = new List<string>();
+			void One(string what, int n, double sec) {
+				if (n > 0) parts.Add($"{what} {n:N0} × {(sec / n >= 1 ? $"{sec / n:N1} s" : $"{sec * 1000 / n:N0} ms")}");
+			}
+			One("fingerprints", c.Hashes, c.HashSec);
+			One("videos probed", c.Probes, c.ProbeSec);
+			One("photos decoded", c.Photos, c.PhotoSec);
+			One("videos sampled", c.Videos, c.VideoSec);
+			return parts.Count == 0 ? null : string.Join(", ", parts);
 		}
 
 		/// <summary>The sets with the other PC's own paths, keyed as that PC's own scan would key them; a set with a file outside the stand-ins is left out.</summary>

@@ -750,6 +750,26 @@ namespace HEI.Agent {
 		/// <summary>The scan's work is done: what it starts from here, the review page among them, must not stay capped.</summary>
 		public static void LiftCpuCap() => CapCpu(0);
 
+		/// <summary>
+		/// The PC's logical processors, all of them: what a job's cap is a share of (<see cref="CapCpu"/>). Not
+		/// Environment.ProcessorCount, which .NET makes fewer for a process in a job whose processor is capped (Castellan's,
+		/// or a scan's that started it) or held to some of the cores: a share of that would be more of the whole than meant.
+		/// </summary>
+		public static int MachineProcessors {
+			get {
+				const ushort AllProcessorGroups = 0xFFFF;
+				try {
+					int n = (int)GetActiveProcessorCount(AllProcessorGroups);
+					if (n > 0) return n;
+				}
+				catch (Exception e) when (e is EntryPointNotFoundException or DllNotFoundException) { }
+				return Environment.ProcessorCount;
+			}
+		}
+
+		[DllImport("kernel32.dll")]
+		static extern uint GetActiveProcessorCount(ushort groupNumber);
+
 		[DllImport("ntdll.dll")]
 		static extern int NtQueryInformationProcess(IntPtr process, int infoClass, out int info, int size, out int returned);
 

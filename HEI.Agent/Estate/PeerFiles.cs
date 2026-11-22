@@ -53,6 +53,7 @@ namespace HEI.Agent.Estate {
 		readonly IFiles files;
 		readonly Pace pace = new();
 		long served, cpuTicks;
+		long asks, openTicks, readTicks, paceTicks, sendTicks;
 
 		/// <param name="game">The game check's answer now (the program played), or null: the kit's <c>gamePlayed</c>, kept by the caller.</param>
 		internal PeerFiles(Func<string?> game, IFiles? files = null) {
@@ -69,6 +70,17 @@ namespace HEI.Agent.Estate {
 		/// <summary>Bytes handed over so far, and the processor time their reads took.</summary>
 		public long Served => Interlocked.Read(ref served);
 		public TimeSpan Cpu => TimeSpan.FromTicks(Interlocked.Read(ref cpuTicks));
+
+		/// <summary>
+		/// Where the route's time went, for the PC reading (<c>GET /api/peer/scan/timing</c>): the asks answered with bytes,
+		/// the bytes, and the time, in ms in all, opening the files, reading them, waiting for the pace, and handing the bytes
+		/// over (waiting for the link to take them).
+		/// </summary>
+		public object Timing => new {
+			asks = Interlocked.Read(ref asks), bytes = Served, openMs = Ms(ref openTicks), readMs = Ms(ref readTicks), paceMs = Ms(ref paceTicks), sendMs = Ms(ref sendTicks),
+		};
+
+		static double Ms(ref long ticks) => Math.Round(Interlocked.Read(ref ticks) * 1000.0 / Stopwatch.Frequency, 1);
 
 		/// <summary>The list kept elsewhere (<see cref="ReplaceWith"/>): a key's file as it was given, or null.</summary>
 		volatile Func<string, string?>? kept;
@@ -284,9 +296,12 @@ namespace HEI.Agent.Estate {
 		/// is played, the reply is cut short of its Content-Length.
 		/// </summary>
 		async Task ReadAsync(string path, long from, long length, HttpContext ctx) {
+			Interlocked.Increment(ref asks);
 			byte[] buffer = new byte[ChunkBytes];
+			long t = Stopwatch.GetTimestamp();
 			await using Stream stream = files.Open(path);
 			if (from > 0) stream.Seek(from, SeekOrigin.Begin);
+			t = Took(ref openTicks, t);
 			long left = length;
 			while (left > 0) {
 				if (game() != null) {
@@ -295,19 +310,31 @@ namespace HEI.Agent.Estate {
 				}
 				int want = (int)Math.Min(buffer.Length, left);
 				long wait = pace.Wait(Now(), want, BytesPerSec);
-				if (wait > 0) await Task.Delay(TimeSpan.FromMilliseconds(wait), ctx.RequestAborted);
+				if (wait > 0) {
+					await Task.Delay(TimeSpan.FromMilliseconds(wait), ctx.RequestAborted);
+					t = Took(ref paceTicks, t);
+				}
 				int n = stream is FileStream fs ? await Task.Run(() => Gentle.Read(fs, buffer, want, ref cpuTicks), ctx.RequestAborted) : await stream.ReadAsync(buffer.AsMemory(0, want), ctx.RequestAborted);
+				t = Took(ref readTicks, t);
 				if (n <= 0) {
 					ctx.Abort(); // it ended early: the other PC sees a short reply, and asks again
 					return;
 				}
 				await ctx.Response.Body.WriteAsync(buffer.AsMemory(0, n), ctx.RequestAborted);
+				t = Took(ref sendTicks, t);
 				Interlocked.Add(ref served, n);
 				left -= n;
 			}
 		}
 
 		static double Now() => Stopwatch.GetTimestamp() * 1000.0 / Stopwatch.Frequency;
+
+		/// <summary>The time since <paramref name="since"/> added to <paramref name="ticks"/>; now, for the next.</summary>
+		static long Took(ref long ticks, long since) {
+			long now = Stopwatch.GetTimestamp();
+			Interlocked.Add(ref ticks, now - since);
+			return now;
+		}
 
 		/// <summary>This PC's disks: each file opened shared, at very low disk priority; an online-only cloud file isn't there.</summary>
 		sealed class Disks : IFiles {

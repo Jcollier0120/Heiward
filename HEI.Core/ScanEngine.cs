@@ -147,8 +147,20 @@ namespace HEI.Core {
 		/// <summary>Where that model ran ("NPU", "GPU", "CPU") and when it last did; null before it has.</summary>
 		public (string Device, DateTime Utc)? AiLastRun => aiEmbedder is { LastRunUtc: DateTime at } e ? (e.DeviceName, at) : null;
 		// What reading the files cost the last search: files decoded and the workers' time on them, photos and videos apart.
-		int photosRead, videosRead;
-		long photoTicks, videoTicks;
+		int photosRead, videosRead, probesRead, hashesRead;
+		long photoTicks, videoTicks, probeTicks, hashTicks;
+
+		/// <summary>What reading the files has cost the search so far, step by step: how many, and the workers' time on them (worker-s).</summary>
+		public readonly record struct ReadCost(int Photos, double PhotoSec, int Videos, double VideoSec, int Probes, double ProbeSec, int Hashes, double HashSec) {
+			public ReadCost Minus(ReadCost b) => new(Photos - b.Photos, PhotoSec - b.PhotoSec, Videos - b.Videos, VideoSec - b.VideoSec,
+				Probes - b.Probes, ProbeSec - b.ProbeSec, Hashes - b.Hashes, HashSec - b.HashSec);
+		}
+
+		/// <summary>The search's <see cref="ReadCost"/> now: its photos decoded, videos sampled, videos probed and files fingerprinted.</summary>
+		public ReadCost ReadCosts => new(Volatile.Read(ref photosRead), Sec(Interlocked.Read(ref photoTicks)), Volatile.Read(ref videosRead), Sec(Interlocked.Read(ref videoTicks)),
+			Volatile.Read(ref probesRead), Sec(Interlocked.Read(ref probeTicks)), Volatile.Read(ref hashesRead), Sec(Interlocked.Read(ref hashTicks)));
+
+		static double Sec(long ticks) => ticks / (double)Stopwatch.Frequency;
 		/// <summary>
 		/// What decoding cost the last search, e.g. "Read 4,800 photos in 412 worker-s (86 ms each) and 210
 		/// videos in 96 worker-s (457 ms each)", and the graphics card when the settings name one
@@ -178,8 +190,10 @@ namespace HEI.Core {
 		/// The photos and videos of <see cref="FoundFiles"/>, without the files this or an earlier search found to be text
 		/// with a video's extension (TypeScript's .ts): what a person counts as photos and videos.
 		/// </summary>
-		public List<(string Path, long Size)> FoundMedia() => foundFiles.Where(f =>
-			!(DatabaseUtils.Database.TryGetValue(new FileEntry { _Path = f.Path }, out FileEntry? e) && e.Flags.Has(EntryFlags.NotMedia))).ToList();
+		public List<(string Path, long Size)> FoundMedia() => foundFiles.Where(f => !KnownNotMedia(f.Path)).ToList();
+		/// <summary>The files of <see cref="FoundFiles"/> the database knows aren't photos or videos (a text file named .ts): those <see cref="FoundMedia"/> leaves out.</summary>
+		public List<string> FoundNotMedia() => foundFiles.Where(f => KnownNotMedia(f.Path)).Select(f => f.Path).ToList();
+		static bool KnownNotMedia(string path) => DatabaseUtils.Database.TryGetValue(new FileEntry { _Path = path }, out FileEntry? e) && e.Flags.Has(EntryFlags.NotMedia);
 		/// <summary>The paths of <see cref="FoundFiles"/>, for <see cref="Settings.ListingProvesExistence"/>.</summary>
 		HashSet<string>? listedPaths;
 
@@ -197,6 +211,12 @@ namespace HEI.Core {
 		/// and one the database can't compare yet waits for its drive's own scan. Null: every file may be read.
 		/// </summary>
 		public Func<string, bool>? MayRead { get; set; }
+
+		/// <summary>
+		/// Called once the files to read are planned, before any is read: each drive's files in the order its workers take
+		/// them (a few at once, from the front). A reader whose bytes are on another PC fetches those just ahead of them.
+		/// </summary>
+		public Action<IReadOnlyList<IReadOnlyList<FileEntry>>>? Planned { get; set; }
 
 		/// <summary>
 		/// Called once a file is to be read (its fingerprint, header and frames), before anything reads it, on the thread
@@ -619,8 +639,8 @@ namespace HEI.Core {
 			AiAcceleratorUsed = null;
 			AiCardUsed = null;
 			AiFallback = null;
-			photosRead = videosRead = 0;
-			photoTicks = videoTicks = 0;
+			photosRead = videosRead = probesRead = hashesRead = 0;
+			photoTicks = videoTicks = probeTicks = hashTicks = 0;
 			// Before anything opens a GPU device: the card the settings name, for this scan.
 			Utils.GpuAdapters.Choose(Settings.Gpu);
 			FFTools.FFmpegNative.HardwareVideoDecode.ResetForScan();
@@ -1387,8 +1407,12 @@ namespace HEI.Core {
 						// then persisted. Best-effort: a missing/locked file leaves it null.
 						// Only fingerprint files inside the include list, so "scan against entire database"
 						// (which compares every historical entry) never spins up out-of-scope drives for a read.
-						if (entry.OsHash == null && IsInIncludeScope(entry))
+						if (entry.OsHash == null && IsInIncludeScope(entry)) {
+							long hashStarted = Stopwatch.GetTimestamp();
 							entry.OsHash = OsHashUtils.TryCompute(entry.Path);
+							Interlocked.Add(ref hashTicks, Stopwatch.GetTimestamp() - hashStarted);
+							Interlocked.Increment(ref hashesRead);
+						}
 
 						if (Settings.IncludeMissingFiles && entry.grayBytes?.Count > 0) {
 							bool hasAllInformation = entry.IsImage && HasUsableCachedGray(entry, 0);
@@ -1455,7 +1479,10 @@ namespace HEI.Core {
 								return ValueTask.CompletedTask;
 							}
 							ReportProgress(entry.Path, T("Scan.Stage.Probing"));
+							long probeStarted = Stopwatch.GetTimestamp();
 							MediaInfo? info = FFProbeEngine.GetMediaInfo(entry.Path, Settings.ExtendedFFToolsLogging, out bool noMedia);
+							Interlocked.Add(ref probeTicks, Stopwatch.GetTimestamp() - probeStarted);
+							Interlocked.Increment(ref probesRead);
 							if (info == null) {
 								entry.invalid = true;
 								// Kept only when ffprobe answered about the file itself: one that timed out, or that another
@@ -1565,6 +1592,7 @@ namespace HEI.Core {
 				// held back by a slow one. Probe candidates are restricted to files this scan
 				// may read anyway — classification must not spin up out-of-scope drives.
 				List<DriveScanGroup> driveGroups = DriveScanPlanner.PartitionByDrive(DatabaseUtils.Database);
+				Planned?.Invoke(driveGroups.Select(g => (IReadOnlyList<FileEntry>)g.Entries).ToList());
 				if (Settings.MaxDegreeOfParallelism == 1) {
 					// Documented promise: 1 = strictly one file at a time. Drives run
 					// sequentially, no probing needed (speed class stays unknown).
