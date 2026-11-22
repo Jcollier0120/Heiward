@@ -60,6 +60,31 @@ public sealed partial class RemoteMirrorTests {
 	}
 
 	[Fact]
+	public void APhotoKnownByItsFingerprint_ThatTheAIStillWants_IsFetchedAhead_AndOneItDoesntWant_IsNot() {
+		// A scan picking up where one stopped: the fingerprints were kept, one photo's embedding wasn't.
+		string[] photos = [Make("known.jpg", 300_000, 50), Make("wanted.jpg", 310_000, 51)];
+		var (mirror, bytes) = Mirror(paths: photos);
+		using (mirror) {
+			List<FileEntry> entries = Entries(mirror, photos);
+			foreach (FileEntry e in entries) {
+				e.grayBytes[0] = new byte[32];
+				e.Flags.Set(EntryFlags.GrayFromRgb224V1);
+				Assert.False(ScanEngine.ImageNeedsDecode(e));
+			}
+			mirror.WantsEmbedding = e => e.Path == entries[1].Path;
+			mirror.Plan([entries]);
+			Assert.True(SpinWait.SpinUntil(() => mirror.Held >= 310_000, 10_000), $"held {mirror.Held}");
+			Thread.Sleep(300);
+			Assert.Equal(310_000, mirror.Held); // the wanted one alone
+			int asks = bytes.Asks;
+			Assert.True(mirror.Before(entries[1]));
+			Assert.Equal(File.ReadAllBytes(photos[1]), File.ReadAllBytes(entries[1].Path));
+			mirror.After(entries[1]);
+			Assert.Equal(asks, bytes.Asks);
+		}
+	}
+
+	[Fact]
 	public void NoMoreIsFetchedAheadThanItsBound_AndMoreOnceTheEngineTakesSome() {
 		string[] photos = Enumerable.Range(0, 10).Select(i => Make($"p{i}.jpg", 50_000, 30 + i)).ToArray();
 		var (mirror, _) = MirrorWith(aheadBytes: 120_000, photos);

@@ -433,8 +433,28 @@ namespace HEI.Core {
 				catch (Exception ex) {
 					Logger.Instance.Warn($"Database checkpoint failed (the scan continues; the final save still runs): {ex}");
 				}
+				CheckpointEmbeddings();
 			}
 		}
+
+		/// <summary>
+		/// The AI's embeddings so far, appended to their store with the database's checkpoint: otherwise they're saved only once
+		/// the analysis ends, and a process ended under a long scan (an update, a crash, a lost power) lost every one, which
+		/// the next scan had to read its files for again. Nothing is pruned here: the analysis's end does that. Best-effort.
+		/// </summary>
+		internal void CheckpointEmbeddings() {
+			try { unionEmbeddingStore?.Save(null); }
+			catch (Exception ex) { Logger.Instance.Warn($"Embedding checkpoint failed (the scan continues): {ex.Message}"); }
+		}
+
+		/// <summary>True from a search's start until it has ended, stopped or not, its last saves done: a stopped scan's own unwinding included.</summary>
+		public bool IsScanning => isScanning;
+
+		/// <summary>
+		/// Whether this scan's AI still wants a photo's embedding (none is kept for it as it is): the photo is read for it, its
+		/// fingerprint known or not. A scan picking up where another stopped has the fingerprints, and not always the embeddings.
+		/// </summary>
+		public bool WantsPhotoEmbedding(FileEntry entry) => aiEmbeddingPipeline?.WantsEmbedding(entry, 0) == true;
 
 		// Explicit flush for a safe suspend point (Pause): persist completed work so the user can
 		// close the app while paused and resume later via the fingerprint cache. Shares
@@ -450,6 +470,7 @@ namespace HEI.Core {
 				catch (Exception ex) {
 					Logger.Instance.Warn($"Pause flush failed (the scan continues): {ex}");
 				}
+				CheckpointEmbeddings();
 			}
 		}
 

@@ -82,12 +82,50 @@ namespace HEI.Agent {
 					gpu ??= kept.Gpu;
 				}
 				else keepSettings = false;
+				// The installed copy's own setup, run by hand ("hei install"): Heiward was here. One run by another copy's setup
+				// (an update's) leaves starting it again to that setup, which knows whether it was.
+				startAgainOnFailure = !dryRun && StartsAgainOnFailure(RunningInstalled, StorePackage.IsPackaged, Environment.GetEnvironmentVariable(FromSetup) == "1", wasHere: false);
 				return await InstallStepsAsync(dryRun, assumeYes, device, ct, onDemand, reuseFrom, scanSpeed, openPage, removeGitHubCopy, gpu, keepSettings);
 			}
 			catch (Exception e) when (e is not OperationCanceledException) {
 				AgentPaths.AppendLog("install failed: " + e);
 				Console.Error.WriteLine($"Heiward couldn't finish installing: {e.Message}");
+				if (startAgainOnFailure) StartAgainAfterFailure();
 				return 1;
+			}
+		}
+
+		/// <summary>Set for the setup another copy's setup runs (an update's second half, from the installed copy): it isn't the one that knows whether Heiward was here.</summary>
+		const string FromSetup = "HEIWARD_FROM_SETUP";
+
+		/// <summary>Whether a failed install starts the installed copy again (<see cref="StartAgainAfterFailure"/>): set once it's known Heiward was here.</summary>
+		static bool startAgainOnFailure;
+
+		/// <summary>
+		/// Whether a failed install starts the copy that was installed again: an update (<paramref name="wasHere"/>, the exe there
+		/// before this copy replaced it), or the installed copy's own setup run by hand. Never the Store version's (the Store
+		/// keeps it), nor the second half of an update, whose first half does it.
+		/// </summary>
+		internal static bool StartsAgainOnFailure(bool runningInstalled, bool packaged, bool fromSetup, bool wasHere) =>
+			!packaged && (wasHere || runningInstalled && !fromSetup);
+
+		/// <summary>
+		/// A failed install, of a copy that was running here, must never leave Heiward down: the installed exe (the one that was
+		/// there when the copy over it failed, or the new one when a later step did) has its review page started again, unless
+		/// it's up. The page runs the scans as before. Said in the log and the window.
+		/// </summary>
+		static void StartAgainAfterFailure() {
+			if (StorePackage.IsPackaged || !File.Exists(InstalledExe)) return;
+			try {
+				int port = ReviewServer.OwnPort(File.Exists(AgentPaths.Config) ? AgentConfig.Load() : new AgentConfig());
+				if (ReviewServer.IsUpAsync(port).GetAwaiter().GetResult()) return;
+				string version = GitHubCopyVersion() is { Length: > 0 } v ? v : "as it was";
+				StartDetached("serve", "--no-browser");
+				AgentPaths.AppendLog($"install: started Heiward {version} again, so the failed install doesn't leave it down");
+				Console.Error.WriteLine($"Heiward {version} is running again.");
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception or InvalidOperationException) {
+				AgentPaths.AppendLog("install: Heiward couldn't be started again after the failed install: " + e.Message);
 			}
 		}
 
@@ -140,11 +178,15 @@ namespace HEI.Agent {
 				Step($"Copy {CurrentExe} -> {InstalledExe}");
 				if (!dryRun) {
 					Directory.CreateDirectory(InstallDir);
-					StopRunningAgents();
-					File.Copy(CurrentExe, InstalledExe, overwrite: true);
+					// An update: whatever fails from here on, the copy that was running is started again.
+					if (File.Exists(InstalledExe)) startAgainOnFailure = StartsAgainOnFailure(false, StorePackage.IsPackaged, false, wasHere: true);
+					await StopRunningAgentsAsync(ct);
+					CopyOver(CurrentExe, InstalledExe, () => StopProcessesIn(InstallDir, "hei", TimeSpan.FromSeconds(5), line => AgentPaths.AppendLog("install: " + line)), CopyWait,
+						AgentPaths.AppendLog);
 					// Continue from the installed copy, so the downloads land next to it (its folder is
 					// VDF's state folder) and everything it registers points at it.
 					var psi = new ProcessStartInfo(InstalledExe) { UseShellExecute = false };
+					psi.Environment[FromSetup] = "1";
 					foreach (string a in Environment.GetCommandLineArgs().Skip(1)) psi.ArgumentList.Add(a);
 					if (!psi.ArgumentList.Contains("install")) psi.ArgumentList.Insert(0, "install");
 					// The installed copy starts empty: it can copy what the folder it came from already has.
@@ -160,6 +202,10 @@ namespace HEI.Agent {
 					using var p = Process.Start(psi)!;
 					if (psi.RedirectStandardInput) p.StandardInput.Close();
 					await p.WaitForExitAsync(ct);
+					if (p.ExitCode != 0 && startAgainOnFailure) {
+						AgentPaths.AppendLog($"install: the installed copy's setup ended with {p.ExitCode}");
+						StartAgainAfterFailure();
+					}
 					return p.ExitCode;
 				}
 			}
@@ -521,9 +567,9 @@ namespace HEI.Agent {
 					try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, throwOnMissingSubKey: false); }
 					catch (Exception e) { Log("uninstall: the Apps & Features entry stays: " + e.Message); }
 					try { Registry.CurrentUser.DeleteSubKeyTree(ProtocolKey, throwOnMissingSubKey: false); } catch { }
-					StopRunningAgents();
+					StopProcessesIn(InstallDir, "hei", StopWait, line => Log("uninstall: " + line));
 					// Anything else still running from the folder (an FFmpeg a scan started) would keep it from going.
-					StopProcessesIn(InstallDir);
+					StopProcessesIn(InstallDir, log: line => Log("uninstall: " + line));
 				}
 			}
 			if (purge) {
@@ -560,27 +606,76 @@ namespace HEI.Agent {
 		internal static string DeleteFolderLater(string folder) =>
 			$"/d /c for /l %i in (1,1,15) do @(if exist \"{folder}\" (ping -n 3 127.0.0.1 >nul & rmdir /s /q \"{folder}\" 2>nul))";
 
+		/// <summary>How long stopping a folder's processes waits for them all to have exited, at most.</summary>
+		internal static readonly TimeSpan StopWait = TimeSpan.FromSeconds(30);
+		/// <summary>How long an update waits for its review page to close by itself, a scan for another PC saving what it checked (<see cref="Estate.ScanForOthers.Shutdown"/>).</summary>
+		internal static readonly TimeSpan PageStopWait = TimeSpan.FromSeconds(45);
+		/// <summary>How long the copy over the installed exe is tried again while something still holds it.</summary>
+		internal static readonly TimeSpan CopyWait = TimeSpan.FromSeconds(20);
+
 		/// <summary>
 		/// Stops every process whose program is in <paramref name="folder"/> (only those named <paramref name="name"/>,
-		/// when given), but this one. Which they are goes by where their exe is (<see cref="RunningFrom"/>).
+		/// when given), but this one, and waits until none is left, at most <paramref name="within"/> (<see cref="StopWait"/>).
+		/// Which they are goes by where their exe is (<see cref="RunningFrom"/>). Each is waited for, a child its parent's
+		/// tree already took among them: one still ending holds its exe as long as it runs. One started meanwhile is stopped too.
 		/// </summary>
-		static void StopProcessesIn(string folder, string? name = null) {
-			Process[] running = name == null ? Process.GetProcesses() : Process.GetProcessesByName(name);
-			try {
-				var byId = running.ToDictionary(p => p.Id);
-				foreach (var (id, exe) in RunningFrom(running.Select(p => (p.Id, ImagePathOrNull(p))), folder, Environment.ProcessId)) {
-					try {
-						Log($"uninstall: stopping {Path.GetFileName(exe)} ({id})");
-						byId[id].Kill(entireProcessTree: true);
-						byId[id].WaitForExit(5000);
+		/// <returns>How many were still running at the end; 0 once all have exited.</returns>
+		internal static int StopProcessesIn(string folder, string? name = null, TimeSpan? within = null, Action<string>? log = null) {
+			var timer = Stopwatch.StartNew();
+			TimeSpan most = within ?? StopWait;
+			var told = new HashSet<int>();
+			while (true) {
+				Process[] running = name == null ? Process.GetProcesses() : Process.GetProcessesByName(name);
+				try {
+					var byId = running.ToDictionary(p => p.Id);
+					var ours = RunningFrom(running.Select(p => (p.Id, ImagePathOrNull(p))), folder, Environment.ProcessId).ToList();
+					if (ours.Count == 0) return 0;
+					foreach (var (id, exe) in ours) {
+						if (told.Add(id)) log?.Invoke($"stopping {Path.GetFileName(exe)} ({id})");
+						// One that's ending already (its parent's tree was stopped first) can't be stopped again: it's waited for below.
+						try { byId[id].Kill(entireProcessTree: true); }
+						catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
 					}
-					catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
+					int left = 0;
+					foreach (var (id, _) in ours) {
+						int ms = (int)Math.Max(0, (most - timer.Elapsed).TotalMilliseconds);
+						try { if (!byId[id].WaitForExit(ms)) left++; }
+						catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { }
+					}
+					if (timer.Elapsed >= most) {
+						if (left > 0) log?.Invoke($"{left} of them still running after {most.TotalSeconds:N0} s");
+						return left;
+					}
+				}
+				finally {
+					foreach (Process p in running) p.Dispose();
 				}
 			}
-			finally {
-				foreach (Process p in running) p.Dispose();
+		}
+
+		/// <summary>
+		/// Copies the new exe over the installed one. An exe just let go can stay held a moment (a process still ending, the
+		/// antivirus reading it): while Windows says another process uses it, the copy is tried again for <paramref name="within"/>,
+		/// <paramref name="stopAgain"/> between tries (a process started meanwhile). Any other failure is thrown at once.
+		/// </summary>
+		internal static void CopyOver(string from, string to, Action stopAgain, TimeSpan within, Action<string>? log = null) {
+			var timer = Stopwatch.StartNew();
+			for (int tries = 1; ; tries++) {
+				try {
+					File.Copy(from, to, overwrite: true);
+					if (tries > 1) log?.Invoke($"install: {Path.GetFileName(to)} copied on try {tries}, {timer.Elapsed.TotalSeconds:N1} s after the first");
+					return;
+				}
+				catch (IOException e) when (InUse(e) && timer.Elapsed < within) {
+					if (tries == 1) log?.Invoke($"install: {Path.GetFileName(to)} is still in use ({e.Message.Trim()}), so the copy is tried again");
+					stopAgain();
+					Thread.Sleep(500);
+				}
 			}
 		}
+
+		/// <summary>Windows' "used by another process" (a sharing violation) or a lock on part of the file: what goes once the holder lets go.</summary>
+		internal static bool InUse(IOException e) => (e.HResult & 0xFFFF) is 32 or 33;
 
 		/// <summary>
 		/// The processes in <paramref name="processes"/> (id, exe) whose exe is in <paramref name="folder"/>, or a folder
@@ -588,8 +683,11 @@ namespace HEI.Agent {
 		/// installed copy's.
 		/// </summary>
 		internal static IEnumerable<(int Id, string Exe)> RunningFrom(IEnumerable<(int Id, string? Exe)> processes, string folder, int self) {
+			// Windows names a process's exe by its real path: the folder is matched as written and as it really is (through a
+			// junction or a drive mounted in a folder), or a copy run through one would be missed, and its exe still held.
+			string real = RealPath.Of(folder);
 			foreach (var (id, exe) in processes)
-				if (id != self && RunsFrom(exe, folder)) yield return (id, exe!);
+				if (id != self && (RunsFrom(exe, folder) || RunsFrom(exe, real))) yield return (id, exe!);
 		}
 
 		/// <summary>True when <paramref name="exe"/> is in <paramref name="folder"/>, or a folder inside it.</summary>
@@ -1033,7 +1131,20 @@ namespace HEI.Agent {
 		/// would lose its scan. Such a copy's review page can still hold the port; <see cref="MakeWayForPageAsync"/>
 		/// sees to that (a development build's has a port of its own, <see cref="AgentPaths.DevPort"/>).
 		/// </summary>
-		static void StopRunningAgents() => StopProcessesIn(InstallDir, "hei");
+		static async Task StopRunningAgentsAsync(CancellationToken ct) {
+			// The page first, asked to close as for an update (/api/quit?why=update): a scan it runs for another PC stops by
+			// itself, keeping what it checked, and that PC hears Heiward is being updated here, rather than that it stopped
+			// answering. Its port stops answering once that's done.
+			int port = ReviewServer.OwnPort(File.Exists(AgentPaths.Config) ? AgentConfig.Load() : new AgentConfig());
+			if (await ReviewServer.PageExeAsync(port) is string exe && (RunsFrom(exe, InstallDir) || RunsFrom(exe, RealPath.Of(InstallDir)))
+				&& await ReviewServer.AskToCloseAsync(port, ReviewServer.QuitForUpdate)) {
+				var waited = Stopwatch.StartNew();
+				while (waited.Elapsed < PageStopWait && await ReviewServer.IsUpAsync(port)) await Task.Delay(250, ct);
+				AgentPaths.AppendLog($"install: the review page closed for the update in {waited.Elapsed.TotalSeconds:N1} s");
+			}
+			// Then every hei.exe left from the install folder, each waited for: a scan, a listing for another PC, the page.
+			StopProcessesIn(InstallDir, "hei", StopWait, line => AgentPaths.AppendLog("install: " + line));
+		}
 
 		/// <summary>
 		/// Every copy's review page uses the same port (<see cref="AgentPaths.InstalledPort"/>), but a development

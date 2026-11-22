@@ -568,9 +568,11 @@ namespace HEI.Agent {
 			});
 			// Another copy's installer wants the port for its own page (AskToCloseAsync). Only the page closes: scans
 			// run in processes of their own. Not during the Store version's setup, whose progress only this page shows.
-			app.MapPost("/api/quit", () => {
+			// ?why=update: this copy's own installer, about to replace it. A scan for another PC then says so to that PC.
+			app.MapPost("/api/quit", (HttpRequest request) => {
 				if (StoreSetup.Running) return Results.Conflict(new { error = "Setting Heiward up." });
-				AgentPaths.AppendLog("review page asked to close");
+				Updating = request.Query["why"] == QuitForUpdate;
+				AgentPaths.AppendLog(Updating ? "review page asked to close: Heiward is being updated" : "review page asked to close");
 				app.Lifetime.StopApplication();
 				return Results.Accepted();
 			});
@@ -608,7 +610,7 @@ namespace HEI.Agent {
 			// The drives' change journals, read between scans so the next one needn't walk a drive whose journal moved on.
 			_ = JournalKeeper.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
 			// The copy from GitHub keeps itself up to date, once a day, never during a scan (SelfUpdate).
-			_ = SelfUpdate.RunAsync(ScanBusy, app.Lifetime.ApplicationStopping);
+			_ = SelfUpdate.RunAsync(() => ScanBusy() || Estate.ScanForOthers.HoldsUpdate(DateTime.UtcNow) != null, app.Lifetime.ApplicationStopping);
 			// The Store version's tasks of an older Heiward's names move to this account's folder, once.
 			_ = Task.Run(() => Installer.MoveStoreTasks(cfg, ScanBusy()));
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
@@ -661,7 +663,15 @@ namespace HEI.Agent {
 				pictures = PictureCompare.Version,
 				// What waits for the person, as Manor's page lists it from its staff: at a manor, the page doesn't open at sign-in.
 				needsYou = ReviewWaiting.NeedsYou(cfg.Port),
+				// Manor installs an update only while this says nothing (its saysBusy): an update stops the page, and a scan for
+				// another PC, or another's of this one, with it. At most a day from the scan's start (ScanForOthers.HoldsUpdate).
+				busy = Busy(now),
 			};
+		}
+
+		static string? Busy(DateTime now) {
+			try { return Estate.ScanForOthers.HoldsUpdate(now); }
+			catch { return null; } // the ping answers whatever else fails
 		}
 
 		/// <summary>A set, developer item, repository or game item automatic cleanup can be told to leave (see <see cref="AutoCleanState.Held"/>).</summary>
@@ -1188,18 +1198,25 @@ namespace HEI.Agent {
 		/// </summary>
 		/// <returns>True once it said it would: false from a build without /api/quit, during the Store version's setup, or
 		/// for another account's page, which is never asked.</returns>
-		public static async Task<bool> AskToCloseAsync(int port) {
+		/// <param name="why"><see cref="QuitForUpdate"/>: this copy's installer is about to replace it (a page of an older build closes all the same).</param>
+		public static async Task<bool> AskToCloseAsync(int port, string? why = null) {
 			if (await PingAsync(port) == null) return false;
 			try {
 				using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
 				if (TokenIn(await http.GetStringAsync($"http://127.0.0.1:{port}/")) is not string token) return false;
-				using var quit = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}/api/quit");
+				using var quit = new HttpRequestMessage(HttpMethod.Post, $"http://127.0.0.1:{port}/api/quit" + (why != null ? "?why=" + Uri.EscapeDataString(why) : ""));
 				quit.Headers.Add("X-Agent-Token", token);
 				using HttpResponseMessage answer = await http.SendAsync(quit);
 				return answer.IsSuccessStatusCode;
 			}
 			catch { return false; }
 		}
+
+		/// <summary>/api/quit's why when this copy's own installer asks: it's about to replace this copy (<see cref="Installer"/>).</summary>
+		public const string QuitForUpdate = "update";
+
+		/// <summary>The page was asked to close for an update (<see cref="QuitForUpdate"/>): what its stop tells another PC it scans or is scanned by.</summary>
+		internal static bool Updating { get; set; }
 
 		/// <summary>The token in a page this server served (index.html's agent-token), or null.</summary>
 		internal static string? TokenIn(string page) =>

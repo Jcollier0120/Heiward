@@ -86,12 +86,46 @@ namespace HEI.Agent.Estate {
 		public static string HomeFor(string pc) => Path.Combine(AgentPaths.Home, "remote", pc);
 
 		static string MirrorIn(string home) => Path.Combine(home, "mirror");
+		/// <summary>
+		/// Written by this PC's page when the scan is to stop (the other PC ended it, or Heiward here stops or is updated): the
+		/// scan stops as if asked, keeping what it checked for the next scan to pick up from, rather than its process being ended.
+		/// </summary>
+		public static string StopFile(string home) => Path.Combine(home, "stop");
 		/// <summary>The listing as at the last scan (<see cref="ListingPages.Save"/>), for the next.</summary>
 		static string ListingIn(string home) => Path.Combine(home, "listing.tsv");
 		static string DatesIn(string home) => Path.Combine(home, "dates.json");
 
 		/// <summary>Whether a photo there has a capture date, read while its bytes were here, with its size and time then.</summary>
 		internal sealed record DateKept(long Size, long ModifiedTicks, bool Has);
+
+		/// <summary>A token cancelled once the stop file is there (looked for every <c>every</c>), or the one it's linked to is.</summary>
+		internal sealed class StopWhenAsked : IDisposable {
+			readonly CancellationTokenSource told;
+			readonly Timer look;
+
+			public StopWhenAsked(string stopFile, CancellationToken ct, Action? said = null, TimeSpan? every = null) {
+				told = CancellationTokenSource.CreateLinkedTokenSource(ct);
+				TimeSpan often = every ?? TimeSpan.FromSeconds(1);
+				look = new Timer(_ => {
+					try {
+						if (told.IsCancellationRequested || !File.Exists(stopFile)) return;
+						said?.Invoke();
+						told.Cancel();
+					}
+					catch (ObjectDisposedException) { }
+				}, null, often, often);
+			}
+
+			public CancellationToken Token => told.Token;
+
+			public void Dispose() {
+				look.Dispose();
+				told.Dispose();
+			}
+		}
+
+		/// <summary>How long a stopped scan waits for the engine's own last saves (its database, the AI's embeddings).</summary>
+		static readonly TimeSpan EngineStopWait = TimeSpan.FromSeconds(20);
 
 		/// <summary>The processor's share for work for another PC, in percent of the whole: <see cref="MostCores"/> cores' worth.</summary>
 		public static double CpuCap(int processors) => Math.Min(100, MostCores * 100.0 / Math.Max(1, processors));
@@ -132,6 +166,9 @@ namespace HEI.Agent.Estate {
 			}
 			Write();
 			using var ticker = new Timer(_ => Write(), null, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(2));
+			// The page asks this scan to stop by its stop file: it stops as its Stop would.
+			using var told = new StopWhenAsked(StopFile(home), ct, () => AgentPaths.AppendLog($"scan for {name}: this PC's page asked it to stop"));
+			ct = told.Token;
 			try {
 				int code = await ScanAsync(pc, name, home, cfg, started, timer, ct, s => stage = s, (d, t) => (done, total) = (d, t), w => waiting = w, b => bytes = b);
 				stage = code == 0 ? "Done" : stage;
@@ -303,6 +340,8 @@ namespace HEI.Agent.Estate {
 			RemoteFiles.Fetch = mirror.Fetch;
 			// Planned: the files it reads next are fetched just ahead of it (RemoteMirror.Plan), several asks at once.
 			var engine = new ScanEngine { Settings = settings, ListRoot = ListFor, BeforeRead = mirror.Before, AfterRead = mirror.After, Planned = mirror.Plan };
+			// A scan picking up where one stopped has the photos' fingerprints, and maybe not their embeddings: those photos are read too.
+			mirror.WantsEmbedding = engine.WantsPhotoEmbedding;
 			int checkedNow = 0, checkedOf = -1;
 			bool checking = true;
 			engine.Progress += (_, e) => {
@@ -357,6 +396,8 @@ namespace HEI.Agent.Estate {
 			// The other PC ended it (its Stop), or this PC stopped it: nothing is saved as found, and what was read stays in the
 			// database for the next scan, but for the files that couldn't be read, and so do its photos' hashes and dates.
 			int Stopped() {
+				// The engine saves its database and the AI's embeddings as it stops: this process ends only once it has.
+				for (var waited = Stopwatch.StartNew(); engine.IsScanning && waited.Elapsed < EngineStopWait;) Thread.Sleep(100);
 				if (!mirror.Failed.IsEmpty) DatabaseUtils.Database.RemoveWhere(e => mirror.Failed.ContainsKey(e.Path));
 				DatabaseUtils.SaveDatabase();
 				KeepTaken(sorted: false);

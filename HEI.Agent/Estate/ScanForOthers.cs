@@ -76,7 +76,7 @@ namespace HEI.Agent.Estate {
 		/// The other PCs on the Estate that can scan this one now (same build), those that could once Heiward there is
 		/// updated (an older one), and those that could once Heiward here is (a newer one there).
 		/// </summary>
-		static (long At, List<object> Can, List<string> Update, List<string> UpdateHere)? offers;
+		static (long At, List<object> Can, List<string> Update, List<string> UpdateHere, HashSet<string> CanIds, Dictionary<string, string> Builds)? offers;
 		static int refreshing;
 
 		/// <summary>
@@ -87,10 +87,13 @@ namespace HEI.Agent.Estate {
 		internal static object? View() {
 			if (Volatile.Read(ref refreshing) == 0 && (offers is not { } o || Environment.TickCount64 - o.At > 60_000)) _ = Task.Run(RefreshOffersAsync);
 			var known = offers;
-			Asked? a = asked;
+			Asked? a = AskedNow();
 			ForeignFindings? found = ForeignFindings.LoadAny();
 			var lent = ScanningFor;
 			if (known is not { Can.Count: > 0 } && known is not { Update.Count: > 0 } && known is not { UpdateHere.Count: > 0 } && a == null && found == null && lent == null) return null;
+			// A scan that stopped part way: Scan again picks up where it stopped, once that PC can scan this one (its build is this one's).
+			bool stopped = a is { Finished: true, Problem: not null, Begun: true };
+			string? now = a?.LenderBuild != null && known?.Builds.TryGetValue(a.Lender.Id, out string? b) == true && b != a.LenderBuild ? b : null;
 			return new {
 				others = known?.Can ?? [],
 				updateOn = known?.Update ?? [],
@@ -98,6 +101,9 @@ namespace HEI.Agent.Estate {
 				asked = a == null ? null : new {
 					pc = a.Lender.Id, name = a.Lender.Name, stage = a.Stage, done = a.Done, total = a.Total, fetchedBytes = a.Fetched,
 					waiting = a.Waiting, finished = a.Finished, problem = a.Problem, sets = a.Sets, startedUtc = a.StartedUtc,
+					stopped, again = stopped && known?.CanIds.Contains(a.Lender.Id) == true,
+					// Heiward there was updated since it began (its build then and now): the card says so.
+					updatedTo = now == null ? null : Short(now),
 				},
 				scanningFor = lent is { } l ? new { name = l.To.Name, sinceUtc = l.Since, linked = l.Linked } : null,
 				found = found == null ? null : new { from = found.FromName, atUtc = found.ScannedAtUtc, sets = found.Groups.Count, setAside = found.Build != AppBuild.Current },
@@ -110,6 +116,8 @@ namespace HEI.Agent.Estate {
 				var can = new List<object>();
 				var update = new List<string>();
 				var updateHere = new List<string>();
+				var canIds = new HashSet<string>(StringComparer.Ordinal);
+				var builds = new Dictionary<string, string>(StringComparer.Ordinal);
 				if (await EstateLink.ReadEstateAsync(CancellationToken.None) is { On: true } estate)
 					foreach (EstateLink.EstatePc pc in estate.Pcs.Where(p => p.Here && p.HasHeiward != false)) {
 						try {
@@ -118,16 +126,20 @@ namespace HEI.Agent.Estate {
 								if (status != 200 || json?.RootElement is not { ValueKind: JsonValueKind.Object } r) continue;
 								bool able = r.TryGetProperty("can", out JsonElement c) && c.ValueKind == JsonValueKind.True;
 								string? build = EstateLink.Str(r, "build");
-								if (able && build == AppBuild.Current) can.Add(new { id = pc.Id, name = pc.Name, npu = EstateLink.Str(r, "npu") });
+								if (build != null) builds[pc.Id] = build;
+								if (able && build == AppBuild.Current) {
+									can.Add(new { id = pc.Id, name = pc.Name, npu = EstateLink.Str(r, "npu") });
+									canIds.Add(pc.Id);
+								}
 								else if (able && build != null) (Newer(build, AppBuild.Current) ? updateHere : update).Add(pc.Name);
 							}
 						}
 						catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing) { }
 					}
-				offers = (Environment.TickCount64, can, update, updateHere);
+				offers = (Environment.TickCount64, can, update, updateHere, canIds, builds);
 			}
 			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing or IOException) {
-				offers = (Environment.TickCount64, [], [], []);
+				offers = (Environment.TickCount64, [], [], [], [], []);
 			}
 			finally {
 				Volatile.Write(ref refreshing, 0);
@@ -136,10 +148,13 @@ namespace HEI.Agent.Estate {
 
 		// ================= This PC asks another to scan it =================
 
-		/// <summary>The scan this PC asked another PC for, as its page shows it.</summary>
+		/// <summary>
+		/// The scan this PC asked another PC for, as its page shows it; kept on disk (<see cref="AskedFile"/>), so a scan that
+		/// stopped, this PC's page with it (an update), still says so, with its Scan again.
+		/// </summary>
 		internal sealed class Asked {
 			public required Pc Lender { get; init; }
-			public DateTime StartedUtc { get; } = DateTime.UtcNow;
+			public DateTime StartedUtc { get; init; } = DateTime.UtcNow;
 			public string Stage { get; set; } = "Listing this PC's photos and videos";
 			public int Done { get; set; }
 			public int Total { get; set; }
@@ -148,6 +163,62 @@ namespace HEI.Agent.Estate {
 			public bool Finished { get; set; }
 			public string? Problem { get; set; }
 			public int? Sets { get; set; }
+			/// <summary>The other PC began the scan (it sent how it's getting on): one that stops after is picked up where it stopped.</summary>
+			public bool Begun { get; set; }
+			/// <summary>The other PC's Heiward when it was asked: one that's another since was updated under the scan.</summary>
+			public string? LenderBuild { get; set; }
+		}
+
+		/// <summary>The scan asked of another PC, as last kept (<see cref="Asked"/>).</summary>
+		internal sealed record AskedKept(string Pc, string Name, DateTime StartedUtc, string Stage, int Done, int Total, long Fetched, bool Finished,
+			string? Problem, int? Sets, bool Begun, string? LenderBuild);
+
+		static string AskedFile => Path.Combine(AgentPaths.Home, "remote-asked.json");
+
+		/// <summary>How long a scan asked of another PC is shown once it has ended, kept across this page's restarts.</summary>
+		static readonly TimeSpan AskedShown = TimeSpan.FromDays(7);
+
+		static long askedSavedAt;
+
+		static void SaveAsked(Asked a) {
+			askedSavedAt = Environment.TickCount64;
+			try {
+				AgentPaths.WriteAtomic(AskedFile, JsonSerializer.Serialize(new AskedKept(a.Lender.Id, a.Lender.Name, a.StartedUtc, a.Stage, a.Done, a.Total, a.Fetched,
+					a.Finished, a.Problem, a.Sets, a.Begun, a.LenderBuild), AgentConfig.Json));
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+		}
+
+		/// <summary>
+		/// The scan asked of another PC when this page started, as kept: within <see cref="AskedShown"/> of its start. One kept
+		/// as under way ended with this page's process, which nothing told: it's stopped, for Scan again.
+		/// </summary>
+		internal static Asked? LoadAsked(string file, DateTime nowUtc) {
+			try {
+				if (!File.Exists(file) || JsonSerializer.Deserialize<AskedKept>(File.ReadAllText(file), AgentConfig.Json) is not { } k) return null;
+				if (nowUtc - k.StartedUtc > AskedShown) return null;
+				var a = new Asked {
+					Lender = new Pc(k.Pc, k.Name), StartedUtc = k.StartedUtc, Stage = k.Stage, Done = k.Done, Total = k.Total, Fetched = k.Fetched,
+					Finished = k.Finished, Problem = k.Problem, Sets = k.Sets, Begun = k.Begun, LenderBuild = k.LenderBuild,
+				};
+				if (!a.Finished) {
+					a.Finished = true;
+					a.Problem = "Heiward on this PC stopped while it was scanned.";
+				}
+				return a;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
+				return null;
+			}
+		}
+
+		static int askedLoaded;
+
+		/// <summary>The scan asked of another PC, the one kept from before this page started included.</summary>
+		static Asked? AskedNow() {
+			if (Interlocked.Exchange(ref askedLoaded, 1) == 0 && LoadAsked(AskedFile, DateTime.UtcNow) is { } kept)
+				lock (gate) asked ??= kept;
+			return asked;
 		}
 
 		static readonly object gate = new();
@@ -183,10 +254,12 @@ namespace HEI.Agent.Estate {
 				using (json) {
 					// Another build can't scan for this one (its rules judge sets otherwise); else the offer read in the kit's words.
 					JsonElement? said = json?.RootElement;
+					if (status == 200 && said is { ValueKind: JsonValueKind.Object } o) a.LenderBuild = EstateLink.Str(o, "build");
 					string? why = status == 200 && said is { ValueKind: JsonValueKind.Object } offer && EstateLink.Str(offer, "build") is string build && build != AppBuild.Current
 						? Versions(name, build)
 						: NpuLoan.OfferFrom("Heiward", a.Lender, status, said) is { Can: false } no ? no.Why : null;
 					if (why != null) return Fail(a, why);
+					SaveAsked(a);
 				}
 			}
 			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or EstateMissing && !ct.IsCancellationRequested) {
@@ -216,6 +289,7 @@ namespace HEI.Agent.Estate {
 		static string Fail(Asked a, string why) {
 			a.Problem = why;
 			a.Finished = true;
+			SaveAsked(a);
 			return why;
 		}
 
@@ -282,11 +356,15 @@ namespace HEI.Agent.Estate {
 			Asked? a = asked;
 			if (a == null || a.Finished) return;
 			if (line["status"] is JsonObject s) {
+				string stage = a.Stage;
+				a.Begun = true;
 				a.Stage = (string?)s["stage"] ?? a.Stage;
 				a.Done = (int?)s["done"] ?? a.Done;
 				a.Total = (int?)s["total"] is int t && t > 0 ? t : a.Total;
 				a.Fetched = (long?)s["fetchedBytes"] ?? a.Fetched;
 				a.Waiting = (string?)s["waiting"];
+				// Kept as it goes, so a stop this page doesn't live through still says how far it got.
+				if (a.Stage != stage || Environment.TickCount64 - askedSavedAt > 60_000) SaveAsked(a);
 			}
 			else if (line["done"] is JsonObject d) {
 				if ((int?)d["code"] is int code && code != 0) {
@@ -301,9 +379,13 @@ namespace HEI.Agent.Estate {
 
 		static void OnEnded(string why) {
 			Asked? a = asked;
-			if (a is { Finished: false }) Fail(a, why);
+			if (a is { Finished: false }) Fail(a, EndedWords(a.Lender.Name, why));
 			Released();
 		}
+
+		/// <summary>Why the other PC's scan of this one ended, in words for this PC's card: its update in plain words, else the loan's.</summary>
+		internal static string EndedWords(string lender, string why) =>
+			why.Contains(Updated, StringComparison.Ordinal) ? $"Heiward on {lender} is being updated, so its scan of this PC stopped." : why;
 
 		/// <summary>The page's Stop: the loan ends, and the other PC stops scanning this one.</summary>
 		internal static void Stop(string? why = null) {
@@ -356,6 +438,7 @@ namespace HEI.Agent.Estate {
 					a.Stage = kept.Groups.Count == 0 ? "Done: no copies found" : $"Done: {kept.Groups.Count:N0} set(s) of copies found";
 					a.Done = a.Total;
 					a.Finished = true;
+					SaveAsked(a);
 					AgentPaths.AppendLog(again ? $"{a.Lender.Name} found nothing new here since its scan of {found.ScannedAtUtc.ToLocalTime():g}: its {kept.Groups.Count:N0} set(s) stand"
 						: $"{a.Lender.Name} scanned this PC: {kept.Groups.Count:N0} set(s)" + (found.Cost is { } c
 							? $"; it fetched {Format.Bytes(c.FetchedBytes)} in {c.Asks:N0} asks and took {c.Seconds:N0} s" : ""));
@@ -506,11 +589,40 @@ namespace HEI.Agent.Estate {
 			await ctx.Response.SendFileAsync(path, ctx.RequestAborted);
 		}
 
-		/// <summary>Heiward's page is stopping: a scan for another PC ends, that PC told why; one asked of another PC ends too.</summary>
+		/// <summary>
+		/// Heiward's page is stopping: a scan for another PC stops first, keeping what it checked (its next scan picks up from
+		/// there), then that PC is told why; one asked of another PC ends too. An update says so (<see cref="ReviewServer.Updating"/>).
+		/// </summary>
 		internal static void Shutdown() {
-			lending?.Stop();
-			job?.Ended();
-			Stop("Heiward stopped on this PC.");
+			bool update = ReviewServer.Updating;
+			job?.EndAndWait(ChildStopWait);
+			if (update) lending?.Stop(Updated);
+			else lending?.Stop();
+			Stop(update ? "Heiward on this PC is being updated." : "Heiward stopped on this PC.");
+		}
+
+		/// <summary>What the other PC hears when this one's Heiward is updated under its scan, in the loan's words ("&lt;PC&gt; stopped lending its NPU: …").</summary>
+		internal const string Updated = "Heiward is being updated there";
+
+		/// <summary>How long a scan for another PC gets to stop by itself, saving what it checked, before its process is ended.</summary>
+		internal static readonly TimeSpan ChildStopWait = TimeSpan.FromSeconds(30);
+
+		/// <summary>The most a scan for another PC, or of this one by another, holds Heiward's update back, from its start.</summary>
+		internal static readonly TimeSpan MostHold = TimeSpan.FromHours(24);
+
+		/// <summary>
+		/// What holds Heiward's update back now, in words for the ping's busy (Manor's Updates: "it updates once it's idle: it is
+		/// busy: …"); null when nothing does. An update stops the page, and with it a scan this PC runs for another, or another's
+		/// of this one (its listing and its files come from here). Each holds it at most <see cref="MostHold"/> from its start:
+		/// past that, the update goes in, and the scan picks up where it stopped when it's asked again.
+		/// </summary>
+		internal static string? HoldsUpdate(DateTime nowUtc) =>
+			Holding(ScanningFor is { } l ? (l.To.Name, l.Since) : null, asked is { Finished: false } a ? (a.Lender.Name, a.StartedUtc) : null, nowUtc);
+
+		internal static string? Holding((string Name, DateTime SinceUtc)? scanningFor, (string Name, DateTime SinceUtc)? scannedBy, DateTime nowUtc) {
+			if (scanningFor is { } s && nowUtc - s.SinceUtc < MostHold) return $"scanning {s.Name}'s photos and videos for it";
+			if (scannedBy is { } b && nowUtc - b.SinceUtc < MostHold) return $"{b.Name} is scanning this PC's photos and videos";
+			return null;
 		}
 
 		/// <summary>
@@ -520,6 +632,7 @@ namespace HEI.Agent.Estate {
 		sealed class RemoteJob(ILoan loan) : ILoanWork {
 			readonly object gate = new();
 			Process? child;
+			string? home;
 			Timer? watch;
 			string? lastStatus;
 			bool ended;
@@ -535,12 +648,13 @@ namespace HEI.Agent.Estate {
 							: Versions(Environment.MachineName, AppBuild.Current, build));
 						return;
 					}
-					string home = RemoteScanner.HomeFor(loan.From.Id);
+					string home = this.home = RemoteScanner.HomeFor(loan.From.Id);
 					Directory.CreateDirectory(home);
 					// This PC's own settings (its AI device, its graphics card), for the scan in that home.
 					try { if (File.Exists(AgentPaths.Config)) File.Copy(AgentPaths.Config, Path.Combine(home, "settings.json"), overwrite: true); }
 					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 					TryDelete(RemoteStatus.FilePath(home));
+					TryDelete(RemoteScanner.StopFile(home));
 					child = StartHei(home, "remote-scan", "--pc", loan.From.Id, "--name", loan.From.Name);
 					if (child == null) {
 						loan.End("Heiward couldn't start the scan there");
@@ -571,15 +685,43 @@ namespace HEI.Agent.Estate {
 				}
 			}
 
-			/// <summary>The other PC ended it (or its link was gone too long), or Heiward stops here: the scan stops.</summary>
+			/// <summary>The other PC ended it (or its link was gone too long): the scan stops, as <see cref="EndAndWait"/>, without holding the loan's thread.</summary>
 			public void Ended() {
+				lock (gate) {
+					if (ended) return;
+				}
+				_ = Task.Run(() => EndAndWait(ChildStopWait));
+			}
+
+			/// <summary>
+			/// The scan stops by itself, asked to (<see cref="RemoteScanner.StopFile"/>): it saves what it checked, for its next
+			/// scan to pick up from, and ends. One that hasn't ended within <paramref name="most"/> is ended.
+			/// </summary>
+			public void EndAndWait(TimeSpan most) {
+				Process? c;
+				string? h;
 				lock (gate) {
 					ended = true;
 					watch?.Dispose();
 					watch = null;
-					try { if (child is { HasExited: false }) child.Kill(entireProcessTree: true); }
-					catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+					(c, h) = (child, home);
 				}
+				if (c == null) return;
+				try {
+					if (c.HasExited) return;
+					if (h != null) {
+						try { File.WriteAllText(RemoteScanner.StopFile(h), ""); }
+						catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+						var timer = Stopwatch.StartNew();
+						if (c.WaitForExit(most)) {
+							AgentPaths.AppendLog($"the scan of {loan.From.Name}'s files stopped in {timer.Elapsed.TotalSeconds:N1} s, keeping what it checked");
+							return;
+						}
+					}
+					AgentPaths.AppendLog($"the scan of {loan.From.Name}'s files didn't stop within {most.TotalSeconds:N0} s: its process is ended");
+					c.Kill(entireProcessTree: true);
+				}
+				catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
 			}
 		}
 

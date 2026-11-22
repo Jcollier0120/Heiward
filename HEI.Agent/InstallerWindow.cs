@@ -42,14 +42,14 @@ namespace HEI.Agent {
 				// This account's port: another account's page may hold the usual one (ReviewServer.OwnPort).
 				int port = ReviewServer.OwnPort(AgentConfig.Load());
 				Directory.CreateDirectory(InstallDir);
-				StopRunningAgents();
+				await StopRunningAgentsAsync(ct);
 				if (await ReviewServer.IsUpAsync(port)) {
 					// This account's page of another copy (the Store version's, or one run from elsewhere): the console says what to do.
 					AgentPaths.AppendLog($"setup window: port {port} is another copy's page, so the setup runs in the console");
 					ShowWindow(console, SwShow);
 					return false;
 				}
-				File.Copy(CurrentExe, InstalledExe, overwrite: true);
+				CopyOver(CurrentExe, InstalledExe, () => StopProcessesIn(InstallDir, "hei", TimeSpan.FromSeconds(5)), CopyWait, AgentPaths.AppendLog);
 				var psi = new ProcessStartInfo(InstalledExe) { UseShellExecute = false, CreateNoWindow = true };
 				foreach (string a in SetupServeArguments(Path.GetDirectoryName(Path.GetFullPath(CurrentExe))!)) psi.ArgumentList.Add(a);
 				KeepStdHandlesToSelf();

@@ -62,7 +62,7 @@ namespace HEI.Agent.Estate {
 			foreach (IReadOnlyList<FileEntry> group in groups) {
 				var list = new List<Stand>();
 				foreach (FileEntry e in group)
-					if (stands.TryGetValue(e.Path, out Stand? s) && ToFetch(s, e) is long cost) {
+					if (stands.TryGetValue(e.Path, out Stand? s) && ToFetch(s, e, WantsEmbedding) is long cost) {
 						s.Lane = planned.Count;
 						s.PlanAt = list.Count;
 						s.AheadCost = cost;
@@ -83,12 +83,18 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
+		/// <summary>
+		/// Whether the engine's AI still wants a photo read for its embedding (<see cref="ScanEngine.WantsPhotoEmbedding"/>), its
+		/// fingerprint known: a scan picking up where one stopped, ended before its embeddings were kept. Null: never.
+		/// </summary>
+		internal Func<FileEntry, bool>? WantsEmbedding { get; set; }
+
 		/// <summary>What the engine will read of a file, in bytes, if it's to be fetched ahead; null if it isn't (it's known, or left out).</summary>
-		static long? ToFetch(Stand s, FileEntry e) {
+		static long? ToFetch(Stand s, FileEntry e, Func<FileEntry, bool>? wantsEmbedding) {
 			if (e.Flags.Has(EntryFlags.ManuallyExcluded) || e.Flags.Has(EntryFlags.TooDark) || e.Flags.Has(EntryFlags.ThumbnailError) || e.Flags.Has(EntryFlags.NotMedia)) return null;
 			long size = s.File.Size;
 			if (size <= 0) return null;
-			if (s.IsPhoto) return ScanEngine.ImageNeedsDecode(e) && size <= MaxWhole ? size : null;
+			if (s.IsPhoto) return (ScanEngine.ImageNeedsDecode(e) || wantsEmbedding?.Invoke(e) == true) && size <= MaxWhole ? size : null;
 			if (e.mediaInfo != null && e.OsHash != null && e.grayBytes is { Count: > 0 }) return null;
 			return Math.Min(size, 2L * EndBytes);
 		}
