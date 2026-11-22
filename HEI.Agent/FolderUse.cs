@@ -232,7 +232,11 @@ namespace HEI.Agent {
 		const uint QueryInformation = 0x0400, QueryLimitedInformation = 0x1000, VmRead = 0x0010;
 		const int ProcessBasicInformation = 0, ProcessWow64Information = 26;
 
-		/// <summary>The process's current directory, without its trailing separator; null when it can't be read.</summary>
+		/// <summary>
+		/// The process's current directory, without its trailing separator; null when it can't be read, or when what's read
+		/// isn't a folder (<see cref="PlausibleLength"/>, <see cref="PlausibleFolder"/>): a process just started can be read
+		/// before Windows has written its parameters, and what's there then is NULs and junk. A caller tries again or skips it.
+		/// </summary>
 		internal static string? CurrentDirectoryOf(int pid) {
 			using SafeProcessHandle h = OpenProcess(QueryInformation | VmRead, false, pid) is { IsInvalid: false } full ? full : OpenProcess(QueryLimitedInformation | VmRead, false, pid);
 			if (h.IsInvalid) return null;
@@ -247,22 +251,53 @@ namespace HEI.Agent {
 			return ReadUnicodeString64(h, parameters + 0x38); // RTL_USER_PROCESS_PARAMETERS.CurrentDirectory.DosPath
 		}
 
-		static string? Trimmed(string? dir) => dir == null ? null : Path.TrimEndingDirectorySeparator(dir);
+		/// <summary>The longest path Windows takes, in characters.</summary>
+		const int LongestPath = 32767;
+
+		/// <summary>
+		/// Whether a UNICODE_STRING's lengths, in bytes, can be a folder's: some text, in whole (two-byte) characters, no
+		/// more than its buffer holds (<paramref name="maximumLength"/>) and no longer than Windows' longest path.
+		/// </summary>
+		internal static bool PlausibleLength(int length, int maximumLength) =>
+			length > 0 && length % 2 == 0 && length <= maximumLength && length <= LongestPath * 2;
+
+		/// <summary>
+		/// <paramref name="dir"/> without its trailing separator when it's a folder's full path: a drive's (C:\…) or a
+		/// share's (\\server\share…, \\?\C:\… too), with none of the characters Windows keeps out of a path in it (a NUL,
+		/// the other control characters below a space, " &lt; &gt; | *). Null when it isn't.
+		/// </summary>
+		internal static string? PlausibleFolder(string dir) {
+			if (dir.Length > LongestPath || dir.Any(c => c < ' ' || c is '"' or '<' or '>' or '|' or '*')) return null;
+			bool drive = dir.Length >= 3 && char.IsAsciiLetter(dir[0]) && dir[1] == ':' && IsSeparator(dir[2]);
+			return drive || IsShare(dir) ? Path.TrimEndingDirectorySeparator(dir) : null;
+		}
+
+		/// <summary>\\server\share: two separators, a name, a separator and another name.</summary>
+		static bool IsShare(string dir) {
+			if (dir.Length < 5 || !IsSeparator(dir[0]) || !IsSeparator(dir[1])) return false;
+			int server = 2;
+			while (server < dir.Length && !IsSeparator(dir[server])) server++;
+			return server > 2 && server + 1 < dir.Length && !IsSeparator(dir[server + 1]);
+		}
+
+		static bool IsSeparator(char c) => c is '\\' or '/';
 
 		static string? ReadUnicodeString64(SafeProcessHandle h, IntPtr at) {
 			byte[]? s = Read(h, at, 16);
 			if (s == null) return null;
-			int length = BitConverter.ToUInt16(s, 0);
-			var buffer = (IntPtr)BitConverter.ToInt64(s, 8);
-			return length == 0 || buffer == IntPtr.Zero || length > 0x10000 ? null : Trimmed(Read(h, buffer, length) is { } text ? Encoding.Unicode.GetString(text) : null);
+			return Text(h, BitConverter.ToUInt16(s, 0), BitConverter.ToUInt16(s, 2), (IntPtr)BitConverter.ToInt64(s, 8));
 		}
 
 		static string? ReadUnicodeString32(SafeProcessHandle h, IntPtr at) {
 			byte[]? s = Read(h, at, 8);
 			if (s == null) return null;
-			int length = BitConverter.ToUInt16(s, 0);
-			var buffer = (IntPtr)(long)BitConverter.ToUInt32(s, 4);
-			return length == 0 || buffer == IntPtr.Zero || length > 0x10000 ? null : Trimmed(Read(h, buffer, length) is { } text ? Encoding.Unicode.GetString(text) : null);
+			return Text(h, BitConverter.ToUInt16(s, 0), BitConverter.ToUInt16(s, 2), (IntPtr)(long)BitConverter.ToUInt32(s, 4));
+		}
+
+		/// <summary>A UNICODE_STRING's text, when it's a plausible folder's; null otherwise.</summary>
+		static string? Text(SafeProcessHandle h, int length, int maximumLength, IntPtr buffer) {
+			if (!PlausibleLength(length, maximumLength) || buffer == IntPtr.Zero) return null;
+			return Read(h, buffer, length) is { } text ? PlausibleFolder(Encoding.Unicode.GetString(text)) : null;
 		}
 
 		static IntPtr? ReadPointer(SafeProcessHandle h, IntPtr at) => Read(h, at, 8) is { } b ? (IntPtr)BitConverter.ToInt64(b, 0) : null;
