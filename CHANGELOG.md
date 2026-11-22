@@ -13,6 +13,7 @@ Each version of Heiward, newest first: what's new, what changed, and what to do 
 - If a scan for another PC is stopped anyway (an update past that day, the link lost, or Stop), the next scan picks up where it stopped: the files it checked aren't read again. Before, the AI's findings so far were lost whenever its process ended early, and the next scan read every photo again.
 - A scan of this PC that stopped part way now says so on the card: why it stopped (for example, that Heiward on the other PC is being updated), how far it got, and **Scan again**. The card says this even after Heiward restarts. Before, it said only that the other PC stopped answering, with no way on.
 - An update now waits for every Heiward process to exit before it replaces Heiward, a scan for another PC included, and tries again while the old file is still in use. If an update fails anyway, Heiward starts again as it was, and its log says so. Before, a failed update could leave Heiward stopped until it was reinstalled.
+- Small fixes and improvements.
 
 ### Before you update
 
