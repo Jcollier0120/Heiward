@@ -95,8 +95,10 @@ namespace HEI.Core.AI {
 				? record
 				: null;
 
-		internal static UnionEmbeddingStore Load(string? cacheKey = null) {
-			string path = PathFor(cacheKey);
+		internal static UnionEmbeddingStore Load(string? cacheKey = null) => LoadFrom(PathFor(cacheKey));
+
+		/// <summary>The store kept in <paramref name="path"/>, which its saves write; tests give one of their own.</summary>
+		internal static UnionEmbeddingStore LoadFrom(string path) {
 			var store = new UnionEmbeddingStore { path = path };
 			if (!File.Exists(path))
 				return store;

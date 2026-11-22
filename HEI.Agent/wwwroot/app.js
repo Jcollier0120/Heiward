@@ -1730,7 +1730,8 @@ function renderRemoteCard(s) {
   const r = s.remote;
   $('remote-section').classList.toggle('hidden', !r);
   if (!r) { remoteShape = null; $('remote-card').replaceChildren(); return; }
-  const shape = JSON.stringify({ ...r, asked: r.asked && { pc: r.asked.pc, finished: r.asked.finished, problem: r.asked.problem, waiting: r.asked.waiting, fetching: !!r.asked.fetchedBytes } });
+  const shape = JSON.stringify({ ...r, asked: r.asked && { pc: r.asked.pc, finished: r.asked.finished, problem: r.asked.problem, waiting: r.asked.waiting, fetching: !!r.asked.fetchedBytes,
+    again: r.asked.again, updatedTo: r.asked.updatedTo, done: r.asked.finished ? r.asked.done : 0 } });
   if (shape === remoteShape && $('remote-card').firstChild) {
     if (remoteProgress && r.asked && !r.asked.finished) remoteProgress(r.asked);
     return;
@@ -1766,11 +1767,30 @@ function renderRemoteCard(s) {
     const stop = el('button', 'btn secondary', 'Stop');
     stop.addEventListener('click', async () => { stop.disabled = true; await post('/api/remote/stop', {}); refresh(); });
     row.append(stop);
+  } else if (a && a.problem && a.stopped) {
+    // Stopped part way (an update on either PC, a lost link, Stop): Scan again picks up where it stopped, once that PC can.
+    const where = a.total ? 'It had checked ' + a.done.toLocaleString() + ' of ' + count(a.total, 'file', 'files') + '.' : null;
+    const updated = a.updatedTo ? 'Heiward on ' + a.name + ' was updated since, to ' + a.updatedTo + '.' : null;
+    const row = line(a.name + '\'s scan of this PC stopped', a.problem, where, updated,
+      a.again ? 'Scan again picks up where it stopped: the files it checked aren\'t read again.'
+        : 'Scan again shows here once ' + a.name + ' can scan this PC' + (a.updatedTo || r.updateOn.length || (r.newerOn && r.newerOn.length) ? ', with the same version of Heiward on both PCs' : '') + '. It picks up where it stopped.');
+    if (a.again) {
+      const go = el('button', 'btn', 'Scan again');
+      go.addEventListener('click', async () => {
+        go.disabled = true;
+        try { await post('/api/remote/scan', { pc: a.pc, name: a.name }); }
+        catch { /* shown above, on the next poll */ }
+        refresh(true);
+      });
+      row.append(go);
+    }
   } else if (a && a.problem) {
     line(a.name + ' didn\'t scan this PC', a.problem);
   }
   if (!a || a.finished) {
     for (const pc of r.others) {
+      if (a && a.again && pc.id === a.pc) continue; // its Scan again is above
+
       const row = line('Have ' + pc.name + ' scan this PC',
         (pc.npu ? pc.name + '\'s ' + pc.npu : pc.name) + ' finds the copies among this PC\'s photos and videos for it. This PC only lists its files and hands them over, ' +
         'gently: at very low priority, about 20 MB a second, and never while a game is played. Later scans read only what\'s new.',
