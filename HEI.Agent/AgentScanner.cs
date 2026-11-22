@@ -135,8 +135,9 @@ namespace HEI.Agent {
 			var modified = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
 			foreach (FileEntry e in DatabaseUtils.Database) modified[e.Path] = e.DateModified;
 			plan?.Save(engine.FoundFiles, p => modified.TryGetValue(p, out DateTime m) ? m : null, started);
-			AgentPaths.AppendLog($"listed for another PC's scan: {engine.FoundMedia().Count:N0} photos and videos in {(DateTime.UtcNow - started).TotalSeconds:N0} s" +
-				(plan != null ? " (" + plan.Describe() + ")" : ""));
+			// The page that started this lends the listing kept, less what isn't a photo or video, and says how many once
+			// (Estate.LentListing.Listed): not here too, counted another way.
+			Estate.LentListing.Listed.Save(new Estate.LentListing.Listed((DateTime.UtcNow - started).TotalSeconds, plan?.Describe(), engine.FoundNotMedia()));
 			return 0;
 		}
 

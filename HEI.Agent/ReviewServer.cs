@@ -245,6 +245,7 @@ namespace HEI.Agent {
 			app.MapGet("/api/peer/scan/listing", Estate.ScanForOthers.ListingRouteAsync);
 			app.MapGet("/api/peer/scan/pages", Estate.ScanForOthers.PagesRouteAsync);
 			app.MapGet("/api/peer/scan/bytes", Estate.ScanForOthers.BytesRouteAsync);
+			app.MapGet("/api/peer/scan/timing", Estate.ScanForOthers.TimingRouteAsync);
 			app.MapGet("/api/peer/findings", Estate.ScanForOthers.FindingsRouteAsync);
 			// This page: have another PC scan this one, stop it, or let go of what it found.
 			app.MapPost("/api/remote/scan", async (RemoteScanRequest request, HttpContext ctx) =>

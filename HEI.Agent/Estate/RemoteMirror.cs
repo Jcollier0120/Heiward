@@ -29,6 +29,9 @@ namespace HEI.Agent.Estate {
 		public string? Code { get; } = code;
 	}
 
+	/// <summary>A piece of a file as it comes: where in the file it starts, and its bytes.</summary>
+	delegate void BytesCame(long at, ReadOnlySpan<byte> bytes);
+
 	/// <summary>Where another PC's bytes come from: its Heiward over the Estate (<see cref="EstateBytes"/>), or, in tests, this PC's own files.</summary>
 	interface IRemoteBytes {
 		/// <summary>
@@ -37,19 +40,38 @@ namespace HEI.Agent.Estate {
 		/// with code "changed" when the file there isn't as it was listed.
 		/// </summary>
 		int Read(ListedFile file, long offset, byte[] buffer, int count, CancellationToken ct);
+
+		/// <summary>
+		/// <paramref name="count"/> bytes of <paramref name="file"/> from <paramref name="offset"/>, handed to
+		/// <paramref name="came"/> in order as they come, in one ask where the source can (a photo whole, not a piece at a
+		/// time): how many came, fewer only where the file ends. Throws as <see cref="Read"/> does.
+		/// </summary>
+		long Stream(ListedFile file, long offset, long count, BytesCame came, CancellationToken ct) {
+			byte[] buffer = new byte[(int)Math.Min(4 * 1024 * 1024, Math.Max(1, count))];
+			long got = 0;
+			while (got < count) {
+				int want = (int)Math.Min(buffer.Length, count - got);
+				int n = Read(file, offset + got, buffer, want, ct);
+				if (n > 0) came(offset + got, buffer.AsSpan(0, n));
+				got += n;
+				if (n < want) break;
+			}
+			return got;
+		}
 	}
 
 	/// <summary>
 	/// Another PC's bytes over the Estate: <c>GET /api/peer/scan/bytes?path=…</c> on that PC's Heiward (the kit's PeerFiles,
-	/// <see cref="PeerFiles"/>), one range at a time, as the spec's asking side does:
+	/// <see cref="PeerFiles"/>), a range in one ask, as the spec's asking side does:
 	/// <list type="bullet">
 	/// <item>Its ETag must be the listing's (size and time): a file changed since it was listed isn't read, and waits for the next scan.</item>
 	/// <item>While a game is played there, it's told 503 and waits <c>retryMs</c>; a reply cut short (a game started) is asked
 	/// again from the byte after the last that came.</item>
 	/// <item>A link that drops, or a Manor that can't reach the other PC just now, is tried again, three times in a row.</item>
 	/// </list>
+	/// Each ask is timed (<see cref="RemoteTimings"/>): asked → its head → its last byte.
 	/// </summary>
-	sealed class EstateBytes(string pc, Action<string?>? waiting = null) : IRemoteBytes {
+	sealed class EstateBytes(string pc, Action<string?>? waiting = null, RemoteTimings? timings = null) : IRemoteBytes {
 		long fetched;
 		int asks;
 
@@ -58,70 +80,88 @@ namespace HEI.Agent.Estate {
 		/// <summary>Ranges asked for so far.</summary>
 		public int Asks => Volatile.Read(ref asks);
 
-		public int Read(ListedFile file, long offset, byte[] buffer, int count, CancellationToken ct) {
+		public int Read(ListedFile file, long offset, byte[] buffer, int count, CancellationToken ct) =>
+			count <= 0 ? 0 : (int)Stream(file, offset, count, (at, bytes) => bytes.CopyTo(buffer.AsSpan((int)(at - offset))), ct);
+
+		public long Stream(ListedFile file, long offset, long count, BytesCame came, CancellationToken ct) {
 			if (count <= 0) return 0;
 			string route = EstateLink.PeerPath(pc, "scan/bytes?path=" + Uri.EscapeDataString(file.Path));
 			string tag = PeerFiles.Tag(file.Size, PeerFiles.MsOf(file.ModifiedUtc));
-			int got = 0, tries = 0;
-			while (got < count) {
-				ct.ThrowIfCancellationRequested();
-				try {
-					long from = offset + got;
-					using HttpResponseMessage r = EstateLink.Ask(route, ct, new RangeHeaderValue(from, offset + count - 1));
-					int status = (int)r.StatusCode;
-					if (status is 200 or 206) {
-						waiting?.Invoke(null);
-						Interlocked.Increment(ref asks);
-						if (r.Headers.ETag?.Tag is string etag && etag != tag) throw new RemoteReadFailed("it changed since it was listed", "changed");
-						long expected = r.Content.Headers.ContentLength ?? -1;
-						using Stream body = r.Content.ReadAsStream(ct);
-						if (status == 200 && from > 0) Skip(body, from); // the whole file, from its start
-						int n = 0;
-						bool cut = false;
-						try {
-							while (got + n < count) {
-								int k = body.Read(buffer, got + n, count - got - n);
-								if (k <= 0) break;
-								n += k;
+			long got = 0;
+			int tries = 0;
+			byte[]? buffer = null;
+			try {
+				while (got < count) {
+					ct.ThrowIfCancellationRequested();
+					try {
+						long from = offset + got;
+						long asked = Stopwatch.GetTimestamp();
+						using HttpResponseMessage r = EstateLink.Ask(route, ct, new RangeHeaderValue(from, offset + count - 1));
+						long head = Stopwatch.GetTimestamp();
+						int status = (int)r.StatusCode;
+						if (status is 200 or 206) {
+							waiting?.Invoke(null);
+							Interlocked.Increment(ref asks);
+							if (r.Headers.ETag?.Tag is string etag && etag != tag) throw new RemoteReadFailed("it changed since it was listed", "changed");
+							long expected = r.Content.Headers.ContentLength ?? -1;
+							using Stream body = r.Content.ReadAsStream(ct);
+							if (status == 200 && from > 0) Skip(body, from); // the whole file, from its start
+							buffer ??= System.Buffers.ArrayPool<byte>.Shared.Rent((int)Math.Min(256 * 1024, count));
+							long n = 0;
+							bool cut = false;
+							try {
+								while (got + n < count) {
+									int k = body.Read(buffer, 0, (int)Math.Min(buffer.Length, count - got - n));
+									if (k <= 0) break;
+									came(from + n, buffer.AsSpan(0, k));
+									n += k;
+								}
 							}
+							catch (IOException) when (!ct.IsCancellationRequested) {
+								cut = true; // the reply ended short of its Content-Length
+							}
+							got += n;
+							Interlocked.Add(ref fetched, n);
+							timings?.Ask(head - asked, Stopwatch.GetTimestamp() - head, n);
+							if (n > 0) tries = 0;
+							if (!cut && status == 206 && expected >= 0 && n >= expected && got < count) return got; // the file ends there
+							if (!cut && got >= count) return got;
+							if (!cut && status == 200) return got;
+							if (++tries >= 6) throw new RemoteReadFailed("its replies kept ending short", null);
+							timings?.Retried();
+							continue; // asked again from the byte after the last that came
 						}
-						catch (IOException) when (!ct.IsCancellationRequested) {
-							cut = true; // the reply ended short of its Content-Length
+						timings?.Refused();
+						string? code = CodeOf(r, ct, out long? retryMs);
+						if (status == 503 && code == "game") {
+							waiting?.Invoke("game");
+							TimeSpan wait = TimeSpan.FromMilliseconds(Math.Clamp(retryMs ?? PeerFiles.GameKeepMs, 5_000, 120_000));
+							ct.WaitHandle.WaitOne(wait);
+							continue;
 						}
-						got += n;
-						Interlocked.Add(ref fetched, n);
-						if (n > 0) tries = 0;
-						if (!cut && status == 206 && expected >= 0 && n >= expected && got < count) return got; // the file ends there
-						if (!cut && got >= count) return got;
-						if (!cut && status == 200) return got;
-						if (++tries >= 6) throw new RemoteReadFailed("its replies kept ending short", null);
-						continue; // asked again from the byte after the last that came
+						if (status == 416) return got; // past its end
+						if (status == 404) throw new RemoteReadFailed("it isn't there any more", "gone");
+						if (status is 403 or 410) throw new RemoteReadFailed("that PC isn't offering its files to this one now", "over");
+						if (status >= 500 && ++tries < 4) { // Manor couldn't reach it just now
+							ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(Math.Pow(3, tries - 1)));
+							continue;
+						}
+						throw new RemoteReadFailed($"the other PC answered {status}", code);
 					}
-					string? code = CodeOf(r, ct, out long? retryMs);
-					if (status == 503 && code == "game") {
-						waiting?.Invoke("game");
-						TimeSpan wait = TimeSpan.FromMilliseconds(Math.Clamp(retryMs ?? PeerFiles.GameKeepMs, 5_000, 120_000));
-						ct.WaitHandle.WaitOne(wait);
-						continue;
+					catch (EstateMissing e) {
+						throw new RemoteReadFailed(e.Message, "over", e);
 					}
-					if (status == 416) return got; // past its end
-					if (status == 404) throw new RemoteReadFailed("it isn't there any more", "gone");
-					if (status is 403 or 410) throw new RemoteReadFailed("that PC isn't offering its files to this one now", "over");
-					if (status >= 500 && ++tries < 4) { // Manor couldn't reach it just now
+					catch (Exception e) when ((e is HttpRequestException || e is TaskCanceledException || e is IOException && e is not RemoteReadFailed) && !ct.IsCancellationRequested) {
+						if (++tries >= 4) throw new RemoteReadFailed("the link to the other PC dropped", null, e);
+						timings?.Retried();
 						ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(Math.Pow(3, tries - 1)));
-						continue;
 					}
-					throw new RemoteReadFailed($"the other PC answered {status}", code);
 				}
-				catch (EstateMissing e) {
-					throw new RemoteReadFailed(e.Message, "over", e);
-				}
-				catch (Exception e) when ((e is HttpRequestException || e is TaskCanceledException || e is IOException && e is not RemoteReadFailed) && !ct.IsCancellationRequested) {
-					if (++tries >= 4) throw new RemoteReadFailed("the link to the other PC dropped", null, e);
-					ct.WaitHandle.WaitOne(TimeSpan.FromSeconds(Math.Pow(3, tries - 1)));
-				}
+				return got;
 			}
-			return got;
+			finally {
+				if (buffer != null) System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+			}
 		}
 
 		static void Skip(Stream body, long bytes) {
@@ -172,7 +212,6 @@ namespace HEI.Agent.Estate {
 		/// <summary>The most fetched whole: a photo, or a small video read by its path. A bigger file is read only through <see cref="Open"/>.</summary>
 		public const long MaxWhole = 256L << 20;
 		const int Align = 64 * 1024;
-		const int MaxPiece = 4 * 1024 * 1024;
 
 		/// <summary>A file read this recently isn't emptied to make room: its reader may not be done with it.</summary>
 		internal TimeSpan Recent { get; init; } = TimeSpan.FromSeconds(30);
@@ -213,7 +252,22 @@ namespace HEI.Agent.Estate {
 			public long Bytes;
 			public long Used;
 			public int Readers;
+			/// <summary>For the timings: when its first reader began, and how long its reads waited for bytes since.</summary>
+			public long Began, Waited;
+			/// <summary>Where it is in the files fetched ahead (<see cref="Plan"/>): its drive's lane and place, -1 for none; what it costs ahead; whether the engine has begun it.</summary>
+			public int Lane, PlanAt = -1;
+			public long AheadCost;
+			public bool Begun;
 		}
+
+		/// <summary>The fetching ahead's own threads, whose waits aren't the engine's.</summary>
+		[ThreadStatic] static bool aheadThread;
+
+		/// <summary>A reason a file's bytes didn't come that asking again won't change (this scan): it went, it changed, the loan is over, it's too big.</summary>
+		static bool Final(string why) => why is "gone" or "changed" or "over" or "not-offered" or "too big to fetch whole";
+
+		/// <summary>Where the scan's time goes, for its log (null: not kept).</summary>
+		public RemoteTimings? Timings { get; init; }
 
 		/// <summary>Whether <paramref name="path"/> is one of the stand-ins (or under their folder).</summary>
 		public bool IsRemote(string path) => path.StartsWith(Folder + "\\", StringComparison.OrdinalIgnoreCase);
@@ -238,7 +292,7 @@ namespace HEI.Agent.Estate {
 		/// Makes the stand-ins the listing's: one for each file listed, of its size and dates; one whose file changed is made
 		/// again; one no longer listed goes. Every stand-in is empty after (a scan stopped short may have left some held).
 		/// </summary>
-		public (int Added, int Changed, int Gone) Sync(RemoteListing listing) {
+		public (int Added, int Changed, int Gone) Sync(RemoteListing listing, Action<int, int>? progress = null) {
 			Directory.CreateDirectory(Folder);
 			try { new DirectoryInfo(Folder).Attributes |= FileAttributes.NotContentIndexed; }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
@@ -251,10 +305,12 @@ namespace HEI.Agent.Estate {
 			foreach (ListedRoot root in listing.Roots)
 				foreach (ListedFile f in root.Files)
 					want[RemotePath.Mirrored(Folder, f.Path)] = f;
-			int added = 0, changed = 0, gone = 0;
+			int added = 0, changed = 0, gone = 0, made = 0;
 			foreach (string p in Directory.EnumerateFiles(Folder, "*", SearchOption.AllDirectories))
 				if (!want.ContainsKey(p) && TryDelete(p)) gone++;
+			progress?.Invoke(0, want.Count);
 			foreach (var (p, f) in want) {
+				if (++made % 1_000 == 0) progress?.Invoke(made, want.Count);
 				var info = new FileInfo(p);
 				if (info.Exists && info.Length == f.Size && info.LastWriteTimeUtc.Ticks == f.ModifiedTicks) {
 					if (!clean) Zero(p, f);
@@ -266,6 +322,7 @@ namespace HEI.Agent.Estate {
 				}
 				stands[p] = new Stand(f, p);
 			}
+			progress?.Invoke(want.Count, want.Count);
 			RemoveEmptyFolders(Folder);
 			return (added, changed, gone);
 		}
@@ -276,9 +333,12 @@ namespace HEI.Agent.Estate {
 		/// </summary>
 		public bool Before(FileEntry entry) {
 			if (!stands.TryGetValue(entry.Path, out Stand? s)) return !IsRemote(entry.Path);
-			Interlocked.Increment(ref s.Readers);
-			bool ok = !s.IsPhoto || !ScanEngine.ImageNeedsDecode(entry) || Fetch(entry.Path, 0, -1);
-			if (!ok) Interlocked.Decrement(ref s.Readers);
+			if (Interlocked.Increment(ref s.Readers) == 1) Begin(s);
+			Reached(s); // after its reader is counted: begun and no reader is a file the engine is done with
+
+			// Fetched ahead already, as a rule (a photo whole, a video's ends); the engine waits here only when it caught up.
+			bool ok = !(Failed.TryGetValue(s.Path, out string? why) && Final(why)) && (!s.IsPhoto || !ScanEngine.ImageNeedsDecode(entry) || Fetch(entry.Path, 0, -1));
+			if (!ok && Interlocked.Decrement(ref s.Readers) == 0) Finish(s, failed: true);
 			return ok;
 		}
 
@@ -286,11 +346,42 @@ namespace HEI.Agent.Estate {
 		public void After(FileEntry entry) {
 			if (!stands.TryGetValue(entry.Path, out Stand? s)) return;
 			if (Interlocked.Decrement(ref s.Readers) > 0) return;
+			Finish(s, Failed.ContainsKey(s.Path));
 			if (s.IsPhoto && WhileHeld is { } take && IsFilled(s, 0, s.File.Size)) {
 				try { take(s.Path); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 			}
 			Empty(s);
+		}
+
+		void Begin(Stand s) {
+			lock (s.Gate) {
+				s.Began = Stopwatch.GetTimestamp();
+				s.Waited = 0;
+			}
+		}
+
+		/// <summary>The engine is done with a file: its time, for the timings.</summary>
+		void Finish(Stand s, bool failed) {
+			if (Timings is not { } t) return;
+			long began, waited;
+			lock (s.Gate) {
+				(began, waited) = (s.Began, s.Waited);
+				s.Began = 0;
+			}
+			if (began != 0) t.File(s.IsPhoto, Stopwatch.GetTimestamp() - began, waited, failed);
+		}
+
+		/// <summary>One fetch of the other PC's bytes, timed for <paramref name="what"/> they were (whoever fetched them).</summary>
+		T Timed<T>(RemoteTimings.For what, Func<T> read) {
+			long t0 = Stopwatch.GetTimestamp();
+			try { return read(); }
+			finally { Timings?.Waited(what, Stopwatch.GetTimestamp() - t0); }
+		}
+
+		/// <summary>The engine waited <paramref name="since"/> till now for <paramref name="s"/>'s bytes (not the fetching ahead's own waits).</summary>
+		static void EngineWaited(Stand s, long since) {
+			if (!aheadThread) Interlocked.Add(ref s.Waited, Stopwatch.GetTimestamp() - since);
 		}
 
 		/// <summary>
@@ -307,6 +398,7 @@ namespace HEI.Agent.Estate {
 		public bool Fetch(string path, long offset, long count) {
 			if (!stands.TryGetValue(path, out Stand? s)) return !IsRemote(path);
 			long size = s.File.Size;
+			bool whole = count < 0 || offset <= 0 && count >= size;
 			if (count < 0) {
 				if (size > MaxWhole) {
 					Failed.TryAdd(path, "too big to fetch whole");
@@ -317,12 +409,15 @@ namespace HEI.Agent.Estate {
 			}
 			long from = Math.Max(0, offset), to = Math.Min(size, offset + count);
 			if (to <= from) return true;
+			if (Failed.TryGetValue(path, out string? why) && Final(why)) return false;
+			long t0 = Stopwatch.GetTimestamp();
 			try {
 				lock (s.Gate) {
 					s.Used = Stopwatch.GetTimestamp();
 					foreach (var (a, b) in Missing(s, from / Align * Align, Math.Min(size, (to + Align - 1) / Align * Align)))
-						FillRange(s, a, b);
+						FillRange(s, a, b, whole ? RemoteTimings.For.Whole : RemoteTimings.For.Ends);
 				}
+				EngineWaited(s, t0);
 				Trim();
 				return true;
 			}
@@ -348,6 +443,7 @@ namespace HEI.Agent.Estate {
 
 		/// <summary>Every stand-in emptied (the scan is over), and marked so the next scan needn't check.</summary>
 		public void EmptyAll() {
+			StopAhead();
 			foreach (Stand s in holding.Keys) Empty(s);
 			try { File.WriteAllText(CleanMark, ""); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
@@ -374,18 +470,15 @@ namespace HEI.Agent.Estate {
 			lock (s.Gate) return Missing(s, a, b).Count == 0;
 		}
 
-		void FillRange(Stand s, long a, long b) {
-			byte[] buffer = new byte[(int)Math.Min(MaxPiece, b - a)];
+		/// <summary>[a, b) fetched into the stand-in in one ask (a photo whole, not 4 MB at a time), written as it comes.</summary>
+		void FillRange(Stand s, long a, long b, RemoteTimings.For what) {
 			using (var fs = new FileStream(s.Path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 1)) {
-				for (long at = a; at < b;) {
-					int want = (int)Math.Min(buffer.Length, b - at);
-					int n = source.Read(s.File, at, buffer, want, Stopping);
-					if (n < want) throw new RemoteReadFailed("it ended early", "changed");
+				long got = Timed(what, () => source.Stream(s.File, a, b - a, (at, bytes) => {
 					fs.Position = at;
-					fs.Write(buffer, 0, n);
-					Mark(s, at, at + n);
-					at += n;
-				}
+					fs.Write(bytes);
+					Mark(s, at, at + bytes.Length);
+				}, Stopping));
+				if (got < b - a) throw new RemoteReadFailed("it ended early", "changed");
 			}
 			Stamp(s.Path, s.File); // writing moved its date: back to the other PC's, which the scan compares
 		}
@@ -507,17 +600,19 @@ namespace HEI.Agent.Estate {
 
 		/// <summary>
 		/// A stand-in's bytes for a decoder or a hash: a photo's fetched whole into its stand-in and read from there (held
-		/// while the stream is open); a video's fetched in 512 KB pieces as they're read, the last eight kept in memory.
-		/// A part that can't be fetched fails the read (an IOException), never reads as zeros.
+		/// while the stream is open); a video's read from its stand-in where it holds them (its ends, fetched ahead), else
+		/// fetched as they're read: 512 KB after a seek, 2 MB at a time while the decoder reads straight on (a frame's group of
+		/// pictures), the last 8 MB kept in memory. A part that can't be fetched fails the read (an IOException), never reads as zeros.
 		/// </summary>
 		sealed class RemoteStream : Stream {
-			const int Piece = 512 * 1024, Keep = 8;
+			const int Piece = 512 * 1024, Straight = 2 * 1024 * 1024, KeepBytes = 8 * 1024 * 1024;
 			readonly RemoteMirror mirror;
 			readonly Stand stand;
 			readonly bool whole;
 			readonly LinkedList<(long At, byte[] Data)> pieces = new();
+			long kept;
 			FileStream? file;
-			long position;
+			long position, lastEnd = -1;
 			bool disposed;
 
 			public RemoteStream(RemoteMirror mirror, Stand stand) {
@@ -540,43 +635,62 @@ namespace HEI.Agent.Estate {
 				long size = stand.File.Size;
 				if (position >= size || into.Length == 0) return 0;
 				int want = (int)Math.Min(into.Length, size - position);
+				bool straight = position == lastEnd;
 				if (whole || mirror.IsFilled(stand, position, position + want)) {
-					file ??= new FileStream(stand.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
-					file.Position = position;
-					int read = file.Read(into[..want]);
+					int read = FromStandIn(position, into[..want]);
 					position += read;
+					lastEnd = position;
 					return read;
 				}
-				long at = position / Piece * Piece;
-				byte[] data = PieceAt(at);
-				int n = (int)Math.Min(want, data.Length - (position - at));
+				var (at, data) = PieceFor(position, straight);
+				int n = (int)Math.Min(want, at + data.Length - position);
 				if (n <= 0) return 0;
 				data.AsSpan((int)(position - at), n).CopyTo(into);
 				position += n;
+				lastEnd = position;
 				return n;
 			}
 
-			byte[] PieceAt(long at) {
+			int FromStandIn(long at, Span<byte> into) {
+				file ??= new FileStream(stand.Path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1);
+				file.Position = at;
+				return file.Read(into);
+			}
+
+			/// <summary>The piece holding <paramref name="at"/>: kept, read from the stand-in where it holds it all, or fetched (bigger <paramref name="straight"/> on).</summary>
+			(long At, byte[] Data) PieceFor(long at, bool straight) {
 				for (var node = pieces.First; node != null; node = node.Next)
-					if (node.Value.At == at) {
+					if (node.Value.At <= at && at < node.Value.At + node.Value.Data.Length) {
 						pieces.Remove(node);
 						pieces.AddFirst(node);
-						return node.Value.Data;
+						return node.Value;
 					}
-				int length = (int)Math.Min(Piece, stand.File.Size - at);
+				long from = straight ? at / Align * Align : at / Piece * Piece;
+				int length = (int)Math.Min(straight ? Straight : Piece, stand.File.Size - from);
 				byte[] data = new byte[length];
-				try {
-					int got = mirror.source.Read(stand.File, at, data, length, mirror.Stopping);
-					if (got < length) throw new RemoteReadFailed("it ended early", "changed");
+				if (mirror.IsFilled(stand, from, from + length)) {
+					if (FromStandIn(from, data) < length) throw new IOException("its stand-in ended early");
 				}
-				catch (RemoteReadFailed e) {
-					mirror.Failed[stand.Path] = e.Code ?? e.Message;
-					if (e.Code == "over") mirror.Over = true;
-					throw;
+				else {
+					long t0 = Stopwatch.GetTimestamp();
+					try {
+						int got = mirror.Timed(RemoteTimings.For.Parts, () => mirror.source.Read(stand.File, from, data, length, mirror.Stopping));
+						if (got < length) throw new RemoteReadFailed("it ended early", "changed");
+					}
+					catch (RemoteReadFailed e) {
+						mirror.Failed[stand.Path] = e.Code ?? e.Message;
+						if (e.Code == "over") mirror.Over = true;
+						throw;
+					}
+					finally { EngineWaited(stand, t0); }
 				}
-				pieces.AddFirst((at, data));
-				if (pieces.Count > Keep) pieces.RemoveLast();
-				return data;
+				pieces.AddFirst((from, data));
+				kept += length;
+				while (kept > KeepBytes && pieces.Count > 1) {
+					kept -= pieces.Last!.Value.Data.Length;
+					pieces.RemoveLast();
+				}
+				return (from, data);
 			}
 
 			public override long Seek(long offset, SeekOrigin origin) =>

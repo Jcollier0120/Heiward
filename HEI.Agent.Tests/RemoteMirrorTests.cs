@@ -206,8 +206,8 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 
 	[Fact]
 	public void AFileThatCantBeFetched_FailsItsRead_AndIsNoted() {
-		string a = Make("a.jpg", 200_000), v = Make("v.mov", 2_000_000, 2);
-		var (mirror, bytes) = Mirror(paths: [a, v]);
+		string a = Make("a.jpg", 200_000), v = Make("v.mov", 2_000_000, 2), b = Make("b.jpg", 100_000, 3);
+		var (mirror, bytes) = Mirror(paths: [a, v, b]);
 		using (mirror) {
 			bytes.Refuse = "changed";
 			string standA = RemotePath.Mirrored(mirror.Folder, a), standV = RemotePath.Mirrored(mirror.Folder, v);
@@ -217,8 +217,11 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 			Assert.ThrowsAny<IOException>(() => s.ReadExactly(new byte[1000]));
 			Assert.Equal("changed", mirror.Failed[standV]);
 
-			bytes.Refuse = "over";
+			// One that changed isn't asked for again this scan; another tells that the loan is over.
+			bytes.Refuse = null;
 			Assert.False(mirror.Fetch(standA, 0, -1));
+			bytes.Refuse = "over";
+			Assert.False(mirror.Fetch(RemotePath.Mirrored(mirror.Folder, b), 0, -1));
 			Assert.True(mirror.Over);
 		}
 	}

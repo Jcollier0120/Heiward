@@ -239,10 +239,15 @@ namespace HEI.Agent.Estate {
 				if (a != asked || a.Finished) return;
 				var notes = new List<string>();
 				var roots = AgentScanner.BuildSettings(AgentConfig.Load(), notes).IncludeList.Order(StringComparer.Ordinal).ToList();
-				LentListing listing = LentListing.Write(ListingPlan.Kept(roots), AppBuild.Current);
+				// What the listing found that isn't a photo or video (its database knows: a text file named .ts) isn't lent:
+				// the other PC would only find that out again.
+				LentListing.Listed? found = LentListing.Listed.Take();
+				var notMedia = new HashSet<string>(found?.NotMedia ?? [], StringComparer.OrdinalIgnoreCase);
+				LentListing listing = LentListing.Write(ListingPlan.Kept(roots), AppBuild.Current, leaveOut: notMedia.Count > 0 ? notMedia.Contains : null);
 				int files = listing.Files;
-				AgentPaths.AppendLog($"listed {files:N0} photos and videos for {a.Lender.Name}'s scan in {timer.Elapsed.TotalSeconds:N1} s ({listCpu.TotalSeconds:N1} s of the processor), " +
-					$"in {listing.Pages.Count:N0} page(s)");
+				AgentPaths.AppendLog($"listed {files:N0} photos and videos for {a.Lender.Name}'s scan in {timer.Elapsed.TotalSeconds:N1} s " +
+					$"({(found != null ? $"{found.Seconds:N1} s listing them{(found.How != null ? ": " + found.How : "")}; " : "")}{listCpu.TotalSeconds:N1} s of the processor), " +
+					$"in {listing.Pages.Count:N0} page(s){(notMedia.Count > 0 ? $"; {notMedia.Count:N0} file(s) that aren't photos or videos left out" : "")}");
 				lock (gate) {
 					if (a != asked || a.Finished) {
 						listing.Dispose();
@@ -454,6 +459,10 @@ namespace HEI.Agent.Estate {
 
 		static readonly PeerFiles NoneOffered = new(() => null);
 
+		/// <summary>GET /api/peer/scan/timing: where handing the files over has spent its time (<see cref="PeerFiles.Timing"/>), for the PC scanning this one, while it does.</summary>
+		internal static Task TimingRouteAsync(HttpContext ctx) =>
+			ListingFor(ctx) != null && serving is { } s ? NpuLoan.Json(200, s.Timing).ExecuteAsync(ctx) : NotAsking(ctx);
+
 		// ================= This PC scans another's files =================
 
 		static Lending? lending;
@@ -579,6 +588,8 @@ namespace HEI.Agent.Estate {
 			var psi = new ProcessStartInfo(Environment.ProcessPath ?? Path.Combine(AppContext.BaseDirectory, "hei.exe")) { UseShellExecute = false, CreateNoWindow = true };
 			foreach (string a in args) psi.ArgumentList.Add(a);
 			if (home != null) psi.Environment["HEIWARD_HOME"] = home;
+			// One thread's work, mostly: the workstation's collector keeps its memory down, where the server's gives each core a heap.
+			psi.Environment["DOTNET_gcServer"] = "0";
 			Installer.KeepStdHandlesToSelf();
 			return Process.Start(psi);
 		}

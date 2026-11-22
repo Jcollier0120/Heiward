@@ -210,6 +210,29 @@ public sealed class RemoteScanTests : IDisposable {
 		Assert.Equal(10_000, new EstateBytes("pc1").Read(File1, 290_000, buffer, buffer.Length, CancellationToken.None));
 	}
 
+	// A photo whole is one ask, its bytes handed on as they come, not 4 MB at a time; each ask is timed.
+	[Fact]
+	public void A_whole_file_comes_in_one_ask_as_it_comes_and_is_timed() {
+		var asked = new List<(long From, long To)>();
+		EstateLink.SendOverride = (request, _) => {
+			RangeItemHeaderValue range = request.Headers.Range!.Ranges.Single();
+			asked.Add((range.From!.Value, range.To!.Value));
+			return Task.FromResult(Bytes(File1, range.From.Value, range.To.Value));
+		};
+		var timings = new RemoteTimings();
+		var bytes = new EstateBytes("pc1", timings: timings);
+		long next = 0;
+		long got = bytes.Stream(File1, 0, File1.Size, (at, piece) => {
+			Assert.Equal(next, at);
+			for (int i = 0; i < piece.Length; i++) Assert.True(piece[i] == ByteAt(at + i), $"byte {at + i}");
+			next += piece.Length;
+		}, CancellationToken.None);
+		Assert.Equal(File1.Size, got);
+		Assert.Equal(File1.Size, next);
+		Assert.Equal([(0L, File1.Size - 1)], asked);
+		Assert.Contains("Asks: 1 ", timings.Summary("pc1", 0, 1, 1, null, null));
+	}
+
 	[Fact]
 	public void A_file_changed_since_it_was_listed_isnt_read() {
 		EstateLink.SendOverride = (request, _) => Task.FromResult(Bytes(File1, 0, 99, tag: "\"300000-1\""));
