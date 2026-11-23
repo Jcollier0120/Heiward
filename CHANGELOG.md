@@ -2,6 +2,18 @@
 
 Each version of Heiward, newest first: what's new, what changed, and what to do before updating.
 
+## 1.11.5
+
+**Small fixes and improvements.**
+
+### What changed
+
+- Small fixes and improvements.
+
+### Before you update
+
+- Nothing: it updates itself as usual.
+
 ## 1.11.4
 
 **A scan of another of your PCs sorts its sets as fast as it checks its files, a scan with nothing new fetches nothing, and one video can't hold a scan up.**
