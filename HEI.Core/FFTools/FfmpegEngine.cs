@@ -141,6 +141,18 @@ namespace HEI.Core.FFTools {
 		/// <summary>Why this thread's last video failed on the GPU, for the log when the CPU then decodes it.</summary>
 		[ThreadStatic] static string? gpuFailureReason;
 
+		/// <summary>Why this thread's last video's position couldn't be reached (<see cref="KeyframesTooFarException"/>).</summary>
+		[ThreadStatic] static string? tooFarReason;
+
+		/// <summary>What reaching one sampled position may cost (<see cref="ForwardBudget"/>); tests set a smaller one.</summary>
+		internal static Func<ForwardBudget> NewForwardBudget = () => new ForwardBudget();
+
+		/// <summary>
+		/// A video left out of the scan because its keyframes are too far apart to sample it (its path, and why in words):
+		/// for the scan's own log, which names it. Called on the scan's worker thread.
+		/// </summary>
+		public static Action<string, string>? VideoLeftOut { get; set; }
+
 		// Vulkan hardware decoding through the native FFmpeg binding segfaults the whole
 		// process on at least some NVIDIA setups (#799) — a native crash we cannot catch.
 		// The CLI path runs FFmpeg out-of-process, so a crash there is isolated and merely
@@ -315,7 +327,7 @@ namespace HEI.Core.FFTools {
 			failureCategory = FfmpegErrorCategory.Unknown;
 			try {
 				FfmpegLogCapture.Reset();
-				using var vsd = new VideoStreamDecoder(videoFile.Path, GetConfiguredHardwareDeviceType(), gpuLane: gpuLane);
+				using var vsd = new VideoStreamDecoder(videoFile.Path, GetConfiguredHardwareDeviceType(), gpuLane: gpuLane) { Budget = NewForwardBudget() };
 				VideoFrameConverter? converter = null;
 				VideoFrameConverter? aiConverter = null;
 				Size converterSourceSize = default;
@@ -395,6 +407,12 @@ namespace HEI.Core.FFTools {
 				}
 				RecordNativeSuccess();
 				return true;
+			}
+			catch (KeyframesTooFarException e) {
+				// The file's own make, not the binding's or the GPU's: no failure recorded against either, and no retry.
+				failureCategory = FfmpegErrorCategory.KeyframesTooFar;
+				tooFarReason = e.Message;
+				return false;
 			}
 			catch (Exception e) {
 				// Same diagnostics combination BuildNativeFailureDetail logs, so the category
@@ -1052,6 +1070,7 @@ namespace HEI.Core.FFTools {
 			if (ShouldUseNativeBinding) {
 				// The GPU's video decoder first, when it has a slot free and decodes this codec (HardwareVideoDecode).
 				gpuFailureReason = null;
+				tooFarReason = null;
 				long started = Stopwatch.GetTimestamp();
 				bool extracted = TryGetGrayBytesFromVideoNativeBatch(videoFile, positions, maxSamplingDurationSeconds, ref tooDarkCounter, onSampleComplete, out FfmpegErrorCategory nativeFailureCategory, embeddingSink, gpuLane: true);
 				double seconds = Stopwatch.GetElapsedTime(started).TotalSeconds;
@@ -1063,8 +1082,9 @@ namespace HEI.Core.FFTools {
 					HardwareVideoDecode.LeftGpu(videoFile.Path);
 					if (extracted)
 						HardwareVideoDecode.RecordSuccess();
-					else {
+					else if (nativeFailureCategory != FfmpegErrorCategory.KeyframesTooFar) {
 						// The GPU couldn't: the CPU tries before anything slower. It only fills the positions still missing.
+						// Not for keyframes too far apart: the processor would decode as many frames to come to the same.
 						extracted = TryGetGrayBytesFromVideoNativeBatch(videoFile, positions, maxSamplingDurationSeconds, ref tooDarkCounter, onSampleComplete, out nativeFailureCategory, embeddingSink);
 						if (extracted)
 							HardwareVideoDecode.RecordFailure(videoFile.Path, gpuFailureReason ?? "no frame");
@@ -1077,6 +1097,17 @@ namespace HEI.Core.FFTools {
 						return false;
 					}
 					return true;
+				}
+				if (nativeFailureCategory == FfmpegErrorCategory.KeyframesTooFar) {
+					// Bounded (ForwardBudget): the FFmpeg process seeks the same way, decoding as far, only slower.
+					if (CountMissingGrayBytePositions(videoFile, positions, maxSamplingDurationSeconds) == 0)
+						return true;
+					videoFile.Flags.Set(EntryFlags.ThumbnailError);
+					string why = tooFarReason ?? "its keyframes are too far apart";
+					Logger.Instance.Warn($"Left '{videoFile.Path}' out: {why}. It isn't tried again while it's unchanged " +
+						"(unless 'Always retry failed sampling' is on).");
+					VideoLeftOut?.Invoke(videoFile.Path, why);
+					return false;
 				}
 				if (ShouldSkipProcessRetryForCorruptFile(nativeFailureCategory, GetConfiguredHardwareDeviceType())) {
 					// The gray frames may all be present (cached, or extracted before the

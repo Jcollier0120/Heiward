@@ -20,6 +20,7 @@ using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using HEI.Core;
+using HEI.Core.FFTools.FFmpegNative;
 using HEI.Core.Utils;
 using Microsoft.Win32.SafeHandles;
 
@@ -397,6 +398,7 @@ namespace HEI.Agent.Estate {
 		/// </summary>
 		public bool Fetch(string path, long offset, long count) {
 			if (!stands.TryGetValue(path, out Stand? s)) return !IsRemote(path);
+			if (sorting && !aheadThread) Reached(s); // the sets got to it: the photos after it are fetched ahead
 			long size = s.File.Size;
 			bool whole = count < 0 || offset <= 0 && count >= size;
 			if (count < 0) {
@@ -440,6 +442,28 @@ namespace HEI.Agent.Estate {
 		/// from its stand-in; a video's parts fetched as they're read, held in memory only. Null for a file that isn't one.
 		/// </summary>
 		public Stream? Open(string path) => stands.TryGetValue(path, out Stand? s) ? new RemoteStream(this, s) : null;
+
+		/// <summary>
+		/// For <see cref="ISortFetch.Refuse"/>: until it's disposed, every read of a stand-in fails as one whose bytes couldn't be
+		/// fetched, and nothing is asked of the other PC; the stand-ins asked for are kept, in order. After it, reads fetch
+		/// (<see cref="Fetch"/>, <see cref="Open"/>) as before.
+		/// </summary>
+		public SortNeeds Refuse() {
+			var needs = new SortNeeds(() => {
+				RemoteFiles.Fetch = Fetch;
+				RemoteMedia.Use(IsRemote, Open);
+			});
+			RemoteFiles.Fetch = (path, _, _) => {
+				if (!stands.ContainsKey(path)) return !IsRemote(path);
+				needs.Asked(path);
+				return false;
+			};
+			RemoteMedia.Use(IsRemote, path => {
+				if (stands.ContainsKey(path)) needs.Asked(path);
+				return null;
+			});
+			return needs;
+		}
 
 		/// <summary>Every stand-in emptied (the scan is over), and marked so the next scan needn't check.</summary>
 		public void EmptyAll() {
@@ -522,7 +546,8 @@ namespace HEI.Agent.Estate {
 			if (Held <= Cap) return;
 			lock (trimming) {
 				long now = Stopwatch.GetTimestamp();
-				foreach (Stand s in holding.Keys.Where(s => Volatile.Read(ref s.Readers) == 0 && Stopwatch.GetElapsedTime(s.Used, now) > Recent).OrderBy(s => s.Used).ToList()) {
+				foreach (Stand s in holding.Keys.Where(s => Volatile.Read(ref s.Readers) == 0 && Stopwatch.GetElapsedTime(s.Used, now) > Recent && !IsAhead(s))
+						.OrderBy(s => s.Used).ToList()) {
 					if (Held <= Cap / 4 * 3) break;
 					Empty(s);
 				}
