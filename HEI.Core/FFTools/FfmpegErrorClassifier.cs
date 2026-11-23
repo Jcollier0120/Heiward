@@ -36,6 +36,11 @@ namespace HEI.Core.FFTools {
 		LibraryLoad,
 		/// <summary>The decode made no progress for the native binding's timeout (a stalled drive or share).</summary>
 		Stalled,
+		/// <summary>
+		/// The file's keyframes are too far apart to reach a position (<see cref="FFmpegNative.ForwardBudget"/>): the file's own
+		/// make, the same on every decoder, so neither the processor nor the FFmpeg process tries it again.
+		/// </summary>
+		KeyframesTooFar,
 	}
 
 	/// <summary>
@@ -151,6 +156,9 @@ namespace HEI.Core.FFTools {
 			FfmpegErrorCategory.LibraryLoad =>
 				"The FFmpeg shared libraries could not be loaded or are the wrong version. Disable " +
 				"'Use native FFmpeg binding', or install an FFmpeg matching the bundled version.",
+			FfmpegErrorCategory.KeyframesTooFar =>
+				"The video's keyframes are too far apart to sample it in reasonable time (some screen recorders and " +
+				"timelapses write one keyframe for the whole video), so it was left out of the comparison.",
 			_ => null,
 		};
 	}

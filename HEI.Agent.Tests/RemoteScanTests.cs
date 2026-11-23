@@ -153,6 +153,77 @@ public sealed class RemoteScanTests : IDisposable {
 		Assert.Equal(["C:\\Photos\\a.jpg", "C:\\Photos\\c.jpg"], g.Items.Select(i => i.Path));
 	}
 
+	// ---- When the findings are from: the scan's end, not its start (a scan of a whole PC takes hours)
+
+	static readonly Pc Laptop = new("0d4a8e61-3f2b-4c97-b5e0-91a6c7d2f384", "Laptop");
+
+	static Dictionary<string, ListedFile> Listed() {
+		var listed = Listing().Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase);
+		listed["C:\\Photos\\c.jpg"] = new ListedFile("C:\\Photos\\c.jpg", 1000, When.Ticks);
+		return listed;
+	}
+
+	static List<ReportGroup> OneSet() => [Set(Item("C:\\Photos\\a.jpg", 1000), Item("C:\\Photos\\c.jpg", 1000))];
+
+	[Fact]
+	public void Findings_are_dated_by_the_scans_end() {
+		DateTime ended = When.AddHours(4.5);
+		var found = new RemoteFindings(RemoteFindings.Version, "1.10.24+abc", "s", When, 16_167, 4, "NPU", OneSet(), null, ended);
+		ForeignFindings kept = ForeignFindings.From(Laptop, found, Listed());
+		Assert.Equal(ended, kept.FinishedUtc);
+		Assert.Equal(ended, kept.FoundUtc());
+		Assert.Equal(When, kept.ScannedAtUtc); // which scan they're from stays its start
+	}
+
+	[Fact]
+	public void An_older_scanners_findings_are_dated_by_when_it_began_and_how_long_it_took() {
+		// As a Heiward before the scan's end was sent writes them: no finishedUtc.
+		string json = JsonSerializer.Serialize(new RemoteFindings(RemoteFindings.Version, "1.10.24+abc", "s", When, 7_200, 4, "NPU", OneSet()), AgentConfig.Json);
+		using (JsonDocument doc = JsonDocument.Parse(json)) Assert.False(doc.RootElement.TryGetProperty("finishedUtc", out JsonElement f) && f.ValueKind != JsonValueKind.Null);
+		RemoteFindings older = JsonSerializer.Deserialize<RemoteFindings>(json.Replace(",\"finishedUtc\":null", ""), AgentConfig.Json)!;
+		Assert.Null(older.FinishedUtc);
+		Assert.Equal(When.AddHours(2), older.EndedUtc);
+		Assert.Equal(When.AddHours(2), ForeignFindings.From(Laptop, older, Listed()).FoundUtc());
+	}
+
+	/// <summary>The findings as a Heiward before the scan's end was kept reads them: the same, without it.</summary>
+	sealed record OlderRemoteFindings(int V, string Build, string Stamp, DateTime ScannedAtUtc, double DurationSec, int FilesScanned, string Device,
+		List<ReportGroup> Groups, RemoteCost? Cost = null);
+
+	sealed record OlderForeignFindings(int V, string FromId, string FromName, string Build, DateTime ScannedAtUtc, List<ReportGroup> Groups);
+
+	[Fact]
+	public void An_older_PC_reads_the_newer_findings_as_it_did() {
+		var found = new RemoteFindings(RemoteFindings.Version, "1.10.24+abc", "s", When, 60, 4, "NPU", OneSet(), new RemoteCost(1, 1, 1, 60, 0), When.AddMinutes(1));
+		OlderRemoteFindings older = JsonSerializer.Deserialize<OlderRemoteFindings>(JsonSerializer.Serialize(found, AgentConfig.Json), AgentConfig.Json)!;
+		Assert.Equal((found.V, found.ScannedAtUtc, found.Groups.Count, found.Stamp), (older.V, older.ScannedAtUtc, older.Groups.Count, older.Stamp));
+
+		ForeignFindings kept = ForeignFindings.From(Laptop, found, Listed());
+		OlderForeignFindings olderKept = JsonSerializer.Deserialize<OlderForeignFindings>(JsonSerializer.Serialize(kept, AgentConfig.Json), AgentConfig.Json)!;
+		Assert.Equal((kept.V, kept.FromId, kept.ScannedAtUtc, kept.Groups.Count), (olderKept.V, olderKept.FromId, olderKept.ScannedAtUtc, olderKept.Groups.Count));
+	}
+
+	[Fact]
+	public void Findings_an_older_Heiward_kept_here_are_dated_by_when_they_came() {
+		// remote-findings.json as an older Heiward wrote it: no finishedUtc.
+		string json = JsonSerializer.Serialize(new OlderForeignFindings(ForeignFindings.Version, Laptop.Id, Laptop.Name, "1.10.24+abc", When, OneSet()), AgentConfig.Json);
+		ForeignFindings old = JsonSerializer.Deserialize<ForeignFindings>(json, AgentConfig.Json)!;
+		Assert.Null(old.FinishedUtc);
+		Assert.Equal(When.AddHours(3), old.FoundUtc(written: When.AddHours(3))); // the file's time, as they came
+		Assert.Equal(When, old.FoundUtc()); // nothing else to go by: the scan's start, as before
+		Assert.Equal(When, old.FoundUtc(written: When.AddDays(-1))); // never before the scan began (a clock set back, a copied file)
+	}
+
+	[Fact]
+	public void A_scan_that_found_nothing_new_is_dated_by_its_own_end_its_sets_as_they_were() {
+		var found = new RemoteFindings(RemoteFindings.Version, "1.10.24+abc", "s", When, 60, 4, "NPU", OneSet(), null, When.AddMinutes(1));
+		DateTime now = When.AddDays(1);
+		ForeignFindings kept = ForeignFindings.From(Laptop, found, Listed(), finished: now);
+		Assert.Equal(now, kept.FoundUtc());
+		Assert.Equal(When, kept.ScannedAtUtc); // still the scan its sets are from
+		Assert.Single(kept.Groups);
+	}
+
 	[Fact]
 	public void A_set_from_this_PCs_own_scan_carries_no_found_on() {
 		string json = JsonSerializer.Serialize(Set(Item("C:\\a.jpg", 1), Item("C:\\b.jpg", 1)), AgentConfig.Json);

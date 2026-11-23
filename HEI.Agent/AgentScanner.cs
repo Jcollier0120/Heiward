@@ -333,6 +333,8 @@ namespace HEI.Agent {
 			List<ReportGroup> groups;
 			Report report;
 			AutoRun? auto;
+			// A video whose keyframes are too far apart to sample is left out (ForwardBudget): said here, by name, once.
+			FfmpegEngine.VideoLeftOut = (path, why) => AgentPaths.AppendLog($"scan: left out {path}: {why}");
 			try {
 				try {
 					await RunEngineAsync(engine, () => { latest = null; phase = ScanPhase.Comparing; }, stopped.Token);
@@ -406,6 +408,7 @@ namespace HEI.Agent {
 				stopWatching.Cancel();
 				await watching;
 				ScanStop.Clear();
+				FfmpegEngine.VideoLeftOut = null;
 			}
 			await status.DisposeAsync();
 

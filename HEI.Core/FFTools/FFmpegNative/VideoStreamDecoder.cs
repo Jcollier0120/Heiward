@@ -219,9 +219,18 @@ namespace HEI.Core.FFTools.FFmpegNative {
 			_io = null;
 		}
 
+		/// <summary>What reaching one position may cost (<see cref="ForwardBudget"/>); tests set a smaller one.</summary>
+		internal ForwardBudget Budget { get; init; } = new();
+
+		/// <summary>
+		/// The frame at <paramref name="position"/>: sought (the keyframe at or before it), then decoded forward to it. False when
+		/// there's none to be had there; <see cref="KeyframesTooFarException"/> when reaching it would cost more than
+		/// <see cref="Budget"/> allows.
+		/// </summary>
 		public bool TryDecodeFrame(out AVFrame frame, TimeSpan position) {
 			// The whole timeout for the seek — and not what earlier positions of the file took.
 			_deadline.Progress();
+			Budget.Start();
 			ffmpeg.av_frame_unref(_pFrame);
 			ffmpeg.av_frame_unref(_pReceivedFrame);
 
@@ -327,8 +336,9 @@ namespace HEI.Core.FFTools.FFmpegNative {
 					break;
 				}
 
-				// Not at target yet - discard this frame and decode the next
+				// Not at target yet - discard this frame and decode the next, while that costs what one position may.
 				ffmpeg.av_frame_unref(_pFrame);
+				Budget.Decode(position.TotalSeconds);
 			}
 			// Out of passes before the target (keyframes very far apart): no frame. Without this the
 			// discarded frame went out as if decoded — the timeout used to end such a decode first.

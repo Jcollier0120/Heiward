@@ -25,9 +25,30 @@ namespace HEI.Agent.Estate {
 	/// removes what another PC found.
 	/// <para>Only files this PC listed to that PC, as it listed them, make it in: a set naming anything else is left out.
 	/// Another build's findings are set aside, as another build's report is (<see cref="Report.Load"/>).</para>
+	/// <para><see cref="ScannedAtUtc"/> is when that PC's scan began, which says which scan they're from; <see cref="FinishedUtc"/>
+	/// when the scan that found them (or found nothing new since) ended, which the page dates them by. A file kept
+	/// by an older Heiward has none, and is dated by when it was written here, as the findings came (<see cref="FoundUtc"/>).</para>
 	/// </summary>
-	sealed record ForeignFindings(int V, string FromId, string FromName, string Build, DateTime ScannedAtUtc, List<ReportGroup> Groups) {
+	sealed record ForeignFindings(int V, string FromId, string FromName, string Build, DateTime ScannedAtUtc, List<ReportGroup> Groups,
+		DateTime? FinishedUtc = null) {
 		public const int Version = 1;
+
+		/// <summary>When the findings are from, as the page says it: the scan's end; for a file kept without it, when it was written here; never before the scan began.</summary>
+		public DateTime FoundUtc(DateTime? written = null) {
+			DateTime at = FinishedUtc ?? written ?? ScannedAtUtc;
+			return at < ScannedAtUtc ? ScannedAtUtc : at;
+		}
+
+		/// <summary>When the findings' file was last written, as they came (null when it can't be told).</summary>
+		public static DateTime? Written() {
+			try {
+				var file = new FileInfo(FilePath);
+				return file.Exists ? file.LastWriteTimeUtc : null;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return null;
+			}
+		}
 
 		public static string FilePath => Path.Combine(AgentPaths.Home, "remote-findings.json");
 
@@ -59,9 +80,9 @@ namespace HEI.Agent.Estate {
 		/// <summary>
 		/// <paramref name="found"/>'s sets as this PC keeps them: only those whose every file is one it listed to
 		/// <paramref name="from"/> (<paramref name="listed"/>), as listed, each marked with that PC's name, whether it's in a
-		/// cloud-synced folder looked at here.
+		/// cloud-synced folder looked at here. Dated by the scan's end (<paramref name="finished"/>, else as the findings say it).
 		/// </summary>
-		public static ForeignFindings From(Pc from, RemoteFindings found, IReadOnlyDictionary<string, ListedFile> listed) {
+		public static ForeignFindings From(Pc from, RemoteFindings found, IReadOnlyDictionary<string, ListedFile> listed, DateTime? finished = null) {
 			var groups = new List<ReportGroup>();
 			foreach (ReportGroup g in found.Groups ?? []) {
 				if (g.Items is not { Count: >= 2 } items || !listed.ContainsKey(g.KeepPath)) continue;
@@ -73,7 +94,7 @@ namespace HEI.Agent.Estate {
 				if (mine.Count != items.Count) continue;
 				groups.Add(g with { Key = ReportBuilder.GroupKey(mine.Select(i => i.Path)), Items = mine, FoundOn = from.Name });
 			}
-			return new ForeignFindings(Version, from.Id, from.Name, found.Build, found.ScannedAtUtc, groups);
+			return new ForeignFindings(Version, from.Id, from.Name, found.Build, found.ScannedAtUtc, groups, finished ?? found.EndedUtc);
 		}
 	}
 

@@ -20,6 +20,7 @@ using System.Security.Cryptography;
 using System.Text.Json;
 using HEI.Core;
 using HEI.Core.AI;
+using HEI.Core.FFTools;
 using HEI.Core.FFTools.FFmpegNative;
 using HEI.Core.Utils;
 
@@ -28,10 +29,15 @@ namespace HEI.Agent.Estate {
 	/// What a scan for another PC found, as that PC pulls it (<c>GET /api/peer/findings</c>), version 1: its sets, with that
 	/// PC's own paths. <see cref="Build"/>: the build that judged them, which must be that PC's own for it to show them
 	/// (another build's rules judge sets otherwise, as a report of another build is set aside).
+	/// <see cref="ScannedAtUtc"/>: when the scan began, which also says which scan they're from (the same again: nothing new);
+	/// <see cref="FinishedUtc"/>: when it ended (an older Heiward leaves it out, and reads past it).
 	/// </summary>
 	sealed record RemoteFindings(int V, string Build, string Stamp, DateTime ScannedAtUtc, double DurationSec, int FilesScanned, string Device,
-		List<ReportGroup> Groups, RemoteCost? Cost = null) {
+		List<ReportGroup> Groups, RemoteCost? Cost = null, DateTime? FinishedUtc = null) {
 		public const int Version = 1;
+
+		/// <summary>When the scan ended: as said, or, from an older PC, when it began and how long it took.</summary>
+		public DateTime EndedUtc => FinishedUtc ?? ScannedAtUtc.AddSeconds(Math.Max(0, DurationSec));
 		/// <summary>In the home of the scans for that PC (<see cref="RemoteScanner.HomeFor"/>).</summary>
 		public static string FilePath => Path.Combine(AgentPaths.Home, "findings.json");
 
@@ -338,6 +344,8 @@ namespace HEI.Agent.Estate {
 			};
 			RemoteMedia.Use(mirror.IsRemote, mirror.Open);
 			RemoteFiles.Fetch = mirror.Fetch;
+			// A video whose keyframes are too far apart to sample is left out, said by name here, not under its stand-in's path.
+			FfmpegEngine.VideoLeftOut = (path, why) => AgentPaths.AppendLog($"scan for {name}: left out {mirror.Original(path)}: {why}");
 			// Planned: the files it reads next are fetched just ahead of it (RemoteMirror.Plan), several asks at once.
 			var engine = new ScanEngine { Settings = settings, ListRoot = ListFor, BeforeRead = mirror.Before, AfterRead = mirror.After, Planned = mirror.Plan };
 			// A scan picking up where one stopped has the photos' fingerprints, and maybe not their embeddings: those photos are read too.
@@ -423,13 +431,20 @@ namespace HEI.Agent.Estate {
 				long fetchedBefore = bytes.Fetched;
 				int asksBefore = bytes.Asks;
 				var sortTimer = Stopwatch.StartNew();
+				// The aligned looks within this scan's share of this PC's processor; what couldn't be told of a file whose bytes
+				// didn't come isn't kept as unknown.
+				hashes.Threads = settings.MaxDegreeOfParallelism;
+				hashes.NotFetched = mirror.Failed.ContainsKey;
 				try {
-					groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, null, null, progress, stopping.Token, dates);
+					groups = ReportBuilder.Build(engine.Duplicates, fingerprints, hashes, null, null, progress, stopping.Token, dates, new SortFetch(mirror, name));
 				}
 				finally {
 					if (fingerprints.FinishReading() is { } read) AgentPaths.AppendLog(read);
-					AgentPaths.AppendLog($"scan for {name}: its sets sorted in {sortTimer.Elapsed.TotalSeconds:N0} s, {Format.Bytes(bytes.Fetched - fetchedBefore)} fetched again for it " +
-						$"in {bytes.Asks - asksBefore:N0} asks (photos alike looked at up close, and their words read)");
+					long sortFetched = bytes.Fetched - fetchedBefore;
+					double sortSeconds = Math.Max(0.001, sortTimer.Elapsed.TotalSeconds);
+					AgentPaths.AppendLog($"scan for {name}: its sets sorted in {sortSeconds:N0} s, {Format.Bytes(sortFetched)} fetched again for it " +
+						$"in {bytes.Asks - asksBefore:N0} asks{(sortFetched > 0 ? $", {Format.Bytes((long)(sortFetched / sortSeconds))}/s" : "")} " +
+						"(photos alike looked at up close, and their words read)");
 				}
 			}
 			catch (OperationCanceledException) when (stopping.IsCancellationRequested) {
@@ -437,6 +452,7 @@ namespace HEI.Agent.Estate {
 			}
 			finally {
 				RemoteFiles.Fetch = null;
+				FfmpegEngine.VideoLeftOut = null;
 				RemoteMedia.Stop();
 				mirror.EmptyAll();
 			}
@@ -462,13 +478,31 @@ namespace HEI.Agent.Estate {
 
 			var cost = new RemoteCost(bytes.Fetched, bytes.Asks, mirror.MostHeld, timer.Elapsed.TotalSeconds, mirror.Failed.Count);
 			var findings = new RemoteFindings(RemoteFindings.Version, AppBuild.Current, listing.Stamp, started, timer.Elapsed.TotalSeconds, files, device,
-				Mapped(groups, mirrorDir), cost);
+				Mapped(groups, mirrorDir), cost, DateTime.UtcNow);
 			AgentPaths.WriteAtomic(RemoteFindings.FilePath, JsonSerializer.Serialize(findings, AgentConfig.Json));
 			AgentPaths.AppendLog($"scan for {name} done: {files:N0} files ({unchangedFiles:N0} as at the last scan), {groups.Count} set(s); " +
 				$"{Format.Bytes(bytes.Fetched)} fetched in {bytes.Asks:N0} asks, at most {Format.Bytes(mirror.MostHeld)} held here at once, " +
 				$"{mirror.Failed.Count:N0} not fetched; {timer.Elapsed.TotalSeconds:N0} s, AI on {device}");
 			foreach (var (path, why) in mirror.Failed.Take(20)) AgentPaths.AppendLog($"  not fetched: {mirror.Original(path)} ({why})");
 			return 0;
+		}
+
+		/// <summary>
+		/// The photos the sets look at again, found by a first pass that fetches nothing and fetched just ahead of the sorting
+		/// (<see cref="ReportBuilder.Build"/>, <see cref="RemoteMirror.SortAhead"/>); said in the log.
+		/// </summary>
+		sealed class SortFetch(RemoteMirror mirror, string name) : ISortFetch {
+			public SortNeeds Refuse() => mirror.Refuse();
+
+			public void Ahead(SortNeeds needs) {
+				if (needs.Asks == 0) {
+					AgentPaths.AppendLog($"scan for {name}: its sets sorted in {needs.Took.TotalSeconds:N0} s from what was kept of its files: nothing fetched again for them");
+					return;
+				}
+				var (photos, bytes) = mirror.SortAhead(needs.Paths);
+				AgentPaths.AppendLog($"scan for {name}: its sets look at {photos:N0} photos again ({Format.Bytes(bytes)}), found in {needs.Took.TotalSeconds:N0} s " +
+					$"without fetching: fetched just ahead of the sorting, {mirror.AheadAsks} asks at once");
+			}
 		}
 
 		/// <summary>The other PC's reading for this one so far (<c>GET /api/peer/scan/timing</c>); null when it doesn't say (an older Heiward there).</summary>

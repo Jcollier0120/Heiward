@@ -14,6 +14,7 @@
 // */
 //
 
+using System.Diagnostics;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -179,11 +180,51 @@ namespace HEI.Agent {
 		bool? LinesUp(string keep, string other) => null;
 		/// <summary>Photos: the picture's size as the text reader decodes it (turned as it's shown); null when its words can't be read.</summary>
 		(int W, int H)? PictureSize(string path) => null;
+		/// <summary>There's a text reader: a picture whose <see cref="PictureSize"/> is null couldn't be decoded, not left unread for want of one.</summary>
+		bool ReadsWords => false;
+		/// <summary>What was looked at is forgotten (<see cref="ReportBuilder.Build"/>'s first pass, whose reads of another PC's files all failed).</summary>
+		void Forget() { }
 		/// <summary>
 		/// Photos: the picture's words read at <paramref name="size"/> (<see cref="TextMatch.Serialize"/>, "" for none); null when they
 		/// can't be read: no text reader (its model isn't downloaded), a file that can't be decoded, or one on a resting drive.
 		/// </summary>
 		string? ReadWords(string path, (int W, int H) size) => null;
+	}
+
+	/// <summary>
+	/// Another PC's files, fetched again for the report's sets (a scan of another PC): which of them the sets will look at is
+	/// found first without fetching anything (<see cref="Refuse"/>), then they're fetched just ahead of the sorting, several
+	/// at once (<see cref="Ahead"/>).
+	/// </summary>
+	interface ISortFetch {
+		/// <summary>Until it's disposed, every read of the other PC's files fails as one whose bytes couldn't be fetched; the files asked for are kept, in order.</summary>
+		SortNeeds Refuse();
+		/// <summary>The first pass is done: <paramref name="needs"/> is what it asked for (nothing: its sets are the ones sorted).</summary>
+		void Ahead(SortNeeds needs);
+	}
+
+	/// <summary>The other PC's files the sorting's first pass asked for (<see cref="ISortFetch.Refuse"/>), each once, in the order it first asked.</summary>
+	sealed class SortNeeds(Action done) : IDisposable {
+		readonly object gate = new();
+		readonly List<string> paths = new();
+		readonly HashSet<string> seen = new(StringComparer.OrdinalIgnoreCase);
+		int asks;
+
+		/// <summary>Reads asked for, however many of the same file.</summary>
+		public int Asks { get { lock (gate) return asks; } }
+		public IReadOnlyList<string> Paths { get { lock (gate) return paths.ToList(); } }
+		/// <summary>How long the first pass took.</summary>
+		public TimeSpan Took { get; set; }
+
+		/// <summary>A read of <paramref name="path"/> was asked for (the aligned looks ask from several threads).</summary>
+		public void Asked(string path) {
+			lock (gate) {
+				asks++;
+				if (seen.Add(path)) paths.Add(path);
+			}
+		}
+
+		public void Dispose() => done();
 	}
 
 	/// <summary>The fingerprints of the scan that just ran: its database's gray frames and its embedding cache.</summary>
@@ -220,8 +261,9 @@ namespace HEI.Agent {
 		uint[]? Audio(string path) {
 			if (!entries.TryGetValue(path, out FileEntry? e) || e.IsImage)
 				return null;
-			// A video on a resting drive keeps the fingerprint it has, if any: it isn't decoded now.
-			if (e.AudioFingerprint == null && MayRead?.Invoke(path) != false &&
+			// A video on a resting drive keeps the fingerprint it has, if any: it isn't decoded now. Nor another PC's: FFmpeg would
+			// read its stand-in here, which holds none of its sound, and fail on it every scan.
+			if (e.AudioFingerprint == null && MayRead?.Invoke(path) != false && !HEI.Core.FFTools.FFmpegNative.RemoteMedia.Handles(path) &&
 					!e.Flags.Any(EntryFlags.NoAudioTrack | EntryFlags.AudioFingerprintError | EntryFlags.SilentAudioTrack)) {
 				ScanEngine.ExtractAudioFingerprint(e, ct);
 				AudioAdded |= e.AudioFingerprint != null;
@@ -368,6 +410,15 @@ namespace HEI.Agent {
 		public (int W, int H)? PictureSize(string path) =>
 			MayRead?.Invoke(path) == false || Ocr() == null || Picture(path) is not { } pic ? null : (pic.Width, pic.Height);
 
+		public bool ReadsWords => ocr != null;
+
+		public void Forget() {
+			lock (placed) placed.Clear();
+			details.Clear();
+			colors[0] = colors[1] = default;
+			decoded.Clear();
+		}
+
 		public string? ReadWords(string path, (int W, int H) size) {
 			ct.ThrowIfCancellationRequested();
 			if (MayRead?.Invoke(path) == false || Ocr() is not { } reader || Picture(path) is not { } pic) return null;
@@ -479,9 +530,10 @@ namespace HEI.Agent {
 		/// <param name="ct">Stop scan: a set of thousands takes a while, so it's heard between rounds.</param>
 		/// <param name="datesKnown">Photos already known to have an EXIF capture date or not (a scan of another PC takes it while
 		/// a photo's bytes are here, and keeps it for its next scan): not opened again for it, and those opened here are added.</param>
+		/// <param name="fetching">Another PC's files, fetched again for the sets (<see cref="BuildAhead"/>); null for this PC's own.</param>
 		public static List<ReportGroup> Build(IEnumerable<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes? hashes = null,
 			Func<string, bool>? mayRead = null, IEnumerable<string>? known = null, Action<int, int>? progress = null, CancellationToken ct = default,
-			IDictionary<string, bool>? datesKnown = null) {
+			IDictionary<string, bool>? datesKnown = null, ISortFetch? fetching = null) {
 			Func<string, bool>? before = readable;
 			ILookup<string, string>? knownBefore = knownByFolder;
 			IDictionary<string, bool>? datesBefore = datesTaken;
@@ -489,8 +541,44 @@ namespace HEI.Agent {
 			knownByFolder = mayRead == null ? null : (known ?? Array.Empty<string>()).Where(p => !mayRead(p))
 				.ToLookup(p => Path.GetDirectoryName(p) ?? "", StringComparer.OrdinalIgnoreCase);
 			datesTaken = datesKnown ?? new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
-			try { return BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes(), progress, ct); }
+			try {
+				return fetching == null ? BuildReadable(duplicates, fingerprints, hashes ?? new ContentHashes(), progress, ct)
+					: BuildAhead(duplicates.ToList(), fingerprints, hashes ?? new ContentHashes(), fetching, progress, ct);
+			}
 			finally { readable = before; knownByFolder = knownBefore; datesTaken = datesBefore; }
+		}
+
+		/// <summary>
+		/// Another PC's sets: sorted once from what's known alone (the hashes, close looks, words and dates the scans kept),
+		/// every read of the other PC's files failing and kept (<see cref="ISortFetch.Refuse"/>), each answer that would have
+		/// read one taken as the same picture, so a set of copies comes together as it will. Nothing asked for: those are the
+		/// sets, as a scan with nothing new finds them, and nothing is fetched. Otherwise the photos asked for are fetched just
+		/// ahead of the sorting, in the order it asked for them (<see cref="ISortFetch.Ahead"/>), and the sets are sorted again
+		/// with them: once a photo at a time, the sorting waited for every fetch.
+		/// </summary>
+		static List<ReportGroup> BuildAhead(List<DuplicateItem> duplicates, IFingerprints fingerprints, ContentHashes hashes, ISortFetch fetching,
+				Action<int, int>? progress, CancellationToken ct) {
+			List<ReportGroup> groups;
+			var timer = Stopwatch.StartNew();
+			ContentHashes dry;
+			SortNeeds needs;
+			using (needs = fetching.Refuse()) {
+				dry = hashes.Dry(needs);
+				// The dates it couldn't read aren't kept as none.
+				datesRefused = true;
+				try { groups = BuildReadable(duplicates, fingerprints, dry, progress, ct); }
+				finally {
+					datesRefused = false;
+					fingerprints.Forget(); // what it couldn't decode, it didn't have
+				}
+			}
+			needs.Took = timer.Elapsed;
+			fetching.Ahead(needs);
+			if (needs.Asks == 0) {
+				hashes.Adopt(dry);
+				return groups;
+			}
+			return BuildReadable(duplicates, fingerprints, hashes, progress, ct);
 		}
 
 		/// <summary>This report's <c>mayRead</c>: a file on a resting drive isn't checked, hashed or opened for its EXIF.</summary>
@@ -507,6 +595,8 @@ namespace HEI.Agent {
 		[ThreadStatic] static IDictionary<string, bool>? datesTaken;
 		/// <summary>How many files this thread has opened for their capture date (tests).</summary>
 		[ThreadStatic] internal static int DatesRead;
+		/// <summary>The first pass of another PC's sets (<see cref="BuildAhead"/>): its reads are refused, so a date it couldn't read isn't kept as none.</summary>
+		[ThreadStatic] static bool datesRefused;
 
 		/// <summary>The photo has an EXIF capture date; one on a resting drive isn't opened.</summary>
 		static bool HasDateTaken(string path) {
@@ -514,7 +604,7 @@ namespace HEI.Agent {
 			if (datesTaken != null && datesTaken.TryGetValue(path, out bool known)) return known;
 			DatesRead++;
 			bool has = ExifReader.TryGetDateTaken(path, out _);
-			if (datesTaken != null) datesTaken[path] = has;
+			if (datesTaken != null && !datesRefused) datesTaken[path] = has;
 			return has;
 		}
 
@@ -1009,6 +1099,64 @@ namespace HEI.Agent {
 			ContentHashes(Dictionary<string, Stored> earlier, Dictionary<string, Look> looks, Dictionary<string, Words> words) =>
 				(this.earlier, looksEarlier, wordsEarlier) = (earlier, looks, words);
 
+			/// <summary>
+			/// The aligned looks' threads at most (<see cref="LineUpAhead"/>); 0: half the processor's. A scan of another PC sets its
+			/// own share of the processor here, so the work it does for that PC stays within it.
+			/// </summary>
+			public int Threads { get; set; }
+
+			/// <summary>
+			/// The files whose bytes didn't come (another PC's, <see cref="Estate.RemoteMirror.Failed"/>): what couldn't be told of
+			/// them isn't kept as unknown, since the next scan fetches them again.
+			/// </summary>
+			public Func<string, bool>? NotFetched { get; set; }
+
+			/// <summary>
+			/// A question whose answer couldn't be told (a picture that can't be decoded, or too even to line up) is kept as that, by
+			/// both files as they were then, under its key behind this (looks.json), or a photo's words behind <see cref="UnreadKey"/>
+			/// (texts.json): it's asked again once either file changes, not every scan. Asked every scan, a scan of another PC with
+			/// nothing new fetched 100 MB of photos again for answers it never got. No older Heiward asks for these keys, so it
+			/// reads them as nothing kept, and drops them as it saves.
+			/// </summary>
+			internal const string UnknownKey = "unknown\n";
+			internal const string UnreadKey = "unread\n";
+
+			/// <summary>The first pass of another PC's sets (<see cref="Dry"/>): a read that fails was refused, so nothing is kept as unknown, and it's taken as the same.</summary>
+			bool dry;
+			SortNeeds? needs;
+
+			/// <summary>
+			/// For <see cref="BuildAhead"/>'s first pass: what this kept from earlier scans, nothing of this scan's answers, and what it
+			/// couldn't tell (every read of another PC's file refused) taken as the same and kept nowhere; both files of a pair it
+			/// couldn't look at go in <paramref name="wanted"/> (a look gives up at the first file it can't read).
+			/// </summary>
+			internal ContentHashes Dry(SortNeeds wanted) => new(earlier, looksEarlier, wordsEarlier) { dry = true, needs = wanted, Threads = Threads, NotFetched = NotFetched };
+
+			/// <summary>The first pass asked for more than <paramref name="before"/> reads: what it just looked at wasn't known.</summary>
+			bool Wanted(int before) => needs != null && needs.Asks > before;
+
+			/// <summary>The first pass couldn't look at the pair: both are wanted.</summary>
+			void Need(string a, string b) {
+				needs?.Asked(a);
+				needs?.Asked(b);
+			}
+
+			/// <summary>The first pass's answers, as this scan's (it asked for nothing it couldn't read: they're the answers).</summary>
+			internal void Adopt(ContentHashes first) {
+				foreach (var (k, v) in first.cache) cache[k] = v;
+				foreach (var (k, v) in first.now) now[k] = v;
+				foreach (var (k, v) in first.looked) looked[k] = v;
+				foreach (var (k, v) in first.looksNow) looksNow[k] = v;
+				foreach (var (k, v) in first.wordsNow) wordsNow[k] = v;
+				foreach (var (k, v) in first.worded) worded[k] = v;
+			}
+
+			bool KeepsUnknown(string a, string? b = null) => !dry && NotFetched?.Invoke(a) != true && (b == null || NotFetched?.Invoke(b) != true);
+
+			/// <summary>The look kept under <paramref name="key"/> for both files as they are now; null for none.</summary>
+			static Look? Kept(Dictionary<string, Look> looks, string key, FileInfo a, FileInfo b) =>
+				looks.TryGetValue(key, out Look? s) && s.SizeA == a.Length && s.ModifiedA == a.LastWriteTimeUtc && s.SizeB == b.Length && s.ModifiedB == b.LastWriteTimeUtc ? s : null;
+
 			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
 			public static string LooksPath => Path.Combine(AgentPaths.Home, "looks.json");
 			/// <summary>The words read in the report's photos: they stay on this PC, in this file, and nowhere else.</summary>
@@ -1066,10 +1214,16 @@ namespace HEI.Agent {
 			}
 
 			TextVerdict? CompareWords(string a, string b, IFingerprints fingerprints) {
-				if (WordsOf(a, fingerprints) is not { } wa || WordsOf(b, fingerprints) is not { } wb) return null;
+				// The second isn't decoded when the first can't be. The first pass, whose reads all fail, goes on to the second when
+				// the first asked for its bytes (it will have them), so both are fetched.
+				int asked = needs?.Asks ?? 0;
+				Words? wa = WordsOf(a, fingerprints), wb = wa != null || Wanted(asked) ? WordsOf(b, fingerprints) : null;
+				if (wa == null || wb == null) return null;
 				(int, int) shapeA = (wa.Width, wa.Height), shapeB = (wb.Width, wb.Height);
 				var (sa, sb) = TextCheck.Sizes(shapeA, shapeB);
-				if (ReadAt(a, wa, sa, fingerprints) is not { } ra || ReadAt(b, wb, sb, fingerprints) is not { } rb) return null;
+				asked = needs?.Asks ?? 0;
+				string? ra = ReadAt(a, wa, sa, fingerprints), rb = ra != null || Wanted(asked) ? ReadAt(b, wb, sb, fingerprints) : null;
+				if (ra == null || rb == null) return null;
 				return TextCheck.Judge(ra, rb, TextCheck.SameShape(shapeA, shapeB));
 			}
 
@@ -1082,15 +1236,29 @@ namespace HEI.Agent {
 				try {
 					var file = new FileInfo(path);
 					if (!file.Exists) return null;
-					if (wordsEarlier.TryGetValue(path, out Words? s) && s.Reader == TextCheck.Version && s.Size == file.Length && s.ModifiedUtc == file.LastWriteTimeUtc)
-						return wordsNow[path] = s;
-					if (fingerprints.PictureSize(path) is not (int width, int height)) return null;
+					if (WordsKept(path, file) is { } s) return wordsNow[path] = s;
+					// A picture that couldn't be decoded for its words, as it is now: not decoded again for each pair it's in, nor next scan.
+					string unread = UnreadKey + path;
+					if (wordsNow.ContainsKey(unread)) return null;
+					if (WordsKept(unread, file) is { } kept) {
+						wordsNow[unread] = kept;
+						return null;
+					}
+					if (fingerprints.PictureSize(path) is not (int width, int height)) {
+						if (fingerprints.ReadsWords && KeepsUnknown(path))
+							wordsNow[unread] = new Words(TextCheck.Version, file.Length, file.LastWriteTimeUtc, 0, 0, new Dictionary<string, string>());
+						return null;
+					}
 					return wordsNow[path] = new Words(TextCheck.Version, file.Length, file.LastWriteTimeUtc, width, height, new Dictionary<string, string>());
 				}
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
 					return null;
 				}
 			}
+
+			/// <summary>The words kept under <paramref name="key"/>, read as this reader reads, of the file as it is now; null for none.</summary>
+			Words? WordsKept(string key, FileInfo file) =>
+				wordsEarlier.TryGetValue(key, out Words? s) && s.Reader == TextCheck.Version && s.Size == file.Length && s.ModifiedUtc == file.LastWriteTimeUtc ? s : null;
 
 			static string? ReadAt(string path, Words words, (int W, int H) size, IFingerprints fingerprints) {
 				string key = $"{size.W}x{size.H}";
@@ -1140,9 +1308,7 @@ namespace HEI.Agent {
 					try {
 						FileInfo fa = new(a), fb = new(b);
 						if (!fa.Exists || !fb.Exists) continue;
-						if (looksEarlier.TryGetValue(key, out Look? s) && s.SizeA == fa.Length && s.ModifiedA == fa.LastWriteTimeUtc &&
-								s.SizeB == fb.Length && s.ModifiedB == fb.LastWriteTimeUtc)
-							continue;
+						if (Kept(looksEarlier, key, fa, fb) != null || Kept(looksEarlier, UnknownKey + key, fa, fb) != null) continue; // LinesUp takes it from there
 						fresh.Add((key, keep, other, fa, fb));
 					}
 					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
@@ -1150,9 +1316,11 @@ namespace HEI.Agent {
 				if (fresh.Count < 2) return;
 				var answers = new bool?[fresh.Count];
 				Exception? stopped = null;
-				// On half the processor's threads, in order: a kept file's pairs come together, so its picture is decoded once.
+				// On half the processor's threads (or the scan's share of them), in order: a kept file's pairs come together, so its
+				// picture is decoded once.
+				int half = Math.Max(1, Environment.ProcessorCount / 2);
 				Parallel.ForEach(System.Collections.Concurrent.Partitioner.Create(0, fresh.Count, 1),
-					new ParallelOptions { MaxDegreeOfParallelism = Math.Max(1, Environment.ProcessorCount / 2) }, (range, loop) => {
+					new ParallelOptions { MaxDegreeOfParallelism = Threads > 0 ? Math.Min(Threads, half) : half }, (range, loop) => {
 						for (int k = range.Item1; k < range.Item2; k++) {
 							try { answers[k] = look(fresh[k].Keep, fresh[k].Other); }
 							catch (OperationCanceledException e) { stopped = e; loop.Stop(); }
@@ -1161,30 +1329,45 @@ namespace HEI.Agent {
 					});
 				if (stopped != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(stopped);
 				for (int k = 0; k < fresh.Count; k++) {
-					var (key, _, _, fa, fb) = fresh[k];
+					var (key, keep, other, fa, fb) = fresh[k];
 					if (answers[k] is bool same) {
 						looksNow[key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, same);
 						looked[key] = same;
 					}
-					else looked[key] = true; // can't be told: as LinesUp answers it
+					else {
+						looked[key] = true; // can't be told: as LinesUp answers it
+						if (dry) Need(keep, other);
+						else if (KeepsUnknown(keep, other)) looksNow[UnknownKey + key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, true);
+					}
 				}
 			}
 
+			/// <param name="unknown">The answer when it can't be told; on the first pass of another PC's sets (<see cref="Dry"/>), the same.</param>
 			bool LookAt(string key, string a, string b, Func<bool?> look, bool unknown = false) {
 				if (!CanRead(a) || !CanRead(b)) {
-					if (!looksEarlier.TryGetValue(key, out Look? kept)) return unknown;
+					if (!looksEarlier.TryGetValue(key, out Look? kept)) {
+						if (looksEarlier.TryGetValue(UnknownKey + key, out Look? none)) looksNow[UnknownKey + key] = none;
+						return unknown;
+					}
 					looksNow[key] = kept;
 					return kept.Same;
 				}
 				try {
 					FileInfo fa = new(a), fb = new(b);
 					if (!fa.Exists || !fb.Exists) return unknown;
-					if (looksEarlier.TryGetValue(key, out Look? s) && s.SizeA == fa.Length && s.ModifiedA == fa.LastWriteTimeUtc &&
-							s.SizeB == fb.Length && s.ModifiedB == fb.LastWriteTimeUtc) {
+					if (Kept(looksEarlier, key, fa, fb) is { } s) {
 						looksNow[key] = s;
 						return s.Same;
 					}
-					if (look() is not bool same) return unknown;
+					if (Kept(looksEarlier, UnknownKey + key, fa, fb) is { } none) {
+						looksNow[UnknownKey + key] = none;
+						return unknown;
+					}
+					if (look() is not bool same) {
+						if (dry) Need(a, b);
+						else if (KeepsUnknown(a, b)) looksNow[UnknownKey + key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, unknown);
+						return dry || unknown;
+					}
 					looksNow[key] = new Look(fa.Length, fa.LastWriteTimeUtc, fb.Length, fb.LastWriteTimeUtc, same);
 					return same;
 				}
@@ -1200,22 +1383,37 @@ namespace HEI.Agent {
 			/// drive whose colours weren't compared before. No plain copy is claimed whose colours weren't compared.
 			/// </summary>
 			public bool SameColors(string a, string b, Func<bool?> look) =>
-				AlsoSame(a, b, look, close => close.Colors, (close, same) => close with { Colors = same });
+				AlsoSame("colors", a, b, look, close => close.Colors, (close, same) => close with { Colors = same });
 
 			/// <summary>
 			/// The two photos are as sharp as each other (<paramref name="look"/>, <see cref="IFingerprints.SameDetail"/>): asked and
 			/// kept as <see cref="SameColors"/> is, of a pair already the same up close. False when it can't be told.
 			/// </summary>
 			public bool SameDetail(string a, string b, Func<bool?> look) =>
-				AlsoSame(a, b, look, close => close.Detail, (close, same) => close with { Detail = same });
+				AlsoSame("detail", a, b, look, close => close.Detail, (close, same) => close with { Detail = same });
 
-			/// <summary>A further question of a pair already the same up close, its answer kept in that close look (<see cref="SameColors"/>).</summary>
-			bool AlsoSame(string a, string b, Func<bool?> look, Func<Look, bool?> kept, Func<Look, bool, Look> keep) {
+			/// <summary>
+			/// A further question (<paramref name="what"/>) of a pair already the same up close, its answer kept in that close look
+			/// (<see cref="SameColors"/>); one that can't be told, under its own key beside it (<see cref="UnknownKey"/>).
+			/// </summary>
+			bool AlsoSame(string what, string a, string b, Func<bool?> look, Func<Look, bool?> kept, Func<Look, bool, Look> keep) {
 				if (string.Compare(a, b, StringComparison.OrdinalIgnoreCase) > 0) (a, b) = (b, a);
 				// Only a close look made or kept this scan, for the files as they are now (LookAt checks that); the answer is kept in it.
 				if (!looksNow.TryGetValue(a + "\n" + b, out Look? close) || !close.Same) return false;
 				if (kept(close) is bool known) return known;
-				if (!CanRead(a) || !CanRead(b) || look() is not bool same) return false;
+				string unknown = UnknownKey + what + "\n" + a + "\n" + b;
+				if (looksNow.ContainsKey(unknown)) return false;
+				if (looksEarlier.TryGetValue(unknown, out Look? none) && none.SizeA == close.SizeA && none.ModifiedA == close.ModifiedA &&
+						none.SizeB == close.SizeB && none.ModifiedB == close.ModifiedB) {
+					looksNow[unknown] = none;
+					return false;
+				}
+				if (!CanRead(a) || !CanRead(b)) return false;
+				if (look() is not bool same) {
+					if (dry) Need(a, b);
+					else if (KeepsUnknown(a, b)) looksNow[unknown] = close with { Same = false, Colors = null, Detail = null };
+					return false;
+				}
 				looksNow[a + "\n" + b] = keep(close, same);
 				return same;
 			}
