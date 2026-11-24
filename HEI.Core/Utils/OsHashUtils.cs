@@ -30,6 +30,10 @@ namespace HEI.Core.Utils {
 		// videos are always far larger, and tiny files aren't worth relinking (re-analysis is cheap).
 		public static string? TryCompute(string path) {
 			try {
+				// Another PC's file has no file here until its ends are fetched: they're fetched before it's opened.
+				if (RemoteFiles.About?.Invoke(path) is RemoteFiles.FileFacts listed &&
+						(!listed.Exists || listed.Length < ChunkSize || !RemoteFiles.Ready(path, 0, ChunkSize) || !RemoteFiles.Ready(path, listed.Length - ChunkSize, ChunkSize)))
+					return null;
 				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 				long size = fs.Length;
 				if (size < ChunkSize)

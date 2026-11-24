@@ -193,19 +193,24 @@ namespace HEI.Agent.Estate {
 	}
 
 	/// <summary>
-	/// Another PC's photos and videos as this PC's scan of them sees them: under <see cref="Folder"/>, a stand-in for each
-	/// (<c>…\mirror\C\Photos\a.jpg</c> for its <c>C:\Photos\a.jpg</c>), a sparse file of its size and dates holding none of
-	/// its bytes. Only what a read needs is fetched, and nothing of it stays:
+	/// Another PC's photos and videos as this PC's scan of them sees them: under <see cref="Folder"/>, a path for each, its
+	/// stand-in (<c>…\mirror\C\Photos\a.jpg</c> for its <c>C:\Photos\a.jpg</c>), of the size and dates it was listed with
+	/// (<see cref="About"/>, for <see cref="RemoteFiles.About"/>). A stand-in is a file here only while bytes of it are: made
+	/// when they're fetched, deleted once they're let go, so the folder holds no more files than the scan holds at once
+	/// (<see cref="Cap"/>), and none once it's over (<see cref="EmptyAll"/>). Only what a read needs is fetched:
 	/// <list type="bullet">
 	/// <item>A photo is fetched whole as it's read (<see cref="Before"/>; a photo can't be decoded from part of it), and
-	/// emptied once read (<see cref="After"/>).</item>
+	/// let go once read (<see cref="After"/>).</item>
 	/// <item>A video is read through <see cref="Open"/>, a stream that fetches the parts its decoder asks for (its header
 	/// and the frame sampled), kept in memory and never written here; its first and last 64 KB, the scan's fingerprint of
-	/// it, go into its stand-in.</item>
+	/// it, go into its stand-in, a sparse file of its size holding only those.</item>
 	/// <item>Every reader that opens a file by its path asks <see cref="Fetch"/> first (<see cref="RemoteFiles"/>), so a
-	/// photo the report looks at again is fetched again rather than read as zeros.</item>
-	/// <item>At most <see cref="Cap"/> of fetched bytes are held at a time: past it, those read longest ago are emptied.</item>
+	/// photo the report looks at again is fetched again rather than found missing.</item>
+	/// <item>At most <see cref="Cap"/> of fetched bytes are held at a time: past it, those read longest ago are let go.</item>
 	/// </list>
+	/// Heiward 1.11.0 to 1.11.5 kept a sparse stand-in of every file listed, and never removed them: 670,000 files on one
+	/// PC. What an earlier scan left in the folder is moved aside whole as the scan begins (<see cref="SetAside"/>), and
+	/// deleted in the background (<see cref="OldMirrors"/>).
 	/// </summary>
 	sealed partial class RemoteMirror : IDisposable {
 		/// <summary>How much of the other PC's files may be held here at once: a few hundred photos.</summary>
@@ -250,6 +255,8 @@ namespace HEI.Agent.Estate {
 			public readonly object Gate = new();
 			/// <summary>The ranges fetched into the stand-in, [From, To), in order and apart.</summary>
 			public readonly List<(long From, long To)> Filled = new();
+			/// <summary>Its file is here: made with the first bytes fetched into it, deleted when they're let go (<see cref="Empty"/>).</summary>
+			public bool OnDisk;
 			public long Bytes;
 			public long Used;
 			public int Readers;
@@ -287,45 +294,84 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
-		string CleanMark => Folder + ".empty";
+		/// <summary>Added to the folder's name when what's in it is moved aside (<see cref="SetAside"/>), before the time it was.</summary>
+		internal const string OldSuffix = ".old-";
+
+		/// <summary>What Heiward 1.11.0 to 1.11.5 wrote beside the folder once a scan had emptied its stand-ins.</summary>
+		internal static string EmptyMark(string folder) => folder + ".empty";
 
 		/// <summary>
-		/// Makes the stand-ins the listing's: one for each file listed, of its size and dates; one whose file changed is made
-		/// again; one no longer listed goes. Every stand-in is empty after (a scan stopped short may have left some held).
+		/// What an earlier scan left in <paramref name="folder"/> moved aside whole, an instant however much it holds: an older
+		/// Heiward's stand-in of every file, or what a scan cut short held. It goes to <c>mirror.old-&lt;time&gt;</c> beside it,
+		/// which <see cref="OldMirrors"/> deletes in the background; an empty folder just goes. False when something is there
+		/// and couldn't be moved (a file in it is open just now): it's left as it is, to be moved another time.
 		/// </summary>
-		public (int Added, int Changed, int Gone) Sync(RemoteListing listing, Action<int, int>? progress = null) {
-			Directory.CreateDirectory(Folder);
-			try { new DirectoryInfo(Folder).Attributes |= FileAttributes.NotContentIndexed; }
+		internal static bool SetAside(string folder) {
+			TryDelete(EmptyMark(folder));
+			if (!Directory.Exists(folder)) return true;
+			try {
+				Directory.Delete(folder); // empty: nothing to set aside
+				return true;
+			}
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-			bool clean = File.Exists(CleanMark);
-			TryDelete(CleanMark);
+			try {
+				Directory.Move(folder, folder + OldSuffix + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff", System.Globalization.CultureInfo.InvariantCulture));
+				return true;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return false;
+			}
+		}
+
+		/// <summary>The folder holds only what this scan made (what was there was moved aside): it goes whole when the scan is over.</summary>
+		bool ownsFolder;
+
+		/// <summary>
+		/// The stand-ins the listing's: one for each file listed, of its size and dates, none of them a file here yet. What an
+		/// earlier scan left in the folder is moved aside (<see cref="SetAside"/>). How many there are.
+		/// </summary>
+		public int Sync(RemoteListing listing) {
 			stands.Clear();
 			holding.Clear();
 			Interlocked.Exchange(ref held, 0);
-			var want = new Dictionary<string, ListedFile>(StringComparer.OrdinalIgnoreCase);
-			foreach (ListedRoot root in listing.Roots)
-				foreach (ListedFile f in root.Files)
-					want[RemotePath.Mirrored(Folder, f.Path)] = f;
-			int added = 0, changed = 0, gone = 0, made = 0;
-			foreach (string p in Directory.EnumerateFiles(Folder, "*", SearchOption.AllDirectories))
-				if (!want.ContainsKey(p) && TryDelete(p)) gone++;
-			progress?.Invoke(0, want.Count);
-			foreach (var (p, f) in want) {
-				if (++made % 1_000 == 0) progress?.Invoke(made, want.Count);
-				var info = new FileInfo(p);
-				if (info.Exists && info.Length == f.Size && info.LastWriteTimeUtc.Ticks == f.ModifiedTicks) {
-					if (!clean) Zero(p, f);
+			lock (fillGate) {
+				closed = false;
+				if (closing.IsCancellationRequested) {
+					closing = new CancellationTokenSource();
+					fetchStop = null;
 				}
-				else {
-					if (info.Exists) changed++;
-					else added++;
-					Create(p, f);
-				}
-				stands[p] = new Stand(f, p);
 			}
-			progress?.Invoke(want.Count, want.Count);
-			RemoveEmptyFolders(Folder);
-			return (added, changed, gone);
+			ownsFolder = SetAside(Folder);
+			foreach (ListedRoot root in listing.Roots)
+				foreach (ListedFile f in root.Files) {
+					string p = RemotePath.Mirrored(Folder, f.Path);
+					stands[p] = new Stand(f, p);
+				}
+			return stands.Count;
+		}
+
+		/// <summary>
+		/// <see cref="RemoteFiles.About"/>: a stand-in as the other PC listed its file (its creation time its last write, as
+		/// Heiward's stand-ins always had it, so the database's entries match); a path under <see cref="Folder"/> that isn't
+		/// listed isn't there; null for any other path, which the disk is asked about.
+		/// </summary>
+		public RemoteFiles.FileFacts? About(string path) =>
+			stands.TryGetValue(path, out Stand? s) ? new RemoteFiles.FileFacts(true, s.File.Size, s.File.ModifiedUtc, s.File.ModifiedUtc)
+			: IsRemote(path) ? default(RemoteFiles.FileFacts)
+			: null;
+
+		/// <summary>From here on, every reader reads the stand-ins through this mirror: <see cref="RemoteFiles"/> and <see cref="RemoteMedia"/>.</summary>
+		public void Serve() {
+			RemoteFiles.Fetch = Fetch;
+			RemoteFiles.About = About;
+			RemoteMedia.Use(IsRemote, Open);
+		}
+
+		/// <summary>Back to reading every file from the disk.</summary>
+		public static void StopServing() {
+			RemoteFiles.Fetch = null;
+			RemoteFiles.About = null;
+			RemoteMedia.Stop();
 		}
 
 		/// <summary>
@@ -410,12 +456,20 @@ namespace HEI.Agent.Estate {
 				count = size;
 			}
 			long from = Math.Max(0, offset), to = Math.Min(size, offset + count);
-			if (to <= from) return true;
+			if (to <= from && size > 0) return true; // nothing asked
 			if (Failed.TryGetValue(path, out string? why) && Final(why)) return false;
 			long t0 = Stopwatch.GetTimestamp();
+			lock (fillGate) {
+				if (closed) return false; // the scan is over
+				filling++;
+			}
 			try {
 				lock (s.Gate) {
 					s.Used = Stopwatch.GetTimestamp();
+					if (to <= from) { // an empty file: one to open, as there
+						if (!s.OnDisk) MakeFile(s, sparse: false);
+						return true;
+					}
 					foreach (var (a, b) in Missing(s, from / Align * Align, Math.Min(size, (to + Align - 1) / Align * Align)))
 						FillRange(s, a, b, whole ? RemoteTimings.For.Whole : RemoteTimings.For.Ends);
 				}
@@ -423,7 +477,7 @@ namespace HEI.Agent.Estate {
 				Trim();
 				return true;
 			}
-			catch (RemoteReadFailed e) {
+			catch (RemoteReadFailed e) when (!closing.IsCancellationRequested) {
 				Failed[path] = e.Code ?? e.Message;
 				if (e.Code == "over") Over = true;
 				return false;
@@ -431,9 +485,37 @@ namespace HEI.Agent.Estate {
 			catch (OperationCanceledException) {
 				return false;
 			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+			catch (Exception e) when ((e is IOException or UnauthorizedAccessException) && !closing.IsCancellationRequested) {
 				Failed[path] = "this PC couldn't hold it: " + e.Message;
 				return false;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
+				return false; // the scan was over before it came: nothing to note
+			}
+			finally {
+				lock (fillGate)
+					if (--filling == 0) Monitor.PulseAll(fillGate);
+			}
+		}
+
+		/// <summary>Fetches under way (<see cref="Fetch"/>), and whether the scan is over (<see cref="EmptyAll"/>): none starts after.</summary>
+		readonly object fillGate = new();
+		int filling;
+		bool closed;
+		/// <summary>Cancelled once the scan is over: a fetch still under way gives up, rather than leave a file behind.</summary>
+		CancellationTokenSource closing = new();
+		CancellationTokenSource? fetchStop;
+		/// <summary>How long the end of a scan waits for the fetches under way to give up.</summary>
+		static readonly TimeSpan FillsEndWait = TimeSpan.FromSeconds(30);
+
+		/// <summary>What a fetch is cancelled by: the scan stopping (<see cref="Stopping"/>), or being over (<see cref="EmptyAll"/>).</summary>
+		CancellationToken FetchToken {
+			get {
+				if (fetchStop == null) {
+					var made = CancellationTokenSource.CreateLinkedTokenSource(Stopping, closing.Token);
+					if (Interlocked.CompareExchange(ref fetchStop, made, null) != null) made.Dispose();
+				}
+				return fetchStop.Token;
 			}
 		}
 
@@ -449,10 +531,7 @@ namespace HEI.Agent.Estate {
 		/// (<see cref="Fetch"/>, <see cref="Open"/>) as before.
 		/// </summary>
 		public SortNeeds Refuse() {
-			var needs = new SortNeeds(() => {
-				RemoteFiles.Fetch = Fetch;
-				RemoteMedia.Use(IsRemote, Open);
-			});
+			var needs = new SortNeeds(Serve);
 			RemoteFiles.Fetch = (path, _, _) => {
 				if (!stands.ContainsKey(path)) return !IsRemote(path);
 				needs.Asked(path);
@@ -465,15 +544,29 @@ namespace HEI.Agent.Estate {
 			return needs;
 		}
 
-		/// <summary>Every stand-in emptied (the scan is over), and marked so the next scan needn't check.</summary>
+		/// <summary>
+		/// The scan is over: the fetching stops (what's under way gives up, and nothing more is fetched), every stand-in held is
+		/// deleted, and the folder goes with them, unless what an earlier scan left there couldn't be moved aside.
+		/// </summary>
 		public void EmptyAll() {
+			closing.Cancel();
 			StopAhead();
+			lock (fillGate) {
+				closed = true;
+				var waited = Stopwatch.StartNew();
+				while (filling > 0 && FillsEndWait - waited.Elapsed is var left && left > TimeSpan.Zero) Monitor.Wait(fillGate, left);
+			}
 			foreach (Stand s in holding.Keys) Empty(s);
-			try { File.WriteAllText(CleanMark, ""); }
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+			if (ownsFolder && Directory.Exists(Folder)) {
+				try { Directory.Delete(Folder, recursive: true); } // the folders the stand-ins were in, and any file a reader still had open
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // moved aside by the next scan, or OldMirrors
+			}
 		}
 
-		public void Dispose() => EmptyAll();
+		public void Dispose() {
+			EmptyAll();
+			fetchStop?.Dispose();
+		}
 
 		/// <summary>The parts of [a, b) not fetched yet.</summary>
 		static List<(long, long)> Missing(Stand s, long a, long b) {
@@ -494,17 +587,35 @@ namespace HEI.Agent.Estate {
 			lock (s.Gate) return Missing(s, a, b).Count == 0;
 		}
 
-		/// <summary>[a, b) fetched into the stand-in in one ask (a photo whole, not 4 MB at a time), written as it comes.</summary>
+		/// <summary>
+		/// [a, b) fetched into the stand-in in one ask (a photo whole, not 4 MB at a time), written as it comes; its file made
+		/// first, if it isn't here: of its size, sparse unless all of it is coming now. Under its <see cref="Stand.Gate"/>.
+		/// </summary>
 		void FillRange(Stand s, long a, long b, RemoteTimings.For what) {
-			using (var fs = new FileStream(s.Path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 1)) {
-				long got = Timed(what, () => source.Stream(s.File, a, b - a, (at, bytes) => {
-					fs.Position = at;
-					fs.Write(bytes);
-					Mark(s, at, at + bytes.Length);
-				}, Stopping));
-				if (got < b - a) throw new RemoteReadFailed("it ended early", "changed");
+			bool made = !s.OnDisk;
+			if (made) MakeFile(s, sparse: a > 0 || b < s.File.Size);
+			try {
+				using (var fs = new FileStream(s.Path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 1)) {
+					long got = Timed(what, () => source.Stream(s.File, a, b - a, (at, bytes) => {
+						fs.Position = at;
+						fs.Write(bytes);
+						Mark(s, at, at + bytes.Length);
+					}, FetchToken));
+					if (got < b - a) throw new RemoteReadFailed("it ended early", "changed");
+				}
 			}
-			Stamp(s.Path, s.File); // writing moved its date: back to the other PC's, which the scan compares
+			catch when (made) {
+				Empty(s); // a file made for bytes that didn't come doesn't stay (a photo's takes its whole size)
+				throw;
+			}
+			Stamp(s.Path, s.File); // writing moved its date: back to the other PC's, for any reader that asks the file
+		}
+
+		/// <summary>The stand-in's file made, held from now on (<see cref="holding"/>) so it's deleted with the rest. Under its <see cref="Stand.Gate"/>.</summary>
+		void MakeFile(Stand s, bool sparse) {
+			Create(s.Path, s.File, sparse);
+			s.OnDisk = true;
+			holding[s] = 0;
 		}
 
 		/// <summary>[a, b) is fetched: added to the stand's ranges, merged with its neighbours.</summary>
@@ -527,16 +638,18 @@ namespace HEI.Agent.Estate {
 			while (now > (most = Interlocked.Read(ref mostHeld)) && Interlocked.CompareExchange(ref mostHeld, now, most) != most) { }
 		}
 
+		/// <summary>What was fetched of a stand-in let go: its file deleted.</summary>
 		void Empty(Stand s) {
 			lock (s.Gate) {
-				if (s.Bytes == 0) return;
-				try { Zero(s.Path, s.File); }
+				if (!s.OnDisk) return;
+				try { File.Delete(s.Path); }
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
-					return; // open elsewhere just now: emptied by the next trim, or at the end
+					return; // open elsewhere just now: let go of by the next trim, or at the end
 				}
 				Interlocked.Add(ref held, -s.Bytes);
 				s.Bytes = 0;
 				s.Filled.Clear();
+				s.OnDisk = false;
 				holding.TryRemove(s, out _);
 			}
 		}
@@ -554,21 +667,13 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
-		static void Create(string path, ListedFile f) {
+		/// <summary>A stand-in's file of the other PC's size: sparse, taking no room till its bytes come; or not, for one all of whose bytes are coming now.</summary>
+		static void Create(string path, ListedFile f, bool sparse) {
 			Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-			using (var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, 1)) {
-				SetSparse(fs.SafeFileHandle);
-				fs.SetLength(f.Size);
-				ZeroAll(fs); // NTFS keeps the cluster the file now ends in: given back too
-			}
-			Stamp(path, f);
-		}
-
-		/// <summary>All of a stand-in's bytes zeroed and their space given back (it stays sparse), its dates the other PC's.</summary>
-		static void Zero(string path, ListedFile f) {
-			using (var fs = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete, 1))
-				ZeroAll(fs);
-			Stamp(path, f);
+			using var fs = new FileStream(path, FileMode.Create, FileAccess.ReadWrite, FileShare.ReadWrite | FileShare.Delete, 1);
+			if (sparse) SetSparse(fs.SafeFileHandle);
+			fs.SetLength(f.Size);
+			if (sparse) ZeroAll(fs); // NTFS keeps the cluster the file now ends in: given back too
 		}
 
 		static void ZeroAll(FileStream fs) {
@@ -587,24 +692,8 @@ namespace HEI.Agent.Estate {
 				throw new IOException($"this drive can't hold sparse files (error {Marshal.GetLastPInvokeError()})");
 		}
 
-		static bool TryDelete(string path) {
-			try {
-				if (!File.Exists(path)) return false;
-				File.Delete(path);
-				return true;
-			}
-			catch (Exception e) when (e is IOException or UnauthorizedAccessException) {
-				return false;
-			}
-		}
-
-		static void RemoveEmptyFolders(string folder) {
-			try {
-				foreach (string sub in Directory.EnumerateDirectories(folder)) {
-					RemoveEmptyFolders(sub);
-					if (!Directory.EnumerateFileSystemEntries(sub).Any()) Directory.Delete(sub);
-				}
-			}
+		static void TryDelete(string path) {
+			try { File.Delete(path); }
 			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 		}
 
@@ -699,7 +788,7 @@ namespace HEI.Agent.Estate {
 				else {
 					long t0 = Stopwatch.GetTimestamp();
 					try {
-						int got = mirror.Timed(RemoteTimings.For.Parts, () => mirror.source.Read(stand.File, from, data, length, mirror.Stopping));
+						int got = mirror.Timed(RemoteTimings.For.Parts, () => mirror.source.Read(stand.File, from, data, length, mirror.FetchToken));
 						if (got < length) throw new RemoteReadFailed("it ended early", "changed");
 					}
 					catch (RemoteReadFailed e) {

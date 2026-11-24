@@ -616,6 +616,8 @@ namespace HEI.Agent {
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
 			// A scan for another PC, or of this one by another, ends with the page: the other PC hears why.
 			app.Lifetime.ApplicationStopping.Register(Estate.ScanForOthers.Shutdown);
+			// What an older Heiward kept of the PCs it scanned for (a file for each of theirs) goes, in the background.
+			Estate.OldMirrors.Start(app.Lifetime.ApplicationStopping);
 			// A clean stop folds the listings' journals in, so a build from before them reads every drive's listing as it is.
 			app.Lifetime.ApplicationStopping.Register(() => StoredListing.FoldAll(AgentPaths.AppendLog));
 			ScanIfDue(cfg);

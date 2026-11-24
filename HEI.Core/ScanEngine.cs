@@ -234,7 +234,16 @@ namespace HEI.Core {
 
 		/// <param name="Listed">Files listed now, as the walk would have (their sizes and dates came with the listing).</param>
 		/// <param name="Unchanged">Paths of files known to be exactly as the database has them.</param>
-		public sealed record RootListing(IReadOnlyList<FileInfo> Listed, IReadOnlyCollection<string> Unchanged);
+		/// <param name="Made">Files listed now that have no file on this PC (another PC's), as entries of their listed sizes and dates.</param>
+		public sealed record RootListing(IReadOnlyList<FileInfo> Listed, IReadOnlyCollection<string> Unchanged, IReadOnlyList<FileEntry>? Made = null);
+
+		/// <summary>The file at <paramref name="path"/> as an entry: another PC's as its listing has it (<see cref="RemoteFiles.About"/>), this PC's as its disk does; null when it isn't there.</summary>
+		static FileEntry? EntryAt(string path) {
+			if (RemoteFiles.About?.Invoke(path) is RemoteFiles.FileFacts listed)
+				return listed.Exists ? new FileEntry(path, listed.Length, listed.CreationTimeUtc, listed.LastWriteTimeUtc) : null;
+			var file = new FileInfo(path);
+			return file.Exists ? new FileEntry(file) : null;
+		}
 		// True between StartSearch beginning a log session and the chained StartCompare
 		// joining it; lets a standalone StartCompare open its own session instead.
 		bool compareIsChainedToSearch;
@@ -953,7 +962,7 @@ namespace HEI.Core {
 			if (disks.Count > 1)
 				Logger.Instance.Info($"Listing {disks.Count} disks at once, slowest first: {string.Join(" | ", disks.Select(d => string.Join(", ", d)))}");
 			// Not disposed: after a cancel this method returns while a walk may still be finishing its folder.
-			var listed = new BlockingCollection<(string Root, IReadOnlyList<FileInfo> Files, IReadOnlyCollection<string>? Unchanged)>();
+			var listed = new BlockingCollection<(string Root, IReadOnlyList<FileInfo> Files, IReadOnlyCollection<string>? Unchanged, IReadOnlyList<FileEntry>? Made)>();
 			Task walks = Task.WhenAll(disks.Select(diskRoots => Task.Run(() => {
 				foreach (string root in diskRoots) {
 					if (cancellationToken.IsCancellationRequested)
@@ -965,12 +974,26 @@ namespace HEI.Core {
 						Settings.IncludeSubDirectories, Settings.IncludeImages, excludedFolders, cancellationToken, Settings.SkipCloudPlaceholders, Settings.ExcludedExtensions,
 						Settings.SkipFoldersContaining, Settings.SkipFolderLinks);
 					listingTimes[root] = Stopwatch.GetElapsedTime(listingStart);
-					listed.Add((root, files, given?.Unchanged));
+					listed.Add((root, files, given?.Unchanged, given?.Made));
 				}
 			})));
 			walks.ContinueWith(_ => listed.CompleteAdding(), TaskScheduler.Default);
 
-			foreach (var (_, files, unchanged) in listed.GetConsumingEnumerable()) {
+			// A listed file into the database: a new one added (or relinked, if it moved), a known one refreshed.
+			void Merge(FileEntry fEntry) {
+				if (!DatabaseUtils.Database.TryGetValue(fEntry, out var dbEntry)) {
+					// Path not in the DB: either a genuinely new file or one moved/renamed from a
+					// path that's now gone. Relink the latter so its analysis survives the move.
+					if (TryRelinkMovedFile(fEntry, relinkBySize))
+						relinkedCount++;
+					else
+						DatabaseUtils.Database.Add(fEntry);
+				}
+				else
+					RefreshExistingEntry(fEntry, dbEntry);
+			}
+
+			foreach (var (_, files, unchanged, made) in listed.GetConsumingEnumerable()) {
 				// Files the caller vouches for: found, and already as the database has them. One the
 				// database doesn't have after all is read like a listed file.
 				foreach (string path in unchanged ?? Array.Empty<string>()) {
@@ -982,10 +1005,8 @@ namespace HEI.Core {
 						continue;
 					}
 					try {
-						var file = new FileInfo(path);
-						if (!file.Exists) continue;
-						foundFiles.Add((file.FullName, file.Length));
-						var fEntry = new FileEntry(file);
+						if (EntryAt(path) is not FileEntry fEntry) continue;
+						foundFiles.Add((fEntry.Path, fEntry.FileSize));
 						if (!TryRelinkMovedFile(fEntry, relinkBySize))
 							DatabaseUtils.Database.Add(fEntry);
 						else
@@ -1008,16 +1029,14 @@ namespace HEI.Core {
 						Logger.Instance.Warn($"Skipped file '{file}' because of {e}");
 						continue;
 					}
-					if (!DatabaseUtils.Database.TryGetValue(fEntry, out var dbEntry)) {
-						// Path not in the DB: either a genuinely new file or one moved/renamed from a
-						// path that's now gone. Relink the latter so its analysis survives the move.
-						if (TryRelinkMovedFile(fEntry, relinkBySize))
-							relinkedCount++;
-						else
-							DatabaseUtils.Database.Add(fEntry);
-					}
-					else
-						RefreshExistingEntry(fEntry, dbEntry);
+					Merge(fEntry);
+				}
+				// Files listed from elsewhere, with no file here: another PC's, their sizes and dates as it listed them.
+				foreach (FileEntry fEntry in made ?? Array.Empty<FileEntry>()) {
+					if (cancellationToken.IsCancellationRequested)
+						return;
+					foundFiles.Add((fEntry.Path, fEntry.FileSize));
+					Merge(fEntry);
 				}
 			}
 			if (cancellationToken.IsCancellationRequested)
@@ -1106,7 +1125,7 @@ namespace HEI.Core {
 			// a copy, not a move — leave it and treat the new path as a new file.)
 			List<FileEntry>? missing = null;
 			foreach (var c in sameSize)
-				if ((MayRead?.Invoke(c.Path) ?? true) && !File.Exists(c.Path)) // one that mustn't be read counts as still there
+				if ((MayRead?.Invoke(c.Path) ?? true) && !RemoteFiles.Exists(c.Path)) // one that mustn't be read counts as still there
 					(missing ??= new List<FileEntry>()).Add(c);
 			if (missing == null)
 				return false;
@@ -1449,7 +1468,7 @@ namespace HEI.Core {
 							// A gray-complete entry may still need embedding backfill — but only
 							// when the file is actually readable; tombstones (deleted files kept
 							// for comparison) stay fully-cached and the AI pass abstains for them.
-							if (hasAllInformation && aiEmbeddingPipeline != null && File.Exists(entry.Path)) {
+							if (hasAllInformation && aiEmbeddingPipeline != null && RemoteFiles.Exists(entry.Path)) {
 								if (entry.IsImage) {
 									hasAllInformation = !aiEmbeddingPipeline.WantsEmbedding(entry, 0);
 								}
@@ -1483,7 +1502,7 @@ namespace HEI.Core {
 						// incomplete cached data cannot be (re)analysed without the file, so
 						// exclude it from this scan instead of spawning ffprobe/ffmpeg on a
 						// missing path (which only errors).
-						if (!File.Exists(entry.Path)) {
+						if (!RemoteFiles.Exists(entry.Path)) {
 							entry.invalid = true;
 							CompleteEntry(entry, driveCounter);
 							return ValueTask.CompletedTask;
@@ -3098,7 +3117,7 @@ namespace HEI.Core {
 			if (e.grayBytes != null)
 				foreach (var v in e.grayBytes.Values)
 					if (v != null) return false;   // at least one usable frame hash -> keep as tombstone
-			if (File.Exists(e.Path)) return false;
+			if (RemoteFiles.Exists(e.Path)) return false;
 			string root = Path.GetPathRoot(e.Path) ?? string.Empty;
 			if (!driveReadyCache.TryGetValue(root, out bool ready))
 				driveReadyCache[root] = ready = IsDriveReady(e.Path);

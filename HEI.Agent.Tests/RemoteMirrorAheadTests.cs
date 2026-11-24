@@ -25,12 +25,13 @@ namespace HEI.Agent.Tests;
 /// before it gets to them, several asks at once, within bounds; a video's decoder reading straight on gets bigger asks.
 /// </summary>
 public sealed partial class RemoteMirrorTests {
-	List<FileEntry> Entries(RemoteMirror mirror, params string[] paths) => paths.Select(p => new FileEntry(RemotePath.Mirrored(mirror.Folder, p))).ToList();
+	List<FileEntry> Entries(RemoteMirror mirror, params string[] paths) => paths.Select(Entry).ToList();
 
 	(RemoteMirror Mirror, LocalBytes Bytes) MirrorWith(long aheadBytes, params string[] paths) {
 		var bytes = new LocalBytes();
 		var mirror = new RemoteMirror(mirrorDir, bytes) { Recent = TimeSpan.Zero, AheadBytes = aheadBytes };
 		mirror.Sync(Listing(paths));
+		mirror.Serve();
 		return (mirror, bytes);
 	}
 
@@ -50,7 +51,7 @@ public sealed partial class RemoteMirrorTests {
 				Assert.Equal(File.ReadAllBytes(photos[i]), File.ReadAllBytes(entries[i].Path));
 				mirror.After(entries[i]);
 			}
-			RemoteFiles.Fetch = mirror.Fetch;
+			Assert.Equal(asks, bytes.Asks);
 			Assert.True(mirror.Before(entries[^1]));
 			Assert.Equal(OsHashUtils.TryCompute(video), OsHashUtils.TryCompute(entries[^1].Path)); // its fingerprint's ends are there
 			mirror.After(entries[^1]);
@@ -111,7 +112,7 @@ public sealed partial class RemoteMirrorTests {
 			// The engine begins the last: the seven more than 32 places before it, never begun, were passed (left out, or known).
 			Assert.True(mirror.Before(entries[^1]));
 			Assert.True(SpinWait.SpinUntil(() => mirror.Held <= 33 * 50_000L, 10_000), $"held {mirror.Held}");
-			Assert.Equal(0, Allocated(entries[0].Path));
+			Assert.False(File.Exists(entries[0].Path)); // deleted
 			mirror.After(entries[^1]);
 		}
 	}
@@ -130,17 +131,30 @@ public sealed partial class RemoteMirrorTests {
 		}
 	}
 
+	// A file here for each photo held, and only while it's held: the most at once is the files fetched ahead and the one
+	// read, never one for each file listed; none once the scan is over.
 	[Fact]
-	public void MakingRoom_CountsTheStandInsAsTheyreMade() {
-		string[] photos = Enumerable.Range(0, 2_500).Select(i => Path.Combine(src, $"p{i:D4}.jpg")).ToArray();
-		foreach (string p in photos) File.WriteAllBytes(p, [1, 2, 3]);
-		var calls = new List<(int Done, int Total)>();
-		using var mirror = new RemoteMirror(mirrorDir, new LocalBytes());
-		mirror.Sync(Listing(photos), (d, t) => calls.Add((d, t)));
-		Assert.Equal((0, 2_500), calls[0]);
-		Assert.Contains((1_000, 2_500), calls);
-		Assert.Contains((2_000, 2_500), calls);
-		Assert.Equal((2_500, 2_500), calls[^1]);
+	public void TheFilesHere_AreNoMoreThanThoseFetchedAhead_AndNoneAfter() {
+		string[] photos = Enumerable.Range(0, 300).Select(i => Make($"p{i:D3}.jpg", 5_000 + i, 200 + i)).ToArray();
+		var bytes = new LocalBytes();
+		var mirror = new RemoteMirror(mirrorDir, bytes) { Recent = TimeSpan.Zero, AheadFiles = 16 };
+		mirror.Sync(Listing(photos));
+		mirror.Serve();
+		int most = 0;
+		using (mirror) {
+			List<FileEntry> entries = Entries(mirror, photos);
+			mirror.Plan([entries]);
+			foreach (FileEntry e in entries) {
+				Assert.True(mirror.Before(e));
+				Assert.Equal(e.FileSize, new FileInfo(e.Path).Length);
+				most = Math.Max(most, FilesHere().Length);
+				mirror.After(e);
+			}
+			Assert.True(SpinWait.SpinUntil(() => mirror.Held == 0, 10_000), $"held {mirror.Held}");
+		}
+		Assert.InRange(most, 1, 16 + 1);
+		Assert.Equal(photos.Sum(p => new FileInfo(p).Length), bytes.Bytes); // each fetched once
+		Assert.False(Directory.Exists(mirrorDir));
 	}
 
 	[Fact]

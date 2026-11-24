@@ -46,6 +46,21 @@ namespace HEI.Core {
 				Flags.Set(EntryFlags.ReparsePointChecked);
 			}
 		}
+		/// <summary>
+		/// A file as its listing gives it, not as a disk here has it: another PC's (<see cref="RemoteFiles.About"/>), which has
+		/// no file here. Its path is made full as a <see cref="FileInfo"/>'s is; it's no reparse point.
+		/// </summary>
+		public FileEntry(string path, long size, DateTime createdUtc, DateTime modifiedUtc) {
+			var fileInfo = new FileInfo(path); // its names only: nothing is asked of the disk
+			_Path = fileInfo.FullName;
+			Folder = fileInfo.Directory?.FullName ?? string.Empty;
+			var extension = fileInfo.Extension;
+			IsImage = FileUtils.ImageExtensions.Any(x => extension.EndsWith(x, StringComparison.OrdinalIgnoreCase));
+			DateCreated = createdUtc;
+			DateModified = modifiedUtc;
+			FileSize = size;
+			Flags.Set(EntryFlags.ReparsePointChecked);
+		}
 
 		[MemoryPackInclude, MemoryPackOrder(0)]
 		internal string _Path;

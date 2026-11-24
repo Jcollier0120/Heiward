@@ -659,7 +659,8 @@ namespace HEI.Agent.Estate {
 					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 					TryDelete(RemoteStatus.FilePath(home));
 					TryDelete(RemoteScanner.StopFile(home));
-					child = StartHei(home, "remote-scan", "--pc", loan.From.Id, "--name", loan.From.Name);
+					// Never while an old mirror of that PC's is being moved aside (OldMirrors): the scan moves it itself.
+					lock (OldMirrors.Gate) child = StartHei(home, "remote-scan", "--pc", loan.From.Id, "--name", loan.From.Name);
 					if (child == null) {
 						loan.End("Heiward couldn't start the scan there");
 						return;
@@ -680,6 +681,7 @@ namespace HEI.Agent.Estate {
 					if (!child.HasExited) return;
 					watch?.Dispose();
 					watch = null;
+					OldMirrors.Kick(); // what it moved aside, or left, goes now
 					var done = new JsonObject { ["code"] = child.ExitCode };
 					if (s is { Pid: var pid } && pid == child.Id) {
 						done["stage"] = s.Stage;
@@ -726,8 +728,23 @@ namespace HEI.Agent.Estate {
 					c.Kill(entireProcessTree: true);
 				}
 				catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
+				finally { OldMirrors.Kick(); }
+			}
+
+			/// <summary>
+			/// Whether this job's scan runs, or is starting, in <paramref name="at"/>, for <see cref="OldMirrors"/>: read without
+			/// its lock, which is held while the scan starts, under OldMirrors' own.
+			/// </summary>
+			public bool RunsIn(string at) {
+				Process? c = Volatile.Read(ref child);
+				if (c == null || !string.Equals(Volatile.Read(ref home), at, StringComparison.OrdinalIgnoreCase)) return false;
+				try { return !c.HasExited; }
+				catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
 			}
 		}
+
+		/// <summary>A scan for another PC runs in <paramref name="home"/>, or is starting there.</summary>
+		internal static bool ScansIn(string home) => Volatile.Read(ref job)?.RunsIn(Path.TrimEndingDirectorySeparator(home)) == true;
 
 		/// <summary><c>hei &lt;args&gt;</c> in the background; with <paramref name="home"/>, as Heiward's home there (HEIWARD_HOME).</summary>
 		static Process? StartHei(string? home, params string[] args) {

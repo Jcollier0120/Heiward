@@ -78,7 +78,8 @@ namespace HEI.Agent.Estate {
 	/// <list type="number">
 	/// <item>The other PC's listing, a page at a time (<see cref="ListingPages"/>), unless it's the same as at the last
 	/// scan (<c>?have=</c>): then nothing is read at all.</item>
-	/// <item>A stand-in for each file listed (<see cref="RemoteMirror"/>); files listed as at the last scan aren't read again.</item>
+	/// <item>A stand-in for each file listed (<see cref="RemoteMirror"/>), a path of its listed size and dates that is a file
+	/// here only while bytes of it are; files listed as at the last scan aren't read again.</item>
 	/// <item>The engine as for this PC's own scans, its readers fetching what they read; at most <see cref="MostCores"/>
 	/// cores' worth of the processor, in the background, the NPU for the AI where this PC has one.</item>
 	/// <item>The report, its sets with the other PC's paths (<see cref="RemoteFindings"/>), for it to pull.</item>
@@ -253,13 +254,9 @@ namespace HEI.Agent.Estate {
 				AgentPaths.AppendLog(giving ? $"scan for {name}: this PC's NPU is lent to something more urgent, so the scan waits for it"
 					: $"scan for {name}: the NPU is free of it again");
 			});
+			// No file is made for them here (an older Heiward made one of each, and kept them): only while bytes of one are held.
 			using var mirror = new RemoteMirror(mirrorDir, bytes) { Stopping = stopping.Token, Timings = timings };
-			// The card counts the stand-ins as they're made, from none (not the listing's count, done).
-			progress(0, listed);
-			stage("Making room for its files");
-			var roomTimer = Stopwatch.StartNew();
-			var (added, changed, gone) = mirror.Sync(listing, progress);
-			AgentPaths.AppendLog($"scan for {name}: room made for its {listed:N0} files in {roomTimer.Elapsed.TotalSeconds:N1} s");
+			mirror.Sync(listing);
 
 			// 3. The engine, as for this PC's own scans, reading through the stand-ins.
 			var notes = new List<string>();
@@ -279,6 +276,9 @@ namespace HEI.Agent.Estate {
 				EnablePartialClipDetection = false,
 				EnableAiPartialDetection = false,
 			};
+			// Its files come over the link, not off this drive, and there's no file of theirs here for the engine's seek probe:
+			// read as from a fast drive, as when each had a stand-in here to probe.
+			if (Path.GetPathRoot(mirrorDir) is { Length: > 0 } drive) settings.DriveTypeOverrides[drive] = "SSD";
 			Directory.CreateDirectory(AgentPaths.Database);
 			var roots = new Dictionary<string, ListedRoot>(StringComparer.OrdinalIgnoreCase);
 			foreach (ListedRoot r in listing.Roots) {
@@ -295,18 +295,24 @@ namespace HEI.Agent.Estate {
 			// Files listed as at the last scan aren't listed again: the engine knows them as they are.
 			Dictionary<string, ListedFile>? before = keptHolds ? kept!.Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase) : null;
 			kept = null; // its files are in before now
-			int unchangedFiles = before == null ? 0
-				: listing.Roots.SelectMany(r => r.Files).Count(f => before.TryGetValue(f.Path, out ListedFile? was) && was == f);
+			int unchangedFiles = 0, added = 0, changed = 0;
+			foreach (ListedFile f in listing.Roots.SelectMany(r => r.Files)) {
+				if (before == null || !before.TryGetValue(f.Path, out ListedFile? was)) added++;
+				else if (was == f) unchangedFiles++;
+				else changed++;
+			}
+			int gone = before == null ? 0 : before.Count - unchangedFiles - changed;
+			// The engine's entries of them, as listed: there's no file of theirs here to ask (RemoteMirror.About for the rest).
 			ScanEngine.RootListing? ListFor(string root) {
 				if (!roots.TryGetValue(Path.TrimEndingDirectorySeparator(root), out ListedRoot? r)) return null;
-				var files = new List<FileInfo>();
+				var made = new List<FileEntry>();
 				var unchanged = new List<string>();
 				foreach (ListedFile f in r.Files) {
 					string p = RemotePath.Mirrored(mirrorDir, f.Path);
 					if (before != null && before.TryGetValue(f.Path, out ListedFile? was) && was == f) unchanged.Add(p);
-					else files.Add(new FileInfo(p));
+					else made.Add(new FileEntry(p, f.Size, f.ModifiedUtc, f.ModifiedUtc));
 				}
-				return new ScanEngine.RootListing(files, unchanged);
+				return new ScanEngine.RootListing(Array.Empty<FileInfo>(), unchanged, made);
 			}
 
 			// The cap is a share of the whole PC, so of all its processors: 8 cores' worth of the X2's 18 is 44%.
@@ -337,13 +343,12 @@ namespace HEI.Agent.Estate {
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving what was read of its photos failed: " + e.Message); }
 			}
 			mirror.WhileHeld = path => {
+				if (!byStandIn.TryGetValue(path, out ListedFile? f)) return;
 				dates[path] = ExifReader.TryGetDateTaken(path, out _);
-				var file = new FileInfo(path);
 				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16);
-				hashes.Keep(path, file.Length, file.LastWriteTimeUtc, Convert.ToHexString(SHA256.HashData(fs)));
+				hashes.Keep(path, f.Size, f.ModifiedUtc, Convert.ToHexString(SHA256.HashData(fs))); // keyed as the sets will ask: by its listed size and time
 			};
-			RemoteMedia.Use(mirror.IsRemote, mirror.Open);
-			RemoteFiles.Fetch = mirror.Fetch;
+			mirror.Serve();
 			// A video whose keyframes are too far apart to sample is left out, said by name here, not under its stand-in's path.
 			FfmpegEngine.VideoLeftOut = (path, why) => AgentPaths.AppendLog($"scan for {name}: left out {mirror.Original(path)}: {why}");
 			// Planned: the files it reads next are fetched just ahead of it (RemoteMirror.Plan), several asks at once.
@@ -451,10 +456,9 @@ namespace HEI.Agent.Estate {
 				return Stopped();
 			}
 			finally {
-				RemoteFiles.Fetch = null;
+				RemoteMirror.StopServing();
 				FfmpegEngine.VideoLeftOut = null;
-				RemoteMedia.Stop();
-				mirror.EmptyAll();
+				mirror.EmptyAll(); // nothing of its files stays here
 			}
 			// Sorting the sets stops between rounds without saying so, and once the other PC ends it every read left fails at
 			// once, so the scan can get to the end first: what it made of part of the files isn't what was found.

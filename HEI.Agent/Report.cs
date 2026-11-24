@@ -615,7 +615,7 @@ namespace HEI.Agent {
 			// equals (the kept one of equal videos, the group split copies join), it's the same file in
 			// every scan, not whichever the scan happened to hand over first.
 			List<List<DuplicateItem>> members = duplicates.GroupBy(d => d.GroupId)
-				.Select(g => g.Where(d => !CanRead(d.Path) || File.Exists(d.Path)).OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList())
+				.Select(g => g.Where(d => !CanRead(d.Path) || RemoteFiles.Exists(d.Path)).OrderBy(d => d.Path, StringComparer.OrdinalIgnoreCase).ToList())
 				.OrderBy(g => g.Count > 0 ? g[0].Path : "", StringComparer.OrdinalIgnoreCase)
 				.ToList();
 			GatherSplitCopies(members, hashes, fingerprints, ct);
@@ -1154,7 +1154,7 @@ namespace HEI.Agent {
 			bool KeepsUnknown(string a, string? b = null) => !dry && NotFetched?.Invoke(a) != true && (b == null || NotFetched?.Invoke(b) != true);
 
 			/// <summary>The look kept under <paramref name="key"/> for both files as they are now; null for none.</summary>
-			static Look? Kept(Dictionary<string, Look> looks, string key, FileInfo a, FileInfo b) =>
+			static Look? Kept(Dictionary<string, Look> looks, string key, RemoteFiles.FileFacts a, RemoteFiles.FileFacts b) =>
 				looks.TryGetValue(key, out Look? s) && s.SizeA == a.Length && s.ModifiedA == a.LastWriteTimeUtc && s.SizeB == b.Length && s.ModifiedB == b.LastWriteTimeUtc ? s : null;
 
 			public static string FilePath => Path.Combine(AgentPaths.Home, "hashes.json");
@@ -1234,7 +1234,8 @@ namespace HEI.Agent {
 					return wordsNow[path] = kept;
 				}
 				try {
-					var file = new FileInfo(path);
+					// Its size and time as its scan has them (another PC's as listed: no file of it is here to ask).
+					RemoteFiles.FileFacts file = RemoteFiles.FactsOf(path);
 					if (!file.Exists) return null;
 					if (WordsKept(path, file) is { } s) return wordsNow[path] = s;
 					// A picture that couldn't be decoded for its words, as it is now: not decoded again for each pair it's in, nor next scan.
@@ -1257,7 +1258,7 @@ namespace HEI.Agent {
 			}
 
 			/// <summary>The words kept under <paramref name="key"/>, read as this reader reads, of the file as it is now; null for none.</summary>
-			Words? WordsKept(string key, FileInfo file) =>
+			Words? WordsKept(string key, RemoteFiles.FileFacts file) =>
 				wordsEarlier.TryGetValue(key, out Words? s) && s.Reader == TextCheck.Version && s.Size == file.Length && s.ModifiedUtc == file.LastWriteTimeUtc ? s : null;
 
 			static string? ReadAt(string path, Words words, (int W, int H) size, IFingerprints fingerprints) {
@@ -1299,14 +1300,14 @@ namespace HEI.Agent {
 			/// LinesUp keeps it, so LinesUp finds it; the pairs it already knows, or can't look at, are left to it.
 			/// </summary>
 			public void LineUpAhead(IReadOnlyList<(string Keep, string Other)> pairs, Func<string, string, bool?> look) {
-				var fresh = new List<(string Key, string Keep, string Other, FileInfo A, FileInfo B)>();
+				var fresh = new List<(string Key, string Keep, string Other, RemoteFiles.FileFacts A, RemoteFiles.FileFacts B)>();
 				var asked = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 				foreach (var (keep, other) in pairs) {
 					(string a, string b) = string.Compare(keep, other, StringComparison.OrdinalIgnoreCase) > 0 ? (other, keep) : (keep, other);
 					string key = AlignedLook.Version + "\n" + a + "\n" + b;
 					if (looked.ContainsKey(key) || !asked.Add(key) || !CanRead(a) || !CanRead(b)) continue;
 					try {
-						FileInfo fa = new(a), fb = new(b);
+						RemoteFiles.FileFacts fa = RemoteFiles.FactsOf(a), fb = RemoteFiles.FactsOf(b);
 						if (!fa.Exists || !fb.Exists) continue;
 						if (Kept(looksEarlier, key, fa, fb) != null || Kept(looksEarlier, UnknownKey + key, fa, fb) != null) continue; // LinesUp takes it from there
 						fresh.Add((key, keep, other, fa, fb));
@@ -1353,7 +1354,7 @@ namespace HEI.Agent {
 					return kept.Same;
 				}
 				try {
-					FileInfo fa = new(a), fb = new(b);
+					RemoteFiles.FileFacts fa = RemoteFiles.FactsOf(a), fb = RemoteFiles.FactsOf(b);
 					if (!fa.Exists || !fb.Exists) return unknown;
 					if (Kept(looksEarlier, key, fa, fb) is { } s) {
 						looksNow[key] = s;
@@ -1446,7 +1447,7 @@ namespace HEI.Agent {
 					return kept.Hash;
 				}
 				try {
-					var file = new FileInfo(path);
+					RemoteFiles.FileFacts file = RemoteFiles.FactsOf(path);
 					if (!file.Exists) return null;
 					if (earlier.TryGetValue(path, out Stored? s) && s.Size == file.Length && s.ModifiedUtc == file.LastWriteTimeUtc) {
 						now[path] = s;
