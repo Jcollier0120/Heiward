@@ -49,8 +49,7 @@ public sealed class SortAheadTests : IDisposable {
 	}
 
 	public void Dispose() {
-		RemoteFiles.Fetch = null;
-		RemoteMedia.Stop();
+		RemoteMirror.StopServing();
 		Environment.SetEnvironmentVariable("HEIWARD_HOME", home);
 		try { Directory.Delete(dir, true); } catch { }
 	}
@@ -169,8 +168,7 @@ public sealed class SortAheadTests : IDisposable {
 		bytes ??= new SlowBytes(TimeSpan.FromMilliseconds(5));
 		var mirror = new RemoteMirror(mirrorDir, bytes) { Recent = TimeSpan.Zero };
 		mirror.Sync(RemoteListing.FromKept([(src + "\\", paths.Select(p => { var f = new FileInfo(p); return (p, f.Length, f.LastWriteTimeUtc); }).ToList())], "test"));
-		RemoteFiles.Fetch = mirror.Fetch;
-		RemoteMedia.Use(mirror.IsRemote, mirror.Open);
+		mirror.Serve();
 		return (mirror, bytes);
 	}
 
@@ -229,8 +227,8 @@ public sealed class SortAheadTests : IDisposable {
 			var (items, looks, mirror, _) = Sets();
 			using (mirror) expected = Json(ReportBuilder.Build(items, looks, new ReportBuilder.ContentHashes(), datesKnown: new Dictionary<string, bool>()));
 			Assert.Equal(0, looks.ZeroReads);
-			RemoteFiles.Fetch = null;
-			Directory.Delete(mirrorDir, true);
+			RemoteMirror.StopServing();
+			if (Directory.Exists(mirrorDir)) Directory.Delete(mirrorDir, true);
 			foreach (string f in Directory.GetFiles(src)) File.Delete(f);
 		}
 		var (again, remote, m, bytes) = Sets(new SlowBytes(TimeSpan.FromMilliseconds(30)));
@@ -371,7 +369,7 @@ public sealed class SortAheadTests : IDisposable {
 					$"{bytes.Bytes / 1e6 / seconds:N2} MB/s, at most {bytes.MostAtOnce} asks at once; its looks waited {looks.WaitTicks / (double)Stopwatch.Frequency:N1} s " +
 					$"for bytes and worked {looks.WorkTicks / (double)Stopwatch.Frequency:N1} s");
 			}
-			RemoteFiles.Fetch = null;
+			RemoteMirror.StopServing();
 		}
 	}
 

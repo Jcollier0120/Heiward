@@ -21,9 +21,9 @@ using HEI.Core.Utils;
 namespace HEI.Agent.Tests;
 
 /// <summary>
-/// The stand-ins a scan of another PC reads: sparse files of the other PC's sizes and dates, holding only what a read
-/// fetched and emptied after, so nothing of the other PC's files stays here; a part that can't be fetched fails the read,
-/// never reads as zeros.
+/// The stand-ins a scan of another PC reads: paths of the other PC's sizes and dates (as listed) that are files here only
+/// while a read's bytes are held, and deleted after, so nothing of the other PC's files stays here; a part that can't be
+/// fetched fails the read, never reads as zeros.
 /// </summary>
 [Collection(AgentHomeCollection.Name)] // RemoteFiles.Fetch is process-wide
 public sealed partial class RemoteMirrorTests : IDisposable {
@@ -37,7 +37,7 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 	}
 
 	public void Dispose() {
-		RemoteFiles.Fetch = null;
+		RemoteMirror.StopServing();
 		try { Directory.Delete(dir, true); } catch { }
 	}
 
@@ -74,42 +74,61 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 		var bytes = new LocalBytes();
 		var mirror = new RemoteMirror(mirrorDir, bytes, cap) { Recent = TimeSpan.Zero };
 		mirror.Sync(Listing(paths));
+		mirror.Serve();
 		return (mirror, bytes);
 	}
 
+	/// <summary>The engine's entry of one of "the other PC's" files, as the scan makes it: from its listing, not from a file here.</summary>
+	Core.FileEntry Entry(string original) {
+		var f = new FileInfo(original);
+		return new Core.FileEntry(RemotePath.Mirrored(mirrorDir, original), f.Length, f.LastWriteTimeUtc, f.LastWriteTimeUtc);
+	}
+
+	/// <summary>Every file under the mirror's folder.</summary>
+	string[] FilesHere() => Directory.Exists(mirrorDir) ? Directory.GetFiles(mirrorDir, "*", SearchOption.AllDirectories) : [];
+
 	[Fact]
-	public void StandIns_HaveTheOtherPcsSizesAndDates_AndTakeNoSpace() {
+	public void StandIns_AreNoFilesHere_TheirSizesAndDatesTheListings() {
 		string a = Make("a.jpg", 300_000), v = Make("v.mp4", 3_000_000, 2);
-		var (mirror, bytes) = Mirror(paths: [a, v]);
+		string[] many = Enumerable.Range(0, 2_500).Select(i => Path.Combine(src, $"p{i:D4}.jpg")).ToArray();
+		foreach (string p in many) File.WriteAllBytes(p, [1, 2, 3]);
+		var (mirror, bytes) = Mirror(paths: [a, v, .. many]);
 		using (mirror) {
+			Assert.Empty(FilesHere()); // 2,502 listed, none made
 			foreach (string p in new[] { a, v }) {
-				var stand = new FileInfo(RemotePath.Mirrored(mirror.Folder, p));
-				Assert.True(stand.Exists);
-				Assert.Equal(new FileInfo(p).Length, stand.Length);
-				Assert.Equal(new FileInfo(p).LastWriteTimeUtc, stand.LastWriteTimeUtc);
-				Assert.Equal(0, Allocated(stand.FullName));
+				string stand = RemotePath.Mirrored(mirror.Folder, p);
+				Assert.False(File.Exists(stand));
+				Assert.True(RemoteFiles.Exists(stand));
+				RemoteFiles.FileFacts facts = RemoteFiles.FactsOf(stand);
+				Assert.Equal(new FileInfo(p).Length, facts.Length);
+				Assert.Equal(new FileInfo(p).LastWriteTimeUtc, facts.LastWriteTimeUtc);
+				Assert.Equal(facts.LastWriteTimeUtc, facts.CreationTimeUtc); // as Heiward's stand-ins always had them: the database's entries match
 			}
+			Assert.False(RemoteFiles.Exists(Path.Combine(mirror.Folder, "C", "not listed.jpg")));
+			Assert.Null(mirror.About(a)); // this PC's own: the disk is asked
+			Assert.True(RemoteFiles.Exists(a));
 			Assert.Equal(0, bytes.Bytes);
 		}
 	}
 
 	[Fact]
-	public void APhoto_IsFetchedWholeToBeRead_AndEmptiedAfter_ItsDateKept() {
+	public void APhoto_IsFetchedWholeToBeRead_AndDeletedAfter() {
 		string a = Make("a.jpg", 300_000);
 		var (mirror, bytes) = Mirror(paths: [a]);
 		using (mirror) {
-			string stand = RemotePath.Mirrored(mirror.Folder, a);
-			var entry = new Core.FileEntry(stand);
+			var entry = Entry(a);
+			string stand = entry.Path;
 			Assert.True(mirror.Before(entry));
 			Assert.Equal(File.ReadAllBytes(a), File.ReadAllBytes(stand));
 			Assert.Equal(300_000, mirror.Held);
 			Assert.Equal(new FileInfo(a).LastWriteTimeUtc, new FileInfo(stand).LastWriteTimeUtc);
+			Assert.False(new FileInfo(stand).Attributes.HasFlag(FileAttributes.SparseFile)); // it came whole
 
 			mirror.After(entry);
 			Assert.Equal(0, mirror.Held);
-			Assert.Equal(0, Allocated(stand));
-			Assert.All(File.ReadAllBytes(stand), b => Assert.Equal(0, b));
-			Assert.Equal(new FileInfo(a).LastWriteTimeUtc, new FileInfo(stand).LastWriteTimeUtc);
+			Assert.False(File.Exists(stand));
+			Assert.Empty(FilesHere());
+			Assert.True(RemoteFiles.Exists(stand)); // still there as listed
 			Assert.Equal(300_000, bytes.Bytes);
 		}
 	}
@@ -119,19 +138,18 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 		string a = Make("a.jpg", 300_000);
 		var (mirror, bytes) = Mirror(paths: [a]);
 		using (mirror) {
-			string stand = RemotePath.Mirrored(mirror.Folder, a);
 			var hashes = new ReportBuilder.ContentHashes();
 			mirror.WhileHeld = path => {
-				var file = new FileInfo(path);
-				hashes.Keep(path, file.Length, file.LastWriteTimeUtc, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
+				RemoteFiles.FileFacts facts = RemoteFiles.FactsOf(path);
+				hashes.Keep(path, facts.Length, facts.LastWriteTimeUtc, Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path))));
 			};
-			var entry = new Core.FileEntry(stand);
+			var entry = Entry(a);
 			Assert.True(mirror.Before(entry));
 			mirror.After(entry);
-			Assert.Equal(0, mirror.Held); // emptied, as before
+			Assert.Equal(0, mirror.Held); // deleted, as before
 
-			// The set's check for plain copies: the photo's own hash, from the stand-in that holds none of it now.
-			Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(a))), hashes.Get(stand));
+			// The set's check for plain copies: the photo's own hash, while no file of it is here.
+			Assert.Equal(Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(a))), hashes.Get(entry.Path));
 			Assert.Equal(300_000, bytes.Bytes);
 			Assert.Equal(1, bytes.Asks);
 		}
@@ -156,34 +174,36 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 			}
 			Assert.InRange(bytes.Bytes, 150_000, 2 * 512 * 1024); // two pieces, not the file
 			Assert.Equal(0, mirror.Held);
-			Assert.Equal(0, Allocated(stand));
+			Assert.Empty(FilesHere());
 		}
 	}
 
 	[Fact]
-	public void TheFingerprintsEnds_AreFetchedAlone_AndMatchTheOriginals() {
+	public void TheFingerprintsEnds_AreFetchedAlone_IntoASparseFile_AndMatchTheOriginals() {
 		string v = Make("v.mp4", 5_000_000, 4);
 		var (mirror, bytes) = Mirror(paths: [v]);
 		using (mirror) {
-			RemoteFiles.Fetch = mirror.Fetch;
 			string stand = RemotePath.Mirrored(mirror.Folder, v);
 			Assert.Equal(OsHashUtils.TryCompute(v), OsHashUtils.TryCompute(stand));
 			Assert.InRange(bytes.Bytes, 2 * 64 * 1024, 3 * 64 * 1024); // its ends, in 64 KB steps
+			Assert.Equal(5_000_000, new FileInfo(stand).Length);
+			Assert.True(new FileInfo(stand).Attributes.HasFlag(FileAttributes.SparseFile)); // its ends alone take room
 		}
+		Assert.False(Directory.Exists(mirrorDir)); // the scan is over: the folder goes
 	}
 
 	[Fact]
-	public void APhotoEmptiedSince_IsFetchedAgainForTheNextRead_NeverReadAsZeros() {
+	public void APhotoDeletedSince_IsFetchedAgainForTheNextRead_NeverFoundMissing() {
 		string p = Path.Combine(src, "pic.bmp");
 		File.WriteAllBytes(p, Bmp(40, 30));
 		var (mirror, bytes) = Mirror(paths: [p]);
 		using (mirror) {
-			RemoteFiles.Fetch = mirror.Fetch;
-			string stand = RemotePath.Mirrored(mirror.Folder, p);
-			var entry = new Core.FileEntry(stand);
+			var entry = Entry(p);
+			string stand = entry.Path;
 			Assert.True(mirror.Before(entry));
 			mirror.After(entry);
 			Assert.Equal(0, mirror.Held);
+			Assert.False(File.Exists(stand));
 			// The report looks at it again: fetched again by its reader's ask.
 			Assert.True(WicImageDecoder.TryGetSize(stand, out int w, out int h));
 			Assert.Equal((40, 30), (w, h));
@@ -192,30 +212,33 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 	}
 
 	[Fact]
-	public void PastTheCap_ThoseReadLongestAgoAreEmptied() {
+	public void PastTheCap_ThoseReadLongestAgoAreDeleted() {
 		string[] photos = Enumerable.Range(1, 6).Select(i => Make($"p{i}.jpg", 100_000, i)).ToArray();
 		var (mirror, _) = Mirror(cap: 250_000, photos);
 		using (mirror) {
 			foreach (string p in photos) Assert.True(mirror.Fetch(RemotePath.Mirrored(mirror.Folder, p), 0, -1));
 			Assert.InRange(mirror.Held, 100_000, 250_000);
 			Assert.True(mirror.MostHeld <= 300_000);
-			Assert.Equal(0, Allocated(RemotePath.Mirrored(mirror.Folder, photos[0])));
+			Assert.False(File.Exists(RemotePath.Mirrored(mirror.Folder, photos[0])));
 			Assert.Equal(File.ReadAllBytes(photos[^1]), File.ReadAllBytes(RemotePath.Mirrored(mirror.Folder, photos[^1])));
+			Assert.InRange(FilesHere().Length, 1, 2); // a file here for each photo held, no more
 		}
 	}
 
 	[Fact]
-	public void AFileThatCantBeFetched_FailsItsRead_AndIsNoted() {
+	public void AFileThatCantBeFetched_FailsItsRead_AndIsNoted_AndLeavesNoFile() {
 		string a = Make("a.jpg", 200_000), v = Make("v.mov", 2_000_000, 2), b = Make("b.jpg", 100_000, 3);
 		var (mirror, bytes) = Mirror(paths: [a, v, b]);
 		using (mirror) {
 			bytes.Refuse = "changed";
 			string standA = RemotePath.Mirrored(mirror.Folder, a), standV = RemotePath.Mirrored(mirror.Folder, v);
-			Assert.False(mirror.Before(new Core.FileEntry(standA)));
+			Assert.False(mirror.Before(Entry(a)));
 			Assert.Equal("changed", mirror.Failed[standA]);
-			using Stream s = mirror.Open(standV)!;
-			Assert.ThrowsAny<IOException>(() => s.ReadExactly(new byte[1000]));
-			Assert.Equal("changed", mirror.Failed[standV]);
+			Assert.Empty(FilesHere()); // the file made for it went with the bytes that didn't come
+			using (Stream s = mirror.Open(standV)!) {
+				Assert.ThrowsAny<IOException>(() => s.ReadExactly(new byte[1000]));
+				Assert.Equal("changed", mirror.Failed[standV]);
+			}
 
 			// One that changed isn't asked for again this scan; another tells that the loan is over.
 			bytes.Refuse = null;
@@ -223,6 +246,7 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 			bytes.Refuse = "over";
 			Assert.False(mirror.Fetch(RemotePath.Mirrored(mirror.Folder, b), 0, -1));
 			Assert.True(mirror.Over);
+			Assert.Empty(FilesHere());
 		}
 	}
 
@@ -239,19 +263,45 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 	}
 
 	[Fact]
-	public void Sync_RemakesChangedStandIns_AndDropsThoseNoLongerListed() {
+	public void AnEmptyFile_IsThereToOpen_WhileItsRead() {
+		string e = Path.Combine(src, "empty.jpg");
+		File.WriteAllBytes(e, []);
+		var (mirror, bytes) = Mirror(paths: [e]);
+		using (mirror) {
+			string stand = RemotePath.Mirrored(mirror.Folder, e);
+			Assert.True(RemoteFiles.Ready(stand));
+			Assert.Equal(0, new FileInfo(stand).Length);
+			Assert.Equal(0, bytes.Asks);
+		}
+		Assert.False(Directory.Exists(mirrorDir));
+	}
+
+	// Heiward 1.11.0 to 1.11.5 left a sparse stand-in of every file listed, and a marker once it had emptied them: the
+	// next scan moves all of that aside at once, never one file at a time, and reads none of it. RemoteHomes deletes it.
+	[Fact]
+	public void WhatAnEarlierScanLeft_IsMovedAsideWhole_AndTheScansOwnFolderGoesAtItsEnd() {
 		string a = Make("a.jpg", 1000), b = Make("b.jpg", 2000, 2);
-		var (mirror, _) = Mirror(paths: [a, b]);
-		mirror.EmptyAll();
-		File.WriteAllBytes(a, new byte[1500]);
-		File.Delete(b);
-		string c = Make("c.jpg", 3000, 3);
-		var again = new RemoteMirror(mirrorDir, new LocalBytes());
-		var (added, changed, gone) = again.Sync(Listing(a, c));
-		Assert.Equal((1, 1, 1), (added, changed, gone));
-		Assert.Equal(1500, new FileInfo(RemotePath.Mirrored(again.Folder, a)).Length);
-		Assert.False(File.Exists(RemotePath.Mirrored(again.Folder, b)));
-		Assert.Equal(a, again.Original(RemotePath.Mirrored(again.Folder, a)));
+		string oldA = RemotePath.Mirrored(mirrorDir, a), oldB = RemotePath.Mirrored(mirrorDir, b);
+		foreach (string p in new[] { oldA, oldB }) {
+			Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+			using var fs = new FileStream(p, FileMode.Create);
+			fs.SetLength(new FileInfo(a).Length);
+		}
+		File.WriteAllText(mirrorDir + ".empty", "");
+
+		var (mirror, bytes) = Mirror(paths: [a, b]);
+		string aside = Assert.Single(Directory.GetDirectories(dir, "m.old-*"));
+		Assert.True(File.Exists(Path.Combine(aside, Path.GetRelativePath(mirrorDir, oldA))));
+		Assert.False(File.Exists(mirrorDir + ".empty"));
+		Assert.Empty(FilesHere());
+		using (mirror) {
+			Assert.True(mirror.Fetch(oldA, 0, -1));
+			Assert.Equal(File.ReadAllBytes(a), File.ReadAllBytes(oldA));
+			Assert.Single(FilesHere());
+		}
+		Assert.False(Directory.Exists(mirrorDir));
+		Assert.True(Directory.Exists(aside)); // not the scan's to delete: RemoteHomes does, in the background
+		Assert.Equal(1000, bytes.Bytes);
 	}
 
 	/// <summary>A small 24-bit BMP of a gradient.</summary>

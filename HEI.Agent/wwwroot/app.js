@@ -1810,7 +1810,14 @@ function renderRemoteCard(s) {
     if (r.newerOn && r.newerOn.length) line('Update Heiward on this PC', r.newerOn.join(' and ') + ' runs a newer version of Heiward, so it can\'t scan this PC\'s files until both run the same one. Castellan updates it under Updates.');
   }
   if (r.scanningFor) line('Scanning ' + r.scanningFor.name + '\'s files for it', 'Its photos and videos are read over the link and none of them is kept here. ' +
-    'At most 8 of this PC\'s cores, in the background, and paused while a game runs here.');
+    'At most 8 of this PC\'s cores, in the background, and paused while a game runs here. What it finds goes back to ' + r.scanningFor.name + ', and nothing of the scan stays on this PC.');
+  // What a scan here found for another PC, still here: that PC can't be reached, or its Heiward is older.
+  for (const h of (r.handingBack || [])) {
+    line('What this PC found for ' + h.name + ' waits to go back to it',
+      h.why === 'older'
+        ? 'Heiward on ' + h.name + ' is older: once it\'s updated, it takes back what this PC found for it, and nothing of it stays here.'
+        : h.name + ' can\'t be reached now. This PC offers it back every half hour, and nothing of it stays here once ' + h.name + ' has it.');
+  }
   const f = r.found;
   if (f) {
     const row = line(f.setAside ? f.from + '\'s findings are set aside' : f.from + ' found ' + count(f.sets, 'set', 'sets') + ' of copies here',

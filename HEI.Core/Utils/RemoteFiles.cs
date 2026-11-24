@@ -16,10 +16,12 @@
 
 namespace HEI.Core.Utils {
 	/// <summary>
-	/// For a scan of another PC's files: each of them is a stand-in here, its size and dates as there, holding only the
-	/// bytes fetched for a read and emptied once read. Every reader that opens a photo or a file's ends by its path asks
-	/// <see cref="Ready(string)"/> first, so a stand-in emptied since is fetched again rather than read as zeros.
-	/// Null <see cref="Fetch"/> (every scan of this PC's own files): every file is ready as it is.
+	/// For a scan of another PC's files: each of them has a path here (its stand-in), but no file of its own until bytes of
+	/// it are fetched for a read, and none again once they're let go. Its size and dates are the listing's
+	/// (<see cref="About"/>): whatever asks whether a file is there, or its size and time, asks <see cref="Exists"/> or
+	/// <see cref="FactsOf"/>, never the disk. Every reader that opens a photo or a file's ends by its path asks
+	/// <see cref="Ready(string)"/> first, so what it reads is fetched, never read as zeros or missing.
+	/// Null <see cref="Fetch"/> and <see cref="About"/> (every scan of this PC's own files): every file is as the disk has it.
 	/// </summary>
 	public static class RemoteFiles {
 		/// <summary>
@@ -34,5 +36,24 @@ namespace HEI.Core.Utils {
 
 		/// <summary>Bytes <paramref name="offset"/> to <paramref name="offset"/> + <paramref name="count"/> are there to read.</summary>
 		public static bool Ready(string path, long offset, long count) => Fetch?.Invoke(path, offset, count) ?? true;
+
+		/// <summary>Whether a file is there, its size and its dates: what a scan asks of a file before it reads it.</summary>
+		public readonly record struct FileFacts(bool Exists, long Length, DateTime CreationTimeUtc, DateTime LastWriteTimeUtc);
+
+		/// <summary>
+		/// What the listing of another PC says of <c>path</c>: one of its files as listed, a path under its stand-ins that
+		/// isn't listed as not there; null for a path that isn't another PC's, which the disk is asked about.
+		/// </summary>
+		public static Func<string, FileFacts?>? About { get; set; }
+
+		/// <summary>Whether the file is there: another PC's as listed, this PC's on its disk.</summary>
+		public static bool Exists(string path) => About?.Invoke(path) is FileFacts f ? f.Exists : File.Exists(path);
+
+		/// <summary>The file's facts: another PC's as listed, this PC's as its disk has them (not there: <see cref="FileFacts.Exists"/> false).</summary>
+		public static FileFacts FactsOf(string path) {
+			if (About?.Invoke(path) is FileFacts listed) return listed;
+			var file = new FileInfo(path);
+			return file.Exists ? new FileFacts(true, file.Length, file.CreationTimeUtc, file.LastWriteTimeUtc) : default;
+		}
 	}
 }

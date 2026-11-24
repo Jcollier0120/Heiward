@@ -72,13 +72,16 @@ namespace HEI.Agent.Estate {
 
 	/// <summary>
 	/// <c>hei remote-scan --pc &lt;id&gt; --name &lt;name&gt;</c>: this PC scans another PC's photos and videos for it, over the
-	/// Estate, in a process of its own whose HEIWARD_HOME is that PC's home here (<see cref="HomeFor"/>): its own database,
-	/// report, content hashes and stand-ins, apart from this PC's own scans. Started by this PC's page when the other PC
-	/// asks (<see cref="ScanForOthers"/>).
+	/// Estate, in a process of its own whose HEIWARD_HOME is that PC's home here (<see cref="HomeFor"/>): its database,
+	/// report, content hashes and stand-ins, apart from this PC's own scans. That home is there only while the scan runs and
+	/// until the other PC has taken its records back (<see cref="ScanRecords"/>, <see cref="RemoteHomes"/>): they're that
+	/// PC's, and come from it as the scan starts. Started by this PC's page when the other PC asks (<see cref="ScanForOthers"/>).
 	/// <list type="number">
 	/// <item>The other PC's listing, a page at a time (<see cref="ListingPages"/>), unless it's the same as at the last
-	/// scan (<c>?have=</c>): then nothing is read at all.</item>
-	/// <item>A stand-in for each file listed (<see cref="RemoteMirror"/>); files listed as at the last scan aren't read again.</item>
+	/// scan (<c>?have=</c>, the stamp its records keep): then nothing is read at all. Else its records, unless a scan here
+	/// left newer ones it hasn't taken back yet.</item>
+	/// <item>A stand-in for each file listed (<see cref="RemoteMirror"/>), a path of its listed size and dates that is a file
+	/// here only while bytes of it are; files listed as at the last scan aren't read again.</item>
 	/// <item>The engine as for this PC's own scans, its readers fetching what they read; at most <see cref="MostCores"/>
 	/// cores' worth of the processor, in the background, the NPU for the AI where this PC has one.</item>
 	/// <item>The report, its sets with the other PC's paths (<see cref="RemoteFindings"/>), for it to pull.</item>
@@ -214,10 +217,15 @@ namespace HEI.Agent.Estate {
 			// 1. Its listing, a page at a time, or word that it's as it was. (Version 1's listing.json, read whole, goes: the
 			// first scan after it asks for all of the listing again.)
 			TryDelete(Path.Combine(home, "listing.json"));
-			RemoteListing? kept = ListingPages.Load(ListingIn(home));
-			bool keptHolds = kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath);
+			// The records of its last scan (ScanRecords) are that PC's, and come from it: unless a scan here left records it
+			// hasn't taken back yet, which are newer than its own. Only their list at first: a scan that finds its files as
+			// they were needs no more of them.
+			bool here = ScanRecords.Whole(home);
+			ScanRecords.Offered? theirs = here ? null : await ScanRecords.AskAsync(pc, "scan/records", ct);
+			RemoteListing? kept = here ? ListingPages.Load(ListingIn(home)) : null;
+			bool keptHolds = here ? kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath) : theirs is { Holds: true, Stamp.Length: > 0 };
 			var listingTimer = Stopwatch.StartNew();
-			ListingPages.Fetched fetched = await ListingPages.FetchAsync(pc, name, keptHolds ? kept!.Stamp : null, progress, ct);
+			ListingPages.Fetched fetched = await ListingPages.FetchAsync(pc, name, !keptHolds ? null : here ? kept!.Stamp : theirs!.Stamp, progress, ct);
 			if (fetched.Problem is string problem) {
 				AgentPaths.AppendLog($"scan for {name}: {problem}");
 				stage(problem);
@@ -230,6 +238,23 @@ namespace HEI.Agent.Estate {
 			RemoteListing listing = fetched.Listing!;
 			int listed = listing.Roots.Sum(r => r.Files.Count);
 			AgentPaths.AppendLog($"scan for {name}: its list of {listed:N0} files came in {listingTimer.Elapsed.TotalSeconds:N1} s");
+			if (theirs is { Files.Count: > 0 }) {
+				// They come whole into a folder of their own, then take their place: a scan stopped as they come leaves none.
+				stage("Fetching what was kept of its last scan");
+				var recordsTimer = Stopwatch.StartNew();
+				string coming = Path.Combine(home, ScanRecords.Coming);
+				try { await Task.Run(() => ScanRecords.Fetch(pc, "scan/records/bytes", theirs, coming, ct), ct); }
+				catch (RemoteReadFailed e) { throw new HttpRequestException("its records didn't come: " + e.Message, e); }
+				// Its log first, then this scan's lines so far.
+				string log = Path.Combine(home, ScanRecords.Log), theirLog = Path.Combine(coming, ScanRecords.Log);
+				if (File.Exists(theirLog) && File.Exists(log)) File.AppendAllText(theirLog, File.ReadAllText(log));
+				foreach (string dir in Directory.EnumerateDirectories(coming)) Directory.Move(dir, Path.Combine(home, Path.GetFileName(dir)));
+				foreach (string file in Directory.EnumerateFiles(coming)) File.Move(file, Path.Combine(home, Path.GetFileName(file)), overwrite: true);
+				Directory.Delete(coming, recursive: true);
+				kept = ListingPages.Load(ListingIn(home));
+				keptHolds = kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath);
+				AgentPaths.AppendLog($"scan for {name}: what was kept of its last scan came from it, {Format.Bytes(theirs.Bytes)} in {recordsTimer.Elapsed.TotalSeconds:N1} s");
+			}
 			// 2. The stand-ins.
 			string mirrorDir = MirrorIn(home);
 			if (!RemoteMirror.CanHold(mirrorDir)) {
@@ -253,13 +278,9 @@ namespace HEI.Agent.Estate {
 				AgentPaths.AppendLog(giving ? $"scan for {name}: this PC's NPU is lent to something more urgent, so the scan waits for it"
 					: $"scan for {name}: the NPU is free of it again");
 			});
+			// No file is made for them here (an older Heiward made one of each, and kept them): only while bytes of one are held.
 			using var mirror = new RemoteMirror(mirrorDir, bytes) { Stopping = stopping.Token, Timings = timings };
-			// The card counts the stand-ins as they're made, from none (not the listing's count, done).
-			progress(0, listed);
-			stage("Making room for its files");
-			var roomTimer = Stopwatch.StartNew();
-			var (added, changed, gone) = mirror.Sync(listing, progress);
-			AgentPaths.AppendLog($"scan for {name}: room made for its {listed:N0} files in {roomTimer.Elapsed.TotalSeconds:N1} s");
+			mirror.Sync(listing);
 
 			// 3. The engine, as for this PC's own scans, reading through the stand-ins.
 			var notes = new List<string>();
@@ -279,6 +300,9 @@ namespace HEI.Agent.Estate {
 				EnablePartialClipDetection = false,
 				EnableAiPartialDetection = false,
 			};
+			// Its files come over the link, not off this drive, and there's no file of theirs here for the engine's seek probe:
+			// read as from a fast drive, as when each had a stand-in here to probe.
+			if (Path.GetPathRoot(mirrorDir) is { Length: > 0 } drive) settings.DriveTypeOverrides[drive] = "SSD";
 			Directory.CreateDirectory(AgentPaths.Database);
 			var roots = new Dictionary<string, ListedRoot>(StringComparer.OrdinalIgnoreCase);
 			foreach (ListedRoot r in listing.Roots) {
@@ -295,18 +319,24 @@ namespace HEI.Agent.Estate {
 			// Files listed as at the last scan aren't listed again: the engine knows them as they are.
 			Dictionary<string, ListedFile>? before = keptHolds ? kept!.Roots.SelectMany(r => r.Files).ToDictionary(f => f.Path, StringComparer.OrdinalIgnoreCase) : null;
 			kept = null; // its files are in before now
-			int unchangedFiles = before == null ? 0
-				: listing.Roots.SelectMany(r => r.Files).Count(f => before.TryGetValue(f.Path, out ListedFile? was) && was == f);
+			int unchangedFiles = 0, added = 0, changed = 0;
+			foreach (ListedFile f in listing.Roots.SelectMany(r => r.Files)) {
+				if (before == null || !before.TryGetValue(f.Path, out ListedFile? was)) added++;
+				else if (was == f) unchangedFiles++;
+				else changed++;
+			}
+			int gone = before == null ? 0 : before.Count - unchangedFiles - changed;
+			// The engine's entries of them, as listed: there's no file of theirs here to ask (RemoteMirror.About for the rest).
 			ScanEngine.RootListing? ListFor(string root) {
 				if (!roots.TryGetValue(Path.TrimEndingDirectorySeparator(root), out ListedRoot? r)) return null;
-				var files = new List<FileInfo>();
+				var made = new List<FileEntry>();
 				var unchanged = new List<string>();
 				foreach (ListedFile f in r.Files) {
 					string p = RemotePath.Mirrored(mirrorDir, f.Path);
 					if (before != null && before.TryGetValue(f.Path, out ListedFile? was) && was == f) unchanged.Add(p);
-					else files.Add(new FileInfo(p));
+					else made.Add(new FileEntry(p, f.Size, f.ModifiedUtc, f.ModifiedUtc));
 				}
-				return new ScanEngine.RootListing(files, unchanged);
+				return new ScanEngine.RootListing(Array.Empty<FileInfo>(), unchanged, made);
 			}
 
 			// The cap is a share of the whole PC, so of all its processors: 8 cores' worth of the X2's 18 is 44%.
@@ -337,13 +367,12 @@ namespace HEI.Agent.Estate {
 				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { AgentPaths.AppendLog("saving what was read of its photos failed: " + e.Message); }
 			}
 			mirror.WhileHeld = path => {
+				if (!byStandIn.TryGetValue(path, out ListedFile? f)) return;
 				dates[path] = ExifReader.TryGetDateTaken(path, out _);
-				var file = new FileInfo(path);
 				using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1 << 16);
-				hashes.Keep(path, file.Length, file.LastWriteTimeUtc, Convert.ToHexString(SHA256.HashData(fs)));
+				hashes.Keep(path, f.Size, f.ModifiedUtc, Convert.ToHexString(SHA256.HashData(fs))); // keyed as the sets will ask: by its listed size and time
 			};
-			RemoteMedia.Use(mirror.IsRemote, mirror.Open);
-			RemoteFiles.Fetch = mirror.Fetch;
+			mirror.Serve();
 			// A video whose keyframes are too far apart to sample is left out, said by name here, not under its stand-in's path.
 			FfmpegEngine.VideoLeftOut = (path, why) => AgentPaths.AppendLog($"scan for {name}: left out {mirror.Original(path)}: {why}");
 			// Planned: the files it reads next are fetched just ahead of it (RemoteMirror.Plan), several asks at once.
@@ -410,7 +439,7 @@ namespace HEI.Agent.Estate {
 				DatabaseUtils.SaveDatabase();
 				KeepTaken(sorted: false);
 				stage("Stopped");
-				AgentPaths.AppendLog($"scan for {name} stopped{(mirror.Over ? " by that PC" : "")}, {Format.Bytes(bytes.Fetched)} fetched: what was read is kept for its next scan");
+				AgentPaths.AppendLog($"scan for {name} stopped{(mirror.Over ? " by that PC" : "")}, {Format.Bytes(bytes.Fetched)} fetched: what was read goes back to that PC, for its next scan");
 				return 130;
 			}
 			try {
@@ -451,10 +480,9 @@ namespace HEI.Agent.Estate {
 				return Stopped();
 			}
 			finally {
-				RemoteFiles.Fetch = null;
+				RemoteMirror.StopServing();
 				FfmpegEngine.VideoLeftOut = null;
-				RemoteMedia.Stop();
-				mirror.EmptyAll();
+				mirror.EmptyAll(); // nothing of its files stays here
 			}
 			// Sorting the sets stops between rounds without saying so, and once the other PC ends it every read left fails at
 			// once, so the scan can get to the end first: what it made of part of the files isn't what was found.
