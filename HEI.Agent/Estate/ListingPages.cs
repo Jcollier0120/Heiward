@@ -256,5 +256,39 @@ namespace HEI.Agent.Estate {
 				return null;
 			}
 		}
+
+		/// <summary>The stamp of the listing kept at <paramref name="path"/>, from its header alone; null when there's none.</summary>
+		internal static string? StampOf(string path) {
+			try {
+				if (!File.Exists(path)) return null;
+				using var reader = new StreamReader(path, System.Text.Encoding.UTF8, detectEncodingFromByteOrderMarks: false, bufferSize: 4096);
+				if (reader.ReadLine() is not { Length: > 0 } head) return null;
+				using JsonDocument doc = JsonDocument.Parse(head);
+				return doc.RootElement.ValueKind == JsonValueKind.Object && doc.RootElement.TryGetProperty("v", out JsonElement v) && v.TryGetInt32(out int version) &&
+					version == Version ? EstateLink.Str(doc.RootElement, "stamp") : null;
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
+				return null;
+			}
+		}
+
+		/// <summary>The files of the listing kept at <paramref name="path"/> that <paramref name="wanted"/> names, read a line at a time.</summary>
+		internal static Dictionary<string, ListedFile> Find(string path, IReadOnlySet<string> wanted) {
+			var found = new Dictionary<string, ListedFile>(StringComparer.OrdinalIgnoreCase);
+			try {
+				if (wanted.Count == 0 || !File.Exists(path)) return found;
+				using var input = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+				bool head = true;
+				ListingLine.ForEach(input, line => {
+					if (head) {
+						head = false;
+						return;
+					}
+					if (ListingLine.Parse(line) is { } f && wanted.Contains(f.Path)) found[f.Path] = f;
+				});
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+			return found;
+		}
 	}
 }

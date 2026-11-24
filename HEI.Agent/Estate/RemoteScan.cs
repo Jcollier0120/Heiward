@@ -72,12 +72,14 @@ namespace HEI.Agent.Estate {
 
 	/// <summary>
 	/// <c>hei remote-scan --pc &lt;id&gt; --name &lt;name&gt;</c>: this PC scans another PC's photos and videos for it, over the
-	/// Estate, in a process of its own whose HEIWARD_HOME is that PC's home here (<see cref="HomeFor"/>): its own database,
-	/// report, content hashes and stand-ins, apart from this PC's own scans. Started by this PC's page when the other PC
-	/// asks (<see cref="ScanForOthers"/>).
+	/// Estate, in a process of its own whose HEIWARD_HOME is that PC's home here (<see cref="HomeFor"/>): its database,
+	/// report, content hashes and stand-ins, apart from this PC's own scans. That home is there only while the scan runs and
+	/// until the other PC has taken its records back (<see cref="ScanRecords"/>, <see cref="RemoteHomes"/>): they're that
+	/// PC's, and come from it as the scan starts. Started by this PC's page when the other PC asks (<see cref="ScanForOthers"/>).
 	/// <list type="number">
 	/// <item>The other PC's listing, a page at a time (<see cref="ListingPages"/>), unless it's the same as at the last
-	/// scan (<c>?have=</c>): then nothing is read at all.</item>
+	/// scan (<c>?have=</c>, the stamp its records keep): then nothing is read at all. Else its records, unless a scan here
+	/// left newer ones it hasn't taken back yet.</item>
 	/// <item>A stand-in for each file listed (<see cref="RemoteMirror"/>), a path of its listed size and dates that is a file
 	/// here only while bytes of it are; files listed as at the last scan aren't read again.</item>
 	/// <item>The engine as for this PC's own scans, its readers fetching what they read; at most <see cref="MostCores"/>
@@ -215,10 +217,15 @@ namespace HEI.Agent.Estate {
 			// 1. Its listing, a page at a time, or word that it's as it was. (Version 1's listing.json, read whole, goes: the
 			// first scan after it asks for all of the listing again.)
 			TryDelete(Path.Combine(home, "listing.json"));
-			RemoteListing? kept = ListingPages.Load(ListingIn(home));
-			bool keptHolds = kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath);
+			// The records of its last scan (ScanRecords) are that PC's, and come from it: unless a scan here left records it
+			// hasn't taken back yet, which are newer than its own. Only their list at first: a scan that finds its files as
+			// they were needs no more of them.
+			bool here = ScanRecords.Whole(home);
+			ScanRecords.Offered? theirs = here ? null : await ScanRecords.AskAsync(pc, "scan/records", ct);
+			RemoteListing? kept = here ? ListingPages.Load(ListingIn(home)) : null;
+			bool keptHolds = here ? kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath) : theirs is { Holds: true, Stamp.Length: > 0 };
 			var listingTimer = Stopwatch.StartNew();
-			ListingPages.Fetched fetched = await ListingPages.FetchAsync(pc, name, keptHolds ? kept!.Stamp : null, progress, ct);
+			ListingPages.Fetched fetched = await ListingPages.FetchAsync(pc, name, !keptHolds ? null : here ? kept!.Stamp : theirs!.Stamp, progress, ct);
 			if (fetched.Problem is string problem) {
 				AgentPaths.AppendLog($"scan for {name}: {problem}");
 				stage(problem);
@@ -231,6 +238,23 @@ namespace HEI.Agent.Estate {
 			RemoteListing listing = fetched.Listing!;
 			int listed = listing.Roots.Sum(r => r.Files.Count);
 			AgentPaths.AppendLog($"scan for {name}: its list of {listed:N0} files came in {listingTimer.Elapsed.TotalSeconds:N1} s");
+			if (theirs is { Files.Count: > 0 }) {
+				// They come whole into a folder of their own, then take their place: a scan stopped as they come leaves none.
+				stage("Fetching what was kept of its last scan");
+				var recordsTimer = Stopwatch.StartNew();
+				string coming = Path.Combine(home, ScanRecords.Coming);
+				try { await Task.Run(() => ScanRecords.Fetch(pc, "scan/records/bytes", theirs, coming, ct), ct); }
+				catch (RemoteReadFailed e) { throw new HttpRequestException("its records didn't come: " + e.Message, e); }
+				// Its log first, then this scan's lines so far.
+				string log = Path.Combine(home, ScanRecords.Log), theirLog = Path.Combine(coming, ScanRecords.Log);
+				if (File.Exists(theirLog) && File.Exists(log)) File.AppendAllText(theirLog, File.ReadAllText(log));
+				foreach (string dir in Directory.EnumerateDirectories(coming)) Directory.Move(dir, Path.Combine(home, Path.GetFileName(dir)));
+				foreach (string file in Directory.EnumerateFiles(coming)) File.Move(file, Path.Combine(home, Path.GetFileName(file)), overwrite: true);
+				Directory.Delete(coming, recursive: true);
+				kept = ListingPages.Load(ListingIn(home));
+				keptHolds = kept != null && Report.Load() != null && File.Exists(RemoteFindings.FilePath);
+				AgentPaths.AppendLog($"scan for {name}: what was kept of its last scan came from it, {Format.Bytes(theirs.Bytes)} in {recordsTimer.Elapsed.TotalSeconds:N1} s");
+			}
 			// 2. The stand-ins.
 			string mirrorDir = MirrorIn(home);
 			if (!RemoteMirror.CanHold(mirrorDir)) {
@@ -415,7 +439,7 @@ namespace HEI.Agent.Estate {
 				DatabaseUtils.SaveDatabase();
 				KeepTaken(sorted: false);
 				stage("Stopped");
-				AgentPaths.AppendLog($"scan for {name} stopped{(mirror.Over ? " by that PC" : "")}, {Format.Bytes(bytes.Fetched)} fetched: what was read is kept for its next scan");
+				AgentPaths.AppendLog($"scan for {name} stopped{(mirror.Over ? " by that PC" : "")}, {Format.Bytes(bytes.Fetched)} fetched: what was read goes back to that PC, for its next scan");
 				return 130;
 			}
 			try {

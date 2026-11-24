@@ -23,15 +23,20 @@ namespace HEI.Agent.Estate {
 	/// <summary>
 	/// Another of the person's PCs scans this one's photos and videos for it, over the Estate: a PC whose NPU can, for one
 	/// that has none (or a slow one). This PC starts it, from its page; it only lists its files and hands over their bytes,
-	/// gently (<see cref="PeerFiles"/>), and the other PC does the rest and sends back what it found, which this PC's page
-	/// shows and cleans up with its own buttons. Both PCs run the same build: another build's rules judge sets otherwise.
+	/// gently (<see cref="PeerFiles"/>), and the other PC does the rest. What the scan keeps (its records: its database,
+	/// what it found, <see cref="ScanRecords"/>) is this PC's, kept here: the other PC fetches it as it starts, and this PC
+	/// takes it back as it ends, done or not, so nothing of it stays there. This PC's page shows what it found and cleans up
+	/// with its own buttons. Both PCs run the same build: another build's rules judge sets otherwise.
 	/// <para>The routes, each under <c>/api/peer</c> (only through Castellan, naming the asking PC):</para>
 	/// <list type="bullet">
 	/// <item>The PC that scans: <c>scan</c> (whether it can now, its build and NPU), <c>scan/out</c> (the loan's results:
-	/// how the scan is getting on, then that it's done), <c>findings</c> (what it found, for the PC asking only).</item>
+	/// how the scan is getting on, then that it's done), <c>scan/kept</c> and <c>scan/kept/bytes</c> (what it holds of the
+	/// asking PC's scans, for it to take back, and let go of once it has).</item>
 	/// <item>The PC scanned: <c>scan/in</c> (the work: which listing), <c>scan/pages</c> (its files, a page at a time:
-	/// <see cref="ListingPages"/>), <c>scan/bytes</c> (their bytes), each only for the PC it asked, while it asks; and
-	/// <c>scan/listing</c>, its files in one answer, as version 1 asked for them.</item>
+	/// <see cref="ListingPages"/>), <c>scan/bytes</c> (their bytes), <c>scan/records</c> and <c>scan/records/bytes</c> (its
+	/// records of that PC's last scan), each only for the PC it asked, while it asks; <c>scan/take</c> (a PC holds records
+	/// of its scans of this one: they're taken back); and <c>scan/listing</c>, its files in one answer, as version 1 asked
+	/// for them.</item>
 	/// </list>
 	/// </summary>
 	static class ScanForOthers {
@@ -45,6 +50,9 @@ namespace HEI.Agent.Estate {
 		static ThreeDWatch? games;
 		static (long At, string? Game)? lastGame;
 		static int checkingGame;
+
+		/// <summary>The game check the records' file routes ask (<see cref="GameNow"/>; tests: one of their own).</summary>
+		internal static Func<string?> Game { get; set; } = GameNow;
 
 		internal static string? GameNow() {
 			var last = lastGame;
@@ -90,7 +98,10 @@ namespace HEI.Agent.Estate {
 			Asked? a = AskedNow();
 			ForeignFindings? found = ForeignFindings.LoadAny();
 			var lent = ScanningFor;
-			if (known is not { Can.Count: > 0 } && known is not { Update.Count: > 0 } && known is not { UpdateHere.Count: > 0 } && a == null && found == null && lent == null) return null;
+			// What scans here found for other PCs, waiting to go back to them (one that can't be reached, or an older Heiward there).
+			var back = RemoteHomes.Waiting;
+			if (known is not { Can.Count: > 0 } && known is not { Update.Count: > 0 } && known is not { UpdateHere.Count: > 0 } && a == null && found == null && lent == null &&
+				back.Count == 0) return null;
 			// A scan that stopped part way: Scan again picks up where it stopped, once that PC can scan this one (its build is this one's).
 			bool stopped = a is { Finished: true, Problem: not null, Begun: true };
 			string? now = a?.LenderBuild != null && known?.Builds.TryGetValue(a.Lender.Id, out string? b) == true && b != a.LenderBuild ? b : null;
@@ -106,6 +117,7 @@ namespace HEI.Agent.Estate {
 					updatedTo = now == null ? null : Short(now),
 				},
 				scanningFor = lent is { } l ? new { name = l.To.Name, sinceUtc = l.Since, linked = l.Linked } : null,
+				handingBack = back.Select(w => new { name = w.Name, why = w.Why }).ToList(),
 				// Dated by the scan's end, not its start: a scan of a whole PC takes hours.
 				found = found == null ? null : new { from = found.FromName, atUtc = found.FoundUtc(found.FinishedUtc == null ? ForeignFindings.Written() : null), sets = found.Groups.Count, setAside = found.Build != AppBuild.Current },
 			};
@@ -297,6 +309,10 @@ namespace HEI.Agent.Estate {
 		/// <summary>This PC's files listed (<c>hei scan --list-only</c>, from the change journals), then the loan begun with it.</summary>
 		static async Task ListAndLendAsync(Asked a) {
 			try {
+				// Records of its last scan being taken back from it: the scan starts from them once they're here.
+				Task<ScanRecords.Took>? taking;
+				lock (takes) taking = takes.GetValueOrDefault(a.Lender.Id);
+				if (taking != null) await taking;
 				var timer = Stopwatch.StartNew();
 				using (Process? list = StartHei(null, "scan", "--list-only")) {
 					if (list == null) {
@@ -371,6 +387,8 @@ namespace HEI.Agent.Estate {
 				if ((int?)d["code"] is int code && code != 0) {
 					string why = ((string?)d["error"] ?? (string?)d["stage"] ?? "it ended early").TrimEnd('.');
 					Stop(Fail(a, $"{a.Lender.Name}'s scan of this PC didn't finish: {why}."));
+					// What it checked comes back all the same: the next scan picks up from there.
+					_ = Task.Run(() => TakeLaterAsync(a.Lender));
 					return;
 				}
 				a.Stage = "Fetching what it found";
@@ -415,40 +433,45 @@ namespace HEI.Agent.Estate {
 					$"({(listCpu + s.Cpu).TotalSeconds / Math.Max(1.0, s.Served / 1e9):N1} s per GB)");
 		}
 
-		/// <summary>The other PC's findings fetched, checked against what was listed to it, and kept for the page (<see cref="ForeignFindings"/>).</summary>
+		/// <summary>
+		/// The other PC's scan of this one done: its records taken back into this PC's own (<see cref="ScanRecords"/>), and what
+		/// it found, read from them, checked against what was listed to it and kept for the page (<see cref="ForeignFindings"/>).
+		/// </summary>
 		static async Task PullFindingsAsync(Asked a) {
 			lock (gate) pulling = true;
 			try {
-				var (status, json) = await EstateLink.GetJsonAsync(EstateLink.PeerPath(a.Lender.Id, "findings"), TimeSpan.FromMinutes(2), CancellationToken.None);
-				using (json) {
-					RemoteFindings? found = status == 200 && json != null ? json.RootElement.Deserialize<RemoteFindings>(AgentConfig.Json) : null;
-					if (found is not { V: RemoteFindings.Version }) {
-						Stop(Fail(a, $"{a.Lender.Name}'s findings didn't come."));
-						return;
-					}
-					if (found.Build != AppBuild.Current) {
-						Stop(Fail(a, Versions(a.Lender.Name, found.Build)));
-						return;
-					}
-					Dictionary<string, ListedFile> listed = ListedOf(found);
-					// Nothing new here since its last scan: the same findings as those kept, and nothing was fetched for them this time.
-					ForeignFindings? before = ForeignFindings.LoadAny();
-					bool again = before != null && before.FromId == a.Lender.Id && before.ScannedAtUtc == found.ScannedAtUtc;
-					DateTime? beforeAt = before?.FoundUtc(before.FinishedUtc == null ? ForeignFindings.Written() : null); // before it's written again
-					// Dated by the scan's end; one that found nothing new ended just now, its findings standing as they were.
-					ForeignFindings kept = ForeignFindings.From(a.Lender, found, listed, again ? DateTime.UtcNow : null);
-					kept.Save();
-					a.Sets = kept.Groups.Count;
-					a.Stage = kept.Groups.Count == 0 ? "Done: no copies found" : $"Done: {kept.Groups.Count:N0} set(s) of copies found";
-					a.Done = a.Total;
-					a.Finished = true;
-					SaveAsked(a);
-					AgentPaths.AppendLog(again ? $"{a.Lender.Name} found nothing new here since its scan of {beforeAt!.Value.ToLocalTime():g}: its {kept.Groups.Count:N0} set(s) stand"
-						: $"{a.Lender.Name} scanned this PC: {kept.Groups.Count:N0} set(s)" + (found.Cost is { } c
-							? $"; it fetched {Format.Bytes(c.FetchedBytes)} in {c.Asks:N0} asks and took {c.Seconds:N0} s" : ""));
+				ScanRecords.Took took = await TakeFrom(a.Lender);
+				// Taken just now, or by its ask a moment before this (its scan's end tells both): either way, they're here.
+				bool came = took.Any || lastTaken.TryGetValue(a.Lender.Id, out DateTime at) && at >= a.StartedUtc;
+				string store = ScanRecords.StoreFor(a.Lender.Id);
+				RemoteFindings? found = came ? RemoteFindings.Load(Path.Combine(store, "findings.json")) : null;
+				if (found == null) {
+					// The other PC keeps them until they come: they're taken the next time it's in touch.
+					Stop(Fail(a, took.Problem != null ? $"{a.Lender.Name}'s findings didn't come: {took.Problem}." : $"{a.Lender.Name}'s findings didn't come."));
+					return;
 				}
+				if (found.Build != AppBuild.Current) {
+					Stop(Fail(a, Versions(a.Lender.Name, found.Build)));
+					return;
+				}
+				Dictionary<string, ListedFile> listed = ListedOf(found, store);
+				// Nothing new here since its last scan: the same findings as those kept, and nothing was fetched for them this time.
+				ForeignFindings? before = ForeignFindings.LoadAny();
+				bool again = before != null && before.FromId == a.Lender.Id && before.ScannedAtUtc == found.ScannedAtUtc;
+				DateTime? beforeAt = before?.FoundUtc(before.FinishedUtc == null ? ForeignFindings.Written() : null); // before it's written again
+				// Dated by the scan's end; one that found nothing new ended just now, its findings standing as they were.
+				ForeignFindings kept = ForeignFindings.From(a.Lender, found, listed, again ? DateTime.UtcNow : null);
+				kept.Save();
+				a.Sets = kept.Groups.Count;
+				a.Stage = kept.Groups.Count == 0 ? "Done: no copies found" : $"Done: {kept.Groups.Count:N0} set(s) of copies found";
+				a.Done = a.Total;
+				a.Finished = true;
+				SaveAsked(a);
+				AgentPaths.AppendLog(again ? $"{a.Lender.Name} found nothing new here since its scan of {beforeAt!.Value.ToLocalTime():g}: its {kept.Groups.Count:N0} set(s) stand"
+					: $"{a.Lender.Name} scanned this PC: {kept.Groups.Count:N0} set(s)" + (found.Cost is { } c
+						? $"; it fetched {Format.Bytes(c.FetchedBytes)} in {c.Asks:N0} asks and took {c.Seconds:N0} s" : ""));
 			}
-			catch (Exception e) when (e is HttpRequestException or OperationCanceledException or InvalidDataException or JsonException or EstateMissing or IOException) {
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
 				Fail(a, $"{a.Lender.Name}'s findings didn't come: {e.Message}");
 			}
 			finally {
@@ -460,14 +483,95 @@ namespace HEI.Agent.Estate {
 			}
 		}
 
-		/// <summary>The files the findings name, as this PC listed them to that PC (those it didn't aren't there): looked up in the listing on disk.</summary>
-		static Dictionary<string, ListedFile> ListedOf(RemoteFindings found) {
-			var listed = new Dictionary<string, ListedFile>(StringComparer.OrdinalIgnoreCase);
-			if (lentListing is not { } listing) return listed;
+		/// <summary>The files the findings name, as this PC listed them to that PC (those it didn't aren't there): looked up in the listing its records keep.</summary>
+		static Dictionary<string, ListedFile> ListedOf(RemoteFindings found, string store) {
+			var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 			foreach (ReportGroup g in found.Groups ?? [])
 				foreach (string path in (g.Items ?? []).Select(i => i.Path).Append(g.KeepPath))
-					if (path != null && !listed.ContainsKey(path) && listing.Find(path) is { } f) listed[path] = f;
-			return listed;
+					if (path != null) wanted.Add(path);
+			return ListingPages.Find(Path.Combine(store, "listing.tsv"), wanted);
+		}
+
+		// ---- The records of this PC's scans by another (ScanRecords): kept here, lent to the PC scanning as it starts, taken back as it ends.
+
+		/// <summary>The records' files, served to the PC scanning this one while it does (<c>scan/records/bytes</c>).</summary>
+		static PeerFiles? recordsServing;
+		/// <summary>Taking a PC's records back, one at a time a PC: whoever asks while one runs waits for it.</summary>
+		static readonly Dictionary<string, Task<ScanRecords.Took>> takes = new(StringComparer.Ordinal);
+		/// <summary>When each PC's records were last taken back.</summary>
+		static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> lastTaken = new(StringComparer.Ordinal);
+
+		/// <summary>What <paramref name="lender"/> holds of its scans of this PC, taken back (<see cref="ScanRecords.TakeAsync"/>); the one under way, if one is.</summary>
+		static Task<ScanRecords.Took> TakeFrom(Pc lender) {
+			lock (takes) {
+				if (takes.TryGetValue(lender.Id, out Task<ScanRecords.Took>? running) && !running.IsCompleted) return running;
+				return takes[lender.Id] = Task.Run(async () => {
+					var timer = Stopwatch.StartNew();
+					ScanRecords.Took took = await ScanRecords.TakeAsync(lender.Id, ScanRecords.StoreFor(lender.Id), CancellationToken.None);
+					if (took.Any) {
+						lastTaken[lender.Id] = DateTime.UtcNow;
+						AgentPaths.AppendLog($"took back what {lender.Name} kept of its scan of this PC, in {timer.Elapsed.TotalSeconds:N1} s: nothing of it stays there");
+					}
+					else if (took.Problem != null) AgentPaths.AppendLog($"what {lender.Name} kept of its scan of this PC didn't come: {took.Problem}; it's taken the next time");
+					return took;
+				});
+			}
+		}
+
+		/// <summary>
+		/// <paramref name="lender"/>'s records taken back when it says it holds some (a scan that stopped, or one from before
+		/// this version kept them there); findings among them that this PC's page doesn't have yet are shown.
+		/// </summary>
+		static async Task TakeLaterAsync(Pc lender) {
+			ScanRecords.Took took = await TakeFrom(lender);
+			if (!took.Any) return;
+			lock (gate) {
+				if (pulling) return; // its scan's end reads them itself
+			}
+			try {
+				string store = ScanRecords.StoreFor(lender.Id);
+				if (RemoteFindings.Load(Path.Combine(store, "findings.json")) is not { } found || found.Build != AppBuild.Current) return;
+				if (ForeignFindings.LoadAny() is { } before && before.FromId == lender.Id && before.ScannedAtUtc >= found.ScannedAtUtc) return;
+				ForeignFindings kept = ForeignFindings.From(lender, found, ListedOf(found, store));
+				kept.Save();
+				// The scan asked of it, whose findings didn't come then: it's done.
+				if (asked is { Finished: true, Problem: not null } a && a.Lender.Id == lender.Id && found.ScannedAtUtc >= a.StartedUtc.AddMinutes(-5)) {
+					a.Problem = null;
+					a.Sets = kept.Groups.Count;
+					a.Stage = kept.Groups.Count == 0 ? "Done: no copies found" : $"Done: {kept.Groups.Count:N0} set(s) of copies found";
+					a.Done = a.Total;
+					SaveAsked(a);
+				}
+				AgentPaths.AppendLog($"{lender.Name}'s findings of its scan of this PC came: {kept.Groups.Count:N0} set(s)");
+			}
+			catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException) {
+				AgentPaths.AppendLog($"{lender.Name}'s findings didn't read: {e.Message}");
+			}
+		}
+
+		/// <summary>GET /api/peer/scan/records: the list of this PC's records of its scans by the PC scanning it, for that PC, as it starts.</summary>
+		internal static async Task RecordsRouteAsync(HttpContext ctx) {
+			if (ListingFor(ctx) == null || EstateLink.AskerOf(ctx.Request) is not { } asker) {
+				await NotAsking(ctx);
+				return;
+			}
+			string store = ScanRecords.StoreFor(asker.Id);
+			ScanRecords.Settle(store);
+			PeerFiles files = recordsServing ??= new PeerFiles(() => Game()) { May = pc => borrowing?.Lender?.Id == pc.Id };
+			await ScanRecords.OfferAsync(ctx, store, ScanRecords.Of(store), files);
+		}
+
+		/// <summary>GET /api/peer/scan/records/bytes?path=…: their files, gently, for the PC scanning this one while it does.</summary>
+		internal static Task RecordsBytesRouteAsync(HttpContext ctx) => ListingFor(ctx) != null && recordsServing is { } files ? files.ServeAsync(ctx) : NotAsking(ctx);
+
+		/// <summary>GET /api/peer/scan/take: the asking PC holds records of its scans of this one (<c>scan/kept</c>): they're taken back now, in the background.</summary>
+		internal static async Task TakeRouteAsync(HttpContext ctx) {
+			if (EstateLink.AskerOf(ctx.Request) is not { } asker) {
+				await NpuLoan.Json(403, new { error = "Only another of your PCs, through Castellan, can ask.", code = "peer" }).ExecuteAsync(ctx);
+				return;
+			}
+			_ = Task.Run(() => TakeLaterAsync(asker));
+			await NpuLoan.Json(202, new { taking = true }).ExecuteAsync(ctx);
 		}
 
 		/// <summary>GET /api/peer/scan/in: the PC scanning this one pulls the work.</summary>
@@ -577,21 +681,52 @@ namespace HEI.Agent.Estate {
 		/// <summary>GET /api/peer/scan/out?loan=…: the PC to scan asks for the results, which starts its scan here.</summary>
 		internal static Task OutRouteAsync(HttpContext ctx) => Lend.OutRouteAsync(ctx);
 
-		/// <summary>GET /api/peer/findings: what this PC's last scan of the asking PC's files found; only that PC's own.</summary>
-		internal static async Task FindingsRouteAsync(HttpContext ctx) {
-			if (EstateLink.AskerOf(ctx.Request) is not { } asker) {
-				await NpuLoan.Json(403, new { error = "Only another of your PCs, through Castellan, can ask." }).ExecuteAsync(ctx);
-				return;
-			}
-			string path = Path.Combine(RemoteScanner.HomeFor(asker.Id), "findings.json");
-			if (!File.Exists(path)) {
-				await NpuLoan.Json(404, new { error = "This PC hasn't scanned that PC's files.", code = "none" }).ExecuteAsync(ctx);
-				return;
-			}
-			ctx.Response.ContentType = "application/json";
+		/// <summary>The records of scans for other PCs this PC holds, each served to the PC it's for alone (<c>scan/kept/bytes</c>).</summary>
+		static readonly System.Collections.Concurrent.ConcurrentDictionary<string, PeerFiles> keptServing = new(StringComparer.Ordinal);
+
+		/// <summary>
+		/// GET /api/peer/scan/kept: what this PC holds of its scans of the asking PC (their records, <see cref="ScanRecords"/>),
+		/// for that PC to take back, once no scan of it runs here; <c>?got=&lt;tag&gt;</c>: that PC has them, and they go from here.
+		/// </summary>
+		internal static Task KeptRouteAsync(HttpContext ctx) => KeptAsync(ctx, Path.Combine(AgentPaths.Home, "remote"));
+
+		/// <summary>The kept route's answer from the homes in <paramref name="remoteRoot"/> (tests: a folder of their own).</summary>
+		internal static async Task KeptAsync(HttpContext ctx, string remoteRoot) {
 			ctx.Response.Headers.CacheControl = "no-store";
-			await ctx.Response.SendFileAsync(path, ctx.RequestAborted);
+			if (EstateLink.AskerOf(ctx.Request) is not { } asker || asker.Id.Length == 0 || asker.Id.IndexOfAny(['\\', '/', ':', '.']) >= 0) {
+				await NpuLoan.Json(403, new { error = "Only another of your PCs, through Castellan, can ask.", code = "peer" }).ExecuteAsync(ctx);
+				return;
+			}
+			string home = Path.Combine(remoteRoot, asker.Id);
+			string? got = ctx.Request.Query["got"];
+			ScanRecords.Manifest m;
+			IResult? answer = null;
+			lock (RemoteHomes.Gate) {
+				m = ScanRecords.Of(home);
+				if (!Directory.Exists(home)) answer = NpuLoan.Json(404, new { error = "This PC holds nothing of that PC's.", code = "none" });
+				else if (RemoteHomes.InUse(home, ScansIn)) answer = NpuLoan.Json(409, new { error = "This PC is scanning that PC's files now.", code = "scanning" });
+				else if (got != null)
+					answer = got != m.Tag ? NpuLoan.Json(409, new { error = "What this PC holds of that PC's changed since.", code = "changed" })
+						: RemoteHomes.Retire(home) ? NpuLoan.Json(200, new { gone = true })
+						: NpuLoan.Json(409, new { error = "What this PC holds of that PC's is in use: it goes the next time.", code = "busy" });
+				else if (m.Files.Count == 0) {
+					RemoteHomes.Retire(home); // nothing in it to take back
+					answer = NpuLoan.Json(404, new { error = "This PC holds nothing of that PC's.", code = "none" });
+				}
+			}
+			if (answer != null) {
+				if (got != null) keptServing.TryRemove(asker.Id, out _);
+				await answer.ExecuteAsync(ctx);
+				return;
+			}
+			string id = asker.Id;
+			PeerFiles files = keptServing.GetOrAdd(id, _ => new PeerFiles(() => Game()) { May = pc => pc.Id == id });
+			await ScanRecords.OfferAsync(ctx, home, m, files);
 		}
+
+		/// <summary>GET /api/peer/scan/kept/bytes?path=…: the files of what this PC holds of the asking PC's scans, gently, for that PC alone.</summary>
+		internal static Task KeptBytesRouteAsync(HttpContext ctx) =>
+			(EstateLink.AskerOf(ctx.Request) is { } asker && keptServing.TryGetValue(asker.Id, out PeerFiles? files) ? files : NoneOffered).ServeAsync(ctx);
 
 		/// <summary>
 		/// Heiward's page is stopping: a scan for another PC stops first, keeping what it checked (its next scan picks up from
@@ -653,14 +788,19 @@ namespace HEI.Agent.Estate {
 						return;
 					}
 					string home = this.home = RemoteScanner.HomeFor(loan.From.Id);
-					Directory.CreateDirectory(home);
-					// This PC's own settings (its AI device, its graphics card), for the scan in that home.
-					try { if (File.Exists(AgentPaths.Config)) File.Copy(AgentPaths.Config, Path.Combine(home, "settings.json"), overwrite: true); }
-					catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-					TryDelete(RemoteStatus.FilePath(home));
-					TryDelete(RemoteScanner.StopFile(home));
-					// Never while an old mirror of that PC's is being moved aside (OldMirrors): the scan moves it itself.
-					lock (OldMirrors.Gate) child = StartHei(home, "remote-scan", "--pc", loan.From.Id, "--name", loan.From.Name);
+					// Never while RemoteHomes moves that PC's home, or a part of it, aside: the scan's start is one step for it.
+					lock (RemoteHomes.Gate) {
+						Directory.CreateDirectory(home);
+						// This PC's own settings (its AI device, its graphics card), for the scan in that home; and whose it is, for this page.
+						try {
+							if (File.Exists(AgentPaths.Config)) File.Copy(AgentPaths.Config, Path.Combine(home, "settings.json"), overwrite: true);
+							AgentPaths.WriteAtomic(RemoteHomes.TargetFile(home), JsonSerializer.Serialize(new { id = loan.From.Id, name = loan.From.Name }));
+						}
+						catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+						TryDelete(RemoteStatus.FilePath(home));
+						TryDelete(RemoteScanner.StopFile(home));
+						child = StartHei(home, "remote-scan", "--pc", loan.From.Id, "--name", loan.From.Name);
+					}
 					if (child == null) {
 						loan.End("Heiward couldn't start the scan there");
 						return;
@@ -681,7 +821,7 @@ namespace HEI.Agent.Estate {
 					if (!child.HasExited) return;
 					watch?.Dispose();
 					watch = null;
-					OldMirrors.Kick(); // what it moved aside, or left, goes now
+					RemoteHomes.Kick(); // what it holds goes back to that PC, and what it moved aside goes
 					var done = new JsonObject { ["code"] = child.ExitCode };
 					if (s is { Pid: var pid } && pid == child.Id) {
 						done["stage"] = s.Stage;
@@ -720,7 +860,7 @@ namespace HEI.Agent.Estate {
 						catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
 						var timer = Stopwatch.StartNew();
 						if (c.WaitForExit(most)) {
-							AgentPaths.AppendLog($"the scan of {loan.From.Name}'s files stopped in {timer.Elapsed.TotalSeconds:N1} s, keeping what it checked");
+							AgentPaths.AppendLog($"the scan of {loan.From.Name}'s files stopped in {timer.Elapsed.TotalSeconds:N1} s: what it checked goes back to {loan.From.Name}");
 							return;
 						}
 					}
@@ -728,12 +868,12 @@ namespace HEI.Agent.Estate {
 					c.Kill(entireProcessTree: true);
 				}
 				catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception) { }
-				finally { OldMirrors.Kick(); }
+				finally { RemoteHomes.Kick(); }
 			}
 
 			/// <summary>
-			/// Whether this job's scan runs, or is starting, in <paramref name="at"/>, for <see cref="OldMirrors"/>: read without
-			/// its lock, which is held while the scan starts, under OldMirrors' own.
+			/// Whether this job's scan runs, or is starting, in <paramref name="at"/>, for <see cref="RemoteHomes"/>: read without
+			/// its lock, which is held while the scan starts, under RemoteHomes' own.
 			/// </summary>
 			public bool RunsIn(string at) {
 				Process? c = Volatile.Read(ref child);

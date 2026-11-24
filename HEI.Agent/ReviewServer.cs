@@ -246,7 +246,12 @@ namespace HEI.Agent {
 			app.MapGet("/api/peer/scan/pages", Estate.ScanForOthers.PagesRouteAsync);
 			app.MapGet("/api/peer/scan/bytes", Estate.ScanForOthers.BytesRouteAsync);
 			app.MapGet("/api/peer/scan/timing", Estate.ScanForOthers.TimingRouteAsync);
-			app.MapGet("/api/peer/findings", Estate.ScanForOthers.FindingsRouteAsync);
+			// The records of a PC's scans by another (Estate.ScanRecords): the PC scanned's, lent as a scan starts, taken back as it ends.
+			app.MapGet("/api/peer/scan/records", Estate.ScanForOthers.RecordsRouteAsync);
+			app.MapGet("/api/peer/scan/records/bytes", Estate.ScanForOthers.RecordsBytesRouteAsync);
+			app.MapGet("/api/peer/scan/take", Estate.ScanForOthers.TakeRouteAsync);
+			app.MapGet("/api/peer/scan/kept", Estate.ScanForOthers.KeptRouteAsync);
+			app.MapGet("/api/peer/scan/kept/bytes", Estate.ScanForOthers.KeptBytesRouteAsync);
 			// This page: have another PC scan this one, stop it, or let go of what it found.
 			app.MapPost("/api/remote/scan", async (RemoteScanRequest request, HttpContext ctx) =>
 				await Estate.ScanForOthers.AskAsync(request.Pc, request.Name, ctx.RequestAborted) is string why
@@ -616,8 +621,8 @@ namespace HEI.Agent {
 			app.Lifetime.ApplicationStopping.Register(PicturesRoute.Close);
 			// A scan for another PC, or of this one by another, ends with the page: the other PC hears why.
 			app.Lifetime.ApplicationStopping.Register(Estate.ScanForOthers.Shutdown);
-			// What an older Heiward kept of the PCs it scanned for (a file for each of theirs) goes, in the background.
-			Estate.OldMirrors.Start(app.Lifetime.ApplicationStopping);
+			// What scans here for other PCs hold goes back to those PCs, and an older Heiward's stand-ins (a file for each of theirs) go, in the background.
+			Estate.RemoteHomes.Start(app.Lifetime.ApplicationStopping);
 			// A clean stop folds the listings' journals in, so a build from before them reads every drive's listing as it is.
 			app.Lifetime.ApplicationStopping.Register(() => StoredListing.FoldAll(AgentPaths.AppendLog));
 			ScanIfDue(cfg);

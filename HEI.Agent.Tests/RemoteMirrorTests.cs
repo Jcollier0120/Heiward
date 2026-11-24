@@ -277,7 +277,7 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 	}
 
 	// Heiward 1.11.0 to 1.11.5 left a sparse stand-in of every file listed, and a marker once it had emptied them: the
-	// next scan moves all of that aside at once, never one file at a time, and reads none of it. OldMirrors deletes it.
+	// next scan moves all of that aside at once, never one file at a time, and reads none of it. RemoteHomes deletes it.
 	[Fact]
 	public void WhatAnEarlierScanLeft_IsMovedAsideWhole_AndTheScansOwnFolderGoesAtItsEnd() {
 		string a = Make("a.jpg", 1000), b = Make("b.jpg", 2000, 2);
@@ -300,7 +300,7 @@ public sealed partial class RemoteMirrorTests : IDisposable {
 			Assert.Single(FilesHere());
 		}
 		Assert.False(Directory.Exists(mirrorDir));
-		Assert.True(Directory.Exists(aside)); // not the scan's to delete: OldMirrors does, in the background
+		Assert.True(Directory.Exists(aside)); // not the scan's to delete: RemoteHomes does, in the background
 		Assert.Equal(1000, bytes.Bytes);
 	}
 

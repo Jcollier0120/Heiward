@@ -70,9 +70,10 @@ namespace HEI.Agent.Estate {
 	/// again from the byte after the last that came.</item>
 	/// <item>A link that drops, or a Manor that can't reach the other PC just now, is tried again, three times in a row.</item>
 	/// </list>
-	/// Each ask is timed (<see cref="RemoteTimings"/>): asked → its head → its last byte.
+	/// Each ask is timed (<see cref="RemoteTimings"/>): asked → its head → its last byte. <paramref name="route"/>: the route
+	/// asked, <c>scan/bytes</c> for the files listed, another for a scan's records (<see cref="ScanRecords"/>).
 	/// </summary>
-	sealed class EstateBytes(string pc, Action<string?>? waiting = null, RemoteTimings? timings = null) : IRemoteBytes {
+	sealed class EstateBytes(string pc, Action<string?>? waiting = null, RemoteTimings? timings = null, string route = "scan/bytes") : IRemoteBytes {
 		long fetched;
 		int asks;
 
@@ -86,7 +87,7 @@ namespace HEI.Agent.Estate {
 
 		public long Stream(ListedFile file, long offset, long count, BytesCame came, CancellationToken ct) {
 			if (count <= 0) return 0;
-			string route = EstateLink.PeerPath(pc, "scan/bytes?path=" + Uri.EscapeDataString(file.Path));
+			string ask = EstateLink.PeerPath(pc, route + "?path=" + Uri.EscapeDataString(file.Path));
 			string tag = PeerFiles.Tag(file.Size, PeerFiles.MsOf(file.ModifiedUtc));
 			long got = 0;
 			int tries = 0;
@@ -97,7 +98,7 @@ namespace HEI.Agent.Estate {
 					try {
 						long from = offset + got;
 						long asked = Stopwatch.GetTimestamp();
-						using HttpResponseMessage r = EstateLink.Ask(route, ct, new RangeHeaderValue(from, offset + count - 1));
+						using HttpResponseMessage r = EstateLink.Ask(ask, ct, new RangeHeaderValue(from, offset + count - 1));
 						long head = Stopwatch.GetTimestamp();
 						int status = (int)r.StatusCode;
 						if (status is 200 or 206) {
@@ -210,7 +211,7 @@ namespace HEI.Agent.Estate {
 	/// </list>
 	/// Heiward 1.11.0 to 1.11.5 kept a sparse stand-in of every file listed, and never removed them: 670,000 files on one
 	/// PC. What an earlier scan left in the folder is moved aside whole as the scan begins (<see cref="SetAside"/>), and
-	/// deleted in the background (<see cref="OldMirrors"/>).
+	/// deleted in the background (<see cref="RemoteHomes"/>).
 	/// </summary>
 	sealed partial class RemoteMirror : IDisposable {
 		/// <summary>How much of the other PC's files may be held here at once: a few hundred photos.</summary>
@@ -303,7 +304,7 @@ namespace HEI.Agent.Estate {
 		/// <summary>
 		/// What an earlier scan left in <paramref name="folder"/> moved aside whole, an instant however much it holds: an older
 		/// Heiward's stand-in of every file, or what a scan cut short held. It goes to <c>mirror.old-&lt;time&gt;</c> beside it,
-		/// which <see cref="OldMirrors"/> deletes in the background; an empty folder just goes. False when something is there
+		/// which <see cref="RemoteHomes"/> deletes in the background; an empty folder just goes. False when something is there
 		/// and couldn't be moved (a file in it is open just now): it's left as it is, to be moved another time.
 		/// </summary>
 		internal static bool SetAside(string folder) {
@@ -559,7 +560,7 @@ namespace HEI.Agent.Estate {
 			foreach (Stand s in holding.Keys) Empty(s);
 			if (ownsFolder && Directory.Exists(Folder)) {
 				try { Directory.Delete(Folder, recursive: true); } // the folders the stand-ins were in, and any file a reader still had open
-				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // moved aside by the next scan, or OldMirrors
+				catch (Exception e) when (e is IOException or UnauthorizedAccessException) { } // moved aside by the next scan, or RemoteHomes
 			}
 		}
 
